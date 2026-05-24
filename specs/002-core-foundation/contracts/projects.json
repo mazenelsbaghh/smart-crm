@@ -1,0 +1,79 @@
+{
+  "endpoints": {
+    "create": {
+      "path": "/api/projects",
+      "method": "POST",
+      "headers": {
+        "Authorization": "Bearer [JWT]"
+      },
+      "request": {
+        "name": "string (required)"
+      },
+      "responses": {
+        "201": {
+          "id": "string (UUID)",
+          "name": "string",
+          "createdAt": "string (ISO-8601)"
+        }
+      }
+    },
+    "list": {
+      "path": "/api/projects",
+      "method": "GET",
+      "headers": {
+        "Authorization": "Bearer [JWT]"
+      },
+      "responses": {
+        "200": [
+          {
+            "id": "string (UUID)",
+            "name": "string",
+            "createdAt": "string (ISO-8601)"
+          }
+        ]
+      }
+    },
+    "get": {
+      "path": "/api/projects/{id}",
+      "method": "GET",
+      "headers": {
+        "Authorization": "Bearer [JWT]"
+      },
+      "responses": {
+        "200": {
+          "id": "string (UUID)",
+          "name": "string",
+          "settings": {
+            "aiAutoReplyEnabled": "boolean",
+            "timezone": "string",
+            "geminiApiKey": "string"
+          },
+          "createdAt": "string (ISO-8601)"
+        },
+        "403": {
+          "error": "Forbidden"
+        },
+        "404": {
+          "error": "Project not found"
+        }
+      }
+    },
+    "updateSettings": {
+      "path": "/api/projects/{id}/settings",
+      "method": "PUT",
+      "headers": {
+        "Authorization": "Bearer [JWT]"
+      },
+      "request": {
+        "aiAutoReplyEnabled": "boolean",
+        "timezone": "string",
+        "geminiApiKey": "string"
+      },
+      "responses": {
+        "200": {
+          "message": "Settings updated successfully"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "endpoints": {
+    "listCustomers": {
+      "path": "/api/projects/{projectId}/customers",
+      "method": "GET",
+      "headers": {
+        "Authorization": "Bearer [JWT]"
+      },
+      "responses": {
+        "200": [
+          {
+            "id": "string (UUID)",
+            "phoneNumber": "string",
+            "name": "string",
+            "city": "string",
+            "leadScore": "integer",
+            "tags": ["string"],
+            "notes": "string",
+            "createdAt": "string"
+          }
+        ]
+      }
+    },
+    "updateCustomer": {
+      "path": "/api/customers/{id}",
+      "method": "PUT",
+      "headers": {
+        "Authorization": "Bearer [JWT]"
+      },
+      "request": {
+        "name": "string",
+        "city": "string",
+        "tags": ["string"],
+        "notes": "string"
+      },
+      "responses": {
+        "200": {
+          "message": "Customer profile updated successfully"
+        }
+      }
+    },
+    "createFollowUp": {
+      "path": "/api/customers/{customerId}/follow-ups",
+      "method": "POST",
+      "headers": {
+        "Authorization": "Bearer [JWT]"
+      },
+      "request": {
+        "details": "string (required)",
+        "dueDate": "string (ISO-8601 timestamp, required)"
+      },
+      "responses": {
+        "201": {
+          "id": "string (UUID)",
+          "customerId": "string",
+          "details": "string",
+          "dueDate": "string",
+          "status": "Pending"
+        }
+      }
+    },
+    "listFollowUps": {
+      "path": "/api/projects/{projectId}/follow-ups",
+      "method": "GET",
+      "headers": {
+        "Authorization": "Bearer [JWT]"
+      },
+      "query_params": {
+        "status": "string (Pending/Done/Missed - optional)"
+      },
+      "responses": {
+        "200": [
+          {
+            "id": "string (UUID)",
+            "customerId": "string",
+            "customerName": "string",
+            "details": "string",
+            "dueDate": "string",
+            "status": "string"
+          }
+        ]
+      }
+    }
+  }
+}
