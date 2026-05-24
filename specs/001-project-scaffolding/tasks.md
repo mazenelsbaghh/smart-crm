@@ -39,7 +39,7 @@ Phase 7: T022 → T023 → T024
 
 **Goal**: Create the foundational project files and directory structure.
 
-- [ ] T001 Create the `.env.example` file at repository root `.env.example`
+- [x] T001 Create the `.env.example` file at repository root `.env.example`
 
   **File**: `.env.example`
   **Action**: Create new file with the following exact content:
@@ -80,7 +80,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T002 Create the `.editorconfig` file at repository root `.editorconfig`
+- [x] T002 Create the `.editorconfig` file at repository root `.editorconfig`
 
   **File**: `.editorconfig`
   **Action**: Create new file with the following exact content:
@@ -111,7 +111,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T003 [P] Create Nginx default configuration at `nginx/default.conf`
+- [x] T003 [P] Create Nginx default configuration at `nginx/default.conf`
 
   **File**: `nginx/default.conf`
   **Action**: Create directory `nginx/` and file `default.conf` with the following exact content:
@@ -153,7 +153,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T004 [P] Create the Python test requirements at `tests/requirements-test.txt`
+- [x] T004 [P] Create the Python test requirements at `tests/requirements-test.txt`
 
   **File**: `tests/requirements-test.txt`
   **Action**: Create directory `tests/` and file `requirements-test.txt` with the following exact content:
@@ -178,7 +178,7 @@ Phase 7: T022 → T023 → T024
 **Goal**: Create the Docker Compose configuration that defines all 6 infrastructure services with health checks.
 **Depends on**: Phase 1 (`.env.example` must exist)
 
-- [ ] T005 Create the main `docker-compose.yml` at repository root `docker-compose.yml`
+- [x] T005 Create the main `docker-compose.yml` at repository root `docker-compose.yml`
 
   **File**: `docker-compose.yml`
   **Action**: Create new file with the following exact content:
@@ -312,7 +312,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T006 [P] Create `docker-compose.override.yml` at repository root `docker-compose.override.yml`
+- [x] T006 [P] Create `docker-compose.override.yml` at repository root `docker-compose.override.yml`
 
   **File**: `docker-compose.override.yml`
   **Action**: Create new file with the following exact content:
@@ -352,7 +352,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T007 [P] Create the MinIO bucket initialization script at `scripts/init-minio.sh`
+- [x] T007 [P] Create the MinIO bucket initialization script at `scripts/init-minio.sh`
 
   **File**: `scripts/init-minio.sh`
   **Action**: Create directory `scripts/` and file `init-minio.sh` with the following exact content. Set the file as executable (`chmod +x scripts/init-minio.sh`):
@@ -405,7 +405,7 @@ Phase 7: T022 → T023 → T024
 **Depends on**: Phase 2 (Docker Compose must exist)
 **Independent Test**: `make up && make health && make down` — all succeed.
 
-- [ ] T008 [US1] Create the `Makefile` at repository root `Makefile`
+- [x] T008 [US1] Create the `Makefile` at repository root `Makefile`
 
   **File**: `Makefile`
   **Action**: Create new file with the following exact content (NOTE: all indented lines MUST use actual TAB characters, not spaces):
@@ -531,7 +531,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T009 [US1] Create the Makefile `.env` auto-copy logic verification
+- [x] T009 [US1] Create the Makefile `.env` auto-copy logic verification
 
   **Action**: Test that the `make env` target works correctly:
   1. Ensure `.env` does NOT exist (delete if it does).
@@ -542,7 +542,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T010 [US1] Add `.env` to `.gitignore` at repository root `.gitignore`
+- [x] T010 [US1] Add `.env` to `.gitignore` at repository root `.gitignore`
 
   **File**: `.gitignore`
   **Action**: Open the existing `.gitignore` and ensure it contains the following sections. If the file does not exist, create it. Append any missing entries:
@@ -602,7 +602,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T011 [US1] Verify full bootstrap workflow
+- [x] T011 [US1] Verify full bootstrap workflow
 
   **Action**: Run the complete bootstrap workflow and verify:
   ```bash
@@ -622,7 +622,7 @@ Phase 7: T022 → T023 → T024
 **Depends on**: Phase 3 (Makefile and Docker services must work)
 **Independent Test**: `make test-setup && make up && make test-phase-0` — all tests pass.
 
-- [ ] T012 [US2] Create `tests/__init__.py` at `tests/__init__.py`
+- [x] T012 [US2] Create `tests/__init__.py` at `tests/__init__.py`
 
   **File**: `tests/__init__.py`
   **Action**: Create an empty file (just to make tests/ a Python package):
@@ -632,7 +632,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T013 [US2] Create `tests/conftest.py` at `tests/conftest.py`
+- [x] T013 [US2] Create `tests/conftest.py` at `tests/conftest.py`
 
   **File**: `tests/conftest.py`
   **Action**: Create new file with the following exact content:
@@ -705,7 +705,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T014 [US2] Create `tests/phase_0/__init__.py` at `tests/phase_0/__init__.py`
+- [x] T014 [US2] Create `tests/phase_0/__init__.py` at `tests/phase_0/__init__.py`
 
   **File**: `tests/phase_0/__init__.py`
   **Action**: Create an empty file:
@@ -715,7 +715,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T015 [US2] Create `tests/phase_0/test_infrastructure.py` at `tests/phase_0/test_infrastructure.py`
+- [x] T015 [US2] Create `tests/phase_0/test_infrastructure.py` at `tests/phase_0/test_infrastructure.py`
 
   **File**: `tests/phase_0/test_infrastructure.py`
   **Action**: Create new file with the following exact content:
@@ -935,7 +935,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T016 [US2] Verify test suite runs successfully
+- [x] T016 [US2] Verify test suite runs successfully
 
   **Action**: Execute the full test flow:
   ```bash
@@ -957,7 +957,7 @@ Phase 7: T022 → T023 → T024
 **Depends on**: Phase 4 (test infrastructure must work)
 **Independent Test**: `make help` lists all targets; each target runs without error.
 
-- [ ] T017 [US3] Verify all Makefile targets work
+- [x] T017 [US3] Verify all Makefile targets work
 
   **Action**: Run each target and verify it works:
   ```bash
@@ -977,7 +977,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T018 [US3] Add `make test-coverage` verification
+- [x] T018 [US3] Add `make test-coverage` verification
 
   **Action**: Run `make test-coverage` and verify:
   1. Tests run with coverage tracking.
@@ -993,7 +993,7 @@ Phase 7: T022 → T023 → T024
 **Depends on**: Phase 5
 **Independent Test**: `.gitignore` blocks sensitive files; README has all required sections.
 
-- [ ] T019 [US4] Verify `.gitignore` blocks sensitive files
+- [x] T019 [US4] Verify `.gitignore` blocks sensitive files
 
   **Action**: Run these checks:
   ```bash
@@ -1007,7 +1007,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T020 [US4] Create `README.md` at repository root `README.md`
+- [x] T020 [US4] Create `README.md` at repository root `README.md`
 
   **File**: `README.md`
   **Action**: Create new file with the following exact content:
@@ -1147,7 +1147,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T021 [US4] Create `LICENSE` file at repository root `LICENSE`
+- [x] T021 [US4] Create `LICENSE` file at repository root `LICENSE`
 
   **File**: `LICENSE`
   **Action**: Create new file with the following content:
@@ -1171,7 +1171,7 @@ Phase 7: T022 → T023 → T024
 **Goal**: Create the Phase 0 skill and finalize all documentation.
 **Depends on**: Phase 6
 
-- [ ] T022 Create Phase 0 skill at `.agents/skills/phase-0/SKILL.md`
+- [x] T022 Create Phase 0 skill at `.agents/skills/phase-0/SKILL.md`
 
   **File**: `.agents/skills/phase-0/SKILL.md`
   **Action**: Create directory `.agents/skills/phase-0/` and file `SKILL.md` with the following exact content:
@@ -1258,7 +1258,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T023 Verify full Phase 0 end-to-end workflow
+- [x] T023 Verify full Phase 0 end-to-end workflow
 
   **Action**: Execute the complete workflow from scratch:
   ```bash
@@ -1278,7 +1278,7 @@ Phase 7: T022 → T023 → T024
 
 ---
 
-- [ ] T024 Git commit and tag Phase 0
+- [x] T024 Git commit and tag Phase 0
 
   **Action**: Commit all changes and tag the release:
   ```bash
