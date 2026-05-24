@@ -91,6 +91,57 @@ services:
     networks:
       - smartcore-net
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-smartcustomercore}-backend
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5000
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Username=${POSTGRES_USER:-smartcore};Password=${POSTGRES_PASSWORD:-changeme_postgres};Database=${POSTGRES_DB:-smartcustomercore}
+      - Redis__ConnectionString=redis:6379
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER:-admin}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS:-changeme_rabbitmq}
+      - Gemini__ApiKey=${GEMINI_API_KEY}
+      - WhatsAppGateway__Url=http://whatsapp-gateway:3000
+      - Elasticsearch__Url=http://elasticsearch:9200
+      - MinIO__Endpoint=http://minio:9000
+      - MinIO__AccessKey=${MINIO_ROOT_USER:-minioadmin}
+      - MinIO__SecretKey=${MINIO_ROOT_PASSWORD:-changeme_minio}
+      - MinIO__BucketName=${MINIO_BUCKET:-smartcore-media}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - smartcore-net
+
+  whatsapp-gateway:
+    build:
+      context: ./whatsapp-gateway
+      dockerfile: Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-smartcustomercore}-whatsapp-gateway
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+      - BACKEND_URL=http://backend:5000
+    volumes:
+      - ./whatsapp-gateway/sessions:/app/sessions
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - smartcore-net
+
   nginx:
     image: nginx:1.25-alpine
     container_name: ${COMPOSE_PROJECT_NAME:-smartcustomercore}-nginx
@@ -108,6 +159,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backend:
+        condition: service_started
     networks:
       - smartcore-net
 

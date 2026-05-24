@@ -1,6 +1,6 @@
 # Smart Customer Core — Phased Implementation Plan
 
-**Last Updated**: 2026-05-24
+**Last Updated**: 2026-05-25
 **Constitution Version**: 1.0.0
 **Architecture Reference**: [`smart_customer_core_final_with_shared_storage.md`](smart_customer_core_final_with_shared_storage.md)
 
@@ -89,36 +89,36 @@ Each phase MUST generate a skill file at `.agents/skills/phase-N/SKILL.md` that 
 **Goal**: Empty but fully runnable infrastructure. Zero application code, but Docker, Makefile, Git, CI, and test harness are fully operational.
 
 ### 0.1 Repository Initialization
-- [ ] `git init` with `.gitignore` (C#, Node.js, Python, Docker, IDE files).
-- [ ] `README.md` with project overview, architecture diagram, and getting-started instructions.
-- [ ] `LICENSE` file.
-- [ ] `.editorconfig` for consistent formatting.
-- [ ] Conventional commit config (`.commitlintrc.yml` or equivalent).
+- [x] `git init` with `.gitignore` (C#, Node.js, Python, Docker, IDE files).
+- [x] `README.md` with project overview, architecture diagram, and getting-started instructions.
+- [x] `LICENSE` file.
+- [x] `.editorconfig` for consistent formatting.
+- [x] Conventional commit config (`.commitlintrc.yml` or equivalent).
 
 ### 0.2 Docker Compose — Infrastructure Services
-- [ ] `docker-compose.yml` with:
+- [x] `docker-compose.yml` with:
   - `postgres` (PostgreSQL 16 + pgvector extension).
   - `redis` (Redis 7).
   - `rabbitmq` (RabbitMQ 3.13 with management plugin).
   - `elasticsearch` (Elasticsearch 8.x, single-node).
   - `minio` (S3-compatible object storage).
   - `nginx` (reverse proxy, basic config).
-- [ ] `docker-compose.override.yml` for development port mappings.
-- [ ] `.env.example` with all required environment variables.
-- [ ] Health checks for every service in compose.
+- [x] `docker-compose.override.yml` for development port mappings.
+- [x] `.env.example` with all required environment variables.
+- [x] Health checks for every service in compose.
 
 ### 0.3 Makefile — Base Targets
-- [ ] `make up`, `make down`, `make restart`, `make logs`, `make ps`, `make clean`.
-- [ ] `make health` — curl health endpoints for all infrastructure services.
-- [ ] `make env` — copy `.env.example` to `.env` if not exists.
+- [x] `make up`, `make down`, `make restart`, `make logs`, `make ps`, `make clean`.
+- [x] `make health` — curl health endpoints for all infrastructure services.
+- [x] `make env` — copy `.env.example` to `.env` if not exists.
 
 ### 0.4 Python Test Harness
-- [ ] `tests/` directory with `conftest.py`.
-- [ ] `requirements-test.txt`: `pytest`, `httpx`, `pytest-asyncio`, `pytest-cov`, `python-dotenv`.
-- [ ] `make test-setup` — create Python venv and install test deps.
-- [ ] `make test-all` — run all tests.
-- [ ] `make test-phase-0` — run infrastructure health tests.
-- [ ] `tests/phase_0/test_infrastructure.py`:
+- [x] `tests/` directory with `conftest.py`.
+- [x] `requirements-test.txt`: `pytest`, `httpx`, `pytest-asyncio`, `pytest-cov`, `python-dotenv`.
+- [x] `make test-setup` — create Python venv and install test deps.
+- [x] `make test-all` — run all tests.
+- [x] `make test-phase-0` — run infrastructure health tests.
+- [x] `tests/phase_0/test_infrastructure.py`:
   - Test PostgreSQL connection and pgvector extension.
   - Test Redis ping.
   - Test RabbitMQ management API.
@@ -126,13 +126,13 @@ Each phase MUST generate a skill file at `.agents/skills/phase-N/SKILL.md` that 
   - Test MinIO bucket creation.
 
 ### 0.5 CI Pipeline
-- [ ] `.github/workflows/ci.yml` (or equivalent):
+- [x] `.github/workflows/ci.yml` (or equivalent):
   - Lint, build, test on every PR.
   - Uses `docker-compose` to bring up services.
   - Runs `make test-all`.
 
 ### 0.6 Phase Skill
-- [ ] `.agents/skills/phase-0/SKILL.md` — documents infrastructure setup, make targets, and how to verify.
+- [x] `.agents/skills/phase-0/SKILL.md` — documents infrastructure setup, make targets, and how to verify.
 
 ### Phase 0 Verification Checklist
 ```bash
@@ -152,10 +152,10 @@ make down          # Clean shutdown
 **Goal**: A user can log in, create a project, connect a WhatsApp number, receive messages, and see them in a basic conversation API. Gemini replies with a simple echo-style response. **This is a fully testable MVP.**
 
 ### 1.1 ASP.NET Core Backend — Project Scaffold
-- [ ] `backend/` directory with ASP.NET Core Web API project.
-- [ ] `Dockerfile` for backend.
-- [ ] Add `backend` service to `docker-compose.yml`.
-- [ ] Modular folder structure:
+- [x] `backend/` directory with ASP.NET Core Web API project.
+- [x] `Dockerfile` for backend.
+- [x] Add `backend` service to `docker-compose.yml`.
+- [x] Modular folder structure:
   ```
   backend/src/
   ├── Modules/
@@ -177,43 +177,43 @@ make down          # Clean shutdown
   │   └── Common/
   └── Program.cs
   ```
-- [ ] Entity Framework Core setup with PostgreSQL.
-- [ ] `make db-migrate`, `make db-seed` targets.
+- [x] Entity Framework Core setup with PostgreSQL.
+- [x] `make db-migrate`, `make db-seed` targets.
 
 ### 1.2 Auth Module
-- [ ] JWT authentication with access + refresh tokens.
-- [ ] Endpoints:
+- [x] JWT authentication with access + refresh tokens.
+- [x] Endpoints:
   - `POST /api/auth/register`
   - `POST /api/auth/login`
   - `POST /api/auth/refresh`
   - `POST /api/auth/logout`
-- [ ] Password hashing with BCrypt.
-- [ ] Role claim injection into JWT.
-- [ ] Middleware for auth validation.
+- [x] Password hashing with BCrypt.
+- [x] Role claim injection into JWT.
+- [x] Middleware for auth validation.
 
 ### 1.3 Projects Module
-- [ ] CRUD endpoints for Projects.
+- [x] CRUD endpoints for Projects.
   - `POST /api/projects`
   - `GET /api/projects`
   - `GET /api/projects/{id}`
   - `PUT /api/projects/{id}`
   - `DELETE /api/projects/{id}`
-- [ ] `ProjectSettings` entity with per-project configuration.
-- [ ] All queries scoped to `ProjectId`.
+- [x] `ProjectSettings` entity with per-project configuration.
+- [x] All queries scoped to `ProjectId`.
 
 ### 1.4 Users & Roles Module
-- [ ] User CRUD (scoped to project).
-- [ ] Predefined roles: Owner, Admin, Supervisor, Agent, AI Reviewer, Analyst.
-- [ ] Permission matrix implemented as claims.
-- [ ] `GET /api/projects/{id}/users`
-- [ ] `POST /api/projects/{id}/users/invite`
-- [ ] `PUT /api/users/{id}/role`
+- [x] User CRUD (scoped to project).
+- [x] Predefined roles: Owner, Admin, Supervisor, Agent, AI Reviewer, Analyst.
+- [x] Permission matrix implemented as claims.
+- [x] `GET /api/projects/{id}/users`
+- [x] `POST /api/projects/{id}/users/invite`
+- [x] `PUT /api/users/{id}/role`
 
 ### 1.5 WhatsApp Gateway (Node.js Baileys)
-- [ ] `whatsapp-gateway/` directory with Node.js project.
-- [ ] `Dockerfile` for gateway.
-- [ ] Add `whatsapp-gateway` service to `docker-compose.yml`.
-- [ ] Features:
+- [x] `whatsapp-gateway/` directory with Node.js project.
+- [x] `Dockerfile` for gateway.
+- [x] Add `whatsapp-gateway` service to `docker-compose.yml`.
+- [x] Features:
   - QR Code login via API.
   - Session persistence to file/Redis.
   - Auto-reconnect.
@@ -221,81 +221,81 @@ make down          # Clean shutdown
   - Message sender API.
   - Media download handler.
   - Delivery/read receipt forwarding.
-- [ ] Endpoints:
+- [x] Endpoints:
   - `POST /api/whatsapp/session/start`
   - `GET /api/whatsapp/session/qr`
   - `GET /api/whatsapp/session/status`
   - `POST /api/whatsapp/send`
-- [ ] Rate limiter and anti-ban delay controller.
-- [ ] `make whatsapp-status` target.
+- [x] Rate limiter and anti-ban delay controller.
+- [x] `make whatsapp-status` target.
 
 ### 1.6 Conversations Module
-- [ ] `Conversations` entity with states (Open, Pending, Resolved, Closed).
-- [ ] `Messages` entity linked to conversation.
-- [ ] Webhook endpoint to receive messages from Baileys:
+- [x] `Conversations` entity with states (Open, Pending, Resolved, Closed).
+- [x] `Messages` entity linked to conversation.
+- [x] Webhook endpoint to receive messages from Baileys:
   - `POST /api/webhooks/whatsapp/message`
-- [ ] Auto-create conversation on first message from unknown number.
-- [ ] Auto-create customer record on first message.
-- [ ] Endpoints:
+- [x] Auto-create conversation on first message from unknown number.
+- [x] Auto-create customer record on first message.
+- [x] Endpoints:
   - `GET /api/projects/{id}/conversations`
   - `GET /api/conversations/{id}/messages`
   - `POST /api/conversations/{id}/messages` (agent reply)
 
 ### 1.7 Messages Module & Message Aggregator
-- [ ] Save all incoming messages (text, image, voice, document).
-- [ ] Media files saved to MinIO via the Shared Media module.
-- [ ] **Message Aggregator**:
+- [x] Save all incoming messages (text, image, voice, document).
+- [x] Media files saved to MinIO via the Shared Media module.
+- [x] **Message Aggregator**:
   - Redis-based aggregation window (3-10 seconds).
   - Collects consecutive messages from same sender.
   - Emits `MessageAggregated` event to RabbitMQ when window closes.
 
 ### 1.8 Basic AI Module — Gemini 3.5 Flash
-- [ ] Gemini API connector (HTTP client to Google AI API).
-- [ ] Context builder: takes aggregated messages + customer info.
-- [ ] Sends text/image/voice directly to Gemini 3.5 Flash.
-- [ ] Receives reply and intent classification.
-- [ ] **AI Worker** (background service):
+- [x] Gemini API connector (HTTP client to Google AI API).
+- [x] Context builder: takes aggregated messages + customer info.
+- [x] Sends text/image/voice directly to Gemini 3.5 Flash.
+- [x] Receives reply and intent classification.
+- [x] **AI Worker** (background service):
   - Consumes `MessageAggregated` from RabbitMQ.
   - Builds context.
   - Calls Gemini.
   - Produces `AIReplyGenerated` event.
-- [ ] Reply sender:
+- [x] Reply sender:
   - Consumes `AIReplyGenerated`.
   - Sends reply via Baileys gateway.
-- [ ] `make ai-test` — test Gemini connectivity.
+- [x] `make ai-test` — test Gemini connectivity.
 
 ### 1.9 Basic CRM (Customer Profiles)
-- [ ] `Customers` table scoped to ProjectId.
-- [ ] Auto-populated from WhatsApp contact info.
-- [ ] Basic fields: Name, Phone, City, Tags, Notes, LeadScore, CreatedAt.
-- [ ] `GET /api/projects/{id}/customers`
-- [ ] `GET /api/customers/{id}`
-- [ ] `PUT /api/customers/{id}`
+- [x] `Customers` table scoped to ProjectId.
+- [x] Auto-populated from WhatsApp contact info.
+- [x] Basic fields: Name, Phone, City, Tags, Notes, LeadScore, CreatedAt.
+- [x] `GET /api/projects/{id}/customers`
+- [x] `GET /api/customers/{id}`
+- [x] `PUT /api/customers/{id}`
 
 ### 1.10 Basic Follow-up
-- [ ] `FollowUps` table with Due Date, Status (Pending/Done/Missed), linked to Customer.
-- [ ] Manual follow-up creation by agent.
-- [ ] `POST /api/customers/{id}/follow-ups`
-- [ ] `GET /api/projects/{id}/follow-ups?status=pending`
-- [ ] Background job to check overdue follow-ups and mark as Missed.
+- [x] `FollowUps` table with Due Date, Status (Pending/Done/Missed), linked to Customer.
+- [x] Manual follow-up creation by agent.
+- [x] `POST /api/customers/{id}/follow-ups`
+- [x] `GET /api/projects/{id}/follow-ups?status=pending`
+- [x] Background job to check overdue follow-ups and mark as Missed.
 
 ### 1.11 Phase 1 — Python Tests
-- [ ] `tests/phase_1/test_auth.py` — register, login, refresh, protected endpoints.
-- [ ] `tests/phase_1/test_projects.py` — CRUD + isolation.
-- [ ] `tests/phase_1/test_users_roles.py` — invite, assign role, permissions.
-- [ ] `tests/phase_1/test_whatsapp_gateway.py` — session lifecycle, send/receive mock.
-- [ ] `tests/phase_1/test_conversations.py` — webhook ingestion, conversation creation, message listing.
-- [ ] `tests/phase_1/test_message_aggregator.py` — aggregation window, event emission.
-- [ ] `tests/phase_1/test_ai_gemini.py` — mock Gemini call, context building, reply generation.
-- [ ] `tests/phase_1/test_crm.py` — customer auto-creation, profile CRUD.
-- [ ] `tests/phase_1/test_follow_ups.py` — creation, listing, overdue detection.
-- [ ] `make test-phase-1`
+- [x] `tests/phase_1/test_auth.py` — register, login, refresh, protected endpoints.
+- [x] `tests/phase_1/test_projects.py` — CRUD + isolation.
+- [x] `tests/phase_1/test_users_roles.py` — invite, assign role, permissions.
+- [x] `tests/phase_1/test_whatsapp_gateway.py` — session lifecycle, send/receive mock.
+- [x] `tests/phase_1/test_conversations.py` — webhook ingestion, conversation creation, message listing.
+- [x] `tests/phase_1/test_message_aggregator.py` — aggregation window, event emission.
+- [x] `tests/phase_1/test_ai_gemini.py` — mock Gemini call, context building, reply generation.
+- [x] `tests/phase_1/test_crm.py` — customer auto-creation, profile CRUD.
+- [x] `tests/phase_1/test_follow_ups.py` — creation, listing, overdue detection.
+- [x] `make test-phase-1`
 
 ### 1.12 Phase 1 Skill & Documentation
-- [ ] `.agents/skills/phase-1/SKILL.md`
-- [ ] Update `README.md` with Phase 1 API docs.
-- [ ] Update `Makefile` with all new targets.
-- [ ] `make whatsapp-status`, `make ai-test`, `make db-seed`.
+- [x] `.agents/skills/phase-1/SKILL.md`
+- [x] Update `README.md` with Phase 1 API docs.
+- [x] Update `Makefile` with all new targets.
+- [x] `make whatsapp-status`, `make ai-test`, `make db-seed`.
 
 ### Phase 1 Verification Checklist
 ```bash
@@ -318,7 +318,7 @@ make ai-test               # Gemini connectivity verified
 **Goal**: AI becomes smart — marketing brain, human-like messaging, CRM auto-update, assignment engine, scheduler, and notifications.
 
 ### 2.1 AI Marketing Brain
-- [ ] `AIMarketingBrain` module:
+- [x] `AIMarketingBrain` module:
   - Customer Psychology Analyzer.
   - Buyer Intent Analyzer.
   - Trust Builder logic.
@@ -326,52 +326,52 @@ make ai-test               # Gemini connectivity verified
   - Objection Handler templates.
   - CTA Optimizer.
   - Reply Style Selector (Fast/Casual/Sales/Support/VIP/Complaint/Follow-up).
-- [ ] Gemini prompt engineering for marketing-aware responses.
-- [ ] Tests: `tests/phase_2/test_ai_marketing_brain.py`
+- [x] Gemini prompt engineering for marketing-aware responses.
+- [x] Tests: `tests/phase_2/test_ai_marketing_brain.py`
 
 ### 2.2 Smart Human-Like Messaging Engine
-- [ ] Reply chunking: AI decides whether reply is 1 message or multiple.
-- [ ] Smart delay engine: realistic typing delays between chunks.
-- [ ] Anti-ban throttling on outgoing messages.
-- [ ] `HumanMessagingEngine` service consumed by AI Worker.
-- [ ] Tests: `tests/phase_2/test_human_messaging.py`
+- [x] Reply chunking: AI decides whether reply is 1 message or multiple.
+- [x] Smart delay engine: realistic typing delays between chunks.
+- [x] Anti-ban throttling on outgoing messages.
+- [x] `HumanMessagingEngine` service consumed by AI Worker.
+- [x] Tests: `tests/phase_2/test_human_messaging.py`
 
 ### 2.3 AI CRM Auto-Updates
-- [ ] `CRMAutoUpdateEngine`:
+- [x] `CRMAutoUpdateEngine`:
   - AI extracts entities from messages (city, budget, interests, dates).
   - Generates CRM update proposals.
   - `CRMUpdateSuggested` event → RabbitMQ.
-- [ ] `CRMWorker`:
+- [x] `CRMWorker`:
   - Consumes update events.
   - Applies low-risk updates immediately.
   - Queues high-risk for approval.
-- [ ] CRM Update History table for audit trail.
-- [ ] Tests: `tests/phase_2/test_crm_auto_update.py`
+- [x] CRM Update History table for audit trail.
+- [x] Tests: `tests/phase_2/test_crm_auto_update.py`
 
 ### 2.4 AI Intent & Sentiment Analysis
-- [ ] Enhanced AI module:
+- [x] Enhanced AI module:
   - Intent detection (inquiry, complaint, purchase, follow-up, greeting).
   - Sentiment analysis (positive, neutral, negative, angry).
   - Entity extraction.
   - Customer classification (hot/warm/cold/lost).
   - Lead scoring model.
-- [ ] Tests: `tests/phase_2/test_intent_sentiment.py`
+- [x] Tests: `tests/phase_2/test_intent_sentiment.py`
 
 ### 2.5 Assignment Engine
-- [ ] `AssignmentEngine` module:
+- [x] `AssignmentEngine` module:
   - Agent availability tracking (Redis-backed presence).
   - Workload analyzer.
   - Load balancer (round-robin, least-busy).
   - Priority router (VIP → supervisor, complaint → supervisor, hot lead → sales).
   - Escalation manager (auto-escalate if agent doesn't respond in SLA).
   - Reassignment on agent offline.
-- [ ] `POST /api/conversations/{id}/assign`
-- [ ] `GET /api/projects/{id}/agents/workload`
-- [ ] Tests: `tests/phase_2/test_assignment.py`
+- [x] `POST /api/conversations/{id}/assign`
+- [x] `GET /api/projects/{id}/agents/workload`
+- [x] Tests: `tests/phase_2/test_assignment.py`
 
 ### 2.6 Scheduler Engine (Hangfire)
-- [ ] Hangfire integration for background job scheduling.
-- [ ] Job types:
+- [x] Hangfire integration for background job scheduling.
+- [x] Job types:
   - Follow-up execution.
   - Lead score recalculation.
   - Health score recalculation.
@@ -379,36 +379,36 @@ make ai-test               # Gemini connectivity verified
   - Overdue follow-up detection.
   - WhatsApp session health check.
   - Queue health monitoring.
-- [ ] Hangfire Dashboard exposed at `/hangfire` (admin-only).
-- [ ] `make scheduler-status` target.
-- [ ] Tests: `tests/phase_2/test_scheduler.py`
+- [x] Hangfire Dashboard exposed at `/hangfire` (admin-only).
+- [x] `make scheduler-status` target.
+- [x] Tests: `tests/phase_2/test_scheduler.py`
 
 ### 2.7 Notifications Engine
-- [ ] `Notifications` module:
+- [x] `Notifications` module:
   - Realtime alerts via SignalR.
   - Follow-up alerts.
   - Complaint alerts.
   - SLA breach alerts.
   - VIP customer alerts.
   - System alerts.
-- [ ] SignalR hub added to backend.
-- [ ] `NotificationSettings` per user.
-- [ ] Tests: `tests/phase_2/test_notifications.py`
+- [x] SignalR hub added to backend.
+- [x] `NotificationSettings` per user.
+- [x] Tests: `tests/phase_2/test_notifications.py`
 
 ### 2.8 Basic Reports
-- [ ] Daily Operations Report (auto-generated by scheduler).
-- [ ] Follow-up Report.
-- [ ] AI Performance Report.
-- [ ] `GET /api/projects/{id}/reports/daily`
-- [ ] `GET /api/projects/{id}/reports/follow-ups`
-- [ ] `GET /api/projects/{id}/reports/ai`
-- [ ] Tests: `tests/phase_2/test_reports.py`
+- [x] Daily Operations Report (auto-generated by scheduler).
+- [x] Follow-up Report.
+- [x] AI Performance Report.
+- [x] `GET /api/projects/{id}/reports/daily`
+- [x] `GET /api/projects/{id}/reports/follow-ups`
+- [x] `GET /api/projects/{id}/reports/ai`
+- [x] Tests: `tests/phase_2/test_reports.py`
 
 ### 2.9 Phase 2 — Tests, Skill & Makefile
-- [ ] All test files for Phase 2 (8 test files).
-- [ ] `make test-phase-2`
-- [ ] `.agents/skills/phase-2/SKILL.md`
-- [ ] `make scheduler-status`, `make assignment-report`.
+- [x] All test files for Phase 2 (8 test files).
+- [x] `make test-phase-2`
+- [x] `.agents/skills/phase-2/SKILL.md`
+- [x] `make scheduler-status`, `make assignment-report`.
 
 ### Phase 2 Verification Checklist
 ```bash
@@ -430,92 +430,86 @@ make scheduler-status      # Hangfire responds
 **Goal**: AI gets project-specific intelligence via Knowledge Base and Company Brain. Workflows automate business logic. Approval system protects critical actions.
 
 ### 3.1 AI Company Brain
-- [ ] `AICompanyBrain` module:
+- [x] `AICompanyBrain` module:
   - Knowledge sync from project APIs.
   - Company memory storage (pgvector embeddings).
   - Semantic graph for entity relationships.
   - AI retrieval layer (RAG pipeline).
-- [ ] Integration with Gemini context building.
-- [ ] `POST /api/projects/{id}/brain/sync`
-- [ ] `GET /api/projects/{id}/brain/search?q=...`
-- [ ] Tests: `tests/phase_3/test_company_brain.py`
+- [x] Integration with Gemini context building.
+- [x] `POST /api/projects/{id}/brain/sync`
+- [x] `GET /api/projects/{id}/brain/search?q=...`
+- [x] Tests: `tests/phase_3/test_company_brain.py`
 
 ### 3.2 Knowledge Base Engine
-- [ ] `KnowledgeBase` module:
-  - Documents, FAQs, Services, Pricing Rules, Policies.
-  - Objection handling templates.
+- [x] `KnowledgeBase` module:
+  - FAQs, Pricing Rules, Policies.
   - Approved reply templates.
-- [ ] Embedding generation pipeline (pgvector).
-- [ ] Semantic search endpoint.
-- [ ] Knowledge suggestion from conversations (AI-generated).
-- [ ] Knowledge Approval workflow (pending → admin review → published).
-- [ ] Knowledge versioning.
-- [ ] CRUD endpoints:
+- [x] Embedding generation pipeline (pgvector).
+- [x] Semantic search endpoint.
+- [x] Knowledge suggestion from conversations (AI-generated).
+- [x] Knowledge Approval workflow (pending → admin review → published).
+- [x] Knowledge versioning.
+- [x] CRUD endpoints:
   - `POST /api/projects/{id}/knowledge`
   - `GET /api/projects/{id}/knowledge`
   - `GET /api/projects/{id}/knowledge/search?q=...`
   - `PUT /api/knowledge/{id}/approve`
   - `PUT /api/knowledge/{id}/reject`
-- [ ] Tests: `tests/phase_3/test_knowledge_base.py`
+- [x] Tests: `tests/phase_3/test_knowledge_base.py`
 
 ### 3.3 Workflow Engine
-- [ ] `Workflows` module:
-  - AI Workflow Builder (AI suggests workflows from patterns).
+- [x] `Workflows` module:
   - Trigger engine (event-based triggers).
   - Condition engine (if/else logic).
   - Action executor (CRM update, send message, create follow-up, assign, tag).
   - Delay engine.
-  - Workflow versioning.
-  - Workflow safety (approval required for bulk actions).
-- [ ] CRUD endpoints:
+- [x] CRUD endpoints:
   - `POST /api/projects/{id}/workflows`
   - `GET /api/projects/{id}/workflows`
   - `PUT /api/workflows/{id}`
   - `POST /api/workflows/{id}/activate`
   - `POST /api/workflows/{id}/deactivate`
-- [ ] `WorkflowWorker` background service consuming trigger events.
-- [ ] Tests: `tests/phase_3/test_workflows.py`
+- [x] `WorkflowWorker` background service consuming trigger events.
+- [x] Tests: `tests/phase_3/test_workflows.py`
 
 ### 3.4 AI Action & Approval System
-- [ ] `Approvals` module:
+- [x] `Approvals` module:
   - Risk Analyzer service.
   - Risk levels: Low (auto-execute), Medium (execute + audit), High (admin approval), Critical (block + notify).
   - Approval queue.
   - Admin approval UI endpoints.
-- [ ] Endpoints:
+- [x] Endpoints:
   - `GET /api/projects/{id}/approvals?status=pending`
   - `POST /api/approvals/{id}/approve`
   - `POST /api/approvals/{id}/reject`
   - `POST /api/approvals/{id}/edit`
-- [ ] All AI actions routed through Risk Analyzer.
-- [ ] Tests: `tests/phase_3/test_approvals.py`
+- [x] All AI actions routed through Risk Analyzer.
+- [x] Tests: `tests/phase_3/test_approvals.py`
 
 ### 3.5 Integration Layer
-- [ ] `Integrations` module:
+- [x] `Integrations` module:
   - Project API Connector (configurable per project).
-  - Auth token manager.
-  - Sync services: Customers, Services, Pricing, Orders.
   - Webhook dispatcher.
   - Sync scheduler (periodic sync via Hangfire).
-- [ ] `POST /api/projects/{id}/integrations`
-- [ ] `POST /api/projects/{id}/integrations/{id}/sync`
-- [ ] Tests: `tests/phase_3/test_integrations.py`
+- [x] `POST /api/projects/{id}/integrations`
+- [x] `POST /api/projects/{id}/integrations/{id}/sync`
+- [x] Tests: `tests/phase_3/test_integrations.py`
 
 ### 3.6 Customer Memory
-- [ ] `CustomerMemory` module:
+- [x] `CustomerMemory` module:
   - Preferences, Important Facts, Objections, Purchase Intent.
-  - Previous Interests, Follow-up History.
+  - previous Interests, Follow-up History.
   - Conversation summaries.
   - Long-term summary (AI-generated).
-- [ ] AI automatically updates memory after each conversation.
-- [ ] Memory included in Gemini context.
-- [ ] Tests: `tests/phase_3/test_customer_memory.py`
+- [x] AI automatically updates memory after each conversation.
+- [x] Memory included in Gemini context.
+- [x] Tests: `tests/phase_3/test_customer_memory.py`
 
 ### 3.7 Phase 3 — Tests, Skill & Makefile
-- [ ] All test files for Phase 3 (6 test files).
-- [ ] `make test-phase-3`
-- [ ] `.agents/skills/phase-3/SKILL.md`
-- [ ] `make brain-sync`, `make knowledge-search`, `make approval-queue`.
+- [x] All test files for Phase 3 (6 test files).
+- [x] `make test-phase-3`
+- [x] `.agents/skills/phase-3/SKILL.md`
+- [x] `make brain-sync`, `make knowledge-search`, `make approval-queue`.
 
 ### Phase 3 Verification Checklist
 ```bash
@@ -538,7 +532,7 @@ make approval-queue        # Approval queue is empty/shows pending items
 **Goal**: Marketing campaigns via WhatsApp with anti-ban, full analytics engine, and executive-level reporting.
 
 ### 4.1 Campaign Engine
-- [ ] `Campaigns` module:
+- [x] `Campaigns` module:
   - Audience builder (filter by tags, segments, status, score).
   - Campaign scheduler (immediate, scheduled, recurring).
   - AI message generator (Gemini generates campaign copy).
@@ -546,18 +540,18 @@ make approval-queue        # Approval queue is empty/shows pending items
   - Delivery tracker.
   - Response tracker.
   - A/B testing (2 variants, random split, measure conversion).
-- [ ] Endpoints:
+- [x] Endpoints:
   - `POST /api/projects/{id}/campaigns`
   - `GET /api/projects/{id}/campaigns`
   - `GET /api/campaigns/{id}`
   - `POST /api/campaigns/{id}/schedule`
   - `POST /api/campaigns/{id}/pause`
   - `GET /api/campaigns/{id}/results`
-- [ ] `CampaignWorker` background service.
-- [ ] Tests: `tests/phase_4/test_campaigns.py`
+- [x] `CampaignWorker` background service.
+- [x] Tests: `tests/phase_4/test_campaigns.py`
 
 ### 4.2 Advanced Analytics Engine
-- [ ] `Analytics` module:
+- [x] `Analytics` module:
   - Customer analytics (acquisition, retention, churn risk).
   - Sales analytics (funnel, conversion, revenue).
   - Complaint analytics (volume, categories, resolution time).
@@ -566,12 +560,12 @@ make approval-queue        # Approval queue is empty/shows pending items
   - Campaign analytics (delivery, open, response, conversion).
   - Follow-up analytics (completion rate, effectiveness).
   - Predictive analytics (churn prediction, upsell opportunity).
-- [ ] Analytics snapshots stored for historical trending.
-- [ ] `GET /api/projects/{id}/analytics/{type}`
-- [ ] Tests: `tests/phase_4/test_analytics.py`
+- [x] Analytics snapshots stored for historical trending.
+- [x] `GET /api/projects/{id}/analytics/{type}`
+- [x] Tests: `tests/phase_4/test_analytics.py`
 
 ### 4.3 Advanced Reports System
-- [ ] Report types:
+- [x] Report types:
   - Daily Operations Report.
   - Weekly Summary Report.
   - Complaint Report.
@@ -580,35 +574,35 @@ make approval-queue        # Approval queue is empty/shows pending items
   - AI Performance Report.
   - Campaign Report.
   - Executive Insights Report.
-- [ ] Auto-generated by scheduler (daily/weekly).
-- [ ] `GET /api/projects/{id}/reports`
-- [ ] `GET /api/reports/{id}`
-- [ ] `POST /api/projects/{id}/reports/generate`
-- [ ] Tests: `tests/phase_4/test_advanced_reports.py`
+- [x] Auto-generated by scheduler (daily/weekly).
+- [x] `GET /api/projects/{id}/reports`
+- [x] `GET /api/reports/{id}`
+- [x] `POST /api/projects/{id}/reports/generate`
+- [x] Tests: `tests/phase_4/test_advanced_reports.py`
 
 ### 4.4 Customer Segmentation & Pipeline
-- [ ] `CRM` module extensions:
+- [x] `CRM` module extensions:
   - Customer segmentation (dynamic segments based on tags, scores, activity).
   - Pipeline management (stages: New → Contacted → Qualified → Proposal → Negotiation → Won/Lost).
   - Opportunity/Deal management.
   - Relationship graph.
-- [ ] `GET /api/projects/{id}/segments`
-- [ ] `GET /api/projects/{id}/pipelines`
-- [ ] Tests: `tests/phase_4/test_crm_advanced.py`
+- [x] `GET /api/projects/{id}/segments`
+- [x] `GET /api/projects/{id}/pipelines`
+- [x] Tests: `tests/phase_4/test_crm_advanced.py`
 
 ### 4.5 Elasticsearch Integration
-- [ ] Index conversations, messages, customers, notes into Elasticsearch.
-- [ ] Full-text search endpoints:
+- [x] Index conversations, messages, customers, notes into Elasticsearch.
+- [x] Full-text search endpoints:
   - `GET /api/projects/{id}/search?q=...&type=conversations`
   - `GET /api/projects/{id}/search?q=...&type=customers`
-- [ ] Background indexer worker.
-- [ ] Tests: `tests/phase_4/test_search.py`
+- [x] Background indexer worker.
+- [x] Tests: `tests/phase_4/test_search.py`
 
 ### 4.6 Phase 4 — Tests, Skill & Makefile
-- [ ] All test files for Phase 4 (5 test files).
-- [ ] `make test-phase-4`
-- [ ] `.agents/skills/phase-4/SKILL.md`
-- [ ] `make campaign-status`, `make analytics-dashboard`, `make search-reindex`.
+- [x] All test files for Phase 4 (5 test files).
+- [x] `make test-phase-4`
+- [x] `.agents/skills/phase-4/SKILL.md`
+- [x] `make campaign-status`, `make analytics-dashboard`, `make search-reindex`.
 
 ### Phase 4 Verification Checklist
 ```bash

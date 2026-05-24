@@ -1,0 +1,21 @@
+{
+  "signalr_event_notification": {
+    "id": "uuid",
+    "type": "VIP | SLA_Breach | Complaint",
+    "message": "string",
+    "createdAt": "datetime-string",
+    "payload": {
+      "customerId": "uuid",
+      "conversationId": "uuid",
+      "severity": "string"
+    }
+  },
+  "notification_settings": {
+    "userId": "uuid",
+    "projectId": "uuid",
+    "enableVIPAlerts": true,
+    "enableSlaBreachAlerts": true,
+    "enableComplaintAlerts": true,
+    "notifyViaWhatsApp": false
+  }
+}

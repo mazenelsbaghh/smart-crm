@@ -1,0 +1,45 @@
+{
+  "endpoints": {
+    "configure_integration": {
+      "path": "/api/projects/{projectId}/integrations",
+      "method": "POST",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        },
+        "body": {
+          "providerName": "CustomERP",
+          "configJson": "{\"baseUrl\":\"https://erp.example.com/api\",\"apiKey\":\"secret_key_123\"}",
+          "isActive": true,
+          "syncIntervalMinutes": 60
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "e4f5a6b7-c8d9-0e1f-2a3b-4c5d6e7f8a9b",
+          "projectId": "7c98a32a-04b7-4c7b-891d-ea58f3fbde99",
+          "providerName": "CustomERP",
+          "isActive": true,
+          "syncIntervalMinutes": 60,
+          "lastSyncAt": null
+        }
+      }
+    },
+    "trigger_sync": {
+      "path": "/api/projects/{projectId}/integrations/{integrationId}/sync",
+      "method": "POST",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "message": "Sync job triggered successfully"
+        }
+      }
+    }
+  }
+}

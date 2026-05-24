@@ -31,8 +31,10 @@ uv tool install --editable .agents/skills/spec-kit
 # Install pbakaus/impeccable
 npx skills add pbakaus/impeccable --path .agents/skills
 
-# Install nextlevelbuilder/ui-ux-pro-max-skill
-git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git .agents/skills/ui-ux-pro-max-skill
+# Install nextlevelbuilder/ui-ux-pro-max-skill (use CLI to generate files and fix root folder suffix)
+npx uipro-cli init --ai antigravity
+mv .agent/skills/ui-ux-pro-max .agents/skills/
+rm -rf .agent
 ```
 
 ### For Claude Code (Workspace: `.claude/skills/`)
@@ -47,7 +49,7 @@ git clone https://github.com/github/spec-kit.git .claude/skills/spec-kit
 npx skills add pbakaus/impeccable --path .claude/skills
 
 # Install nextlevelbuilder/ui-ux-pro-max-skill
-git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git .claude/skills/ui-ux-pro-max-skill
+npx uipro-cli init --ai claude
 ```
 
 ### For Cursor (Workspace: `.cursor/skills/`)
@@ -62,5 +64,5 @@ git clone https://github.com/github/spec-kit.git .cursor/skills/spec-kit
 npx skills add pbakaus/impeccable --path .cursor/skills
 
 # Install nextlevelbuilder/ui-ux-pro-max-skill
-git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git .cursor/skills/ui-ux-pro-max-skill
+npx uipro-cli init --ai cursor
 ```

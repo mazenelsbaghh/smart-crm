@@ -1,0 +1,23 @@
+{
+  "daily_operations_report": {
+    "projectId": "uuid",
+    "date": "date-string",
+    "totalConversations": 150,
+    "activeConversations": 45,
+    "completedConversations": 95,
+    "missedFollowUps": 10,
+    "aiAutoRepliesSent": 120
+  },
+  "follow_up_report": {
+    "projectId": "uuid",
+    "pendingCount": 15,
+    "missedCount": 8,
+    "completedCount": 35
+  },
+  "ai_performance_report": {
+    "projectId": "uuid",
+    "averageResponseTimeMs": 1150,
+    "accuracyScore": 0.94,
+    "totalTokenUsage": 45000
+  }
+}

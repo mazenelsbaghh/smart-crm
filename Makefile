@@ -110,7 +110,127 @@ test-phase-0: ## Run Phase 0 infrastructure tests only
 	$(PYTEST) tests/phase_0/ -v --tb=short
 	@echo "✅ Phase 0 tests complete."
 
+test-phase-1: ## Run Phase 1 core tests only
+	@echo "🧪 Running Phase 1 core tests..."
+	$(PYTEST) tests/phase_1/ -v --tb=short
+	@echo "✅ Phase 1 tests complete."
+
+test-phase-2: ## Run Phase 2 AI intelligence tests only
+	@echo "🧪 Running Phase 2 AI intelligence tests..."
+	$(PYTEST) tests/phase_2/ -v --tb=short
+	@echo "✅ Phase 2 tests complete."
+
+test-phase-3: ## Run Phase 3 knowledge & workflows tests only
+	@echo "🧪 Running Phase 3 knowledge & workflows tests..."
+	$(PYTEST) tests/phase_3/ -v --tb=short
+	@echo "✅ Phase 3 tests complete."
+
+test-phase-4: ## Run Phase 4 campaigns & analytics tests only
+	@echo "🧪 Running Phase 4 campaigns & analytics tests..."
+	$(PYTEST) tests/phase_4/ -v --tb=short
+	@echo "✅ Phase 4 tests complete."
+
+test-phase-5: ## Run Phase 5 media & audit tests only
+	@echo "🧪 Running Phase 5 media & audit tests..."
+	$(PYTEST) tests/phase_5/ -v --tb=short
+	@echo "✅ Phase 5 tests complete."
+
 test-coverage: ## Run all tests with coverage report
 	@echo "📊 Running tests with coverage..."
 	$(PYTEST) tests/ -v --cov=. --cov-report=html --cov-report=term
 	@echo "✅ Coverage report generated in htmlcov/"
+
+# === Database ===
+db-migrate: ## Run EF Core migrations (restarts backend container to trigger migration)
+	$(COMPOSE) restart backend
+
+db-seed: ## Seed database (restarts backend container to trigger seeder)
+	$(COMPOSE) restart backend
+
+db-reset: ## Reset the database (drops and recreates backend database)
+	$(COMPOSE) down -v
+	$(COMPOSE) up -d --build
+
+# === Diagnostics & Session status ===
+whatsapp-status: ## Check WhatsApp session status (usage: make whatsapp-status PROJECT_ID=...)
+	@if [ -z "$(PROJECT_ID)" ]; then \
+		echo "⚠️  PROJECT_ID is required. Usage: make whatsapp-status PROJECT_ID=<uuid>"; \
+	else \
+		curl -s "http://localhost:80/api/whatsapp/session/status?projectId=$(PROJECT_ID)"; \
+	fi
+
+ai-test: ## Test Gemini API connection
+	@if [ -z "$(GEMINI_API_KEY)" ]; then \
+		echo "⚠️  GEMINI_API_KEY environment variable is not set."; \
+	else \
+		curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$(GEMINI_API_KEY)" \
+			-H 'Content-Type: application/json' \
+			-d '{"contents":[{"parts":[{"text":"Hello, response short OK"}]}]}'; \
+	fi
+
+scheduler-status: ## Check Hangfire scheduler server status
+	@curl -s -I "http://localhost:80/hangfire" | head -n 1
+
+crm-report: ## Generate CRM Daily Operations report (usage: make crm-report PROJECT_ID=...)
+	@if [ -z "$(PROJECT_ID)" ]; then \
+		echo "⚠️  PROJECT_ID is required. Usage: make crm-report PROJECT_ID=<uuid>"; \
+	else \
+		curl -s "http://localhost:80/api/projects/$(PROJECT_ID)/reports/daily"; \
+	fi
+
+brain-sync: ## Trigger semantic brain synchronization (usage: make brain-sync PROJECT_ID=...)
+	@if [ -z "$(PROJECT_ID)" ]; then \
+		echo "⚠️  PROJECT_ID is required. Usage: make brain-sync PROJECT_ID=<uuid>"; \
+	else \
+		curl -s -X POST "http://localhost:80/api/projects/$(PROJECT_ID)/brain/sync"; \
+	fi
+
+knowledge-search: ## Search Company Brain (usage: make knowledge-search PROJECT_ID=... Q=...)
+	@if [ -z "$(PROJECT_ID)" ] || [ -z "$(Q)" ]; then \
+		echo "⚠️  PROJECT_ID and Q are required. Usage: make knowledge-search PROJECT_ID=<uuid> Q=<query>"; \
+	else \
+		curl -s "http://localhost:80/api/projects/$(PROJECT_ID)/brain/search?q=$(Q)"; \
+	fi
+
+approval-queue: ## Get pending approval requests (usage: make approval-queue PROJECT_ID=...)
+	@if [ -z "$(PROJECT_ID)" ]; then \
+		echo "⚠️  PROJECT_ID is required. Usage: make approval-queue PROJECT_ID=<uuid>"; \
+	else \
+		curl -s "http://localhost:80/api/projects/$(PROJECT_ID)/approvals?status=Pending"; \
+	fi
+
+campaign-status: ## Get campaigns status (usage: make campaign-status PROJECT_ID=...)
+	@if [ -z "$(PROJECT_ID)" ]; then \
+		echo "⚠️  PROJECT_ID is required. Usage: make campaign-status PROJECT_ID=<uuid>"; \
+	else \
+		curl -s "http://localhost:80/api/projects/$(PROJECT_ID)/campaigns"; \
+	fi
+
+analytics-dashboard: ## Trigger daily analytics snapshot calculation (usage: make analytics-dashboard PROJECT_ID=...)
+	@if [ -z "$(PROJECT_ID)" ]; then \
+		echo "⚠️  PROJECT_ID is required. Usage: make analytics-dashboard PROJECT_ID=<uuid>"; \
+	else \
+		curl -s -X POST "http://localhost:80/api/projects/$(PROJECT_ID)/analytics/recalculate"; \
+	fi
+
+search-reindex: ## Reindex all project database records to Elasticsearch (usage: make search-reindex PROJECT_ID=...)
+	@if [ -z "$(PROJECT_ID)" ]; then \
+		echo "⚠️  PROJECT_ID is required. Usage: make search-reindex PROJECT_ID=<uuid>"; \
+	else \
+		curl -s -X POST "http://localhost:80/api/projects/$(PROJECT_ID)/search/reindex"; \
+	fi
+
+asset-stats: ## Get assets metrics
+	@curl -s "http://localhost:80/api/system/metrics"
+
+audit-report: ## Extract project audit logs (usage: make audit-report PROJECT_ID=...)
+	@if [ -z "$(PROJECT_ID)" ]; then \
+		echo "⚠️  PROJECT_ID is required. Usage: make audit-report PROJECT_ID=<uuid>"; \
+	else \
+		curl -s "http://localhost:80/api/projects/$(PROJECT_ID)/audit"; \
+	fi
+
+system-health: ## Fetch system health status
+	@curl -s "http://localhost:80/api/system/health"
+
+

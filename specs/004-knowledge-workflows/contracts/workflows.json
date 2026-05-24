@@ -1,0 +1,66 @@
+{
+  "endpoints": {
+    "create_workflow": {
+      "path": "/api/projects/{projectId}/workflows",
+      "method": "POST",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        },
+        "body": {
+          "name": "Auto Hot Lead Qualifier",
+          "triggerType": "CustomerTagAdded",
+          "filtersJson": "{\"tag\": \"Interested\"}",
+          "actionsJson": "[{\"type\": \"UpdateCRM\", \"parameters\": {\"leadScore\": 80, \"status\": \"Qualified\"}}, {\"type\": \"CreateFollowUp\", \"parameters\": {\"hoursDelay\": 24, \"title\": \"Call hot lead\"}}]",
+          "isActive": true
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "9b49b43b-15c8-5d8c-902e-fb69f4fcfe22",
+          "projectId": "7c98a32a-04b7-4c7b-891d-ea58f3fbde99",
+          "name": "Auto Hot Lead Qualifier",
+          "triggerType": "CustomerTagAdded",
+          "filtersJson": "{\"tag\": \"Interested\"}",
+          "actionsJson": "[{\"type\": \"UpdateCRM\", \"parameters\": {\"leadScore\": 80, \"status\": \"Qualified\"}}, {\"type\": \"CreateFollowUp\", \"parameters\": {\"hoursDelay\": 24, \"title\": \"Call hot lead\"}}]",
+          "isActive": true,
+          "version": 1,
+          "createdAt": "2026-05-24T20:50:00Z"
+        }
+      }
+    },
+    "activate_workflow": {
+      "path": "/api/workflows/{id}/activate",
+      "method": "POST",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "9b49b43b-15c8-5d8c-902e-fb69f4fcfe22",
+          "isActive": true
+        }
+      }
+    },
+    "deactivate_workflow": {
+      "path": "/api/workflows/{id}/deactivate",
+      "method": "POST",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "9b49b43b-15c8-5d8c-902e-fb69f4fcfe22",
+          "isActive": false
+        }
+      }
+    }
+  }
+}

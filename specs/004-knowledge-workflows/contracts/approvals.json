@@ -1,0 +1,67 @@
+{
+  "endpoints": {
+    "list_pending_approvals": {
+      "path": "/api/projects/{projectId}/approvals",
+      "method": "GET",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        },
+        "query": {
+          "status": "Pending"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "id": "a1c2b3d4-e5f6-7890-abcd-ef1234567890",
+            "projectId": "7c98a32a-04b7-4c7b-891d-ea58f3fbde99",
+            "actionType": "CRMUpdate",
+            "payloadJson": "{\"customerId\":\"8b38a32a-04b7-4c7b-891d-ea58f3fbde00\",\"budget\":2500000}",
+            "riskLevel": "High",
+            "status": "Pending",
+            "requestedBy": "AI_Worker",
+            "createdAt": "2026-05-24T20:50:00Z"
+          }
+        ]
+      }
+    },
+    "approve_request": {
+      "path": "/api/approvals/{id}/approve",
+      "method": "POST",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "a1c2b3d4-e5f6-7890-abcd-ef1234567890",
+          "status": "Approved",
+          "executedAt": "2026-05-24T20:51:00Z"
+        }
+      }
+    },
+    "reject_request": {
+      "path": "/api/approvals/{id}/reject",
+      "method": "POST",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        },
+        "body": {
+          "notes": "Rejected due to budget mismatch compared to past conversation history"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "a1c2b3d4-e5f6-7890-abcd-ef1234567890",
+          "status": "Rejected"
+        }
+      }
+    }
+  }
+}

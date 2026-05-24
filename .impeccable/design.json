@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-24T22:52:00Z",
+  "title": "Design System: Smart Customer Core",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Cyber Cyan",
+        "canonical": "oklch(80% 0.16 195)",
+        "tonalRamp": [
+          "oklch(20% 0.05 195)",
+          "oklch(30% 0.08 195)",
+          "oklch(40% 0.10 195)",
+          "oklch(50% 0.12 195)",
+          "oklch(60% 0.14 195)",
+          "oklch(70% 0.15 195)",
+          "oklch(80% 0.16 195)",
+          "oklch(95% 0.04 195)"
+        ]
+      },
+      "secondary": {
+        "role": "secondary",
+        "displayName": "Hot Pink",
+        "canonical": "oklch(65% 0.25 350)",
+        "tonalRamp": [
+          "oklch(20% 0.08 350)",
+          "oklch(30% 0.12 350)",
+          "oklch(40% 0.16 350)",
+          "oklch(50% 0.20 350)",
+          "oklch(60% 0.23 350)",
+          "oklch(65% 0.25 350)",
+          "oklch(75% 0.20 350)",
+          "oklch(95% 0.05 350)"
+        ]
+      },
+      "neutral-bg": {
+        "role": "background",
+        "displayName": "Midnight Space",
+        "canonical": "oklch(12% 0.01 220)",
+        "tonalRamp": [
+          "oklch(8% 0.01 220)",
+          "oklch(10% 0.01 220)",
+          "oklch(12% 0.01 220)",
+          "oklch(15% 0.01 220)",
+          "oklch(20% 0.01 220)",
+          "oklch(25% 0.01 220)",
+          "oklch(35% 0.01 220)",
+          "oklch(95% 0.005 220)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display Outfit",
+        "purpose": "Dashboard landing, big callouts, status boards."
+      },
+      "body": {
+        "displayName": "Body Inter",
+        "purpose": "Chat logs, data grids, configuration panels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "neon-cyan-glow",
+        "value": "0 0 15px rgba(0, 243, 255, 0.25)",
+        "purpose": "Focus rings and selected container highlights."
+      },
+      {
+        "name": "neon-pink-glow",
+        "value": "0 0 15px rgba(255, 0, 127, 0.25)",
+        "purpose": "Alerts, critical notifications, and badge triggers."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Smooth, snappy transitions for active and hovered components."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Neon Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Cyan button with quick keyboard shortcut indicator.",
+      "html": "<button class=\"ds-btn-neon-primary\">SEND REPLY <kbd class=\"ds-kbd\">⌘↵</kbd></button>",
+      "css": ".ds-btn-neon-primary { background: #00f3ff; color: #0a0e17; padding: 10px 20px; font-family: 'Outfit', sans-serif; font-size: 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); display: inline-flex; align-items: center; gap: 12px; } .ds-btn-neon-primary:hover { background: #5effff; box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); transform: translateY(-1px); } .ds-btn-neon-primary:active { transform: translateY(0); } .ds-kbd { background: rgba(10, 14, 23, 0.15); border: 1px solid rgba(10, 14, 23, 0.2); border-radius: 4px; padding: 2px 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 500; color: #0a0e17; }"
+    },
+    {
+      "name": "Keyboard Shortcut Tooltip (KBD)",
+      "kind": "chip",
+      "refersTo": "kbd-tooltip",
+      "description": "Small floating or inline indicators showing keyboard triggers.",
+      "html": "<span class=\"ds-kbd-badge\"><span class=\"ds-kbd-label\">Press</span> <kbd class=\"ds-kbd-key\">⌘K</kbd> <span class=\"ds-kbd-label\">to search</span></span>",
+      "css": ".ds-kbd-badge { display: inline-flex; align-items: center; gap: 6px; background: #121824; border: 1px solid #1e293b; padding: 4px 8px; border-radius: 6px; } .ds-kbd-key { background: #0a0e17; border: 1px solid #1e293b; color: #94a3b8; padding: 1px 4px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; box-shadow: 0 1px 0 rgba(0,0,0,0.4); } .ds-kbd-label { font-family: 'Inter', sans-serif; font-size: 12px; color: #94a3b8; }"
+    },
+    {
+      "name": "Vibrant Chat Input",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Dark text input that glows cyan on active focus.",
+      "html": "<div class=\"ds-input-container\"><input type=\"text\" class=\"ds-input-neon\" placeholder=\"Type a reply...\" /><kbd class=\"ds-kbd-action\">Enter</kbd></div>",
+      "css": ".ds-input-container { position: relative; display: flex; align-items: center; width: 100%; max-width: 400px; } .ds-input-neon { width: 100%; background: #121824; border: 1px solid #1e293b; border-radius: 8px; padding: 12px 64px 12px 16px; color: #f8fafc; font-family: 'Inter', sans-serif; font-size: 14px; outline: none; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); } .ds-input-neon::placeholder { color: #94a3b8; } .ds-input-neon:focus { border-color: #00f3ff; box-shadow: 0 0 12px rgba(0, 243, 255, 0.2); } .ds-kbd-action { position: absolute; right: 12px; background: #0a0e17; border: 1px solid #1e293b; color: #94a3b8; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 11px; }"
+    },
+    {
+      "name": "Command Palette Row",
+      "kind": "custom",
+      "refersTo": "command-row",
+      "description": "Highly responsive command palette suggestion.",
+      "html": "<div class=\"ds-command-row\"><div class=\"ds-command-left\"><span class=\"ds-command-icon\">⚡</span> <span class=\"ds-command-text\">Assign to AI Auto-Reply</span></div><kbd class=\"ds-kbd-key\">⌘A</kbd></div>",
+      "css": ".ds-command-row { display: flex; align-items: center; justify-content: space-between; background: #121824; border: 1px solid #1e293b; padding: 12px 16px; border-radius: 8px; font-family: 'Inter', sans-serif; cursor: pointer; transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1); width: 100%; max-width: 400px; } .ds-command-row:hover { background: #1a2234; border-color: #00f3ff; } .ds-command-left { display: flex; align-items: center; gap: 12px; } .ds-command-icon { font-size: 16px; } .ds-command-text { color: #f8fafc; font-size: 14px; font-weight: 500; } .ds-kbd-key { background: #0a0e17; border: 1px solid #1e293b; color: #94a3b8; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 11px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Neon Midnight Command",
+    "overview": "Smart Customer Core is a high-velocity workspace designed for modern operations agents who manage high-frequency WhatsApp conversations. The UI rejects the dry, sterile light-mode look of traditional corporate CRMs in favor of a sleek, dark console that reduces eye strain, maintains high focus, and feels like a modern developer tool or high-end game client.",
+    "keyCharacteristics": [
+      "Neon Dark Aesthetic: Tinted space-navy backgrounds paired with sharp, glowing cybernetic accents.",
+      "Shortcuts-First Interaction: Visible keyboard shortcuts on every button, tab, and menu element.",
+      "Instant Response Feel: Micro-animations and transitions keep the UI feeling fast and reactive."
+    ],
+    "rules": [
+      {
+        "name": "The 10% Accent Rule",
+        "body": "Vibrant Cyan and Hot Pink accent colors must collectively occupy less than 10% of the screen area. They are used purely for guidance, focus states, and indicators. The canvas must remain restful and clean.",
+        "section": "colors"
+      },
+      {
+        "name": "The Space Navy Tint Rule",
+        "body": "Never use pure black (#000000) or pure white (#ffffff). All dark surfaces are tinted with space navy to create depth and cohesion.",
+        "section": "colors"
+      },
+      {
+        "name": "The KBD-Visibility Rule",
+        "body": "Every shortcut must be rendered in a distinct, monospaced `kbd` block (e.g. `[K]`) using JetBrains Mono, styled with a subtle border and background to stand out clearly as a keyboard trigger.",
+        "section": "typography"
+      },
+      {
+        "name": "The Interactive Elevation Rule",
+        "body": "Surfaces never float or have shadows at rest. Shadow is a dynamic response to user hover or focus state, manifesting as a cybernetic glow.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do provide visual keyboard shortcut indicators (kbd tags) directly beside every interactive control.",
+      "Do use cyber cyan (#00f3ff) for primary action states and focus indicators.",
+      "Do enforce a strict dark mode using space navy tints for all background levels.",
+      "Do respect user reduced motion preferences by setting animation transition times to 0s when requested."
+    ],
+    "donts": [
+      "Don't use standard side-stripe borders as indicators on list items or chat previews. Use full border transitions or background highlights.",
+      "Don't implement slow, multi-stage overlays when inline commands or shortcuts could perform the operation immediately.",
+      "Don't use neon colors as text colors on light backgrounds, ensuring all interactions meet WCAG 2.1 AA guidelines.",
+      "Don't use generic black-and-white scales; maintain the space navy brand tint throughout the dashboard."
+    ]
+  }
+}

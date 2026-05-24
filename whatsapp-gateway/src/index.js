@@ -1,0 +1,108 @@
+import express from 'express';
+import { startSession, getQR, getStatus, sendMessage, statuses, sessions } from './baileys-manager.js';
+
+const app = express();
+app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
+
+app.post('/api/whatsapp/session/start', async (req, res) => {
+    const { projectId } = req.body;
+    if (!projectId) {
+        return res.status(400).json({ error: 'projectId is required' });
+    }
+    try {
+        const result = await startSession(projectId);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/whatsapp/session/qr', (req, res) => {
+    const { projectId } = req.query;
+    if (!projectId) {
+        return res.status(400).json({ error: 'projectId is required' });
+    }
+    const qr = getQR(projectId);
+    if (!qr) {
+        return res.status(404).json({ error: 'QR code not ready or session already connected' });
+    }
+    res.json({ qr });
+});
+
+app.get('/api/whatsapp/session/status', (req, res) => {
+    const { projectId } = req.query;
+    if (!projectId) {
+        return res.status(400).json({ error: 'projectId is required' });
+    }
+    const status = getStatus(projectId);
+    res.json({ projectId, ...status });
+});
+
+app.post('/api/whatsapp/send', async (req, res) => {
+    const { projectId, to, message } = req.body;
+    console.log(`[GATEWAY SEND] Request received. projectId: ${projectId}, to: ${to}, message: ${message}`);
+    console.log(`[GATEWAY SEND] Available sessions: ${Array.from(sessions.keys()).join(', ')}`);
+    console.log(`[GATEWAY SEND] Available statuses: ${Array.from(statuses.entries()).map(([k, v]) => `${k}=${v}`).join(', ')}`);
+    if (!projectId || !to || !message) {
+        return res.status(400).json({ error: 'projectId, to, and message are required' });
+    }
+    try {
+        const result = await sendMessage(projectId, to, message);
+        res.json(result);
+    } catch (err) {
+        console.error(`[GATEWAY SEND] Error sending message: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+const mockSentMessages = [];
+
+// Mock connection endpoint for integration testing
+app.post('/api/whatsapp/session/mock', (req, res) => {
+    const { projectId, status, phoneNumber } = req.body;
+    console.log(`[MOCK SESSION] Request received. projectId: ${projectId}, status: ${status}, phoneNumber: ${phoneNumber}`);
+    if (!projectId || !status) {
+        return res.status(400).json({ error: 'projectId and status are required' });
+    }
+    
+    statuses.set(projectId, status);
+    
+    if (status === 'Connected') {
+        sessions.set(projectId, {
+            isMock: true,
+            user: { id: phoneNumber ? `${phoneNumber}:1` : '1234567890:1' },
+            sendMessage: async (jid, content) => {
+                console.log(`[MOCK SEND] Sending to ${jid}: ${content.text}`);
+                const messageId = `msg_${Math.random().toString(36).substring(7)}`;
+                mockSentMessages.push({
+                    projectId,
+                    to: jid.split('@')[0],
+                    message: content.text,
+                    messageId,
+                    timestamp: new Date().toISOString()
+                });
+                return { key: { id: messageId } };
+            }
+        });
+    } else {
+        sessions.delete(projectId);
+    }
+    
+    console.log(`[MOCK SESSION] Current sessions key count: ${sessions.size}`);
+    res.json({ message: `Mocked session status of ${projectId} to ${status}` });
+});
+
+app.get('/api/whatsapp/mock/sent', (req, res) => {
+    res.json(mockSentMessages);
+});
+
+app.post('/api/whatsapp/mock/clear', (req, res) => {
+    mockSentMessages.length = 0;
+    res.json({ message: 'Mock sent messages cleared' });
+});
+
+app.listen(PORT, () => {
+    console.log(`WhatsApp Gateway listening on port ${PORT}`);
+});

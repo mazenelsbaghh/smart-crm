@@ -1,0 +1,89 @@
+{
+  "endpoints": {
+    "create_document": {
+      "path": "/api/projects/{projectId}/knowledge",
+      "method": "POST",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        },
+        "body": {
+          "title": "Pricing Policy 2026",
+          "content": "Our default subscription is $49/month with a 10% discount for annual payments.",
+          "sourceUrl": "https://example.com/pricing",
+          "status": "Draft"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "8a38a32a-04b7-4c7b-891d-ea58f3fbde11",
+          "projectId": "7c98a32a-04b7-4c7b-891d-ea58f3fbde99",
+          "title": "Pricing Policy 2026",
+          "content": "Our default subscription is $49/month with a 10% discount for annual payments.",
+          "sourceUrl": "https://example.com/pricing",
+          "version": 1,
+          "status": "Draft",
+          "createdAt": "2026-05-24T20:50:00Z",
+          "updatedAt": "2026-05-24T20:50:00Z"
+        }
+      }
+    },
+    "approve_document": {
+      "path": "/api/knowledge/{id}/approve",
+      "method": "PUT",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "8a38a32a-04b7-4c7b-891d-ea58f3fbde11",
+          "status": "Published"
+        }
+      }
+    },
+    "reject_document": {
+      "path": "/api/knowledge/{id}/reject",
+      "method": "PUT",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "8a38a32a-04b7-4c7b-891d-ea58f3fbde11",
+          "status": "Draft"
+        }
+      }
+    },
+    "search_brain": {
+      "path": "/api/projects/{projectId}/brain/search",
+      "method": "GET",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer {token}"
+        },
+        "query": {
+          "q": "annual price list discount",
+          "limit": 3
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "chunkId": "1b2c3d4e-5f6g-7h8i-9j0k-1l2m3n4o5p6q",
+            "documentId": "8a38a32a-04b7-4c7b-891d-ea58f3fbde11",
+            "chunkText": "Our default subscription is $49/month with a 10% discount for annual payments.",
+            "similarityScore": 0.895
+          }
+        ]
+      }
+    }
+  }
+}
