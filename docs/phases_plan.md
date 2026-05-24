@@ -2,7 +2,7 @@
 
 **Last Updated**: 2026-05-24
 **Constitution Version**: 1.0.0
-**Architecture Reference**: [`smart_customer_core_final_with_shared_storage.md`](../smart_customer_core_final_with_shared_storage.md)
+**Architecture Reference**: [`smart_customer_core_final_with_shared_storage.md`](smart_customer_core_final_with_shared_storage.md)
 
 ---
 
