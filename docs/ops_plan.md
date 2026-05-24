@@ -4,13 +4,15 @@
 
 ## Chronological Log
 
-### 2026-05-25: Phase 6 Frontend Dashboard, Realtime & Production Hardening (Planned)
+### 2026-05-25: Phase 6 Frontend Dashboard, Realtime & Production Hardening (Completed)
 - **Goal**: Configure Nginx reverse proxy with SSL termination, CORS controls, and rate-limiting zones; write automated backup/restore scripts for PostgreSQL, Redis, and MinIO storage; containerize frontend application with Docker.
 - **Updates**:
-  - Create Nginx configuration at `nginx/production.conf`.
-  - Add backup and restore script files `deploy/backup.sh` and `deploy/restore.sh`.
-  - Extend `docker-compose.production.yml` with the frontend container and Nginx ingress router.
-  - Update `Makefile` to include `make deploy` (production deployment build), `make backup` (full system state backup), and `make restore` (full state restore).
+  - Created hardened production Nginx reverse proxy configuration at `nginx/production.conf` supporting SSL/TLS redirects, custom origin-controlled CORS policies, active SignalR hubs WS tunneling, rate-limiting zone rules (100 requests/minute, burst=20) and standard HTTP 429 status response.
+  - Wrote automated backup script `deploy/backup.sh` to package PostgreSQL dump, Redis memory snapshots, and MinIO storage files into a single timestamped gzip archive.
+  - Wrote automated restore script `deploy/restore.sh` to clean and reinitialize Postgres DB, copy Redis/MinIO assets, and restart the backend service container with startup delay (`sleep 8`) to gracefully rebuild the connections pool and avoid 502 Bad Gateway errors.
+  - Created root-level and deploy-level `docker-compose.production.yml` configuration files to orchestrate the backend, database, caching, object storage, Next.js frontend app, and Nginx containers.
+  - Created multi-stage `frontend/Dockerfile` to compile and package Next.js production builds.
+  - Updated repository `Makefile` by adding targets: `make deploy` (production docker compose deployment), `make backup` (full state backup execution), `make restore FILE=...` (full state recovery), and `make test-phase-6` (Phase 6 individual test verification).
 
 ### 2026-05-25: Phase 5 Shared Assets, Media Engine & Audit Trail (Completed)
 - **Goal**: Integrate MinIO S3-compatible file storage with the backend container, configure connection environment variables in `.env` and `docker-compose.yml`, set up Serilog logging output configurations, and add Make targets for managing media assets, audit queries, and system health checks.

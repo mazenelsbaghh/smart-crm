@@ -53,7 +53,8 @@ The initial structure of `achievements.md` MUST be:
 2. Execute the **`speckit-plan`** skill to create a robust, secure, and DRY technical implementation plan (`plan.md`).
 3. Ensure the plan conforms to the project's `.specify/memory/constitution.md` principles.
 4. **Mandatory Design reference**: You MUST use and apply the guidelines of **`ui-ux-pro-max-skill`** and **`impeccable`** to ensure high-fidelity styling, UX heuristics, and pixel-perfect layout planning.
-5. **Progress Update**: Mark Phase 2 as completed (`[x]`) in `achievements.md` before proceeding.
+5. **Frontend Architecture Planning**: You MUST plan the frontend code using Clean Code principles and divide components strictly into feature packages/modules (`packages/`), feature components (`components/`), and reusable shared components (`shared/components/` or `components/shared/`).
+6. **Progress Update**: Mark Phase 2 as completed (`[x]`) in `achievements.md` before proceeding.
 
 ### Phase 3: Detailed Task Breakdown for Cheaper LLMs (`speckit-tasks`)
 1. Execute the **`speckit-tasks`** skill to generate the `tasks.md` file.
@@ -63,6 +64,7 @@ The initial structure of `achievements.md` MUST be:
 4. Verify that the task checklist conforms to the checklist formatting rules.
 5. To fulfill this, your task breakdown must:
    - Be extremely atomic: Break down complex operations into single-file, single-function, or single-rule edits.
+   - Separate Frontend tasks cleanly into packages, components, and shared components (تقسيم الواجهة الأمامية إلى بكدج، كومبوننت، وشيرد كومبوننت) to ensure clean code and modularity.
    - Be self-contained: Each task must specify the exact file path, the required modification, and the expected code structure.
    - Leave zero ambiguity: Do not write vague tasks like "update the UI" or "add logging". Instead, write "In file `src/index.js`, add a try-catch block to the login function and log the error message using `console.error`."
    - Explicitly define checkpoints and testing commands for every user story.
@@ -72,18 +74,21 @@ The initial structure of `achievements.md` MUST be:
 1. Execute the **`speckit-implement`** skill.
 2. Systematically execute the tasks defined in `tasks.md` sequentially.
 3. Verify that each task compiles/runs correctly as you proceed.
-4. **RECORD & RESOLVE WARNINGS**: If you encounter any compiler warnings, build issues, lint warnings, or test failures during this phase:
+4. **Clean Code & Premium UI/UX Implementation**:
+   - Ensure all frontend implementation conforms to Clean Code principles: keep components small and focused (Single Responsibility), write highly readable TypeScript/TSX code, avoid duplicate inline styling by utilizing HSL design tokens, and enforce proper state separation.
+   - Maintain the modular packaging structure: feature packages/modules (`packages/`), feature components (`components/`), and reusable shared components (`shared/components/` or `components/shared/`).
+5. **RECORD & RESOLVE WARNINGS**: If you encounter any compiler warnings, build issues, lint warnings, or test failures during this phase:
    - You MUST immediately record them in a new `### Warnings and Issues / تحذيرات ومشاكل` section at the end of the `achievements.md` file as unchecked checkboxes (`- [ ]`).
    - You MUST also add them to the end of the `tasks.md` checklist as new unchecked items.
    - You MUST systematically fix every warning/issue, checking them off (`[x]`) in both `achievements.md` and `tasks.md` only when they are fully resolved and verified.
-5. **Progress Update**: Mark Phase 4 as completed (`[x]`) in `achievements.md` before proceeding.
+6. **Progress Update**: Mark Phase 4 as completed (`[x]`) in `achievements.md` before proceeding.
 
 ### Phase 5: Deep Architectural, Code & UI/UX Critique
 1. Once implementation is completed and verified, you must trigger a deep review and critique phase with the prompt:
    > "The cheaper llm model implemented the, tasks. We need a deep review of the implementation"
 2. Conduct a thorough and deep critique (انتقاد ديب) of the codebase:
    - **Backend**: Audit for unhandled exceptions, correct error response codes, security vulnerabilities (validation, sanitization), correct database transactions, and proper layering.
-   - **Frontend**: Check for state management correctness, proper async handler error catches, rendering efficiency, and optimal component structures.
+   - **Frontend**: Audit component modularity (Packages/Modules, Components, Shared Components), Clean Code standards (no massive 500+ line components, separation of concerns, DRY hooks, proper typescript interfaces), state management correctness, proper async handler error catches, and rendering efficiency.
    - **UI & UX**: Verify pixel-perfect layouts, responsive design consistency, correct styling tokens, smooth transitions/hover states, accessibility (contrast, labels), and prevention of layout shifts. **You MUST run and apply the specific critique rules from `ui-ux-pro-max-skill` and `impeccable` to audit and align the UI/UX implementation.**
    - Check all modified and created files against the specification (`spec.md`) and plan (`plan.md`).
    - Audit the code for DRY principles (ensure no duplicated logic) and security requirements (verify inputs are sanitized, secrets are not exposed).

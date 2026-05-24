@@ -31,6 +31,25 @@ namespace Modules.CRM.API
                 .Where(s => s.ProjectId == projectId)
                 .OrderBy(s => s.Order)
                 .ToListAsync();
+
+            if (stages.Count == 0)
+            {
+                var defaultStageNames = new[] { "New", "Contacted", "Proposal", "Negotiation", "Won", "Lost" };
+                for (int i = 0; i < defaultStageNames.Length; i++)
+                {
+                    var stage = new PipelineStage
+                    {
+                        Id = Guid.NewGuid(),
+                        ProjectId = projectId,
+                        Name = defaultStageNames[i],
+                        Order = i
+                    };
+                    _context.PipelineStages.Add(stage);
+                    stages.Add(stage);
+                }
+                await _context.SaveChangesAsync();
+            }
+
             return Ok(stages);
         }
 

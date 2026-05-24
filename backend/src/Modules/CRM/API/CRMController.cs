@@ -27,8 +27,43 @@ namespace Modules.CRM.API
         [HttpGet("projects/{projectId}/customers")]
         public async Task<IActionResult> GetCustomers(Guid projectId)
         {
-            var customers = await _context.Customers.ToListAsync();
-            return Ok(customers);
+            var customers = await _context.Customers
+                .Where(c => c.ProjectId == projectId)
+                .ToListAsync();
+
+            // Find all active deals for this project to map pipeline stages
+            var activeDeals = await _context.Deals
+                .Where(d => d.ProjectId == projectId && d.Status == DealStatus.Open)
+                .ToListAsync();
+
+            var stages = await _context.PipelineStages
+                .Where(s => s.ProjectId == projectId)
+                .ToDictionaryAsync(s => s.Id, s => s.Name);
+
+            var customerStages = activeDeals
+                .GroupBy(d => d.CustomerId)
+                .ToDictionary(g => g.Key, g => 
+                {
+                    var stageId = g.First().PipelineStageId;
+                    return stages.TryGetValue(stageId, out var name) ? name : "New";
+                });
+
+            var result = customers.Select(c => new
+            {
+                c.Id,
+                c.ProjectId,
+                c.PhoneNumber,
+                c.Name,
+                c.City,
+                c.LeadScore,
+                c.Tags,
+                c.Notes,
+                c.Budget,
+                c.Interests,
+                pipelineStage = customerStages.TryGetValue(c.Id, out var stage) ? stage : "New"
+            });
+
+            return Ok(result);
         }
 
         [HttpGet("customers/{id}")]
@@ -36,7 +71,34 @@ namespace Modules.CRM.API
         {
             var customer = await _context.Customers.FindAsync(id);
             if (customer == null) return NotFound();
-            return Ok(customer);
+
+            var activeDeal = await _context.Deals
+                .FirstOrDefaultAsync(d => d.CustomerId == id && d.Status == DealStatus.Open);
+            
+            string stageName = "New";
+            if (activeDeal != null)
+            {
+                var stage = await _context.PipelineStages.FindAsync(activeDeal.PipelineStageId);
+                if (stage != null)
+                {
+                    stageName = stage.Name;
+                }
+            }
+
+            return Ok(new
+            {
+                customer.Id,
+                customer.ProjectId,
+                customer.PhoneNumber,
+                customer.Name,
+                customer.City,
+                customer.LeadScore,
+                customer.Tags,
+                customer.Notes,
+                customer.Budget,
+                customer.Interests,
+                pipelineStage = stageName
+            });
         }
 
         [HttpPut("customers/{id}")]
@@ -53,6 +115,80 @@ namespace Modules.CRM.API
             customer.LeadScore = request.LeadScore ?? customer.LeadScore;
             customer.Tags = request.Tags ?? customer.Tags;
             customer.Notes = request.Notes ?? customer.Notes;
+            if (request.Budget.HasValue)
+            {
+                customer.Budget = request.Budget.Value;
+            }
+
+            // Handle pipeline stage update
+            string resolvedStageName = "New";
+            if (!string.IsNullOrEmpty(request.PipelineStage))
+            {
+                var stage = await _context.PipelineStages
+                    .FirstOrDefaultAsync(s => s.ProjectId == customer.ProjectId && s.Name.ToLower() == request.PipelineStage.ToLower());
+
+                if (stage == null)
+                {
+                    int maxOrder = await _context.PipelineStages
+                        .Where(s => s.ProjectId == customer.ProjectId)
+                        .Select(s => s.Order)
+                        .DefaultIfEmpty(-1)
+                        .MaxAsync();
+
+                    stage = new PipelineStage
+                    {
+                        Id = Guid.NewGuid(),
+                        ProjectId = customer.ProjectId,
+                        Name = request.PipelineStage,
+                        Order = maxOrder + 1
+                    };
+                    _context.PipelineStages.Add(stage);
+                    await _context.SaveChangesAsync();
+                }
+
+                resolvedStageName = stage.Name;
+
+                var activeDeal = await _context.Deals
+                    .FirstOrDefaultAsync(d => d.CustomerId == id && d.Status == DealStatus.Open);
+
+                if (activeDeal != null)
+                {
+                    activeDeal.PipelineStageId = stage.Id;
+                    if (request.Budget.HasValue)
+                    {
+                        activeDeal.Amount = request.Budget.Value;
+                    }
+                    _context.Entry(activeDeal).State = EntityState.Modified;
+                }
+                else
+                {
+                    var deal = new Deal
+                    {
+                        Id = Guid.NewGuid(),
+                        ProjectId = customer.ProjectId,
+                        CustomerId = customer.Id,
+                        Title = $"{customer.Name}'s Deal",
+                        Amount = customer.Budget ?? 0,
+                        PipelineStageId = stage.Id,
+                        Status = DealStatus.Open
+                    };
+                    _context.Deals.Add(deal);
+                }
+            }
+            else
+            {
+                // Resolve existing stage name
+                var activeDeal = await _context.Deals
+                    .FirstOrDefaultAsync(d => d.CustomerId == id && d.Status == DealStatus.Open);
+                if (activeDeal != null)
+                {
+                    var stage = await _context.PipelineStages.FindAsync(activeDeal.PipelineStageId);
+                    if (stage != null)
+                    {
+                        resolvedStageName = stage.Name;
+                    }
+                }
+            }
 
             await _context.SaveChangesAsync();
 
@@ -68,7 +204,20 @@ namespace Modules.CRM.API
                 });
             }
 
-            return Ok(customer);
+            return Ok(new
+            {
+                customer.Id,
+                customer.ProjectId,
+                customer.PhoneNumber,
+                customer.Name,
+                customer.City,
+                customer.LeadScore,
+                customer.Tags,
+                customer.Notes,
+                customer.Budget,
+                customer.Interests,
+                pipelineStage = resolvedStageName
+            });
         }
 
         [HttpPost("customers/{customerId}/follow-ups")]
@@ -140,11 +289,13 @@ namespace Modules.CRM.API
 
     public class UpdateCustomerRequest
     {
-        public string Name { get; set; }
-        public string City { get; set; }
+        public string? Name { get; set; }
+        public string? City { get; set; }
         public int? LeadScore { get; set; }
-        public string[] Tags { get; set; }
-        public string Notes { get; set; }
+        public string[]? Tags { get; set; }
+        public string? Notes { get; set; }
+        public decimal? Budget { get; set; }
+        public string? PipelineStage { get; set; }
     }
 
     public class CreateFollowUpRequest

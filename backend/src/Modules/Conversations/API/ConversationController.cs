@@ -4,6 +4,9 @@ using Shared.Infrastructure;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.SignalR;
+using Modules.Conversations.Hubs;
+using Modules.Conversations.Domain;
 
 namespace Modules.Conversations.API
 {
@@ -14,12 +17,14 @@ namespace Modules.Conversations.API
         private readonly AppDbContext _context;
         private readonly Services.IAssignmentEngine _assignmentEngine;
         private readonly Shared.Queue.IEventBus _eventBus;
+        private readonly IHubContext<NotificationHub> _hubContext;
 
-        public ConversationController(AppDbContext context, Services.IAssignmentEngine assignmentEngine, Shared.Queue.IEventBus eventBus)
+        public ConversationController(AppDbContext context, Services.IAssignmentEngine assignmentEngine, Shared.Queue.IEventBus eventBus, IHubContext<NotificationHub> hubContext)
         {
             _context = context;
             _assignmentEngine = assignmentEngine;
             _eventBus = eventBus;
+            _hubContext = hubContext;
         }
 
         [HttpGet("projects/{projectId}/conversations")]
@@ -47,9 +52,73 @@ namespace Modules.Conversations.API
             var messages = await _context.Messages
                 .Where(m => m.ConversationId == conversationId)
                 .OrderBy(m => m.Timestamp)
+                .Select(m => new
+                {
+                    id = m.Id,
+                    conversationId = m.ConversationId,
+                    senderType = m.Direction == "Incoming" ? "Customer" : "Agent",
+                    content = m.Content,
+                    createdAt = m.Timestamp.ToString("o"),
+                    status = m.Direction == "Incoming" ? "Delivered" : "Sent",
+                    mediaUrl = (string)null,
+                    mediaType = (string)null,
+                    direction = m.Direction,
+                    timestamp = m.Timestamp
+                })
                 .ToListAsync();
 
             return Ok(messages);
+        }
+
+        [HttpPost("conversations/{id}/messages")]
+        public async Task<IActionResult> SendMessage(Guid id, [FromBody] SendMessageRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Content))
+            {
+                return BadRequest("Content is required.");
+            }
+
+            var conversation = await _context.Conversations.FindAsync(id);
+            if (conversation == null)
+            {
+                return NotFound($"Conversation {id} not found.");
+            }
+
+            // Create Outgoing message
+            var message = new Message
+            {
+                ConversationId = conversation.Id,
+                ExternalMessageId = $"msg_agent_{Guid.NewGuid().ToString("N")}",
+                Direction = "Outgoing",
+                Content = request.Content,
+                MessageType = "Text",
+                Timestamp = DateTime.UtcNow
+            };
+
+            _context.Messages.Add(message);
+            
+            // Update conversation last message timestamp
+            conversation.LastMessageTimestamp = DateTime.UtcNow;
+            _context.Entry(conversation).State = EntityState.Modified;
+
+            await _context.SaveChangesAsync();
+
+            // Broadcast message via SignalR to project group
+            var payload = new
+            {
+                id = message.Id,
+                conversationId = message.ConversationId,
+                senderType = "Agent",
+                content = message.Content,
+                createdAt = message.Timestamp.ToString("o"),
+                status = "Sent",
+                mediaUrl = (string)null,
+                mediaType = (string)null
+            };
+
+            await _hubContext.Clients.Group($"project_{conversation.ProjectId}").SendAsync("ReceiveMessage", payload);
+
+            return Ok(payload);
         }
 
         [HttpPost("conversations/{id}/assign")]
@@ -109,6 +178,11 @@ namespace Modules.Conversations.API
 
             return Ok(conversation);
         }
+    }
+
+    public class SendMessageRequest
+    {
+        public string Content { get; set; } = string.Empty;
     }
 
     public class AssignConversationRequest

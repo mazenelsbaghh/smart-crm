@@ -1,0 +1,67 @@
+@import "../styles/variables.css";
+
+/* Additional global helpers */
+.text-indigo {
+  color: hsl(var(--accent-primary));
+}
+
+.text-pink {
+  color: hsl(var(--accent-secondary));
+}
+
+.text-emerald {
+  color: hsl(var(--accent-success));
+}
+
+.text-muted {
+  color: hsl(var(--text-muted));
+}
+
+.neon-btn {
+  background: hsl(var(--accent-primary));
+  color: hsl(var(--text-primary));
+  border: none;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-normal);
+}
+
+.neon-btn:hover {
+  background: hsl(var(--accent-secondary));
+  box-shadow: var(--shadow-neon-pink);
+  transform: translateY(-1px);
+}
+
+.neon-btn-secondary {
+  background: transparent;
+  color: hsl(var(--text-primary));
+  border: 1px solid hsl(var(--accent-primary));
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-normal);
+}
+
+.neon-btn-secondary:hover {
+  border-color: hsl(var(--accent-secondary));
+  background: rgba(236, 72, 153, 0.1);
+  box-shadow: var(--shadow-neon-pink);
+}
+
+.neon-input {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: hsl(var(--text-primary));
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: var(--transition-normal);
+}
+
+.neon-input:focus {
+  border-color: hsl(var(--accent-primary));
+  box-shadow: var(--shadow-neon);
+}

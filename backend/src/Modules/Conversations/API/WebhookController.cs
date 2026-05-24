@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Modules.Conversations.Domain;
 using Modules.Conversations.Services;
+using Modules.Conversations.Hubs;
+using Microsoft.AspNetCore.SignalR;
 using Shared.Infrastructure;
 using Shared.Security;
 using System;
@@ -16,12 +18,14 @@ namespace Modules.Conversations.API
         private readonly AppDbContext _context;
         private readonly ITenantContext _tenantContext;
         private readonly IMessageAggregator _messageAggregator;
+        private readonly IHubContext<NotificationHub> _hubContext;
 
-        public WebhookController(AppDbContext context, ITenantContext tenantContext, IMessageAggregator messageAggregator)
+        public WebhookController(AppDbContext context, ITenantContext tenantContext, IMessageAggregator messageAggregator, IHubContext<NotificationHub> hubContext)
         {
             _context = context;
             _tenantContext = tenantContext;
             _messageAggregator = messageAggregator;
+            _hubContext = hubContext;
         }
 
         [HttpPost("message")]
@@ -86,6 +90,19 @@ namespace Modules.Conversations.API
 
             _context.Messages.Add(message);
             await _context.SaveChangesAsync();
+
+            // 3.5 Broadcast via SignalR to the group
+            await _hubContext.Clients.Group($"project_{payload.ProjectId}").SendAsync("ReceiveMessage", new
+            {
+                id = message.Id,
+                conversationId = message.ConversationId,
+                senderType = "Customer",
+                content = message.Content,
+                createdAt = message.Timestamp.ToString("o"),
+                status = "Delivered",
+                mediaUrl = (string)null,
+                mediaType = (string)null
+            });
 
             // 4. Pass message to aggregator for grouping window
             await _messageAggregator.AggregateMessageAsync(payload.ProjectId, payload.Sender, payload.Content);

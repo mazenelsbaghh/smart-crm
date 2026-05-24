@@ -1,0 +1,104 @@
+/* Design System Tokens - HSL Tailored Colors & Sleek Dark Mode */
+:root {
+  /* Color Palette - HSL values */
+  --bg-primary: 222 47% 11%;      /* Dark Navy background (#0f172a) */
+  --bg-secondary: 223 47% 16%;    /* Slightly lighter card background (#1e293b) */
+  --bg-tertiary: 223 47% 22%;     /* Inset panels background (#334155) */
+  
+  --text-primary: 210 40% 98%;    /* Clean white for main headings */
+  --text-secondary: 215 20% 75%;  /* Soft gray for descriptions & body */
+  --text-muted: 218 11% 55%;      /* Muted gray for inactive tabs, dates */
+  
+  --accent-primary: 239 84% 67%;  /* Electric Indigo (#6366f1) */
+  --accent-secondary: 330 81% 60%;/* Hot Pink / VIP glow (#ec4899) */
+  --accent-success: 142 72% 43%;  /* Bright Emerald (#10b981) */
+  --accent-warning: 38 92% 50%;   /* Neon Amber (#f59e0b) */
+  --accent-danger: 0 84% 60%;     /* Alert Red (#ef4444) */
+
+  /* Borders & Shadows */
+  --border-glow: rgba(99, 102, 241, 0.15);
+  --border-glow-active: rgba(236, 72, 153, 0.3);
+  --shadow-neon: 0 0 15px rgba(99, 102, 241, 0.25);
+  --shadow-neon-pink: 0 0 15px rgba(236, 72, 153, 0.25);
+
+  /* Fonts */
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  
+  /* Spacing Scale */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-xxl: 3rem;
+  
+  /* Border Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1.25rem;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-spring: 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Base resets & setups */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: hsl(var(--bg-primary));
+  color: hsl(var(--text-primary));
+  font-family: var(--font-family);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+.glass-panel-interactive {
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  transition: var(--transition-normal);
+}
+
+.glass-panel-interactive:hover {
+  background: rgba(30, 41, 59, 0.85);
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: var(--shadow-neon);
+  transform: translateY(-2px);
+}
+
+/* Scrollbars styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.4);
+}

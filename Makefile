@@ -233,4 +233,27 @@ audit-report: ## Extract project audit logs (usage: make audit-report PROJECT_ID
 system-health: ## Fetch system health status
 	@curl -s "http://localhost:80/api/system/health"
 
+# === Phase 6 Deployment & Operations ===
+deploy: env ## Run the production stack with docker-compose.production.yml
+	@echo "🚀 Deploying Smart Customer Core in production mode..."
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.production.yml up -d --build
+	@echo "✅ Production stack deployed."
+
+backup: ## Run the automated backup utility script
+	@chmod +x deploy/backup.sh
+	./deploy/backup.sh
+
+restore: ## Run the automated restore utility script (usage: make restore FILE=...)
+	@if [ -z "$(FILE)" ]; then \
+		echo "⚠️  FILE is required. Usage: make restore FILE=<path_to_archive>"; \
+	else \
+		chmod +x deploy/restore.sh; \
+		./deploy/restore.sh $(FILE); \
+	fi
+
+test-phase-6: test-setup ## Run Phase 6 dashboard, SignalR, production & backup tests
+	@echo "🧪 Running Phase 6 verification tests..."
+	$(PYTEST) tests/phase_6/ -v --tb=short
+	@echo "✅ Phase 6 tests complete."
+
 

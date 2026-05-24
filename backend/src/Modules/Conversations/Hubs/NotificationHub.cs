@@ -48,5 +48,32 @@ namespace Modules.Conversations.Hubs
 
             await base.OnDisconnectedAsync(exception);
         }
+
+        public async Task JoinProjectGroup(string projectIdStr)
+        {
+            if (Guid.TryParse(projectIdStr, out var projectId))
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"project_{projectId}");
+                Console.WriteLine($"[NotificationHub] Client joined group explicitly: project_{projectId}");
+            }
+        }
+
+        public async Task UpdatePresence(string status)
+        {
+            var httpContext = Context.GetHttpContext();
+            var projectIdStr = httpContext?.Request.Query["projectId"].ToString();
+
+            if (string.IsNullOrEmpty(projectIdStr))
+            {
+                projectIdStr = Context.User?.FindFirst("ProjectId")?.Value;
+            }
+
+            if (Guid.TryParse(projectIdStr, out var projectId))
+            {
+                var agentId = Context.UserIdentifier ?? "UnknownAgent";
+                await Clients.Group($"project_{projectId}").SendAsync("AgentPresenceUpdated", agentId, status);
+                Console.WriteLine($"[NotificationHub] AgentPresenceUpdated: {agentId} is {status}");
+            }
+        }
     }
 }
