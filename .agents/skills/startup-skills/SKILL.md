@@ -17,19 +17,22 @@ Initializes the essential startup skills for the current project:
 
 Run the following commands to install these skills in your project workspace.
 
-### For Antigravity IDE (Workspace: `.agent/skills/`)
+### For Antigravity IDE (Workspace: `.agents/skills/`)
 ```bash
 # Create the skills directory if it doesn't exist
-mkdir -p .agent/skills
+mkdir -p .agents/skills
 
-# Install github/spec-kit
-git clone https://github.com/github/spec-kit.git .agent/skills/spec-kit
+# Install and initialize github/spec-kit (requires uv to be installed)
+git clone https://github.com/github/spec-kit.git .agents/skills/spec-kit
+uv tool install --editable .agents/skills/spec-kit
+# Ensure ~/.local/bin is in your PATH, or run:
+~/.local/bin/specify init . --integration agy --force
 
 # Install pbakaus/impeccable
-npx skills add pbakaus/impeccable --path .agent/skills
+npx skills add pbakaus/impeccable --path .agents/skills
 
 # Install nextlevelbuilder/ui-ux-pro-max-skill
-git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git .agent/skills/ui-ux-pro-max-skill
+git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git .agents/skills/ui-ux-pro-max-skill
 ```
 
 ### For Claude Code (Workspace: `.claude/skills/`)
