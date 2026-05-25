@@ -45,7 +45,9 @@ namespace Modules.Conversations.API
                 {
                     ProjectId = payload.ProjectId,
                     PhoneNumber = payload.Sender,
-                    Name = $"WA Customer {payload.Sender.Substring(Math.Max(0, payload.Sender.Length - 4))}",
+                    Name = !string.IsNullOrWhiteSpace(payload.Name) 
+                        ? payload.Name 
+                        : $"WA Customer {payload.Sender.Substring(Math.Max(0, payload.Sender.Length - 4))}",
                     City = string.Empty,
                     Notes = string.Empty
                 };
@@ -116,6 +118,7 @@ namespace Modules.Conversations.API
         public Guid ProjectId { get; set; }
         public string MessageId { get; set; }
         public string Sender { get; set; }
+        public string Name { get; set; }
         public string Content { get; set; }
         public string MessageType { get; set; }
         public long Timestamp { get; set; }
