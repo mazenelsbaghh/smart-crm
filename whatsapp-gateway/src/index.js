@@ -1,5 +1,10 @@
 import express from 'express';
+import dns from 'dns';
+import fs from 'fs';
+import path from 'path';
 import { startSession, getQR, getStatus, sendMessage, statuses, sessions } from './baileys-manager.js';
+
+dns.setDefaultResultOrder('ipv4first');
 
 const app = express();
 app.use(express.json());
@@ -103,6 +108,32 @@ app.post('/api/whatsapp/mock/clear', (req, res) => {
     res.json({ message: 'Mock sent messages cleared' });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`WhatsApp Gateway listening on port ${PORT}`);
+    
+    // Auto-restore sessions from /app/sessions or local sessions directory
+    try {
+        let sessionsDir = '/app/sessions';
+        if (!fs.existsSync(sessionsDir)) {
+            sessionsDir = path.resolve('./sessions');
+        }
+        if (fs.existsSync(sessionsDir)) {
+            const files = fs.readdirSync(sessionsDir);
+            for (const file of files) {
+                const fullPath = path.join(sessionsDir, file);
+                if (fs.statSync(fullPath).isDirectory()) {
+                    // Check if there are credentials in it (e.g. creds.json)
+                    const credsFile = path.join(fullPath, 'creds.json');
+                    if (fs.existsSync(credsFile)) {
+                        console.log(`[GATEWAY STARTUP] Found existing session directory for project: ${file}. Restoring connection...`);
+                        startSession(file).catch(err => {
+                            console.error(`[GATEWAY STARTUP] Failed to restore session for project ${file}: ${err.message}`);
+                        });
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        console.error('[GATEWAY STARTUP] Error scanning sessions directory:', err.message);
+    }
 });
