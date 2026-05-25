@@ -1,0 +1,80 @@
+{
+  "gateway_endpoints": {
+    "startSession": {
+      "path": "/api/whatsapp/session/start",
+      "method": "POST",
+      "request": {
+        "projectId": "string (UUID, required)"
+      },
+      "responses": {
+        "200": {
+          "status": "Initializing",
+          "message": "Baileys session started. Scannable QR code will be generated."
+        }
+      }
+    },
+    "getQR": {
+      "path": "/api/whatsapp/session/qr",
+      "method": "GET",
+      "query_params": {
+        "projectId": "string (UUID, required)"
+      },
+      "responses": {
+        "200": {
+          "qr": "string (base64 or text representation of QR matrix)"
+        },
+        "404": {
+          "error": "QR code not ready or session already connected"
+        }
+      }
+    },
+    "getStatus": {
+      "path": "/api/whatsapp/session/status",
+      "method": "GET",
+      "query_params": {
+        "projectId": "string (UUID, required)"
+      },
+      "responses": {
+        "200": {
+          "projectId": "string",
+          "status": "Connected / Disconnected / Initializing",
+          "phoneNumber": "string"
+        }
+      }
+    },
+    "sendMessage": {
+      "path": "/api/whatsapp/send",
+      "method": "POST",
+      "request": {
+        "projectId": "string (UUID, required)",
+        "to": "string (recipient phone number, required)",
+        "message": "string (text content, required)"
+      },
+      "responses": {
+        "200": {
+          "messageId": "string",
+          "status": "Sent"
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "incomingMessage": {
+      "path": "/api/webhooks/whatsapp/message",
+      "method": "POST",
+      "payload": {
+        "projectId": "string (UUID)",
+        "messageId": "string",
+        "sender": "string (phone number)",
+        "content": "string (text or parsed media indicator)",
+        "messageType": "string (Text, Image, Voice, Document)",
+        "timestamp": "integer (epoch seconds)"
+      },
+      "responses": {
+        "200": {
+          "status": "Received"
+        }
+      }
+    }
+  }
+}
