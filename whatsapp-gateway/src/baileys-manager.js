@@ -105,7 +105,9 @@ export async function startSession(projectId) {
 
                     if (!mInfo) continue;
 
-                    const sender = msg.key.remoteJid.split('@')[0];
+                    const sender = msg.key.remoteJid.endsWith('@s.whatsapp.net')
+                        ? msg.key.remoteJid.split('@')[0]
+                        : msg.key.remoteJid;
                     let content = '';
                     let messageType = 'Text';
 
@@ -186,7 +188,18 @@ export async function sendMessage(projectId, to, text) {
     }
 
     // Sanitize recipient to a valid JID (keep as-is if already a full JID, otherwise strip non-digits and append domain)
-    const jid = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+    let jid;
+    if (to.includes('@')) {
+        jid = to;
+    } else {
+        const cleanTo = to.replace(/\D/g, '');
+        // If it starts with 7 or 8 and is 14-15 digits long, it is a WhatsApp LID
+        if ((cleanTo.startsWith('7') || cleanTo.startsWith('8')) && (cleanTo.length === 14 || cleanTo.length === 15)) {
+            jid = `${cleanTo}@lid`;
+        } else {
+            jid = `${cleanTo}@s.whatsapp.net`;
+        }
+    }
     console.log(`[baileys-manager] Sanitized JID for sending: raw="${to}", sanitized="${jid}"`);
 
     try {
