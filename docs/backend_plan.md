@@ -4,6 +4,15 @@
 
 ## Chronological Log
 
+### 2026-05-25: WhatsApp Gateway Message Sending and Receiving Fixes (Completed)
+- **Goal**: Address message transmission failure in `whatsapp-gateway` by introducing strict JID sanitization, socket state validation, dynamic session path resolution, and robust message unwrapping.
+- **Updates**:
+  - Implemented phone number sanitization to strip raw inputs (`+`, spaces, dashes) to digits-only before building the WhatsApp JID (`number@s.whatsapp.net`).
+  - Added connection state check in `sendMessage` throwing descriptive error if the socket is not initialized or disconnected.
+  - Enhanced Baileys `messages.upsert` event handler to unwrap ephemeral or view-once wrapper messages and correctly extract content for text, images, and voice notes.
+  - Added try-catch blocks around webhook delivery to prevent gateway crashes during backend outages.
+  - Configured dynamic fallback path resolution for sessions directory (`/app/sessions` or `./sessions`) to support seamless local macOS and Docker host environments.
+
 ### 2026-05-25: Phase 6 Frontend Dashboard, Realtime & Production Hardening (Completed)
 - **Goal**: Hardening backend authentication, SignalR presence and endpoints, configuring CORS rules, database/Redis connection pooling, rate limiting response structures, and structured exception handling middleware.
 - **Updates**:
