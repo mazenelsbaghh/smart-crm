@@ -1,28 +1,25 @@
-/* Design System Tokens - HSL Tailored Colors & Sleek Dark Mode */
+/* Design System Tokens - Arabic RTL Light Admin */
 :root {
-  /* Color Palette - HSL values */
-  --bg-primary: 222 47% 11%;      /* Dark Navy background (#0f172a) */
-  --bg-secondary: 223 47% 16%;    /* Slightly lighter card background (#1e293b) */
-  --bg-tertiary: 223 47% 22%;     /* Inset panels background (#334155) */
+  --bg-primary: 210 40% 98%;
+  --bg-secondary: 0 0% 100%;
+  --bg-tertiary: 214 32% 91%;
   
-  --text-primary: 210 40% 98%;    /* Clean white for main headings */
-  --text-secondary: 215 20% 75%;  /* Soft gray for descriptions & body */
-  --text-muted: 218 11% 55%;      /* Muted gray for inactive tabs, dates */
+  --text-primary: 222 47% 11%;
+  --text-secondary: 215 25% 27%;
+  --text-muted: 215 16% 47%;
   
-  --accent-primary: 239 84% 67%;  /* Electric Indigo (#6366f1) */
-  --accent-secondary: 330 81% 60%;/* Hot Pink / VIP glow (#ec4899) */
-  --accent-success: 142 72% 43%;  /* Bright Emerald (#10b981) */
-  --accent-warning: 38 92% 50%;   /* Neon Amber (#f59e0b) */
-  --accent-danger: 0 84% 60%;     /* Alert Red (#ef4444) */
+  --accent-primary: 221 83% 53%;
+  --accent-secondary: 262 83% 58%;
+  --accent-success: 158 64% 40%;
+  --accent-warning: 38 92% 50%;
+  --accent-danger: 0 72% 51%;
 
-  /* Borders & Shadows */
-  --border-glow: rgba(99, 102, 241, 0.15);
-  --border-glow-active: rgba(236, 72, 153, 0.3);
-  --shadow-neon: 0 0 15px rgba(99, 102, 241, 0.25);
-  --shadow-neon-pink: 0 0 15px rgba(236, 72, 153, 0.25);
+  --border-glow: rgba(15, 23, 42, 0.08);
+  --border-glow-active: rgba(37, 99, 235, 0.28);
+  --shadow-neon: 0 10px 30px rgba(15, 23, 42, 0.08);
+  --shadow-neon-pink: 0 12px 28px rgba(124, 58, 237, 0.14);
 
-  /* Fonts */
-  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-family: 'Noto Sans Arabic', 'Tahoma', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   
   /* Spacing Scale */
   --space-xs: 0.25rem;
@@ -55,33 +52,27 @@ body {
   background-color: hsl(var(--bg-primary));
   color: hsl(var(--text-primary));
   font-family: var(--font-family);
+  direction: rtl;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Glassmorphism Classes */
 .glass-panel {
-  background: rgba(30, 41, 59, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  background: hsl(var(--bg-secondary));
+  border: 1px solid hsl(var(--bg-tertiary));
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
 }
 
 .glass-panel-interactive {
-  background: rgba(30, 41, 59, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  background: hsl(var(--bg-secondary));
+  border: 1px solid hsl(var(--bg-tertiary));
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
   transition: var(--transition-normal);
 }
 
 .glass-panel-interactive:hover {
-  background: rgba(30, 41, 59, 0.85);
-  border-color: rgba(99, 102, 241, 0.3);
+  border-color: rgba(37, 99, 235, 0.28);
   box-shadow: var(--shadow-neon);
-  transform: translateY(-2px);
 }
 
 /* Scrollbars styling */
@@ -95,10 +86,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(148, 163, 184, 0.45);
   border-radius: var(--radius-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.4);
+  background: rgba(37, 99, 235, 0.45);
 }

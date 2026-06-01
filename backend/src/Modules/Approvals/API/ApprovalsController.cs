@@ -145,7 +145,16 @@ namespace Modules.Approvals.API
 
                 if (root.TryGetProperty("budget", out var budgetProp) || root.TryGetProperty("Budget", out budgetProp))
                 {
-                    customer.Budget = budgetProp.GetDecimal();
+                    var budgetVal = budgetProp.GetDecimal();
+                    customer.Budget = budgetVal;
+
+                    var activeDeal = await _context.Deals
+                        .FirstOrDefaultAsync(d => d.CustomerId == customerId && d.Status == Modules.CRM.Domain.DealStatus.Open);
+                    if (activeDeal != null)
+                    {
+                        activeDeal.Amount = budgetVal;
+                        _context.Entry(activeDeal).State = EntityState.Modified;
+                    }
                 }
 
                 if (root.TryGetProperty("city", out var cityProp) || root.TryGetProperty("City", out cityProp))

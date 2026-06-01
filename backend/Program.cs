@@ -28,6 +28,28 @@ builder.Host.UseSerilog();
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
 
+var allowedCorsOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? new[]
+    {
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001"
+    };
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("FrontendDev", policy =>
+    {
+        policy
+            .WithOrigins(allowedCorsOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+});
+
 // Configure JWT Authentication
 builder.Services.AddAuthentication(options =>
 {
@@ -164,6 +186,7 @@ if (app.Environment.IsDevelopment())
 
 // Enable tenancy middleware early in the pipeline
 app.UseMiddleware<TenantMiddleware>();
+app.UseCors("FrontendDev");
 app.UseAuthentication();
 app.UseAuthorization();
 

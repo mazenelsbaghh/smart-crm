@@ -39,6 +39,9 @@ namespace Modules.CRM.Services
                 return;
             }
 
+            // Always update customer label on every message
+            customer.Label = !string.IsNullOrEmpty(@event.Label) ? @event.Label : "استفسار عام";
+
             bool highConfidence = @event.Confidence >= 0.8;
             string status = highConfidence ? "Applied" : "PendingApproval";
 
@@ -79,6 +82,14 @@ namespace Modules.CRM.Services
                 if (highConfidence)
                 {
                     customer.Budget = @event.Budget.Value;
+
+                    var activeDeal = await _context.Deals
+                        .FirstOrDefaultAsync(d => d.CustomerId == @event.CustomerId && d.Status == DealStatus.Open);
+                    if (activeDeal != null)
+                    {
+                        activeDeal.Amount = @event.Budget.Value;
+                        _context.Entry(activeDeal).State = EntityState.Modified;
+                    }
                 }
             }
 
@@ -205,9 +216,122 @@ namespace Modules.CRM.Services
                 });
             }
 
+            // 3. Process Suggested Pipeline Stage
+            if (!string.IsNullOrEmpty(@event.PipelineStage))
+            {
+                var stage = await _context.PipelineStages
+                    .FirstOrDefaultAsync(s => s.ProjectId == @event.ProjectId && s.Name.ToLower() == @event.PipelineStage.ToLower());
+
+                if (stage == null)
+                {
+                    int maxOrder = await _context.PipelineStages
+                        .Where(s => s.ProjectId == @event.ProjectId)
+                        .Select(s => s.Order)
+                        .DefaultIfEmpty(-1)
+                        .MaxAsync();
+
+                    stage = new PipelineStage
+                    {
+                        Id = Guid.NewGuid(),
+                        ProjectId = @event.ProjectId,
+                        Name = @event.PipelineStage,
+                        Order = maxOrder + 1
+                    };
+                    _context.PipelineStages.Add(stage);
+                    await _context.SaveChangesAsync();
+                }
+
+                var activeDeal = await _context.Deals
+                    .FirstOrDefaultAsync(d => d.CustomerId == @event.CustomerId && d.Status == DealStatus.Open);
+
+                if (activeDeal != null)
+                {
+                    activeDeal.PipelineStageId = stage.Id;
+                    if (stage.Name.Equals("Won", StringComparison.OrdinalIgnoreCase))
+                    {
+                        activeDeal.Status = DealStatus.Won;
+                        activeDeal.ClosedAt = DateTime.UtcNow;
+                    }
+                    else if (stage.Name.Equals("Lost", StringComparison.OrdinalIgnoreCase))
+                    {
+                        activeDeal.Status = DealStatus.Lost;
+                        activeDeal.ClosedAt = DateTime.UtcNow;
+                    }
+                    _context.Entry(activeDeal).State = EntityState.Modified;
+                }
+                else
+                {
+                    var dealStatus = DealStatus.Open;
+                    DateTime? closedAt = null;
+                    if (stage.Name.Equals("Won", StringComparison.OrdinalIgnoreCase))
+                    {
+                        dealStatus = DealStatus.Won;
+                        closedAt = DateTime.UtcNow;
+                    }
+                    else if (stage.Name.Equals("Lost", StringComparison.OrdinalIgnoreCase))
+                    {
+                        dealStatus = DealStatus.Lost;
+                        closedAt = DateTime.UtcNow;
+                    }
+
+                    var deal = new Deal
+                    {
+                        Id = Guid.NewGuid(),
+                        ProjectId = @event.ProjectId,
+                        CustomerId = @event.CustomerId,
+                        Title = $"{customer.Name ?? customer.PhoneNumber}'s Deal",
+                        Amount = customer.Budget ?? 0,
+                        PipelineStageId = stage.Id,
+                        Status = dealStatus,
+                        ClosedAt = closedAt
+                    };
+                    _context.Deals.Add(deal);
+                }
+            }
+
+            // Get resolved stage name to return
+            string resolvedStageName = "New";
+            var activeOrLastDeal = await _context.Deals
+                .Where(d => d.CustomerId == customer.Id)
+                .OrderByDescending(d => d.ClosedAt ?? d.CreatedAt)
+                .FirstOrDefaultAsync();
+            if (activeOrLastDeal != null)
+            {
+                var currentStage = await _context.PipelineStages.FindAsync(activeOrLastDeal.PipelineStageId);
+                if (currentStage != null)
+                {
+                    resolvedStageName = currentStage.Name;
+                }
+            }
+
             // Save updates
             await _context.SaveChangesAsync();
             Console.WriteLine($"[CRMAutoUpdateEngine] CRM updates saved. High Confidence: {highConfidence}");
+
+            // Broadcast customer update via SignalR
+            try
+            {
+                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("CustomerUpdated", new
+                {
+                    id = customer.Id,
+                    projectId = customer.ProjectId,
+                    phoneNumber = customer.PhoneNumber,
+                    name = customer.Name,
+                    city = customer.City,
+                    leadScore = customer.LeadScore,
+                    tags = customer.Tags,
+                    notes = customer.Notes,
+                    budget = customer.Budget,
+                    interests = customer.Interests,
+                    label = customer.Label,
+                    pipelineStage = resolvedStageName
+                });
+                Console.WriteLine($"[CRMAutoUpdateEngine] Broadcasted CustomerUpdated SignalR event for customer {customer.Id}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CRMAutoUpdateEngine] Failed to broadcast CustomerUpdated event: {ex.Message}");
+            }
         }
     }
 }

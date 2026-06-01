@@ -5,6 +5,7 @@ export interface CustomerSummary {
   name: string;
   phone: string;
   avatarUrl: string | null;
+  label?: string;
 }
 
 export interface Conversation {

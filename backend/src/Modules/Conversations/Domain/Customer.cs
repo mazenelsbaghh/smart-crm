@@ -14,5 +14,6 @@ namespace Modules.Conversations.Domain
         public string Notes { get; set; } = string.Empty;
         public decimal? Budget { get; set; }
         public string[] Interests { get; set; } = Array.Empty<string>();
+        public string? Label { get; set; }
     }
 }

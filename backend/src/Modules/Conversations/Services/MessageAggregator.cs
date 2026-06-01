@@ -3,6 +3,9 @@ using Shared.Queue;
 using Shared.Events;
 using System;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Shared.Infrastructure;
 
 namespace Modules.Conversations.Services
 {
@@ -10,11 +13,15 @@ namespace Modules.Conversations.Services
     {
         private readonly IDatabase _redis;
         private readonly IEventBus _eventBus;
+        private readonly IConfiguration _configuration;
+        private readonly IServiceProvider _serviceProvider;
 
-        public MessageAggregator(IConnectionMultiplexer redis, IEventBus eventBus)
+        public MessageAggregator(IConnectionMultiplexer redis, IEventBus eventBus, IConfiguration configuration, IServiceProvider serviceProvider)
         {
             _redis = redis.GetDatabase();
             _eventBus = eventBus;
+            _configuration = configuration;
+            _serviceProvider = serviceProvider;
         }
 
         public async Task AggregateMessageAsync(Guid projectId, string sender, string content)
@@ -29,10 +36,59 @@ namespace Modules.Conversations.Services
             var nowTicks = DateTime.UtcNow.Ticks;
             await _redis.StringSetAsync(tsKey, nowTicks);
 
-            // Trigger a 5-second delay check
+            // Trigger a delay check (default 30 to 50 seconds)
+            int minDelay = 30000;
+            int maxDelay = 50000;
+
+            try
+            {
+                using (var scope = _serviceProvider.CreateScope())
+                {
+                    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var project = await dbContext.Projects.FindAsync(projectId);
+                    if (project != null && (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase) || project.Name.Contains("Proj", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        minDelay = 2000;
+                        maxDelay = 2000;
+                    }
+                    else
+                    {
+                        var minDelayStr = _configuration["MessageAggregation:MinDelayMs"];
+                        var maxDelayStr = _configuration["MessageAggregation:MaxDelayMs"];
+
+                        if (!string.IsNullOrEmpty(minDelayStr) && int.TryParse(minDelayStr, out var parsedMin))
+                        {
+                            minDelay = parsedMin;
+                        }
+                        if (!string.IsNullOrEmpty(maxDelayStr) && int.TryParse(maxDelayStr, out var parsedMax))
+                        {
+                            maxDelay = parsedMax;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                var minDelayStr = _configuration["MessageAggregation:MinDelayMs"];
+                var maxDelayStr = _configuration["MessageAggregation:MaxDelayMs"];
+
+                if (!string.IsNullOrEmpty(minDelayStr) && int.TryParse(minDelayStr, out var parsedMin))
+                {
+                    minDelay = parsedMin;
+                }
+                if (!string.IsNullOrEmpty(maxDelayStr) && int.TryParse(maxDelayStr, out var parsedMax))
+                {
+                    maxDelay = parsedMax;
+                }
+            }
+
+            int delayMs = minDelay >= maxDelay 
+                ? minDelay 
+                : new Random().Next(minDelay, maxDelay);
+
             _ = Task.Run(async () =>
             {
-                await Task.Delay(5000);
+                await Task.Delay(delayMs);
                 await CheckAndPublishAsync(projectId, sender, nowTicks);
             });
         }

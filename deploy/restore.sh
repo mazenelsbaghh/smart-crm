@@ -53,9 +53,11 @@ docker cp "${EXTRACTED_PATH}/minio_data/." smartcustomercore-minio:/data/
 echo "🔄 Restarting MinIO to refresh storage state..."
 docker compose restart minio
 
-# 4. Restart Backend to refresh connection pools
+# 4. Restart Backend and Nginx to refresh connection pools and resolve IPs
 echo "🔄 Restarting Backend to refresh connection pools..."
 docker compose restart backend
+echo "🔄 Restarting Nginx to re-resolve backend container IP..."
+docker compose restart nginx
 echo "⏳ Waiting for backend to boot up..."
 sleep 8
 

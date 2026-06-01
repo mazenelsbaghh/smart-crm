@@ -61,7 +61,7 @@ docker-compose -f docker-compose.yml -f docker-compose.production.yml up -d --bu
 Test endpoint rate limits (requires `pytest` environment):
 
 ```bash
-pytest tests/phase_6/test_production.py
+pytest tests/phase_6/test_zz_production.py
 ```
 
 Or manually verify via `curl` by spamming requests:

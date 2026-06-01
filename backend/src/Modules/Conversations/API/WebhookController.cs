@@ -33,25 +33,40 @@ namespace Modules.Conversations.API
         {
             // Set context tenant project id
             _tenantContext.SetProjectId(payload.ProjectId);
+            var normalizedSender = NormalizeWhatsAppPhone(payload.Sender);
+            var senderLid = string.IsNullOrWhiteSpace(payload.SenderLid) ? null : payload.SenderLid.Trim();
 
-            // 1. Resolve Customer by PhoneNumber globally but within payload Project
+            // 1. Resolve Customer by PhoneNumber globally but within payload Project.
+            // WhatsApp multi-device may send a @lid as remoteJid and the real phone in remoteJidAlt.
             var customer = await _context.Customers
                 .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(c => c.ProjectId == payload.ProjectId && c.PhoneNumber == payload.Sender);
+                .FirstOrDefaultAsync(c =>
+                    c.ProjectId == payload.ProjectId &&
+                    (c.PhoneNumber == normalizedSender || (senderLid != null && c.PhoneNumber == senderLid)));
 
             if (customer == null)
             {
                 customer = new Customer
                 {
                     ProjectId = payload.ProjectId,
-                    PhoneNumber = payload.Sender,
+                    PhoneNumber = normalizedSender,
                     Name = !string.IsNullOrWhiteSpace(payload.Name) 
                         ? payload.Name 
-                        : $"WA Customer {payload.Sender.Substring(Math.Max(0, payload.Sender.Length - 4))}",
+                        : $"WA Customer {normalizedSender.Substring(Math.Max(0, normalizedSender.Length - 4))}",
                     City = string.Empty,
                     Notes = string.Empty
                 };
                 _context.Customers.Add(customer);
+                await _context.SaveChangesAsync();
+            }
+            else if (customer.PhoneNumber.EndsWith("@lid", StringComparison.OrdinalIgnoreCase) && normalizedSender != customer.PhoneNumber)
+            {
+                customer.PhoneNumber = normalizedSender;
+                if (!string.IsNullOrWhiteSpace(payload.Name))
+                {
+                    customer.Name = payload.Name;
+                }
+                _context.Entry(customer).State = EntityState.Modified;
                 await _context.SaveChangesAsync();
             }
 
@@ -106,21 +121,52 @@ namespace Modules.Conversations.API
                 mediaType = (string)null
             });
 
+            // 3.6 Broadcast AI typing if auto-reply is enabled
+            var settings = await _context.ProjectSettings
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(s => s.ProjectId == payload.ProjectId);
+            if (settings != null && settings.AiAutoReplyEnabled)
+            {
+                await _hubContext.Clients.Group($"project_{payload.ProjectId}").SendAsync("AITyping", new
+                {
+                    conversationId = conversation.Id,
+                    isTyping = true
+                });
+            }
+
             // 4. Pass message to aggregator for grouping window
-            await _messageAggregator.AggregateMessageAsync(payload.ProjectId, payload.Sender, payload.Content);
+            await _messageAggregator.AggregateMessageAsync(payload.ProjectId, normalizedSender, payload.Content);
 
             return Ok(new { status = "Received" });
+        }
+
+        private static string NormalizeWhatsAppPhone(string sender)
+        {
+            if (string.IsNullOrWhiteSpace(sender))
+            {
+                return sender;
+            }
+
+            var trimmed = sender.Trim();
+            if (trimmed.EndsWith("@s.whatsapp.net", StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed.Split('@')[0];
+            }
+
+            return trimmed;
         }
     }
 
     public class IncomingMessagePayload
     {
         public Guid ProjectId { get; set; }
-        public string MessageId { get; set; }
-        public string Sender { get; set; }
-        public string Name { get; set; }
-        public string Content { get; set; }
-        public string MessageType { get; set; }
+        public string MessageId { get; set; } = default!;
+        public string Sender { get; set; } = default!;
+        public string? SenderJid { get; set; }
+        public string? SenderLid { get; set; }
+        public string? Name { get; set; }
+        public string Content { get; set; } = default!;
+        public string? MessageType { get; set; }
         public long Timestamp { get; set; }
     }
 }

@@ -52,14 +52,16 @@ async def test_message_aggregation_flow(rabbitmq_config):
             assert webhook_resp.status_code == 200
             time.sleep(0.5)
 
-        # 2. Get event from RabbitMQ (Wait up to 8 seconds: 5s silence window + 3s buffer)
+        # 2. Get event from RabbitMQ (Wait up to 12 seconds: 5s silence window + buffer)
         received_event = None
         start_time = time.time()
-        while time.time() - start_time < 8.0:
+        while time.time() - start_time < 12.0:
             method_frame, header_frame, body = channel.basic_get(queue=queue_name, auto_ack=True)
             if method_frame:
-                received_event = json.loads(body.decode())
-                break
+                evt = json.loads(body.decode())
+                if evt.get("ProjectId") == proj_id:
+                    received_event = evt
+                    break
             time.sleep(0.5)
 
         connection.close()

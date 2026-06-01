@@ -98,20 +98,24 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-smartcustomercore}-backend
     restart: unless-stopped
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://+:5000
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Username=${POSTGRES_USER:-smartcore};Password=${POSTGRES_PASSWORD:-changeme_postgres};Database=${POSTGRES_DB:-smartcustomercore}
-      - Redis__ConnectionString=redis:6379
-      - RabbitMQ__Host=rabbitmq
-      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER:-admin}
-      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS:-changeme_rabbitmq}
-      - Gemini__ApiKey=${GEMINI_API_KEY}
-      - WhatsAppGateway__Url=http://whatsapp-gateway:3000
-      - Elasticsearch__Url=http://elasticsearch:9200
-      - MinIO__Endpoint=http://minio:9000
-      - MinIO__AccessKey=${MINIO_ROOT_USER:-minioadmin}
-      - MinIO__SecretKey=${MINIO_ROOT_PASSWORD:-changeme_minio}
-      - MinIO__BucketName=${MINIO_BUCKET:-smartcore-media}
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: "http://+:5000"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Username=${POSTGRES_USER:-smartcore};Password=${POSTGRES_PASSWORD:-changeme_postgres};Database=${POSTGRES_DB:-smartcustomercore}"
+      Redis__ConnectionString: "redis:6379"
+      RabbitMQ__Host: "rabbitmq"
+      RabbitMQ__Username: "${RABBITMQ_DEFAULT_USER:-admin}"
+      RabbitMQ__Password: "${RABBITMQ_DEFAULT_PASS:-changeme_rabbitmq}"
+      Gemini__ApiKey: "${GEMINI_API_KEY}"
+      WhatsAppGateway__Url: "http://whatsapp-gateway:3000"
+      Elasticsearch__Url: "http://elasticsearch:9200"
+      MinIO__Endpoint: "http://minio:9000"
+      MinIO__AccessKey: "${MINIO_ROOT_USER:-minioadmin}"
+      MinIO__SecretKey: "${MINIO_ROOT_PASSWORD:-changeme_minio}"
+      MinIO__BucketName: "${MINIO_BUCKET:-smartcore-media}"
+      MessageAggregation__MinDelayMs: "30000"
+      MessageAggregation__MaxDelayMs: "50000"
+      WhatsApp__MinTypingDelayMs: "3000"
+      WhatsApp__MaxTypingDelayMs: "5000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,11 +138,31 @@ services:
       - PORT=3000
       - REDIS_URL=redis://redis:6379
       - BACKEND_URL=http://backend:5000
+      - AUTO_RESTORE_SESSIONS=${AUTO_RESTORE_SESSIONS:-true}
     volumes:
       - ./whatsapp-gateway/sessions:/app/sessions
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - smartcore-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "http://localhost"
+        NEXT_PUBLIC_WS_URL: "http://localhost/hubs"
+    container_name: ${COMPOSE_PROJECT_NAME:-smartcustomercore}-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    ports:
+      - "${FRONTEND_PORT:-3002}:3000"
+    depends_on:
+      backend:
+        condition: service_started
     networks:
       - smartcore-net
 
@@ -160,6 +184,8 @@ services:
       redis:
         condition: service_healthy
       backend:
+        condition: service_started
+      frontend:
         condition: service_started
     networks:
       - smartcore-net

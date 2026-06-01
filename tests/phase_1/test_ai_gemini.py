@@ -7,7 +7,7 @@ BASE_URL = "http://localhost:80/api"
 
 @pytest.mark.asyncio
 async def test_ai_gemini_auto_reply_flow():
-    sender_phone = f"555{uuid.uuid4().hex[:6]}"
+    sender_phone = f"555{str(uuid.uuid4().int)[:6]}"
     message_id = f"msg_{uuid.uuid4().hex}"
     incoming_content = "Hello, I want to know about your services."
 
@@ -74,9 +74,9 @@ async def test_ai_gemini_auto_reply_flow():
         )
         assert webhook_resp.status_code == 200
 
-        # 6. Wait for the 5-second silence window + processing buffer (total 8 seconds)
-        print("Waiting 8 seconds for message aggregation and AI reply generation...")
-        await pytest.importorskip("asyncio").sleep(8.0)
+        # 6. Wait for the 5-second silence window + processing buffer + typing delay (total 10 seconds)
+        print("Waiting 10 seconds for message aggregation and AI reply generation...")
+        await pytest.importorskip("asyncio").sleep(10.0)
 
         # 7. Check if the gateway received the AI reply
         sent_resp = await client.get(f"{BASE_URL}/whatsapp/mock/sent")
@@ -118,9 +118,9 @@ async def test_ai_gemini_auto_reply_flow():
         )
         assert webhook_resp.status_code == 200
 
-        # Wait again for aggregation window
-        print("Waiting 8 seconds again (with AI disabled)...")
-        await pytest.importorskip("asyncio").sleep(8.0)
+        # Wait again for aggregation window (total 10 seconds)
+        print("Waiting 10 seconds again (with AI disabled)...")
+        await pytest.importorskip("asyncio").sleep(10.0)
 
         # Check mock sent messages again - should be empty
         sent_resp = await client.get(f"{BASE_URL}/whatsapp/mock/sent")

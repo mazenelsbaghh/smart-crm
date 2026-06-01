@@ -11,5 +11,7 @@ namespace Modules.CRM.Domain
         public DateTime DueDate { get; set; }
         public string Status { get; set; } = "Pending"; // Pending, Done, Missed
         public string Notes { get; set; }
+        public string Type { get; set; } = "Nurturing"; // Nurturing, AppointmentReminder
+        public DateTime? AppointmentTime { get; set; }
     }
 }

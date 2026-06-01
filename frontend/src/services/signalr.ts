@@ -1,4 +1,4 @@
-import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
+import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr';
 import { Message, ConversationStatus, AISuggestion } from '../types/chat';
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost/hubs';
@@ -14,6 +14,8 @@ export class SignalRService {
   private onAISuggestionCallback?: (suggestion: AISuggestion) => void;
   private onNotificationCallback?: (title: string, body: string, type: string) => void;
   private onPresenceCallback?: (agentId: string, status: 'Online' | 'Offline') => void;
+  private onAITypingCallback?: (convId: string, isTyping: boolean) => void;
+  private onCustomerCallback?: (customer: any) => void;
 
   constructor(projectId: string, token: string) {
     this.projectId = projectId;
@@ -21,7 +23,10 @@ export class SignalRService {
   }
 
   public async start(): Promise<void> {
-    if (this.connection) return;
+    if (this.connection && this.connection.state !== HubConnectionState.Disconnected) return;
+    if (this.connection?.state === HubConnectionState.Disconnected) {
+      this.connection = null;
+    }
 
     const hubUrl = `${WS_URL}/notifications?projectId=${this.projectId}`;
 
@@ -52,6 +57,12 @@ export class SignalRService {
       }
     });
 
+    this.connection.on('AITyping', (data: { conversationId: string; isTyping: boolean }) => {
+      if (this.onAITypingCallback) {
+        this.onAITypingCallback(data.conversationId, data.isTyping);
+      }
+    });
+
     this.connection.on('NotificationReceived', (title: string, body: string, type: string) => {
       if (this.onNotificationCallback) {
         this.onNotificationCallback(title, body, type);
@@ -64,6 +75,12 @@ export class SignalRService {
       }
     });
 
+    this.connection.on('CustomerUpdated', (customer: any) => {
+      if (this.onCustomerCallback) {
+        this.onCustomerCallback(customer);
+      }
+    });
+
     try {
       await this.connection.start();
       console.log('SignalR connection established successfully.');
@@ -71,6 +88,13 @@ export class SignalRService {
       await this.connection.invoke('JoinProjectGroup', this.projectId);
     } catch (err) {
       console.error('Error starting SignalR connection:', err);
+      const failedConnection = this.connection;
+      this.connection = null;
+      try {
+        await failedConnection?.stop();
+      } catch {
+        // Ignore cleanup failures after a failed negotiation/start.
+      }
       throw err;
     }
   }
@@ -88,7 +112,7 @@ export class SignalRService {
   }
 
   public async updatePresence(status: 'Online' | 'Offline'): Promise<void> {
-    if (!this.connection) return;
+    if (this.connection?.state !== HubConnectionState.Connected) return;
     try {
       await this.connection.invoke('UpdatePresence', status);
     } catch (err) {
@@ -115,5 +139,13 @@ export class SignalRService {
 
   public registerOnPresenceChange(callback: (agentId: string, status: 'Online' | 'Offline') => void) {
     this.onPresenceCallback = callback;
+  }
+
+  public registerOnAITyping(callback: (convId: string, isTyping: boolean) => void) {
+    this.onAITypingCallback = callback;
+  }
+
+  public registerOnCustomerUpdate(callback: (customer: any) => void) {
+    this.onCustomerCallback = callback;
   }
 }

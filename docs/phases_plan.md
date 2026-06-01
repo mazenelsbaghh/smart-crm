@@ -622,43 +622,43 @@ make search-reindex        # Elasticsearch indices created
 **Goal**: Centralized asset management, media transformation pipeline, and comprehensive audit logging.
 
 ### 5.1 Shared Asset Management System
-- [ ] `Media` module:
+- [x] `Media` module:
   - Asset Registry (central database for all files).
   - Asset metadata (dimensions, duration, MIME type, hash).
   - File references (no duplication — store once, reference everywhere).
   - Secure URL generation (signed URLs with expiry).
   - Asset versioning.
   - AI media tagging (Gemini classifies uploaded media).
-- [ ] MinIO integration for actual file storage.
-- [ ] Endpoints:
+- [x] MinIO integration for actual file storage.
+- [x] Endpoints:
   - `POST /api/assets/upload`
   - `GET /api/assets/{id}`
   - `GET /api/assets/{id}/download`
   - `GET /api/assets/{id}/thumbnail`
   - `DELETE /api/assets/{id}`
-- [ ] Tests: `tests/phase_5/test_assets.py`
+- [x] Tests: `tests/phase_5/test_assets.py`
 
 ### 5.2 Media Transformation Engine
-- [ ] Thumbnail generator.
-- [ ] Image resize/compression.
-- [ ] Format conversion.
-- [ ] WhatsApp optimization (compress for WhatsApp limits).
-- [ ] `MediaWorker` background service.
-- [ ] Tests: `tests/phase_5/test_media_transform.py`
+- [x] Thumbnail generator.
+- [x] Image resize/compression.
+- [x] Format conversion.
+- [x] WhatsApp optimization (compress for WhatsApp limits).
+- [x] `MediaWorker` background service.
+- [x] Tests: `tests/phase_5/test_media_transform.py`
 
 ### 5.3 Audit & System Logging
-- [ ] `Audit` module:
+- [x] `Audit` module:
   - All API requests logged with user, action, timestamp, IP.
   - All AI decisions logged with input/output.
   - All CRM changes logged with before/after values.
   - All approval actions logged.
-- [ ] Serilog structured logging.
-- [ ] Audit search via Elasticsearch.
-- [ ] `GET /api/projects/{id}/audit?action=...&user=...&from=...&to=...`
-- [ ] Tests: `tests/phase_5/test_audit.py`
+- [x] Serilog structured logging.
+- [x] Audit search via Elasticsearch.
+- [x] `GET /api/projects/{id}/audit?action=...&user=...&from=...&to=...`
+- [x] Tests: `tests/phase_5/test_audit.py`
 
 ### 5.4 System Health & Monitoring
-- [ ] `SystemHealth` module:
+- [x] `SystemHealth` module:
   - API health checks (`/health`).
   - Worker health checks.
   - RabbitMQ queue depth monitoring.
@@ -666,16 +666,16 @@ make search-reindex        # Elasticsearch indices created
   - PostgreSQL connection pool monitoring.
   - WhatsApp session health.
   - Gemini API latency monitoring.
-- [ ] `GET /api/system/health`
-- [ ] `GET /api/system/metrics`
-- [ ] Alerting on critical failures (via notification engine).
-- [ ] Tests: `tests/phase_5/test_system_health.py`
+- [x] `GET /api/system/health`
+- [x] `GET /api/system/metrics`
+- [x] Alerting on critical failures (via notification engine).
+- [x] Tests: `tests/phase_5/test_system_health.py`
 
 ### 5.5 Phase 5 — Tests, Skill & Makefile
-- [ ] All test files for Phase 5 (4 test files).
-- [ ] `make test-phase-5`
-- [ ] `.agents/skills/phase-5/SKILL.md`
-- [ ] `make asset-stats`, `make audit-report`, `make system-health`.
+- [x] All test files for Phase 5 (4 test files).
+- [x] `make test-phase-5`
+- [x] `.agents/skills/phase-5/SKILL.md`
+- [x] `make asset-stats`, `make audit-report`, `make system-health`.
 
 ### Phase 5 Verification Checklist
 ```bash
@@ -696,67 +696,67 @@ make audit-report          # Audit trail queryable
 **Goal**: Production-ready web dashboard with realtime inbox, full CRM UI, and deployment automation.
 
 ### 6.1 Frontend Scaffold (React/Next.js)
-- [ ] `frontend/` directory with Next.js project.
-- [ ] `Dockerfile` for frontend.
-- [ ] Add `frontend` service to `docker-compose.yml`.
-- [ ] Design system: consistent colors, typography, spacing.
-- [ ] Auth flow: login, register, refresh token handling.
-- [ ] Layout: sidebar navigation, header, main content.
+- [x] `frontend/` directory with Next.js project.
+- [x] `Dockerfile` for frontend.
+- [x] Add `frontend` service to `docker-compose.yml`.
+- [x] Design system: consistent colors, typography, spacing.
+- [x] Auth flow: login, register, refresh token handling.
+- [x] Layout: sidebar navigation, header, main content.
 
 ### 6.2 Dashboard Page
-- [ ] KPI cards (new customers, open conversations, pending follow-ups, active campaigns).
-- [ ] Activity feed (recent events).
-- [ ] Quick actions (new conversation, new follow-up, new campaign).
+- [x] KPI cards (new customers, open conversations, pending follow-ups, active campaigns).
+- [x] Activity feed (recent events).
+- [x] Quick actions (new conversation, new follow-up, new campaign).
 
 ### 6.3 Inbox Page (Realtime)
-- [ ] 3-panel layout: Conversation List | Chat Window | Customer Panel.
-- [ ] SignalR integration for live message updates.
-- [ ] Filters: status, priority, assigned agent.
-- [ ] Agent presence indicators.
-- [ ] Message composer with media upload.
-- [ ] AI suggestion display.
+- [x] 3-panel layout: Conversation List | Chat Window | Customer Panel.
+- [x] SignalR integration for live message updates.
+- [x] Filters: status, priority, assigned agent.
+- [x] Agent presence indicators.
+- [x] Message composer with media upload.
+- [x] AI suggestion display.
 
 ### 6.4 CRM Pages
-- [ ] Customer list with search and filters.
-- [ ] Customer profile page (timeline, tags, scores, follow-ups, notes).
-- [ ] Pipeline board (Kanban-style drag-and-drop).
+- [x] Customer list with search and filters.
+- [x] Customer profile page (timeline, tags, scores, follow-ups, notes).
+- [x] Pipeline board (Kanban-style drag-and-drop).
 
 ### 6.5 Management Pages
-- [ ] Follow-ups list.
-- [ ] Campaigns list & create/edit.
-- [ ] Reports viewer.
-- [ ] Workflows list & builder.
-- [ ] Knowledge Base manager.
-- [ ] Approval queue.
-- [ ] Settings (project, WhatsApp, users, roles).
+- [x] Follow-ups list.
+- [x] Campaigns list & create/edit.
+- [x] Reports viewer.
+- [x] Workflows list & builder.
+- [x] Knowledge Base manager.
+- [x] Approval queue.
+- [x] Settings (project, WhatsApp, users, roles).
 
 ### 6.6 Production Hardening
-- [ ] Nginx SSL termination (Let's Encrypt).
-- [ ] Rate limiting on API.
-- [ ] CORS configuration.
-- [ ] Compression (gzip/brotli).
-- [ ] Database connection pooling optimized.
-- [ ] Redis connection pooling.
-- [ ] Error handling middleware (structured error responses).
-- [ ] Request/response logging.
+- [x] Nginx SSL termination (Let's Encrypt).
+- [x] Rate limiting on API.
+- [x] CORS configuration.
+- [x] Compression (gzip/brotli).
+- [x] Database connection pooling optimized.
+- [x] Redis connection pooling.
+- [x] Error handling middleware (structured error responses).
+- [x] Request/response logging.
 
 ### 6.7 Deployment Automation
-- [ ] `deploy/` directory with:
+- [x] `deploy/` directory with:
   - `docker-compose.production.yml`
   - `setup-server.sh` (installs Docker, clones repo, configures firewall).
   - `backup.sh` (PostgreSQL dump, Redis snapshot, MinIO sync).
   - `restore.sh` (reverse of backup).
-- [ ] `make deploy` — production build + up.
-- [ ] `make backup` — full backup.
-- [ ] `make restore` — full restore.
+- [x] `make deploy` — production build + up.
+- [x] `make backup` — full backup.
+- [x] `make restore` — full restore.
 
 ### 6.8 Phase 6 — Tests, Skill & Makefile
-- [ ] `tests/phase_6/test_frontend_api.py` — test frontend API calls.
-- [ ] `tests/phase_6/test_signalr.py` — test realtime connections.
-- [ ] `tests/phase_6/test_production.py` — test rate limiting, CORS, SSL.
-- [ ] `tests/phase_6/test_deployment.py` — test backup/restore scripts.
-- [ ] `make test-phase-6`
-- [ ] `.agents/skills/phase-6/SKILL.md`
+- [x] `tests/phase_6/test_frontend_api.py` — test frontend API calls.
+- [x] `tests/phase_6/test_signalr.py` — test realtime connections.
+- [x] `tests/phase_6/test_zz_production.py` — test rate limiting, CORS, SSL.
+- [x] `tests/phase_6/test_deployment.py` — test backup/restore scripts.
+- [x] `make test-phase-6`
+- [x] `.agents/skills/phase-6/SKILL.md`
 
 ### Phase 6 Verification Checklist
 ```bash

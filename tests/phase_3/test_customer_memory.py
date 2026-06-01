@@ -54,7 +54,7 @@ async def test_customer_memory_generation_on_close():
         assert len(conversations) > 0
         conversation = conversations[0]
         conversation_id = conversation["id"]
-        customer_id = conversation["customerId"]
+        customer_id = conversation["customer"]["id"]
 
         # 2. Send another WhatsApp message in the same conversation expressing price objection
         msg_resp2 = await client.post(

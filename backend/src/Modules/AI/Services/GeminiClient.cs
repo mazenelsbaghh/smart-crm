@@ -96,7 +96,7 @@ namespace Modules.AI.Services
                 return $"[Mock Gemini Reply] Re: {messageContent}";
             }
 
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={apiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={apiKey}";
 
             var requestBody = new
             {
@@ -133,7 +133,7 @@ namespace Modules.AI.Services
             catch (Exception ex)
             {
                 Console.WriteLine($"Error calling Gemini API: {ex.Message}");
-                return $"[AI Error Recovery] Unable to reach AI engine. Received: {messageContent}";
+                return "[AI_ERROR] Unable to reach AI engine.";
             }
         }
     }

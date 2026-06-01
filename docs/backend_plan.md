@@ -4,6 +4,47 @@
 
 ## Chronological Log
 
+### 2026-05-25: AI Auto-Reply Context Contextualization, Delay Tuning & Auto-CRM Deal Sync (Completed)
+- **Goal**:
+  1. Inject the recent chat history (last 15 messages formatted chronologically) and Customer Memory (Facts, Objections, Summary) into the Gemini auto-reply prompt so that it responds intelligently with full customer context.
+  2. Increase the message aggregation silence window to 30-50 seconds to prevent sending multiple quick responses.
+  3. Increase the chunk typing simulation delay to 5-9 seconds between messages.
+  4. Ensure that auto-applied CRM budget suggestions (high confidence) or manually approved budget updates in `ApprovalsController` also sync with active deals.
+- **Updates**:
+  - Modified `IAIMarketingBrain.AnalyzeAndGenerateReplyAsync` to accept `chatHistory` and `customerMemory` parameters, and inject them into the system prompt.
+  - Updated `AIReplyWorker.HandleAsync` to fetch `CustomerMemory` and the last 15 conversation messages, formatting them cleanly before calling the AI engine.
+  - Updated `MessageAggregator.cs` to wait for a randomized delay between 30 and 50 seconds before verifying and publishing aggregated messages.
+  - Updated `HumanMessagingEngine.cs` to clamp the calculated chunk typing delay between 5000 and 9000 ms.
+  - Updated `CRMAutoUpdateEngine.cs` and `ApprovalsController.cs` to synchronize the active open deal's Amount when a customer's budget is updated.
+
+### 2026-05-25: CRM Customer Budget Persistence and AI Sync Brain Seeding Fixes (Completed)
+- **Goal**: 
+  1. Allow setting or clearing the customer's budget via the update endpoint, ensuring setting it to `null` is saved to PostgreSQL and the active deal's amount is synchronized.
+  2. Fix the "مزامنة ذكاء AI" (Sync AI Brain) behavior so it does not delete the user's manual knowledge documents and replace them with mock data templates; instead, it should only seed templates if no documents exist, and otherwise re-index/regenerate embeddings for existing documents.
+- **Updates**:
+  - Modified `UpdateCustomerRequest` to use a backing field and flag (`IsBudgetSet`) to differentiate between omitting the `Budget` property and explicitly setting it to `null`.
+  - Updated `CRMController.UpdateCustomer` to save budget changes (including `null`) if `IsBudgetSet` is true.
+  - Synchronized `Deal.Amount` for the customer's active open deal to match the updated budget.
+  - Modified `AICompanyBrain.SyncBrainAsync` to only seed the 3 default policy templates if the database is empty, and otherwise re-index any existing user documents that lack chunks or embeddings.
+
+### 2026-05-25: SignalR AI Typing Indicator Broadcast (Completed)
+- **Goal**: Send a real-time SignalR event when an incoming WhatsApp message is received and AI auto-reply is enabled, so the frontend can notify agents that the AI is responding.
+- **Updates**:
+  - Update `WebhookController.cs` to check `ProjectSettings.AiAutoReplyEnabled` upon message ingestion.
+  - Broadcast `AITyping` message (passing `conversationId` and `isTyping: true`) to the tenant SignalR group (`project_{projectId}`).
+  - Add integration tests or ensure existing flows are compatible.
+
+## Chronological Log
+
+### 2026-05-25: WA Web Version Fetching and Webhook Payload Validation Fixes (Completed)
+- **Goal**: Resolve SyntaxError in `whatsapp-gateway` version fetching, fix backend webhook 400 Bad Request validation errors, and clean up integration test timing issues.
+- **Updates**:
+  - Replaced the nonexistent named export `fetchLatestWaWebVersion` with `fetchLatestBaileysVersion` from `@itsukichan/baileys` to fetch correct WhatsApp Web version strings.
+  - Made the `Name` and `MessageType` fields in `IncomingMessagePayload` DTO nullable (`string?`) in C# `WebhookController.cs`, resolving model state validation errors for partial JSON webhook requests.
+  - Increased sleep times in `test_ai_gemini.py` integration tests to 10 seconds to account for the simulated human typing delay (3.3 seconds) on auto-reply generation.
+  - Standardized the test phone number generator in `test_ai_gemini.py` to be digits-only, preventing mismatches caused by letters getting stripped during gateway JID sanitization.
+  - Verified all 9/9 Phase 1 core tests pass successfully.
+
 ### 2026-05-25: WhatsApp Gateway Message Sending and Receiving Fixes (Completed)
 - **Goal**: Address message transmission failure in `whatsapp-gateway` by introducing strict JID sanitization, socket state validation, dynamic session path resolution, and robust message unwrapping.
 - **Updates**:

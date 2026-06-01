@@ -110,7 +110,7 @@
 
 ### Tests for User Story 3
 
-- [x] T022 [P] [US3] Write Nginx rate-limiting, CORS, and SSL integration tests in `tests/phase_6/test_production.py`
+- [x] T022 [P] [US3] Write Nginx rate-limiting, CORS, and SSL integration tests in `tests/phase_6/test_zz_production.py`
 - [x] T023 [P] [US3] Write backup and restore validation tests in `tests/phase_6/test_deployment.py`
 
 ### Implementation for User Story 3

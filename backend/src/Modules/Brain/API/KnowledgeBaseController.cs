@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Modules.Brain.Services;
+using Shared.Infrastructure;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Modules.Brain.API
@@ -10,10 +13,21 @@ namespace Modules.Brain.API
     public class KnowledgeBaseController : ControllerBase
     {
         private readonly IKnowledgeBaseService _kbService;
+        private readonly AppDbContext _context;
 
-        public KnowledgeBaseController(IKnowledgeBaseService kbService)
+        public KnowledgeBaseController(IKnowledgeBaseService kbService, AppDbContext context)
         {
             _kbService = kbService;
+            _context = context;
+        }
+
+        [HttpGet("projects/{projectId}/knowledge")]
+        public async Task<IActionResult> GetDocuments(Guid projectId)
+        {
+            var docs = await _context.KnowledgeDocuments
+                .Where(d => d.ProjectId == projectId)
+                .ToListAsync();
+            return Ok(docs);
         }
 
         [HttpPost("projects/{projectId}/knowledge")]
@@ -49,6 +63,20 @@ namespace Modules.Brain.API
             {
                 var doc = await _kbService.RejectDocumentAsync(id);
                 return Ok(doc);
+            }
+            catch (ArgumentException ex)
+            {
+                return NotFound(ex.Message);
+            }
+        }
+
+        [HttpDelete("knowledge/{id}")]
+        public async Task<IActionResult> DeleteDocument(Guid id)
+        {
+            try
+            {
+                await _kbService.DeleteDocumentAsync(id);
+                return NoContent();
             }
             catch (ArgumentException ex)
             {

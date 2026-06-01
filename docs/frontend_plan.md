@@ -8,6 +8,27 @@ This document tracks all frontend requirements, design structures, pages, and im
 
 ## Chronological Log
 
+### 2026-05-25: CrmX Admin Redesign, Full Arabic Translations & Real-time AI Typing (Completed)
+- **Visual Redesign**: Redesign `Sidebar.tsx`, `Header.tsx`, and `layout.module.css` to implement the white sidebar (with centered user profile, avatar, name, green active dot) and the solid deep blue header (with white items, project selector, and search bar). Set up active items right-border highlight for RTL.
+- **Arabic Translation Pass**: Full UI copy, titles, labels, input place holders, modals, and tables translation to Arabic for CRM Pipeline, Campaigns, Follow-ups, Workflows, Knowledge Base, Approvals, and Reports.
+- **Real-time AI Typing Indicator**: Integrate `AITyping` event handler in `SignalRService.ts` and set up typing state in `Inbox.tsx` chat thread, displaying pulsing dots with custom text bubble.
+
+### 2026-05-25: Frontend Clean Code & CSS Modules Refactoring (Completed)
+- **Goal**: Reorganize route page layouts into modular packages, move all inline React CSS declarations to scoped CSS Modules (`.module.css`), and keep routing entry files as thin wrappers.
+- **Reorganized Directories**:
+  - `frontend/src/packages/auth/` — Authentication screens and styles (`Login.tsx`, `Register.tsx`, `auth.module.css`)
+  - `frontend/src/packages/dashboard/` — Analytical widgets and stats cards (`Dashboard.tsx`, `dashboard.module.css`)
+  - `frontend/src/packages/inbox/` — Three-panel real-time chat with SignalR and AI Suggestions (`Inbox.tsx`, `inbox.module.css`)
+  - `frontend/src/packages/crm/` — Contacts list and Deals pipeline Kanban board (`CustomerList.tsx`, `PipelineBoard.tsx`, `crm.module.css`)
+  - `frontend/src/packages/error/` — Runtime error diagnostics boundaries (`ErrorBoundary.tsx`, `error-boundary.module.css`)
+  - `frontend/src/components/layout/` — Desktop/mobile Sidebar, Header, and layout styling (`Sidebar.tsx`, `Header.tsx`, `layout.module.css`)
+  - `frontend/src/components/shared/` — Shared CRM customer details modal drawer (`CustomerDetail.tsx`, `customer-detail.module.css`)
+- **App Router Entry Wrappers**:
+  - Converted `src/app/page.tsx`, `src/app/register/page.tsx`, `src/app/(dashboard)/dashboard/page.tsx`, `src/app/(dashboard)/inbox/page.tsx`, `src/app/(dashboard)/crm/page.tsx`, `src/app/(dashboard)/crm/pipeline/page.tsx`, and `src/app/error.tsx` into thin route wrappers importing components from packages.
+- **Hardening and Verification**:
+  - Verified 100% successful compile of Next.js production builds using Turbopack with zero warnings/errors.
+  - Verified 50/50 test passes across all backend/frontend integration test modules.
+
 ### 2026-05-25: Phase 6 Frontend Dashboard, Realtime & Production Hardening (Completed)
 - **Goal**: Create a Next.js application side-by-side with backend containers, implement secure authentication client routing, build a real-time 3-panel chat inbox using SignalR, and deliver a clean CRM pipeline Kanban board.
 - **Pages**:
@@ -91,5 +112,5 @@ Ensure CORS, TLS, and Rate limiting policies are active:
 
 ```bash
 # Run the automated pytest suite
-pytest tests/phase_6/test_production.py
+pytest tests/phase_6/test_zz_production.py
 ```

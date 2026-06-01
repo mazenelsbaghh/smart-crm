@@ -1,0 +1,403 @@
+.backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal {
+  width: 900px;
+  max-width: 95vw;
+  max-height: 90vh;
+  border-radius: var(--radius-lg);
+  background-color: hsl(var(--bg-secondary));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.8);
+  overflow: hidden;
+}
+
+.loadingSpinner {
+  padding: var(--space-xl);
+  text-align: center;
+  color: hsl(var(--text-secondary));
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-lg);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: hsl(var(--text-primary));
+}
+
+.subtitle {
+  margin: var(--space-xs) 0 0 0;
+  font-size: 0.875rem;
+  color: hsl(var(--text-muted));
+}
+
+.closeBtn {
+  cursor: pointer;
+  color: hsl(var(--text-secondary));
+  padding: var(--space-xs);
+  border-radius: var(--radius-full);
+  transition: var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.closeBtn:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+  color: hsl(var(--text-primary));
+}
+
+.bodyGrid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  overflow-y: auto;
+  flex-grow: 1;
+}
+
+@media (max-width: 768px) {
+  .bodyGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.formColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.interactionsColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  padding-left: var(--space-lg);
+}
+
+@media (max-width: 768px) {
+  .interactionsColumn {
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: var(--space-lg);
+  }
+}
+
+.sectionTitle {
+  margin: 0 0 var(--space-xs) 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: hsl(var(--text-secondary));
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+
+.label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: hsl(var(--text-muted));
+}
+
+.input {
+  background-color: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  color: hsl(var(--text-primary));
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.9rem;
+  outline: none;
+  transition: var(--transition-normal);
+}
+
+.input:focus {
+  border-color: hsl(var(--accent-primary));
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.select {
+  background-color: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  color: hsl(var(--text-primary));
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.9rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.select:focus {
+  border-color: hsl(var(--accent-primary));
+}
+
+.textarea {
+  background-color: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  color: hsl(var(--text-primary));
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.9rem;
+  outline: none;
+  resize: vertical;
+}
+
+.textarea:focus {
+  border-color: hsl(var(--accent-primary));
+}
+
+.tagInputRow {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.addTagBtn {
+  background-color: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-md);
+  color: hsl(var(--accent-primary));
+  padding: 0 var(--space-md);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-fast);
+}
+
+.addTagBtn:hover {
+  background-color: rgba(99, 102, 241, 0.25);
+}
+
+.tagCloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.tag {
+  display: flex;
+  align-items: center;
+  background-color: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-full);
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  color: hsl(var(--text-secondary));
+}
+
+.smartLabelBadge {
+  font-size: 0.75rem;
+  background-color: hsla(262, 83%, 95%, 0.12);
+  color: hsl(262, 83%, 75%);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  font-weight: 600;
+}
+
+.removeTagIcon {
+  cursor: pointer;
+  margin-left: 6px;
+  color: hsl(var(--text-muted));
+  transition: var(--transition-fast);
+}
+
+.removeTagIcon:hover {
+  color: hsl(var(--accent-danger));
+}
+
+.saveBtn {
+  background-color: hsl(var(--accent-primary));
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: var(--space-md);
+  box-shadow: 0 4px 14px 0 rgba(99, 102, 241, 0.4);
+  transition: var(--transition-normal);
+}
+
+.saveBtn:hover:not(:disabled) {
+  background-color: hsl(var(--accent-primary-hover, 240, 80%, 65%));
+  transform: translateY(-1px);
+}
+
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scoreIndicatorPanel {
+  background-color: rgba(255,255,255,0.01);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+.scoreCards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+
+.scoreCard {
+  background-color: rgba(255,255,255,0.02);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+.scoreLabel {
+  font-size: 0.75rem;
+  color: hsl(var(--text-muted));
+  font-weight: 600;
+}
+
+.scoreVal {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: hsl(var(--text-primary));
+}
+
+.followUpFormBox {
+  background-color: rgba(255,255,255,0.01);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+.scheduleBtn {
+  background-color: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius-md);
+  color: hsl(var(--text-primary));
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-fast);
+}
+
+.scheduleBtn:hover:not(:disabled) {
+  background-color: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.15);
+}
+
+.scheduleBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.emptyFollowUps {
+  padding: var(--space-md);
+  text-align: center;
+  color: hsl(var(--text-muted));
+  font-size: 0.875rem;
+  background-color: rgba(255, 255, 255, 0.01);
+  border-radius: var(--radius-md);
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.followUpList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.followUpCard {
+  background-color: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.followUpHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-xs);
+}
+
+.followUpDate {
+  font-size: 0.75rem;
+  color: hsl(var(--text-secondary));
+  font-weight: 600;
+}
+
+.statusBadge {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.statusPending {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: hsl(20, 100%, 60%);
+}
+
+.statusCompleted {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: hsl(140, 100%, 60%);
+}
+
+.statusMissed {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: hsl(0, 100%, 65%);
+}
+
+.followUpNotes {
+  margin: 0;
+  font-size: 0.85rem;
+  color: hsl(var(--text-muted));
+}

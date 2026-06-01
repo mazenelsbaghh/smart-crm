@@ -60,6 +60,21 @@ namespace Modules.Projects.API
             }
 
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == id);
+            if (settings == null)
+            {
+                var settingsExistsAtAll = await _context.ProjectSettings.IgnoreQueryFilters().AnyAsync(s => s.ProjectId == id);
+                if (!settingsExistsAtAll)
+                {
+                    settings = new ProjectSettings
+                    {
+                        ProjectId = id,
+                        AiAutoReplyEnabled = false,
+                        Timezone = "UTC"
+                    };
+                    _context.ProjectSettings.Add(settings);
+                    await _context.SaveChangesAsync();
+                }
+            }
 
             return Ok(new
             {
@@ -80,13 +95,29 @@ namespace Modules.Projects.API
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == id);
             if (settings == null)
             {
-                return NotFound(new { error = "Settings not found for this project" });
-            }
+                var settingsExistsAtAll = await _context.ProjectSettings.IgnoreQueryFilters().AnyAsync(s => s.ProjectId == id);
+                if (settingsExistsAtAll)
+                {
+                    return NotFound(new { error = "Settings not found for this project" });
+                }
 
-            settings.AiAutoReplyEnabled = request.AiAutoReplyEnabled;
-            settings.Timezone = request.Timezone ?? "UTC";
-            settings.GeminiApiKey = request.GeminiApiKey;
-            settings.UpdatedAt = DateTime.UtcNow;
+                settings = new ProjectSettings
+                {
+                    ProjectId = id,
+                    AiAutoReplyEnabled = request.AiAutoReplyEnabled,
+                    Timezone = request.Timezone ?? "UTC",
+                    GeminiApiKey = request.GeminiApiKey,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.ProjectSettings.Add(settings);
+            }
+            else
+            {
+                settings.AiAutoReplyEnabled = request.AiAutoReplyEnabled;
+                settings.Timezone = request.Timezone ?? "UTC";
+                settings.GeminiApiKey = request.GeminiApiKey;
+                settings.UpdatedAt = DateTime.UtcNow;
+            }
 
             await _context.SaveChangesAsync();
             return Ok(new { message = "Settings updated successfully" });

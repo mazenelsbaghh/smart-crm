@@ -163,7 +163,7 @@ ai-test: ## Test Gemini API connection
 	@if [ -z "$(GEMINI_API_KEY)" ]; then \
 		echo "⚠️  GEMINI_API_KEY environment variable is not set."; \
 	else \
-		curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$(GEMINI_API_KEY)" \
+		curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$(GEMINI_API_KEY)" \
 			-H 'Content-Type: application/json' \
 			-d '{"contents":[{"parts":[{"text":"Hello, response short OK"}]}]}'; \
 	fi

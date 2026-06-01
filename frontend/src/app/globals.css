@@ -19,7 +19,7 @@
 
 .neon-btn {
   background: hsl(var(--accent-primary));
-  color: hsl(var(--text-primary));
+  color: #fff;
   border: none;
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
@@ -31,12 +31,11 @@
 .neon-btn:hover {
   background: hsl(var(--accent-secondary));
   box-shadow: var(--shadow-neon-pink);
-  transform: translateY(-1px);
 }
 
 .neon-btn-secondary {
   background: transparent;
-  color: hsl(var(--text-primary));
+  color: hsl(var(--accent-primary));
   border: 1px solid hsl(var(--accent-primary));
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
@@ -47,13 +46,13 @@
 
 .neon-btn-secondary:hover {
   border-color: hsl(var(--accent-secondary));
-  background: rgba(236, 72, 153, 0.1);
+  background: rgba(124, 58, 237, 0.08);
   box-shadow: var(--shadow-neon-pink);
 }
 
 .neon-input {
-  background: rgba(15, 23, 42, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: hsl(var(--bg-secondary));
+  border: 1px solid hsl(var(--bg-tertiary));
   color: hsl(var(--text-primary));
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);

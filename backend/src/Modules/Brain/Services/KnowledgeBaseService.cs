@@ -14,6 +14,7 @@ namespace Modules.Brain.Services
         Task<KnowledgeDocument> CreateDocumentAsync(Guid projectId, string title, string content, string? sourceUrl);
         Task<KnowledgeDocument> ApproveDocumentAsync(Guid id);
         Task<KnowledgeDocument> RejectDocumentAsync(Guid id);
+        Task DeleteDocumentAsync(Guid id);
     }
 
     public class KnowledgeBaseService : IKnowledgeBaseService
@@ -66,6 +67,19 @@ namespace Modules.Brain.Services
             doc.Status = "Draft";
             await _dbContext.SaveChangesAsync();
             return doc;
+        }
+
+        public async Task DeleteDocumentAsync(Guid id)
+        {
+            var doc = await _dbContext.KnowledgeDocuments
+                .Include(d => d.Chunks)
+                .FirstOrDefaultAsync(d => d.Id == id);
+            
+            if (doc == null) throw new ArgumentException("Document not found");
+
+            _dbContext.KnowledgeChunks.RemoveRange(doc.Chunks);
+            _dbContext.KnowledgeDocuments.Remove(doc);
+            await _dbContext.SaveChangesAsync();
         }
 
         private async Task GenerateChunksAndEmbeddingsAsync(KnowledgeDocument doc)

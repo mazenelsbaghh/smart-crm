@@ -3,8 +3,8 @@ import { AuthProvider } from '../context/auth-context';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Smart WhatsApp - Dashboard',
-  description: 'Smart WhatsApp Customer Core Web Portal',
+  title: 'سمارت كاستمر - لوحة التحكم',
+  description: 'منصة إدارة العملاء والردود الذكية عبر واتساب',
 };
 
 export default function RootLayout({
@@ -13,8 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body>
+    <html lang="ar" dir="rtl">
+      <body suppressHydrationWarning>
         <AuthProvider>
           {children}
         </AuthProvider>

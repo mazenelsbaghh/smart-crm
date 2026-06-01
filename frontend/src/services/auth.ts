@@ -24,6 +24,34 @@ export interface LoginResponse {
   user: User;
 }
 
+function parseJwt(token: string) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
+export function getUserFromToken(token: string): User | null {
+  const payload = parseJwt(token);
+  if (!payload) return null;
+  const role = payload.role || payload["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] || "Agent";
+  return {
+    id: payload.sub || "",
+    email: payload.email || "",
+    fullName: (payload.email || "").split('@')[0] || "Agent",
+    role: role,
+  };
+}
+
 export const authService = {
   async login(email: string, password: string): Promise<LoginResponse> {
     const response = await api.post<LoginResponse>('/api/auth/login', {
@@ -32,9 +60,14 @@ export const authService = {
     });
     const { accessToken, refreshToken, user } = response.data;
     
+    const userFromToken = getUserFromToken(accessToken);
+    const resolvedUser = user || userFromToken;
+
     localStorage.setItem('accessToken', accessToken);
     localStorage.setItem('refreshToken', refreshToken);
-    localStorage.setItem('user', JSON.stringify(user));
+    if (resolvedUser) {
+      localStorage.setItem('user', JSON.stringify(resolvedUser));
+    }
     
     // Auto load projects for the logged in user
     try {
@@ -46,7 +79,11 @@ export const authService = {
       console.error('Error fetching user projects during login', e);
     }
     
-    return response.data;
+    return {
+      accessToken,
+      refreshToken,
+      user: resolvedUser!,
+    };
   },
 
   async register(email: string, password: string, fullName: string): Promise<any> {

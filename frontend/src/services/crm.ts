@@ -12,6 +12,7 @@ export interface Customer {
   budget: number | null;
   interests: string[];
   pipelineStage?: string;
+  label?: string;
 }
 
 export interface PipelineStage {

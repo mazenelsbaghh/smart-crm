@@ -8,6 +8,11 @@ using Microsoft.AspNetCore.SignalR;
 using Modules.Conversations.Hubs;
 using Modules.Conversations.Domain;
 
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+
 namespace Modules.Conversations.API
 {
     [ApiController]
@@ -18,32 +23,65 @@ namespace Modules.Conversations.API
         private readonly Services.IAssignmentEngine _assignmentEngine;
         private readonly Shared.Queue.IEventBus _eventBus;
         private readonly IHubContext<NotificationHub> _hubContext;
+        private readonly IConfiguration _configuration;
+        private readonly HttpClient _httpClient;
 
-        public ConversationController(AppDbContext context, Services.IAssignmentEngine assignmentEngine, Shared.Queue.IEventBus eventBus, IHubContext<NotificationHub> hubContext)
+        public ConversationController(
+            AppDbContext context, 
+            Services.IAssignmentEngine assignmentEngine, 
+            Shared.Queue.IEventBus eventBus, 
+            IHubContext<NotificationHub> hubContext,
+            IConfiguration configuration)
         {
             _context = context;
             _assignmentEngine = assignmentEngine;
             _eventBus = eventBus;
             _hubContext = hubContext;
+            _configuration = configuration;
+            _httpClient = new HttpClient();
         }
 
         [HttpGet("projects/{projectId}/conversations")]
         public async Task<IActionResult> ListConversations(Guid projectId)
         {
             var conversations = await _context.Conversations
-                .Select(c => new
-                {
-                    c.Id,
-                    c.ProjectId,
-                    c.CustomerId,
-                    c.AssignedUserId,
-                    c.Status,
-                    c.LastMessageTimestamp,
-                    c.CreatedAt
-                })
+                .Where(c => c.ProjectId == projectId)
+                .Join(_context.Customers,
+                    c => c.CustomerId,
+                    cust => cust.Id,
+                    (c, cust) => new
+                    {
+                        c.Id,
+                        c.ProjectId,
+                        c.Status,
+                        c.LastMessageTimestamp,
+                        c.CreatedAt,
+                        c.AssignedUserId,
+                        customer = new
+                        {
+                            id = cust.Id,
+                            name = cust.Name ?? cust.PhoneNumber,
+                            phone = cust.PhoneNumber,
+                            avatarUrl = (string)null,
+                            label = cust.Label
+                        }
+                    })
                 .ToListAsync();
 
-            return Ok(conversations);
+            var mapped = conversations.Select(c => new
+            {
+                id = c.Id,
+                projectId = c.ProjectId,
+                status = c.Status,
+                lastMessageAt = c.LastMessageTimestamp.ToString("o"),
+                createdAt = c.CreatedAt.ToString("o"),
+                unreadCount = 0,
+                assignedAgentId = c.AssignedUserId,
+                assignedAgentName = (string)null,
+                customer = c.customer
+            }).ToList();
+
+            return Ok(mapped);
         }
 
         [HttpGet("conversations/{conversationId}/messages")]
@@ -56,7 +94,7 @@ namespace Modules.Conversations.API
                 {
                     id = m.Id,
                     conversationId = m.ConversationId,
-                    senderType = m.Direction == "Incoming" ? "Customer" : "Agent",
+                    senderType = m.Direction == "Incoming" ? "Customer" : (m.ExternalMessageId != null && m.ExternalMessageId.StartsWith("msg_ai_") ? "AI" : "Agent"),
                     content = m.Content,
                     createdAt = m.Timestamp.ToString("o"),
                     status = m.Direction == "Incoming" ? "Delivered" : "Sent",
@@ -117,6 +155,39 @@ namespace Modules.Conversations.API
             };
 
             await _hubContext.Clients.Group($"project_{conversation.ProjectId}").SendAsync("ReceiveMessage", payload);
+
+            // Forward to WhatsApp Gateway
+            var customer = await _context.Customers.FindAsync(conversation.CustomerId);
+            if (customer != null && !string.IsNullOrEmpty(customer.PhoneNumber))
+            {
+                var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+                var gatewayPayload = new
+                {
+                    projectId = conversation.ProjectId,
+                    to = customer.PhoneNumber,
+                    message = request.Content
+                };
+                
+                var jsonContent = new StringContent(
+                    JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
+                    Encoding.UTF8,
+                    "application/json"
+                );
+
+                try
+                {
+                    var response = await _httpClient.PostAsync($"{gatewayUrl}/api/whatsapp/send", jsonContent);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var responseBody = await response.Content.ReadAsStringAsync();
+                        Console.WriteLine($"[ConversationController] Gateway returned error code {response.StatusCode}: {responseBody}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ConversationController] Exception while calling WhatsApp Gateway: {ex.Message}");
+                }
+            }
 
             return Ok(payload);
         }

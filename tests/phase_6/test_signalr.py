@@ -4,16 +4,42 @@ import uuid
 import time
 import json
 import websockets
+import socket
+import ssl
 
-BASE_URL = "http://localhost:80/api"
-WS_URL = "ws://localhost:80/hubs/notifications"
+def get_base_urls():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    try:
+        s.connect(("localhost", 443))
+        s.close()
+        return "https://localhost:443/api", "wss://localhost:443/hubs/notifications", True
+    except Exception:
+        return "http://localhost:80/api", "ws://localhost:80/hubs/notifications", False
+
+BASE_URL, WS_URL, IS_HTTPS = get_base_urls()
+
+def get_client_kwargs():
+    kwargs = {}
+    if IS_HTTPS:
+        kwargs["verify"] = False
+    return kwargs
+
+def get_ws_kwargs():
+    kwargs = {}
+    if IS_HTTPS:
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        kwargs["ssl"] = ssl_context
+    return kwargs
 
 @pytest.mark.asyncio
 async def test_signalr_realtime_chat_delivery():
     sender_phone = f"555{uuid.uuid4().hex[:6]}"
     message_id = f"msg_{uuid.uuid4().hex}"
     
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, **get_client_kwargs()) as client:
         # 1. Create Project
         proj_resp = await client.post(f"{BASE_URL}/projects", json={"name": "RealtimeChatProj"})
         assert proj_resp.status_code == 201
@@ -38,7 +64,7 @@ async def test_signalr_realtime_chat_delivery():
 
         # 4. Connect to SignalR Notification Hub
         ws_endpoint = f"{WS_URL}?projectId={proj_id}"
-        async with websockets.connect(ws_endpoint) as ws:
+        async with websockets.connect(ws_endpoint, **get_ws_kwargs()) as ws:
             # Send SignalR JSON protocol handshake
             handshake = {"protocol": "json", "version": 1}
             await ws.send(json.dumps(handshake) + "\x1e")

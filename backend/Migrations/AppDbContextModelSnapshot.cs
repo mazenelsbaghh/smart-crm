@@ -354,6 +354,9 @@ namespace backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("AppointmentTime")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -371,6 +374,10 @@ namespace backend.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Type")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -594,6 +601,9 @@ namespace backend.Migrations
                     b.PrimitiveCollection<string[]>("Interests")
                         .IsRequired()
                         .HasColumnType("text[]");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("text");
 
                     b.Property<int>("LeadScore")
                         .HasColumnType("integer");

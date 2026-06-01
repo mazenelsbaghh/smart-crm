@@ -11,6 +11,7 @@
   - Wrote automated backup script `deploy/backup.sh` to package PostgreSQL dump, Redis memory snapshots, and MinIO storage files into a single timestamped gzip archive.
   - Wrote automated restore script `deploy/restore.sh` to clean and reinitialize Postgres DB, copy Redis/MinIO assets, and restart the backend service container with startup delay (`sleep 8`) to gracefully rebuild the connections pool and avoid 502 Bad Gateway errors.
   - Created root-level and deploy-level `docker-compose.production.yml` configuration files to orchestrate the backend, database, caching, object storage, Next.js frontend app, and Nginx containers.
+  - Fixed a critical Docker Compose environment override issue where the list syntax in `docker-compose.production.yml` wiped out environment variables defined in the base `docker-compose.yml` for the backend service. Converted the backend `environment` fields to map format in both compose configurations.
   - Created multi-stage `frontend/Dockerfile` to compile and package Next.js production builds.
   - Updated repository `Makefile` by adding targets: `make deploy` (production docker compose deployment), `make backup` (full state backup execution), `make restore FILE=...` (full state recovery), and `make test-phase-6` (Phase 6 individual test verification).
 

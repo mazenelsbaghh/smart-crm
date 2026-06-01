@@ -8,9 +8,10 @@
     "start": "node src/index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.6.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
     "axios": "^1.6.8",
     "express": "^4.19.2",
+    "pino": "^10.1.0",
     "redis": "^4.6.13"
   }
 }

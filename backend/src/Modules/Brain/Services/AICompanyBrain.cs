@@ -38,64 +38,104 @@ namespace Modules.Brain.Services
 
         public async Task SyncBrainAsync(Guid projectId)
         {
-            // Clear existing knowledge documents for this project to simulate clean sync
-            var oldDocs = await _dbContext.KnowledgeDocuments
-                .Where(d => d.ProjectId == projectId)
-                .ToListAsync();
-            _dbContext.KnowledgeDocuments.RemoveRange(oldDocs);
-            await _dbContext.SaveChangesAsync();
+            // Check if there are already any documents for this project
+            var hasDocs = await _dbContext.KnowledgeDocuments
+                .AnyAsync(d => d.ProjectId == projectId);
 
-            // Mock synchronized external data
-            var syncPayloads = new[]
+            if (!hasDocs)
             {
-                new { Title = "Pricing Policy 2026", Content = "Our default subscription is $49/month with a 10% discount for annual payments.", Source = "https://example.com/pricing" },
-                new { Title = "Shipping Policy", Content = "We offer free shipping on all orders over $50. Standard shipping takes 3-5 business days.", Source = "https://example.com/shipping" },
-                new { Title = "Refund Policy", Content = "Refunds are processed within 5-7 business days of request. Items must be returned in original condition.", Source = "https://example.com/refunds" }
-            };
-
-            foreach (var payload in syncPayloads)
-            {
-                var doc = new KnowledgeDocument
+                // Only seed default templates if the project has no documents
+                var syncPayloads = new[]
                 {
-                    ProjectId = projectId,
-                    Title = payload.Title,
-                    Content = payload.Content,
-                    SourceUrl = payload.Source,
-                    Status = "Published", // Auto-publish synced records
-                    Version = 1
+                    new { Title = "Pricing Policy 2026", Content = "Our default subscription is $49/month with a 10% discount for annual payments.", Source = "https://example.com/pricing" },
+                    new { Title = "Shipping Policy", Content = "We offer free shipping on all orders over $50. Standard shipping takes 3-5 business days.", Source = "https://example.com/shipping" },
+                    new { Title = "Refund Policy", Content = "Refunds are processed within 5-7 business days of request. Items must be returned in original condition.", Source = "https://example.com/refunds" }
                 };
 
-                _dbContext.KnowledgeDocuments.Add(doc);
-                await _dbContext.SaveChangesAsync(); // Generates doc.Id
-
-                // Split content into chunks (for simplicity, we create one chunk per sentence or paragraph)
-                var chunks = payload.Content.Split(new[] { ". " }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var chunkText in chunks)
+                foreach (var payload in syncPayloads)
                 {
-                    var cleanText = chunkText.Trim();
-                    if (!cleanText.EndsWith(".") && !string.IsNullOrEmpty(cleanText))
+                    var doc = new KnowledgeDocument
                     {
-                        cleanText += ".";
-                    }
-
-                    if (string.IsNullOrEmpty(cleanText)) continue;
-
-                    // Generate embeddings via Gemini
-                    var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(cleanText);
-                    var embeddingVector = new Vector(embeddingFloats);
-
-                    var chunk = new KnowledgeChunk
-                    {
-                        KnowledgeDocumentId = doc.Id,
-                        ChunkText = cleanText,
-                        Embedding = embeddingVector
+                        ProjectId = projectId,
+                        Title = payload.Title,
+                        Content = payload.Content,
+                        SourceUrl = payload.Source,
+                        Status = "Published", // Auto-publish synced records
+                        Version = 1
                     };
 
-                    _dbContext.KnowledgeChunks.Add(chunk);
-                }
-            }
+                    _dbContext.KnowledgeDocuments.Add(doc);
+                    await _dbContext.SaveChangesAsync(); // Generates doc.Id
 
-            await _dbContext.SaveChangesAsync();
+                    // Split content into chunks
+                    var chunks = payload.Content.Split(new[] { ". " }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var chunkText in chunks)
+                    {
+                        var cleanText = chunkText.Trim();
+                        if (!cleanText.EndsWith(".") && !string.IsNullOrEmpty(cleanText))
+                        {
+                            cleanText += ".";
+                        }
+
+                        if (string.IsNullOrEmpty(cleanText)) continue;
+
+                        var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(cleanText);
+                        var embeddingVector = new Vector(embeddingFloats);
+
+                        var chunk = new KnowledgeChunk
+                        {
+                            KnowledgeDocumentId = doc.Id,
+                            ChunkText = cleanText,
+                            Embedding = embeddingVector
+                        };
+
+                        _dbContext.KnowledgeChunks.Add(chunk);
+                    }
+                }
+                await _dbContext.SaveChangesAsync();
+            }
+            else
+            {
+                // If there are existing documents, make sure their chunks and embeddings are up-to-date
+                var documents = await _dbContext.KnowledgeDocuments
+                    .Where(d => d.ProjectId == projectId)
+                    .ToListAsync();
+
+                foreach (var doc in documents)
+                {
+                    // Check if this document already has chunks. If not, generate them.
+                    var hasChunks = await _dbContext.KnowledgeChunks
+                        .AnyAsync(c => c.KnowledgeDocumentId == doc.Id);
+
+                    if (!hasChunks)
+                    {
+                        var chunksText = doc.Content.Split(new[] { ". " }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var chunkText in chunksText)
+                        {
+                            var cleanText = chunkText.Trim();
+                            if (!cleanText.EndsWith(".") && !string.IsNullOrEmpty(cleanText))
+                            {
+                                cleanText += ".";
+                            }
+
+                            if (string.IsNullOrEmpty(cleanText)) continue;
+
+                            var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(cleanText);
+                            var embeddingVector = new Vector(embeddingFloats);
+
+                            var chunk = new KnowledgeChunk
+                            {
+                                KnowledgeDocumentId = doc.Id,
+                                ChunkText = cleanText,
+                                Embedding = embeddingVector
+                            };
+
+                            _dbContext.KnowledgeChunks.Add(chunk);
+                        }
+                    }
+                }
+                await _dbContext.SaveChangesAsync();
+            }
         }
 
         public async Task<List<KnowledgeChunkSearchDto>> SearchBrainAsync(Guid projectId, string query, int limit = 3)

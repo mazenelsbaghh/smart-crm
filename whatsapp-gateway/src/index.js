@@ -2,7 +2,7 @@ import express from 'express';
 import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
-import { startSession, getQR, getStatus, sendMessage, statuses, sessions } from './baileys-manager.js';
+import { startSession, getQR, getStatus, sendMessage, disconnectSession, statuses, sessions, sessionErrors } from './baileys-manager.js';
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -24,6 +24,19 @@ app.post('/api/whatsapp/session/start', async (req, res) => {
     }
 });
 
+app.post('/api/whatsapp/session/disconnect', async (req, res) => {
+    const { projectId } = req.body;
+    if (!projectId) {
+        return res.status(400).json({ error: 'projectId is required' });
+    }
+    try {
+        const result = await disconnectSession(projectId);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/whatsapp/session/qr', (req, res) => {
     const { projectId } = req.query;
     if (!projectId) {
@@ -31,7 +44,9 @@ app.get('/api/whatsapp/session/qr', (req, res) => {
     }
     const qr = getQR(projectId);
     if (!qr) {
-        return res.status(404).json({ error: 'QR code not ready or session already connected' });
+        return res.status(404).json({
+            error: sessionErrors.get(projectId) || 'QR code not ready or session already connected'
+        });
     }
     res.json({ qr });
 });
@@ -111,6 +126,11 @@ app.post('/api/whatsapp/mock/clear', (req, res) => {
 app.listen(PORT, async () => {
     console.log(`WhatsApp Gateway listening on port ${PORT}`);
     
+    if (process.env.AUTO_RESTORE_SESSIONS !== 'true') {
+        console.log('[GATEWAY STARTUP] Auto-restore sessions disabled. Sessions will start on demand.');
+        return;
+    }
+
     // Auto-restore sessions from /app/sessions or local sessions directory
     try {
         let sessionsDir = '/app/sessions';

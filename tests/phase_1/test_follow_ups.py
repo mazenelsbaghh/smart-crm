@@ -90,3 +90,88 @@ async def test_follow_ups_flow():
         assert list_missed.status_code == 200
         missed = list_missed.json()
         assert any(f["id"] == overdue_followup["id"] for f in missed)
+
+@pytest.mark.asyncio
+async def test_dynamic_follow_ups_types():
+    sender_phone = f"555{uuid.uuid4().hex[:6]}"
+    message_id = f"msg_{uuid.uuid4().hex}"
+    
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        # Create Project
+        proj_resp = await client.post(f"{BASE_URL}/projects", json={"name": "DynamicFollowUpTypesProj"})
+        assert proj_resp.status_code == 201
+        proj_id = proj_resp.json()["id"]
+
+        # Ingest message via webhook to auto-create Customer
+        await client.post(
+            f"{BASE_URL}/webhooks/whatsapp/message",
+            json={
+                "projectId": proj_id,
+                "messageId": message_id,
+                "sender": sender_phone,
+                "content": "Hi, dynamic types.",
+                "messageType": "Text",
+                "timestamp": int(time.time())
+            }
+        )
+
+        headers = {"X-Project-Id": proj_id}
+        customers_resp = await client.get(f"{BASE_URL}/projects/{proj_id}/customers", headers=headers)
+        customer_id = customers_resp.json()[0]["id"]
+
+        # 1. Nurturing follow-up should set DueDate directly to requested value
+        nurturing_due = (datetime.utcnow() + timedelta(days=2)).isoformat() + "Z"
+        nurturing_resp = await client.post(
+            f"{BASE_URL}/customers/{customer_id}/follow-ups",
+            headers=headers,
+            json={
+                "dueDate": nurturing_due,
+                "notes": "Nurturing notes",
+                "type": "Nurturing"
+            }
+        )
+        assert nurturing_resp.status_code == 201
+        nurturing = nurturing_resp.json()
+        assert nurturing["type"] == "Nurturing"
+        assert nurturing["appointmentTime"] is None
+        # Check due date is close to the requested date (seconds difference < 5)
+        parsed_nurturing_due = datetime.strptime(nurturing["dueDate"].rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S")
+        parsed_requested_nurturing = datetime.strptime(nurturing_due.rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S")
+        assert abs((parsed_nurturing_due - parsed_requested_nurturing).total_seconds()) < 5
+
+        # 2. AppointmentReminder follow-up (e.g. appointment in 48 hours) should calculate DueDate as exactly 24 hours before
+        appointment_time = (datetime.utcnow() + timedelta(hours=48)).isoformat() + "Z"
+        appt_resp = await client.post(
+            f"{BASE_URL}/customers/{customer_id}/follow-ups",
+            headers=headers,
+            json={
+                "notes": "Appointment reminder notes",
+                "type": "AppointmentReminder",
+                "appointmentTime": appointment_time
+            }
+        )
+        assert appt_resp.status_code == 201
+        appt = appt_resp.json()
+        assert appt["type"] == "AppointmentReminder"
+        
+        parsed_appt_time = datetime.strptime(appt["appointmentTime"].rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S")
+        parsed_due = datetime.strptime(appt["dueDate"].rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S")
+        # DueDate must be exactly 24 hours before AppointmentTime
+        assert abs((parsed_appt_time - parsed_due).total_seconds() - 86400) < 5
+
+        # 3. AppointmentReminder scheduled less than 24 hours away (e.g. in 10 hours) should clamp DueDate to current time (trigger immediately)
+        close_appointment_time = (datetime.utcnow() + timedelta(hours=10)).isoformat() + "Z"
+        close_appt_resp = await client.post(
+            f"{BASE_URL}/customers/{customer_id}/follow-ups",
+            headers=headers,
+            json={
+                "notes": "Immediate reminder notes",
+                "type": "AppointmentReminder",
+                "appointmentTime": close_appointment_time
+            }
+        )
+        assert close_appt_resp.status_code == 201
+        close_appt = close_appt_resp.json()
+        parsed_close_due = datetime.strptime(close_appt["dueDate"].rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S")
+        # Due date should be very close to the current UTC time (e.g. within 5 seconds)
+        assert abs((parsed_close_due - datetime.utcnow()).total_seconds()) < 5

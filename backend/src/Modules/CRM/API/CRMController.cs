@@ -31,16 +31,17 @@ namespace Modules.CRM.API
                 .Where(c => c.ProjectId == projectId)
                 .ToListAsync();
 
-            // Find all active deals for this project to map pipeline stages
-            var activeDeals = await _context.Deals
-                .Where(d => d.ProjectId == projectId && d.Status == DealStatus.Open)
+            // Find all deals for this project to map pipeline stages
+            var allDeals = await _context.Deals
+                .Where(d => d.ProjectId == projectId)
+                .OrderByDescending(d => d.ClosedAt ?? d.CreatedAt)
                 .ToListAsync();
 
             var stages = await _context.PipelineStages
                 .Where(s => s.ProjectId == projectId)
                 .ToDictionaryAsync(s => s.Id, s => s.Name);
 
-            var customerStages = activeDeals
+            var customerStages = allDeals
                 .GroupBy(d => d.CustomerId)
                 .ToDictionary(g => g.Key, g => 
                 {
@@ -60,6 +61,7 @@ namespace Modules.CRM.API
                 c.Notes,
                 c.Budget,
                 c.Interests,
+                c.Label,
                 pipelineStage = customerStages.TryGetValue(c.Id, out var stage) ? stage : "New"
             });
 
@@ -72,13 +74,15 @@ namespace Modules.CRM.API
             var customer = await _context.Customers.FindAsync(id);
             if (customer == null) return NotFound();
 
-            var activeDeal = await _context.Deals
-                .FirstOrDefaultAsync(d => d.CustomerId == id && d.Status == DealStatus.Open);
+            var lastDeal = await _context.Deals
+                .Where(d => d.CustomerId == id)
+                .OrderByDescending(d => d.ClosedAt ?? d.CreatedAt)
+                .FirstOrDefaultAsync();
             
             string stageName = "New";
-            if (activeDeal != null)
+            if (lastDeal != null)
             {
-                var stage = await _context.PipelineStages.FindAsync(activeDeal.PipelineStageId);
+                var stage = await _context.PipelineStages.FindAsync(lastDeal.PipelineStageId);
                 if (stage != null)
                 {
                     stageName = stage.Name;
@@ -97,6 +101,7 @@ namespace Modules.CRM.API
                 customer.Notes,
                 customer.Budget,
                 customer.Interests,
+                customer.Label,
                 pipelineStage = stageName
             });
         }
@@ -115,9 +120,10 @@ namespace Modules.CRM.API
             customer.LeadScore = request.LeadScore ?? customer.LeadScore;
             customer.Tags = request.Tags ?? customer.Tags;
             customer.Notes = request.Notes ?? customer.Notes;
-            if (request.Budget.HasValue)
+            customer.Label = request.Label ?? customer.Label;
+            if (request.IsBudgetSet)
             {
-                customer.Budget = request.Budget.Value;
+                customer.Budget = request.Budget;
             }
 
             // Handle pipeline stage update
@@ -154,14 +160,37 @@ namespace Modules.CRM.API
                 if (activeDeal != null)
                 {
                     activeDeal.PipelineStageId = stage.Id;
-                    if (request.Budget.HasValue)
+                    if (request.IsBudgetSet)
                     {
-                        activeDeal.Amount = request.Budget.Value;
+                        activeDeal.Amount = request.Budget ?? 0;
+                    }
+                    if (stage.Name.Equals("Won", StringComparison.OrdinalIgnoreCase))
+                    {
+                        activeDeal.Status = DealStatus.Won;
+                        activeDeal.ClosedAt = DateTime.UtcNow;
+                    }
+                    else if (stage.Name.Equals("Lost", StringComparison.OrdinalIgnoreCase))
+                    {
+                        activeDeal.Status = DealStatus.Lost;
+                        activeDeal.ClosedAt = DateTime.UtcNow;
                     }
                     _context.Entry(activeDeal).State = EntityState.Modified;
                 }
                 else
                 {
+                    var status = DealStatus.Open;
+                    DateTime? closedAt = null;
+                    if (stage.Name.Equals("Won", StringComparison.OrdinalIgnoreCase))
+                    {
+                        status = DealStatus.Won;
+                        closedAt = DateTime.UtcNow;
+                    }
+                    else if (stage.Name.Equals("Lost", StringComparison.OrdinalIgnoreCase))
+                    {
+                        status = DealStatus.Lost;
+                        closedAt = DateTime.UtcNow;
+                    }
+
                     var deal = new Deal
                     {
                         Id = Guid.NewGuid(),
@@ -170,7 +199,8 @@ namespace Modules.CRM.API
                         Title = $"{customer.Name}'s Deal",
                         Amount = customer.Budget ?? 0,
                         PipelineStageId = stage.Id,
-                        Status = DealStatus.Open
+                        Status = status,
+                        ClosedAt = closedAt
                     };
                     _context.Deals.Add(deal);
                 }
@@ -186,6 +216,12 @@ namespace Modules.CRM.API
                     if (stage != null)
                     {
                         resolvedStageName = stage.Name;
+                    }
+
+                    if (request.IsBudgetSet)
+                    {
+                        activeDeal.Amount = request.Budget ?? 0;
+                        _context.Entry(activeDeal).State = EntityState.Modified;
                     }
                 }
             }
@@ -216,6 +252,7 @@ namespace Modules.CRM.API
                 customer.Notes,
                 customer.Budget,
                 customer.Interests,
+                customer.Label,
                 pipelineStage = resolvedStageName
             });
         }
@@ -226,13 +263,35 @@ namespace Modules.CRM.API
             var customer = await _context.Customers.FindAsync(customerId);
             if (customer == null) return NotFound("Customer not found");
 
+            string resolvedType = string.IsNullOrEmpty(request.Type) ? "Nurturing" : request.Type;
+            DateTime calculatedDueDate = DateTime.SpecifyKind(request.DueDate, DateTimeKind.Utc);
+            DateTime? apptTime = null;
+
+            if (resolvedType == "AppointmentReminder")
+            {
+                if (!request.AppointmentTime.HasValue)
+                {
+                    return BadRequest("AppointmentTime is required for AppointmentReminder type");
+                }
+
+                apptTime = DateTime.SpecifyKind(request.AppointmentTime.Value, DateTimeKind.Utc);
+                calculatedDueDate = apptTime.Value.AddDays(-1);
+
+                if (calculatedDueDate < DateTime.UtcNow)
+                {
+                    calculatedDueDate = DateTime.UtcNow;
+                }
+            }
+
             var followUp = new FollowUp
             {
                 CustomerId = customerId,
                 ProjectId = customer.ProjectId, // Inherit from customer
-                DueDate = DateTime.SpecifyKind(request.DueDate, DateTimeKind.Utc),
+                DueDate = calculatedDueDate,
                 Status = "Pending",
-                Notes = request.Notes ?? string.Empty
+                Notes = request.Notes ?? string.Empty,
+                Type = resolvedType,
+                AppointmentTime = apptTime
             };
 
             _context.FollowUps.Add(followUp);
@@ -261,6 +320,17 @@ namespace Modules.CRM.API
 
             var followUps = await query.ToListAsync();
             return Ok(followUps);
+        }
+
+        [HttpPost("follow-ups/{id}/complete")]
+        public async Task<IActionResult> CompleteFollowUp(Guid id)
+        {
+            var followUp = await _context.FollowUps.FindAsync(id);
+            if (followUp == null) return NotFound();
+
+            followUp.Status = "Completed";
+            await _context.SaveChangesAsync();
+            return Ok(followUp);
         }
 
         [HttpGet("projects/{projectId}/crm-proposals")]
@@ -294,7 +364,21 @@ namespace Modules.CRM.API
         public int? LeadScore { get; set; }
         public string[]? Tags { get; set; }
         public string? Notes { get; set; }
-        public decimal? Budget { get; set; }
+        public string? Label { get; set; }
+
+        private decimal? _budget;
+        public bool IsBudgetSet { get; private set; }
+
+        public decimal? Budget
+        {
+            get => _budget;
+            set
+            {
+                _budget = value;
+                IsBudgetSet = true;
+            }
+        }
+
         public string? PipelineStage { get; set; }
     }
 
@@ -302,5 +386,7 @@ namespace Modules.CRM.API
     {
         public DateTime DueDate { get; set; }
         public string Notes { get; set; }
+        public string? Type { get; set; }
+        public DateTime? AppointmentTime { get; set; }
     }
 }

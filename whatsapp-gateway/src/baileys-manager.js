@@ -1,13 +1,57 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion } from '@itsukichan/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import path from 'path';
 import fs from 'fs';
 import axios from 'axios';
+import pino from 'pino';
 
 export const sessions = new Map();
 export const qrCodes = new Map();
 export const statuses = new Map();
+export const sessionErrors = new Map();
+const reconnectAttempts = new Map();
+const reconnectTimers = new Map();
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:5000';
+const MAX_RECONNECT_ATTEMPTS = Number(process.env.MAX_RECONNECT_ATTEMPTS || 3);
+const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
+
+function extractPhoneFromJid(jid) {
+    if (!jid || !jid.includes('@s.whatsapp.net')) return null;
+    return jid.split('@')[0].replace(/\D/g, '') || null;
+}
+
+function resolveIncomingSender(key) {
+    const rawJid = key.remoteJid || '';
+    const senderLid = rawJid.endsWith('@lid') ? rawJid : null;
+    const candidatePhone =
+        extractPhoneFromJid(key.senderPn) ||
+        extractPhoneFromJid(key.remoteJidAlt) ||
+        extractPhoneFromJid(key.participantPn) ||
+        extractPhoneFromJid(key.participant);
+
+    if (candidatePhone) {
+        return {
+            sender: candidatePhone,
+            senderJid: `${candidatePhone}@s.whatsapp.net`,
+            senderLid
+        };
+    }
+
+    if (rawJid.endsWith('@s.whatsapp.net')) {
+        const phone = extractPhoneFromJid(rawJid);
+        return {
+            sender: phone || rawJid,
+            senderJid: rawJid,
+            senderLid: null
+        };
+    }
+
+    return {
+        sender: rawJid,
+        senderJid: rawJid,
+        senderLid
+    };
+}
 
 export async function startSession(projectId) {
     if (sessions.has(projectId)) {
@@ -15,6 +59,8 @@ export async function startSession(projectId) {
     }
 
     statuses.set(projectId, 'Initializing');
+    sessionErrors.delete(projectId);
+    reconnectAttempts.set(projectId, reconnectAttempts.get(projectId) || 0);
     
     let sessionsDir = '/app/sessions';
     try {
@@ -33,16 +79,17 @@ export async function startSession(projectId) {
 
     let version = [2, 3000, 1017531287];
     try {
-        const { version: latestVersion } = await fetchLatestWaWebVersion();
+        const { version: latestVersion } = await fetchLatestBaileysVersion();
         version = latestVersion;
         console.log(`Using fetched WA Web version: ${version.join('.')}`);
     } catch (err) {
         console.warn('Failed to fetch latest WA Web version, using fallback:', err.message);
     }
 
-    const sock = (makeWASocket.default || makeWASocket)({
+    const sock = makeWASocket({
         version,
         auth: state,
+        logger: pino({ level: process.env.BAILEYS_LOG_LEVEL || 'warn' }),
         printQRInTerminal: false
     });
 
@@ -58,22 +105,44 @@ export async function startSession(projectId) {
         }
         
         if (qr) {
+            console.log(`QR code updated for project ${projectId}`);
             qrCodes.set(projectId, qr);
             statuses.set(projectId, 'Initializing');
+            sessionErrors.delete(projectId);
+            reconnectAttempts.set(projectId, 0);
         }
 
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log(`Connection closed for project ${projectId}. Reconnecting: ${shouldReconnect}`);
+            const disconnectStatusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = disconnectStatusCode !== DisconnectReason.loggedOut;
+            const errorMessage = lastDisconnect?.error?.message || 'WhatsApp connection closed before pairing completed';
+            const attempts = (reconnectAttempts.get(projectId) || 0) + 1;
+            reconnectAttempts.set(projectId, attempts);
+            console.log(`Connection closed for project ${projectId}. Reconnecting: ${shouldReconnect}. Attempt: ${attempts}/${MAX_RECONNECT_ATTEMPTS}. Reason: ${errorMessage}`);
             
-            qrCodes.delete(projectId);
-            statuses.set(projectId, 'Disconnected');
+            sessionErrors.set(projectId, errorMessage);
             
-            if (shouldReconnect) {
+            if (shouldReconnect && sessions.has(projectId) && attempts < MAX_RECONNECT_ATTEMPTS) {
                 sessions.delete(projectId);
-                setTimeout(() => startSession(projectId), 5000);
+                statuses.set(projectId, 'Initializing');
+                const timer = setTimeout(() => {
+                    reconnectTimers.delete(projectId);
+                    startSession(projectId).catch((err) => {
+                        sessionErrors.set(projectId, err.message);
+                        statuses.set(projectId, 'Disconnected');
+                    });
+                }, RECONNECT_DELAY_MS);
+                reconnectTimers.set(projectId, timer);
             } else {
                 sessions.delete(projectId);
+                qrCodes.delete(projectId);
+                statuses.set(projectId, 'Disconnected');
+                sessionErrors.set(
+                    projectId,
+                    shouldReconnect
+                        ? `${errorMessage}. Unable to generate a WhatsApp QR code after ${attempts} attempts.`
+                        : errorMessage
+                );
                 try {
                     fs.rmSync(authDir, { recursive: true, force: true });
                 } catch (e) {
@@ -84,6 +153,8 @@ export async function startSession(projectId) {
             console.log(`Connection opened successfully for project ${projectId}`);
             statuses.set(projectId, 'Connected');
             qrCodes.delete(projectId);
+            sessionErrors.delete(projectId);
+            reconnectAttempts.set(projectId, 0);
         }
     });
 
@@ -105,9 +176,7 @@ export async function startSession(projectId) {
 
                     if (!mInfo) continue;
 
-                    const sender = msg.key.remoteJid.endsWith('@s.whatsapp.net')
-                        ? msg.key.remoteJid.split('@')[0]
-                        : msg.key.remoteJid;
+                    const { sender, senderJid, senderLid } = resolveIncomingSender(msg.key);
                     let content = '';
                     let messageType = 'Text';
 
@@ -151,6 +220,9 @@ export async function startSession(projectId) {
                             projectId,
                             messageId: msg.key.id,
                             sender,
+                            senderJid,
+                            senderLid,
+                            name: msg.pushName || '',
                             content,
                             messageType,
                             timestamp
@@ -163,7 +235,7 @@ export async function startSession(projectId) {
         }
     });
 
-    return { status: 'Initializing', message: 'Session started. Scannable QR code generated.' };
+    return { status: 'Initializing', message: 'Session started. Waiting for a scannable QR code.' };
 }
 
 export function getQR(projectId) {
@@ -174,7 +246,8 @@ export function getStatus(projectId) {
     const status = statuses.get(projectId) || 'Disconnected';
     const sock = sessions.get(projectId);
     const phoneNumber = sock?.user?.id?.split(':')[0] || null;
-    return { status, phoneNumber };
+    const error = sessionErrors.get(projectId) || null;
+    return { status, phoneNumber, error };
 }
 
 export async function sendMessage(projectId, to, text) {
@@ -212,4 +285,45 @@ export async function sendMessage(projectId, to, text) {
         console.error(`[baileys-manager] sock.sendMessage failed to ${jid}. error=${err.message}`, err);
         throw new Error(`Failed to send WhatsApp message to ${jid}: ${err.message}`);
     }
+}
+
+export async function disconnectSession(projectId) {
+    const sock = sessions.get(projectId);
+    const reconnectTimer = reconnectTimers.get(projectId);
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimers.delete(projectId);
+    }
+    sessions.delete(projectId);
+    qrCodes.delete(projectId);
+    sessionErrors.delete(projectId);
+    reconnectAttempts.delete(projectId);
+    statuses.set(projectId, 'Disconnected');
+
+    if (sock) {
+        try {
+            sock.end();
+        } catch (err) {
+            console.error(`Error ending socket for project ${projectId}:`, err.message);
+        }
+    }
+
+    let sessionsDir = '/app/sessions';
+    try {
+        if (!fs.existsSync(sessionsDir)) {
+            sessionsDir = path.resolve('./sessions');
+        }
+    } catch (e) {
+        sessionsDir = path.resolve('./sessions');
+    }
+    const authDir = path.join(sessionsDir, projectId);
+    if (fs.existsSync(authDir)) {
+        try {
+            fs.rmSync(authDir, { recursive: true, force: true });
+            console.log(`Cleaned up credentials directory for project ${projectId}`);
+        } catch (e) {
+            console.error(`Failed to clean auth files for project ${projectId}:`, e.message);
+        }
+    }
+    return { status: 'Disconnected', message: 'Session disconnected and cleaned up.' };
 }

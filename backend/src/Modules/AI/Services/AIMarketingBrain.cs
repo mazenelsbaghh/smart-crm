@@ -20,11 +20,20 @@ namespace Modules.AI.Services
         public CRMEntities Entities { get; set; } = new CRMEntities();
         public string ReplyContent { get; set; } = string.Empty;
         public double Confidence { get; set; } = 1.0;
+        public string Label { get; set; } = string.Empty;
+        public string PipelineStage { get; set; } = "New";
     }
 
     public interface IAIMarketingBrain
     {
-        Task<MarketingAnalysisResult> AnalyzeAndGenerateReplyAsync(string messageContent, string apiKeyOverride = null);
+        Task<MarketingAnalysisResult> AnalyzeAndGenerateReplyAsync(
+            string messageContent, 
+            string apiKeyOverride = null, 
+            string brainContext = null, 
+            string chatHistory = null, 
+            string customerMemory = null,
+            string[] existingLabels = null,
+            string customerProfile = null);
     }
 
     public class AIMarketingBrain : IAIMarketingBrain
@@ -36,7 +45,14 @@ namespace Modules.AI.Services
             _geminiClient = geminiClient;
         }
 
-        public async Task<MarketingAnalysisResult> AnalyzeAndGenerateReplyAsync(string messageContent, string apiKeyOverride = null)
+        public async Task<MarketingAnalysisResult> AnalyzeAndGenerateReplyAsync(
+            string messageContent, 
+            string apiKeyOverride = null, 
+            string brainContext = null, 
+            string chatHistory = null, 
+            string customerMemory = null,
+            string[] existingLabels = null,
+            string customerProfile = null)
         {
             var systemPrompt = @"You are a high-performing AI Marketing Brain and CRM assistant.
 Analyze the customer's message and generate a response.
@@ -45,9 +61,10 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
   ""intent"": ""inquiry | complaint | purchase | follow-up | greeting"",
   ""sentiment"": ""positive | neutral | negative | angry"",
   ""replyStyle"": ""Fast | Casual | Sales | Support | VIP | Complaint | Follow-up"",
+  ""label"": ""a short Arabic label (max 3 words) classifying the customer's current state/need based on the message, e.g., 'استفسار عن السعر', 'طلب شراء', 'شكوى', 'ترحيب'"",
+  ""pipelineStage"": ""New | Contacted | Qualified | Proposal | Negotiation | Won | Lost"",
   ""entities"": {
     ""city"": ""string | null"",
-    ""budget"": number | null,
     ""interests"": [""string""],
     ""timeline"": ""string | null""
   },
@@ -64,7 +81,44 @@ Guidelines for replyStyle:
 - Complaint: Apologetic, resolution-focused, highly empathetic.
 - Follow-up: Re-engaging, curious.
 
-Ensure the replyContent is written in the same language as the customer's message. Don't use placeholders.";
+Guidelines for replyContent formatting and unity:
+- CRITICAL: Write a SINGLE cohesive response. Do NOT paste multiple different scripts, greeting scripts, or welcome templates together.
+- Do NOT repeat greetings (e.g. do not say 'أهلاً' or 'مرحباً' or 'نورتنا' more than once in the same response).
+- Do NOT include multiple signature lines or repeat agent names (e.g. never output '- ساندي ✨' more than once).
+- If the reference knowledge base contains multiple templates, scripts, or FAQs, synthesize their facts into a single natural message.
+- Strictly avoid repeating the same request/question (e.g. do not ask for the same customer details multiple times or in different styles).
+- Ensure there are no redundant paragraphs. Keep it professional, warm, and concise in Arabic.
+- Use double newlines ('\n\n') ONLY to separate logical paragraphs. Keep the number of paragraphs to a minimum (typically 1 to 3 paragraphs max) to avoid sending too many small message bubbles.
+
+Ensure the replyContent is written in the same language as the customer's message. Don't use placeholders.
+Be concise, natural, and friendly. Do not repeat greetings or duplicate questions. Keep your replyContent focused on answering the customer's direct query without unnecessary fluff.";
+
+            if (existingLabels != null && existingLabels.Length > 0)
+            {
+                var labelsList = string.Join(", ", System.Linq.Enumerable.Select(existingLabels, l => $"'{l}'"));
+                systemPrompt += $"\n\nExisting Customer Labels currently in use in our database:\n[{labelsList}]\nChoose ONE of these exact existing labels for the \"label\" field. Do not invent a new label if existing labels are provided above.";
+            }
+
+            if (!string.IsNullOrEmpty(customerProfile))
+            {
+                systemPrompt += $"\n\nHere is the customer's current CRM profile details:\n{customerProfile}\n" +
+                                 "Identify if any fields are marked as \"Missing\". If there are missing fields (such as Name or City), you MUST politely and naturally ask the customer for them during the conversation. Do not ask for everything at once; ask for them step-by-step in a friendly Arabic conversational style, only if it fits the flow of the conversation.";
+            }
+
+            if (!string.IsNullOrEmpty(brainContext))
+            {
+                systemPrompt += $"\n\nUse the following reference knowledge base information to accurately answer the customer's questions if applicable:\n{brainContext}\n\nDo not invent facts outside this reference information if it contains pricing, shipping, or policies.";
+            }
+
+            if (!string.IsNullOrEmpty(customerMemory))
+            {
+                systemPrompt += $"\n\nHere is what you remember about this customer (Customer Profile & Memory):\n{customerMemory}";
+            }
+
+            if (!string.IsNullOrEmpty(chatHistory))
+            {
+                systemPrompt += $"\n\nHere is the recent chat history between the customer and Agent/AI for context:\n{chatHistory}";
+            }
 
             var fullPrompt = $"{systemPrompt}\n\nCustomer Message: \"{messageContent}\"";
 
@@ -74,7 +128,13 @@ Ensure the replyContent is written in the same language as the customer's messag
             {
                 return new MarketingAnalysisResult
                 {
-                    ReplyContent = "[AI Error Recovery] Empty response from AI engine."
+                    Intent = "inquiry",
+                    Sentiment = "neutral",
+                    ReplyStyle = "Casual",
+                    ReplyContent = "أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.",
+                    Confidence = 0.5,
+                    Label = "استفسار عام",
+                    PipelineStage = "New"
                 };
             }
 
@@ -102,6 +162,14 @@ Ensure the replyContent is written in the same language as the customer's messag
                     // Ensure entities is initialized
                     result.Entities ??= new CRMEntities();
                     result.Entities.Interests ??= Array.Empty<string>();
+                    if (string.IsNullOrEmpty(result.Label))
+                    {
+                        result.Label = "استفسار عام";
+                    }
+                    if (string.IsNullOrEmpty(result.PipelineStage))
+                    {
+                        result.PipelineStage = "New";
+                    }
                     return result;
                 }
             }
@@ -111,13 +179,31 @@ Ensure the replyContent is written in the same language as the customer's messag
             }
 
             // Fallback if not valid JSON
+            string fallbackReply = rawResponse;
+            if (string.IsNullOrEmpty(rawResponse) || 
+                rawResponse.StartsWith("[AI_ERROR]") || 
+                rawResponse.StartsWith("[AI Error Recovery]") ||
+                !rawResponse.Trim().StartsWith("{"))
+            {
+                if (rawResponse != null && rawResponse.StartsWith("[Mock Gemini Reply]"))
+                {
+                    fallbackReply = rawResponse;
+                }
+                else
+                {
+                    fallbackReply = "أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.";
+                }
+            }
+
             return new MarketingAnalysisResult
             {
                 Intent = "inquiry",
                 Sentiment = "neutral",
                 ReplyStyle = "Casual",
-                ReplyContent = rawResponse, // Use the raw text as content
-                Confidence = 0.5
+                ReplyContent = fallbackReply,
+                Confidence = 0.5,
+                Label = "استفسار عام",
+                PipelineStage = "New"
             };
         }
     }

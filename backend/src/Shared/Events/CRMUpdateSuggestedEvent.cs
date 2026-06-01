@@ -14,5 +14,7 @@ namespace Shared.Events
         public string Intent { get; set; }
         public string Sentiment { get; set; }
         public double Confidence { get; set; }
+        public string Label { get; set; }
+        public string PipelineStage { get; set; } = "New";
     }
 }

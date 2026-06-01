@@ -83,6 +83,15 @@ namespace Modules.WhatsApp.API
             var result = await response.Content.ReadAsStringAsync();
             return StatusCode((int)response.StatusCode, JsonDocument.Parse(result));
         }
+
+        [HttpPost("session/disconnect")]
+        public async Task<IActionResult> DisconnectSession([FromBody] DisconnectSessionRequest request)
+        {
+            var content = new StringContent(JsonSerializer.Serialize(request, _jsonOptions), Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync($"{_gatewayUrl}/api/whatsapp/session/disconnect", content);
+            var result = await response.Content.ReadAsStringAsync();
+            return StatusCode((int)response.StatusCode, JsonDocument.Parse(result));
+        }
     }
 
     public class StartSessionRequest
@@ -93,14 +102,19 @@ namespace Modules.WhatsApp.API
     public class SendMessageRequest
     {
         public Guid ProjectId { get; set; }
-        public string To { get; set; }
-        public string Message { get; set; }
+        public string To { get; set; } = default!;
+        public string Message { get; set; } = default!;
     }
 
     public class MockSessionRequest
     {
         public Guid ProjectId { get; set; }
-        public string Status { get; set; }
-        public string PhoneNumber { get; set; }
+        public string Status { get; set; } = default!;
+        public string? PhoneNumber { get; set; }
+    }
+
+    public class DisconnectSessionRequest
+    {
+        public Guid ProjectId { get; set; }
     }
 }
