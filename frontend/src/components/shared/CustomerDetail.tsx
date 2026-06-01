@@ -35,6 +35,15 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [pipelineStage, setPipelineStage] = useState('New');
+  const [label, setLabel] = useState('');
+
+  // AI Memory / Profile fields
+  const [editableSummary, setEditableSummary] = useState('');
+  const [editableFacts, setEditableFacts] = useState('');
+  const [editableTriggers, setEditableTriggers] = useState('');
+  const [editableObjections, setEditableObjections] = useState('');
+  const [savingMemory, setSavingMemory] = useState(false);
+  const [loadingMemory, setLoadingMemory] = useState(false);
   
   // Follow-up form
   const [newFollowUpDate, setNewFollowUpDate] = useState('');
@@ -58,11 +67,42 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       setNotes(data.notes || '');
       setTags(data.tags || []);
       setPipelineStage(data.pipelineStage || 'New');
+      setLabel(data.label || '');
 
       // Fetch followups
       const fuResp = await api.get<FollowUp[]>(`/api/projects/${projectId}/follow-ups`);
       const filtered = fuResp.data.filter(f => f.customerId === customerId);
       setFollowUps(filtered);
+
+      // Fetch AI Customer Memory
+      try {
+        setLoadingMemory(true);
+        const memResp = await api.get(`/api/customers/${customerId}/memory`);
+        if (memResp.data) {
+          setEditableSummary(memResp.data.longTermSummary || '');
+          try {
+            const facts = JSON.parse(memResp.data.factsJson || '[]');
+            setEditableFacts(facts.join(', '));
+          } catch { setEditableFacts(''); }
+          try {
+            const triggers = JSON.parse(memResp.data.triggersJson || '[]');
+            setEditableTriggers(triggers.join(', '));
+          } catch { setEditableTriggers(''); }
+          try {
+            const objections = JSON.parse(memResp.data.objectionsJson || '[]');
+            setEditableObjections(objections.join(', '));
+          } catch { setEditableObjections(''); }
+        }
+      } catch (err) {
+        console.error('Customer memory not found or failed to load', err);
+        setEditableSummary('');
+        setEditableFacts('');
+        setEditableTriggers('');
+        setEditableObjections('');
+      } finally {
+        setLoadingMemory(false);
+      }
+
     } catch (e) {
       console.error('Error loading customer detail data', e);
     } finally {
@@ -88,6 +128,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
         tags,
         budget: budget ? parseFloat(budget) : null,
         pipelineStage,
+        label,
       });
       onUpdate();
       onClose();
@@ -95,6 +136,27 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       console.error('Failed to save customer updates', err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveMemory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingMemory(true);
+    try {
+      const parseCsv = (csv: string) => csv.split(',').map(s => s.trim()).filter(Boolean);
+      const payload = {
+        longTermSummary: editableSummary,
+        factsJson: JSON.stringify(parseCsv(editableFacts)),
+        triggersJson: JSON.stringify(parseCsv(editableTriggers)),
+        objectionsJson: JSON.stringify(parseCsv(editableObjections)),
+      };
+      await api.put(`/api/customers/${customerId}/memory`, payload);
+      alert('تم تحديث ملف تعريف العميل بنجاح!');
+    } catch (err) {
+      console.error('Failed to save customer memory', err);
+      alert('فشل حفظ تفاصيل ملف العميل.');
+    } finally {
+      setSavingMemory(false);
     }
   };
 
@@ -187,6 +249,17 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 onChange={(e) => setName(e.target.value)} 
                 className={styles.input} 
                 required
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>تصنيف العميل (Label)</label>
+              <input 
+                type="text" 
+                value={label} 
+                onChange={(e) => setLabel(e.target.value)} 
+                className={styles.input} 
+                placeholder="مثال: استفسار عن السعر، طلب شراء، ترحيب..."
               />
             </div>
 
@@ -295,8 +368,8 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
           <div className={styles.interactionsColumn}>
             {/* AI intelligence warning score indicators */}
             <div className={styles.scoreIndicatorPanel}>
-              <h3 className={styles.sectionTitle}>AI Summary</h3>
-              <div className={styles.scoreCards}>
+              <h3 className={styles.sectionTitle}>AI Summary & Profile</h3>
+              <div className={styles.scoreCards} style={{ marginBottom: '12px' }}>
                 <div className={styles.scoreCard} style={{ borderLeft: '4px solid hsl(var(--accent-primary))' }}>
                   <span className={styles.scoreLabel}>Lead Score</span>
                   <span className={styles.scoreVal}>{leadScore}/100</span>
@@ -306,6 +379,55 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   <span className={styles.scoreVal}>{pipelineStage}</span>
                 </div>
               </div>
+
+              {/* Editable Customer Memory */}
+              <form onSubmit={handleSaveMemory} style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>ملخص العميل (AI Summary)</label>
+                  <textarea 
+                    value={editableSummary} 
+                    onChange={(e) => setEditableSummary(e.target.value)} 
+                    className={styles.textarea} 
+                    rows={2}
+                    placeholder="ملخص طويل المدى لشخصية العميل وطلباته..."
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>الحقائق المكتشفة (Facts - مفصولة بفاصلة)</label>
+                  <input 
+                    type="text"
+                    value={editableFacts} 
+                    onChange={(e) => setEditableFacts(e.target.value)} 
+                    className={styles.input} 
+                    placeholder="مثال: مهتم بالدورة، يفضل التواصل واتساب"
+                  />
+                </div>
+                <div className={styles.formRow}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>الاعتراضات (Objections)</label>
+                    <input 
+                      type="text"
+                      value={editableObjections} 
+                      onChange={(e) => setEditableObjections(e.target.value)} 
+                      className={styles.input} 
+                      placeholder="السعر مرتفع..."
+                    />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>المحفزات (Triggers)</label>
+                    <input 
+                      type="text"
+                      value={editableTriggers} 
+                      onChange={(e) => setEditableTriggers(e.target.value)} 
+                      className={styles.input} 
+                      placeholder="خصم فوري..."
+                    />
+                  </div>
+                </div>
+                <button type="submit" disabled={savingMemory} className={styles.scheduleBtn} style={{ marginTop: '4px', background: 'rgba(99, 102, 241, 0.12)', borderColor: 'rgba(99, 102, 241, 0.25)', color: 'hsl(239, 84%, 75%)' }}>
+                  {savingMemory ? 'جاري الحفظ...' : 'تحديث ملف العميل'}
+                </button>
+              </form>
             </div>
 
             {/* Schedule Followup Form */}

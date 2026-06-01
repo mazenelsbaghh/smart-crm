@@ -83,9 +83,35 @@ namespace Modules.Brain.API
                 return NotFound(ex.Message);
             }
         }
+
+        [HttpPut("knowledge/{id}")]
+        public async Task<IActionResult> UpdateDocument(Guid id, [FromBody] UpdateDocumentRequest request)
+        {
+            if (request == null || string.IsNullOrEmpty(request.Title) || string.IsNullOrEmpty(request.Content))
+            {
+                return BadRequest("Title and Content are required");
+            }
+
+            try
+            {
+                var doc = await _kbService.UpdateDocumentAsync(id, request.Title, request.Content, request.SourceUrl);
+                return Ok(doc);
+            }
+            catch (ArgumentException ex)
+            {
+                return NotFound(ex.Message);
+            }
+        }
     }
 
     public class CreateDocumentRequest
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+        public string? SourceUrl { get; set; }
+    }
+
+    public class UpdateDocumentRequest
     {
         public string Title { get; set; } = string.Empty;
         public string Content { get; set; } = string.Empty;

@@ -12,6 +12,7 @@ namespace Modules.Brain.Services
     public interface IKnowledgeBaseService
     {
         Task<KnowledgeDocument> CreateDocumentAsync(Guid projectId, string title, string content, string? sourceUrl);
+        Task<KnowledgeDocument> UpdateDocumentAsync(Guid id, string title, string content, string? sourceUrl);
         Task<KnowledgeDocument> ApproveDocumentAsync(Guid id);
         Task<KnowledgeDocument> RejectDocumentAsync(Guid id);
         Task DeleteDocumentAsync(Guid id);
@@ -41,6 +42,25 @@ namespace Modules.Brain.Services
             };
 
             _dbContext.KnowledgeDocuments.Add(doc);
+            await _dbContext.SaveChangesAsync();
+
+            // Generate chunks and embeddings
+            await GenerateChunksAndEmbeddingsAsync(doc);
+
+            return doc;
+        }
+
+        public async Task<KnowledgeDocument> UpdateDocumentAsync(Guid id, string title, string content, string? sourceUrl)
+        {
+            var doc = await _dbContext.KnowledgeDocuments.FindAsync(id);
+            if (doc == null) throw new ArgumentException("Document not found");
+
+            doc.Title = title;
+            doc.Content = content;
+            doc.SourceUrl = sourceUrl;
+            doc.Version += 1;
+            doc.Status = "Draft"; // Set back to draft so user publishes it again
+
             await _dbContext.SaveChangesAsync();
 
             // Generate chunks and embeddings

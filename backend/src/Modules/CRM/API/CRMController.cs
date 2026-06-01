@@ -355,6 +355,50 @@ namespace Modules.CRM.API
             if (memory == null) return NotFound();
             return Ok(memory);
         }
+
+        [HttpPut("customers/{customerId}/memory")]
+        public async Task<IActionResult> UpdateCustomerMemory(Guid customerId, [FromBody] UpdateCustomerMemoryRequest request)
+        {
+            var memory = await _context.CustomerMemories
+                .FirstOrDefaultAsync(m => m.CustomerId == customerId);
+            
+            if (memory == null)
+            {
+                var customer = await _context.Customers.FindAsync(customerId);
+                if (customer == null) return NotFound("Customer not found");
+
+                memory = new Modules.Customers.Domain.CustomerMemory
+                {
+                    CustomerId = customerId,
+                    ProjectId = customer.ProjectId,
+                    LongTermSummary = request.LongTermSummary ?? string.Empty,
+                    FactsJson = request.FactsJson ?? "[]",
+                    TriggersJson = request.TriggersJson ?? "[]",
+                    ObjectionsJson = request.ObjectionsJson ?? "[]",
+                    LastUpdatedAt = DateTime.UtcNow
+                };
+                _context.CustomerMemories.Add(memory);
+            }
+            else
+            {
+                memory.LongTermSummary = request.LongTermSummary ?? memory.LongTermSummary;
+                memory.FactsJson = request.FactsJson ?? memory.FactsJson;
+                memory.TriggersJson = request.TriggersJson ?? memory.TriggersJson;
+                memory.ObjectionsJson = request.ObjectionsJson ?? memory.ObjectionsJson;
+                memory.LastUpdatedAt = DateTime.UtcNow;
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok(memory);
+        }
+    }
+
+    public class UpdateCustomerMemoryRequest
+    {
+        public string? LongTermSummary { get; set; }
+        public string? FactsJson { get; set; }
+        public string? TriggersJson { get; set; }
+        public string? ObjectionsJson { get; set; }
     }
 
     public class UpdateCustomerRequest

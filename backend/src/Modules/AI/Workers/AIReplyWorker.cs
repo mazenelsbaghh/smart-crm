@@ -143,7 +143,7 @@ namespace Modules.AI.Workers
             try
             {
                 existingLabels = await dbContext.Customers
-                    .Where(c => c.Label != null && c.Label != "")
+                    .Where(c => c.ProjectId == @event.ProjectId && c.Label != null && c.Label != "")
                     .Select(c => c.Label)
                     .Distinct()
                     .ToArrayAsync();

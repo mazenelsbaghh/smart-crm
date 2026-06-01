@@ -93,6 +93,87 @@ namespace Modules.AI.Services
                 {
                     return apiKey.Substring("mock_json_".Length);
                 }
+
+                if (messageContent.Contains("JSON format") || messageContent.Contains("JSON") || messageContent.Contains("\"intent\""))
+                {
+                    // Check if it's the Customer Memory Extraction prompt
+                    if (messageContent.Contains("\"facts\"") || messageContent.Contains("\"triggers\""))
+                    {
+                        string facts = "[]";
+                        string objections = "[]";
+                        
+                        if (messageContent.Contains("email"))
+                        {
+                            facts = "[\"Prefers contact via email\"]";
+                        }
+                        if (messageContent.Contains("expensive") || messageContent.Contains("price") || messageContent.Contains("cost"))
+                        {
+                            objections = "[\"Price sensitive / Objections about cost\"]";
+                        }
+
+                        return $@"{{
+  ""facts"": {facts},
+  ""triggers"": [],
+  ""objections"": {objections},
+  ""summary"": ""Automated mock summary of conversation.""
+}}";
+                    }
+
+                    // Extract customer message to formulate a context-appropriate mock reply
+                    string customerMessage = "";
+                    int msgIdx = messageContent.LastIndexOf("Customer Message: \"");
+                    if (msgIdx != -1)
+                    {
+                        customerMessage = messageContent.Substring(msgIdx + "Customer Message: \"".Length).Trim().TrimEnd('"');
+                    }
+
+                    string replyContent = "أهلاً بك! كيف يمكنني مساعدتك اليوم؟";
+                    string intent = "greeting";
+                    string label = "ترحيب";
+                    string city = null;
+
+                    if (customerMessage.Contains("سعر") || customerMessage.Contains("بكام") || customerMessage.Contains("تفاصيل") || customerMessage.Contains("شحن") || customerMessage.Contains("facebook.com") || customerMessage.Contains("share"))
+                    {
+                        intent = "inquiry";
+                        label = "استفسار عن السعر";
+                        replyContent = "بالتأكيد! تفاصيل السعر هي 500 جنيه مصري، وهناك خصم خاص لفترة محدودة. هل تحب تأكيد الطلب؟";
+                    }
+                    else if (customerMessage.Contains("مشكلة") || customerMessage.Contains("شكوى") || customerMessage.Contains("بطيء"))
+                    {
+                        intent = "complaint";
+                        label = "شكوى";
+                        replyContent = "نعتذر بشدة عن أي إزعاج. يرجى تزويدنا بالتفاصيل لنقوم بحل المشكلة فوراً.";
+                    }
+                    else if (customerMessage.Contains("قاهرة") || customerMessage.Contains("القاهرة"))
+                    {
+                        intent = "inquiry";
+                        label = "استفسار";
+                        city = "القاهرة";
+                        replyContent = "أهلاً بأهل القاهرة! نوصل للقاهرة خلال 24 ساعة.";
+                    }
+                    else if (messageContent.Contains("City: Missing"))
+                    {
+                        intent = "inquiry";
+                        label = "استفسار";
+                        replyContent = "أهلاً بك! تشرفنا بحضرتك يا فندم. ممكن نعرف حضرتك بتكلمنا من أي مدينة؟";
+                    }
+
+                    return $@"{{
+  ""intent"": ""{intent}"",
+  ""sentiment"": ""positive"",
+  ""replyStyle"": ""Casual"",
+  ""label"": ""{label}"",
+  ""pipelineStage"": ""New"",
+  ""entities"": {{
+    ""city"": {(city == null ? "null" : $"\"{city}\"")},
+    ""interests"": [],
+    ""timeline"": null
+  }},
+  ""replyContent"": ""{replyContent}"",
+  ""confidence"": 0.99
+}}";
+                }
+
                 return $"[Mock Gemini Reply] Re: {messageContent}";
             }
 
