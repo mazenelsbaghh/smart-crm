@@ -9,6 +9,8 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 
+using Modules.Customers.Services;
+
 namespace Modules.CRM.API
 {
     [ApiController]
@@ -17,11 +19,13 @@ namespace Modules.CRM.API
     {
         private readonly AppDbContext _context;
         private readonly IEventBus _eventBus;
+        private readonly ICustomerMemoryService _customerMemoryService;
 
-        public CRMController(AppDbContext context, IEventBus eventBus)
+        public CRMController(AppDbContext context, IEventBus eventBus, ICustomerMemoryService customerMemoryService)
         {
             _context = context;
             _eventBus = eventBus;
+            _customerMemoryService = customerMemoryService;
         }
 
         [HttpGet("projects/{projectId}/customers")]
@@ -390,6 +394,20 @@ namespace Modules.CRM.API
 
             await _context.SaveChangesAsync();
             return Ok(memory);
+        }
+
+        [HttpPost("projects/{projectId}/customers/{customerId}/memory/generate")]
+        public async Task<IActionResult> GenerateCustomerProfile(Guid projectId, Guid customerId)
+        {
+            try
+            {
+                var memory = await _customerMemoryService.GenerateCompleteProfileAsync(projectId, customerId);
+                return Ok(memory);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
         }
     }
 

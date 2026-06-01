@@ -99,6 +99,24 @@ namespace Modules.AI.Services
                     // Check if it's the Customer Memory Extraction prompt
                     if (messageContent.Contains("\"facts\"") || messageContent.Contains("\"triggers\""))
                     {
+                        Console.WriteLine($"[GeminiClient Mock Check] contains Analyze: {messageContent.Contains("Analyze the following WhatsApp conversation")}, contains Arabic: {messageContent.Contains("عايز") || messageContent.Contains("الشحن") || messageContent.Contains("الدورة المكثفة") || messageContent.Contains("القاهرة")}");
+                        if (messageContent.Contains("Analyze the following WhatsApp conversation") && 
+                            (messageContent.Contains("عايز") || messageContent.Contains("الشحن") || messageContent.Contains("الدورة المكثفة") || messageContent.Contains("القاهرة")))
+                        {
+                            return $@"{{
+  ""facts"": [""مهتم بالدورة المكثفة"", ""يفضل التواصل واتساب"", ""يعيش في القاهرة""],
+  ""triggers"": [""خصم لفترة محدودة"", ""البدء الفوري""],
+  ""objections"": [""السعر مرتفع قليلاً""],
+  ""summary"": ""عميل مهتم بالتسجيل في الدورة ويبحث عن تفاصيل الأسعار وتسهيلات الدفع ويعيش في القاهرة."",
+  ""name"": ""أدهم مدبولي"",
+  ""city"": ""القاهرة"",
+  ""budget"": 1500,
+  ""leadScore"": 85,
+  ""pipelineStage"": ""Proposal"",
+  ""label"": ""طلب حجز""
+}}";
+                        }
+
                         string facts = "[]";
                         string objections = "[]";
                         

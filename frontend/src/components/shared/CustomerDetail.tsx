@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Customer, crmService } from '../../services/crm';
 import { api } from '../../services/api';
-import { X, Plus, Calendar, Tag } from 'lucide-react';
+import { X, Plus, Calendar, Tag, Sparkles } from 'lucide-react';
 import styles from './customer-detail.module.css';
 
 interface CustomerDetailProps {
@@ -44,6 +44,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   const [editableObjections, setEditableObjections] = useState('');
   const [savingMemory, setSavingMemory] = useState(false);
   const [loadingMemory, setLoadingMemory] = useState(false);
+  const [generatingMemory, setGeneratingMemory] = useState(false);
   
   // Follow-up form
   const [newFollowUpDate, setNewFollowUpDate] = useState('');
@@ -157,6 +158,23 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       alert('فشل حفظ تفاصيل ملف العميل.');
     } finally {
       setSavingMemory(false);
+    }
+  };
+
+  const handleGenerateMemory = async () => {
+    setGeneratingMemory(true);
+    try {
+      const resp = await api.post(`/api/projects/${projectId}/customers/${customerId}/memory/generate`);
+      if (resp.data) {
+        await fetchCustomerData();
+        alert('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح!');
+      }
+    } catch (err: any) {
+      console.error('Failed to generate customer profile', err);
+      const errMsg = err.response?.data || 'فشل توليد ملف التعريف. تأكد من وجود رسائل سابقة للعميل.';
+      alert(errMsg);
+    } finally {
+      setGeneratingMemory(false);
     }
   };
 
@@ -424,9 +442,15 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     />
                   </div>
                 </div>
-                <button type="submit" disabled={savingMemory} className={styles.scheduleBtn} style={{ marginTop: '4px', background: 'rgba(99, 102, 241, 0.12)', borderColor: 'rgba(99, 102, 241, 0.25)', color: 'hsl(239, 84%, 75%)' }}>
-                  {savingMemory ? 'جاري الحفظ...' : 'تحديث ملف العميل'}
-                </button>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                  <button type="submit" disabled={savingMemory || generatingMemory} className={styles.scheduleBtn} style={{ flex: 1, background: 'rgba(99, 102, 241, 0.12)', borderColor: 'rgba(99, 102, 241, 0.25)', color: 'hsl(239, 84%, 75%)' }}>
+                    {savingMemory ? 'جاري الحفظ...' : 'حفظ التعديلات'}
+                  </button>
+                  <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(168, 85, 247, 0.12)', borderColor: 'rgba(168, 85, 247, 0.25)', color: 'hsl(270, 84%, 75%)' }}>
+                    <Sparkles size={14} />
+                    {generatingMemory ? 'جاري التحليل...' : 'تحديث ذكي بالـ AI'}
+                  </button>
+                </div>
               </form>
             </div>
 
