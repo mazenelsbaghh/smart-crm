@@ -30,11 +30,26 @@ export default function CustomerList() {
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState('All');
   const [cityFilter, setCityFilter] = useState('All');
+  const [selectedLabel, setSelectedLabel] = useState('All');
 
-  // Reset to first page when search, filters or project change
+  // Reset to first page when search, filters, label or project change
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, stageFilter, cityFilter, activeProject]);
+  }, [search, stageFilter, cityFilter, selectedLabel, activeProject]);
+
+  useEffect(() => {
+    setSelectedLabel('All');
+  }, [activeProject]);
+
+  // Calculate label counts dynamically from ALL customers
+  const labelStats = React.useMemo(() => {
+    const stats: Record<string, number> = {};
+    customers.forEach(c => {
+      const lbl = c.label || 'بدون تصنيف';
+      stats[lbl] = (stats[lbl] || 0) + 1;
+    });
+    return Object.entries(stats).map(([name, count]) => ({ name, count }));
+  }, [customers]);
   
   // Modal state
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -108,8 +123,9 @@ export default function CustomerList() {
     
     const matchesStage = stageFilter === 'All' || c.pipelineStage === stageFilter;
     const matchesCity = cityFilter === 'All' || c.city === cityFilter;
+    const matchesLabel = selectedLabel === 'All' || (c.label || 'بدون تصنيف') === selectedLabel;
 
-    return matchesSearch && matchesStage && matchesCity;
+    return matchesSearch && matchesStage && matchesCity && matchesLabel;
   });
 
   // Paginated List
@@ -127,6 +143,27 @@ export default function CustomerList() {
           <h1 className={styles.pageTitle}>إدارة العملاء CRM</h1>
           <p className={styles.pageSubtitle}>راجع بيانات العملاء والتقييمات والوسوم ومراحل البيع</p>
         </div>
+      </div>
+
+      {/* AI Smart Labels Statistics & Filter Bar */}
+      <div className={styles.labelsStatsBar}>
+        <div 
+          className={`${styles.labelCard} ${selectedLabel === 'All' ? styles.labelCardActive : ''}`}
+          onClick={() => setSelectedLabel('All')}
+        >
+          <span className={styles.labelCardName}>كل التصنيفات</span>
+          <span className={styles.labelCardCount}>{customers.length}</span>
+        </div>
+        {labelStats.map(stat => (
+          <div 
+            key={stat.name}
+            className={`${styles.labelCard} ${selectedLabel === stat.name ? styles.labelCardActive : ''}`}
+            onClick={() => setSelectedLabel(stat.name)}
+          >
+            <span className={styles.labelCardName}>{stat.name}</span>
+            <span className={styles.labelCardCount}>{stat.count}</span>
+          </div>
+        ))}
       </div>
 
       {/* Search and Filters panel */}
