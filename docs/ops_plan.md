@@ -1,8 +1,17 @@
 # Operations & Deployment Master Plan
 
-**Last Updated**: 2026-06-02
+**Last Updated**: 2026-06-05
 
 ## Chronological Log
+
+### 2026-06-05: Manual Deployment and Server Recovery (In Progress)
+- **Goal**: Manually deploy updates to the Hostinger server `147.93.86.206` via local rsync and rebuild docker services.
+- **Updates**:
+  - Run rsync to sync all code changes to server root (excluding caches/node_modules/dotenv).
+  - Rebuild and restart the Docker stack on the server using SSH.
+  - Check container health.
+
+
 
 ### 2026-06-02: Resolve Frontend CORS & Network Errors & Enable WhatsApp Seen Status (Completed)
 - **Goal**: Address frontend Axios "Network Error" issues, SignalR drops, and enable WhatsApp "seen" status (read receipts) for incoming messages.

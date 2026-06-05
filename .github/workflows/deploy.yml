@@ -32,6 +32,12 @@ jobs:
             --exclude='node_modules' \
             --exclude='bin' \
             --exclude='obj' \
+            --exclude='.next' \
+            --exclude='sessions' \
+            --exclude='.pytest_cache' \
+            --exclude='.vscode' \
+            --exclude='.DS_Store' \
+            --exclude='*.log' \
             ./ root@$SSH_HOST:/root/smart-crm/
 
       - name: Initialize Environment and Restart Application
