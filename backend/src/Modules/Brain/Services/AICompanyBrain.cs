@@ -36,6 +36,51 @@ namespace Modules.Brain.Services
             _geminiClient = geminiClient;
         }
 
+        private async Task GenerateChunksAndEmbeddingsAsync(KnowledgeDocument doc)
+        {
+            var oldChunks = await _dbContext.KnowledgeChunks
+                .Where(c => c.KnowledgeDocumentId == doc.Id)
+                .ToListAsync();
+            _dbContext.KnowledgeChunks.RemoveRange(oldChunks);
+            await _dbContext.SaveChangesAsync();
+
+            var paragraphs = doc.Content.Split(new[] { "\r\n\r\n", "\n\n", "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            var currentChunk = new System.Text.StringBuilder();
+            var chunks = new List<string>();
+
+            foreach (var p in paragraphs)
+            {
+                var clean = p.Trim();
+                if (string.IsNullOrEmpty(clean)) continue;
+
+                if (currentChunk.Length + clean.Length > 800 && currentChunk.Length > 0)
+                {
+                    chunks.Add(currentChunk.ToString().Trim());
+                    currentChunk.Clear();
+                }
+                currentChunk.AppendLine(clean);
+            }
+            if (currentChunk.Length > 0)
+            {
+                chunks.Add(currentChunk.ToString().Trim());
+            }
+
+            foreach (var chunkText in chunks)
+            {
+                var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(chunkText);
+                var embeddingVector = new Vector(embeddingFloats);
+
+                var chunk = new KnowledgeChunk
+                {
+                    KnowledgeDocumentId = doc.Id,
+                    ChunkText = chunkText,
+                    Embedding = embeddingVector
+                };
+
+                _dbContext.KnowledgeChunks.Add(chunk);
+            }
+        }
+
         public async Task SyncBrainAsync(Guid projectId)
         {
             // Check if there are already any documents for this project
@@ -68,29 +113,7 @@ namespace Modules.Brain.Services
                     await _dbContext.SaveChangesAsync(); // Generates doc.Id
 
                     // Split content into chunks
-                    var chunks = payload.Content.Split(new[] { ". " }, StringSplitOptions.RemoveEmptyEntries);
-                    foreach (var chunkText in chunks)
-                    {
-                        var cleanText = chunkText.Trim();
-                        if (!cleanText.EndsWith(".") && !string.IsNullOrEmpty(cleanText))
-                        {
-                            cleanText += ".";
-                        }
-
-                        if (string.IsNullOrEmpty(cleanText)) continue;
-
-                        var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(cleanText);
-                        var embeddingVector = new Vector(embeddingFloats);
-
-                        var chunk = new KnowledgeChunk
-                        {
-                            KnowledgeDocumentId = doc.Id,
-                            ChunkText = cleanText,
-                            Embedding = embeddingVector
-                        };
-
-                        _dbContext.KnowledgeChunks.Add(chunk);
-                    }
+                    await GenerateChunksAndEmbeddingsAsync(doc);
                 }
                 await _dbContext.SaveChangesAsync();
             }
@@ -109,29 +132,7 @@ namespace Modules.Brain.Services
 
                     if (!hasChunks)
                     {
-                        var chunksText = doc.Content.Split(new[] { ". " }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var chunkText in chunksText)
-                        {
-                            var cleanText = chunkText.Trim();
-                            if (!cleanText.EndsWith(".") && !string.IsNullOrEmpty(cleanText))
-                            {
-                                cleanText += ".";
-                            }
-
-                            if (string.IsNullOrEmpty(cleanText)) continue;
-
-                            var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(cleanText);
-                            var embeddingVector = new Vector(embeddingFloats);
-
-                            var chunk = new KnowledgeChunk
-                            {
-                                KnowledgeDocumentId = doc.Id,
-                                ChunkText = cleanText,
-                                Embedding = embeddingVector
-                            };
-
-                            _dbContext.KnowledgeChunks.Add(chunk);
-                        }
+                        await GenerateChunksAndEmbeddingsAsync(doc);
                     }
                 }
                 await _dbContext.SaveChangesAsync();
@@ -146,7 +147,8 @@ namespace Modules.Brain.Services
             // Npgsql pgvector CosineDistance query
             var results = await _dbContext.KnowledgeChunks
                 .Include(c => c.KnowledgeDocument)
-                .Where(c => c.KnowledgeDocument!.ProjectId == projectId && c.KnowledgeDocument.Status == "Published")
+                .Where(c => c.KnowledgeDocument!.ProjectId == projectId && 
+                        (c.KnowledgeDocument.Status == "Published" || c.KnowledgeDocument.Status == "Approved"))
                 .OrderBy(c => c.Embedding!.CosineDistance(queryVector))
                 .Take(limit)
                 .Select(c => new KnowledgeChunkSearchDto

@@ -7,7 +7,7 @@ BASE_URL = "http://localhost:80/api"
 
 @pytest.mark.asyncio
 async def test_ai_marketing_brain_flow():
-    sender_phone = f"555{uuid.uuid4().hex[:6]}"
+    sender_phone = f"555{uuid.uuid4().int % 1000000:06d}"
     message_id = f"msg_{uuid.uuid4().hex}"
     
     # We send structured JSON as the mock Gemini response

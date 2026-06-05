@@ -35,7 +35,11 @@ var allowedCorsOrigins = builder.Configuration
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
-        "http://127.0.0.1:3001"
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://localhost",
+        "http://127.0.0.1"
     };
 
 builder.Services.AddCors(options =>
@@ -43,7 +47,7 @@ builder.Services.AddCors(options =>
     options.AddPolicy("FrontendDev", policy =>
     {
         policy
-            .WithOrigins(allowedCorsOrigins)
+            .SetIsOriginAllowed(origin => true)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -83,7 +87,10 @@ builder.Services.AddHangfire(config => config
     .UsePostgreSqlStorage(options => 
         options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("DefaultConnection"))));
 
-builder.Services.AddHangfireServer();
+builder.Services.AddHangfireServer(options =>
+{
+    options.SchedulePollingInterval = TimeSpan.FromSeconds(5);
+});
 
 // Dependency Injection registrations
 builder.Services.AddScoped<ITenantContext, TenantContext>();
@@ -205,6 +212,66 @@ using (var scope = app.Services.CreateScope())
         context.Database.Migrate();
         Console.WriteLine("✅ Database migrations applied successfully.");
         await DbSeeder.SeedAsync(context, passwordHasher);
+
+        // One-time startup routine to re-chunk all existing documents using the new paragraph-based logic
+        Console.WriteLine("⏳ Starting startup Knowledge Base re-chunking...");
+        var documents = await context.KnowledgeDocuments.IgnoreQueryFilters().ToListAsync();
+        var geminiClient = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IGeminiClient>();
+        int totalChunksCreated = 0;
+        foreach (var doc in documents)
+        {
+            var oldChunks = await context.KnowledgeChunks
+                .IgnoreQueryFilters()
+                .Where(c => c.KnowledgeDocumentId == doc.Id)
+                .ToListAsync();
+            context.KnowledgeChunks.RemoveRange(oldChunks);
+            await context.SaveChangesAsync();
+
+            var paragraphs = doc.Content.Split(new[] { "\r\n\r\n", "\n\n", "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            var currentChunk = new System.Text.StringBuilder();
+            var chunks = new System.Collections.Generic.List<string>();
+
+            foreach (var p in paragraphs)
+            {
+                var clean = p.Trim();
+                if (string.IsNullOrEmpty(clean)) continue;
+
+                if (currentChunk.Length + clean.Length > 800 && currentChunk.Length > 0)
+                {
+                    chunks.Add(currentChunk.ToString().Trim());
+                    currentChunk.Clear();
+                }
+                currentChunk.AppendLine(clean);
+            }
+            if (currentChunk.Length > 0)
+            {
+                chunks.Add(currentChunk.ToString().Trim());
+            }
+
+            foreach (var chunkText in chunks)
+            {
+                try
+                {
+                    var embeddingFloats = await geminiClient.GenerateEmbeddingAsync(chunkText);
+                    var embeddingVector = new Pgvector.Vector(embeddingFloats);
+
+                    var chunk = new Modules.Brain.Domain.KnowledgeChunk
+                    {
+                        KnowledgeDocumentId = doc.Id,
+                        ChunkText = chunkText,
+                        Embedding = embeddingVector
+                    };
+                    context.KnowledgeChunks.Add(chunk);
+                    totalChunksCreated++;
+                }
+                catch (Exception embEx)
+                {
+                    Console.WriteLine($"[Startup Re-chunker] Failed to generate embedding for chunk: {embEx.Message}");
+                }
+            }
+            await context.SaveChangesAsync();
+        }
+        Console.WriteLine($"✅ Startup Knowledge Base re-chunking complete. Re-chunked {documents.Count} documents, created {totalChunksCreated} chunks.");
     }
     catch (Exception ex)
     {

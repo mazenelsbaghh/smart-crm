@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using Modules.Workflows.Domain;
 using Shared.Infrastructure;
 using System;
@@ -17,10 +18,17 @@ namespace Modules.Workflows.Services
     public class WorkflowEngine : IWorkflowEngine
     {
         private readonly AppDbContext _dbContext;
+        private readonly Shared.Queue.IEventBus _eventBus;
+        private readonly Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> _hubContext;
 
-        public WorkflowEngine(AppDbContext dbContext)
+        public WorkflowEngine(
+            AppDbContext dbContext,
+            Shared.Queue.IEventBus eventBus,
+            Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext)
         {
             _dbContext = dbContext;
+            _eventBus = eventBus;
+            _hubContext = hubContext;
         }
 
         public async Task ProcessEventAsync(Guid projectId, string triggerType, Guid customerId, object eventData)
@@ -146,6 +154,62 @@ namespace Modules.Workflows.Services
                         {
                             customer.Name = nameObj?.ToString() ?? customer.Name;
                         }
+                    }
+                }
+                else if (string.Equals(action.Type, "SendMessage", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (action.Parameters != null && action.Parameters.TryGetValue("text", out var textObj))
+                    {
+                        var text = textObj?.ToString() ?? string.Empty;
+                        // Replace placeholders
+                        text = text.Replace("{{CustomerName}}", customer.Name ?? "عميلنا العزيز")
+                                   .Replace("{{PhoneNumber}}", customer.PhoneNumber);
+
+                        await _eventBus.PublishAsync(new Shared.Events.AIReplyGeneratedEvent
+                        {
+                            ProjectId = projectId,
+                            Sender = customer.PhoneNumber,
+                            Content = text,
+                            Buttons = Array.Empty<string>()
+                        });
+                    }
+                }
+                else if (string.Equals(action.Type, "SendAlert", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (action.Parameters != null)
+                    {
+                        var title = action.Parameters.TryGetValue("title", out var titleObj) ? titleObj?.ToString() ?? "تنبيه تلقائي" : "تنبيه تلقائي";
+                        var message = action.Parameters.TryGetValue("message", out var msgObj) ? msgObj?.ToString() ?? string.Empty : string.Empty;
+                        var severity = action.Parameters.TryGetValue("severity", out var sevObj) ? sevObj?.ToString() ?? "Info" : "Info";
+
+                        // Replace placeholders
+                        message = message.Replace("{{CustomerName}}", customer.Name ?? "عميلنا العزيز")
+                                         .Replace("{{PhoneNumber}}", customer.PhoneNumber);
+
+                        var alert = new Modules.Conversations.Domain.NotificationAlert
+                        {
+                            ProjectId = projectId,
+                            UserId = Guid.Empty, // System alert
+                            Type = severity,
+                            Message = $"{title}: {message}",
+                            IsRead = false
+                        };
+
+                        _dbContext.NotificationAlerts.Add(alert);
+                        await _dbContext.SaveChangesAsync(); // generate Id and timestamps
+
+                        await _hubContext.Clients.Group($"project_{projectId}").SendAsync("ReceiveNotification", new
+                        {
+                            id = alert.Id,
+                            type = alert.Type,
+                            message = alert.Message,
+                            createdAt = alert.CreatedAt.ToString("o"),
+                            payload = new
+                            {
+                                customerId = customer.Id,
+                                severity = severity
+                            }
+                        });
                     }
                 }
             }

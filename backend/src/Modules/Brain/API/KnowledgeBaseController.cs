@@ -42,6 +42,18 @@ namespace Modules.Brain.API
             return Created($"/api/knowledge/{doc.Id}", doc);
         }
 
+        [HttpPost("projects/{projectId}/knowledge/suggest")]
+        public async Task<IActionResult> SuggestDocument(Guid projectId, [FromBody] CreateDocumentRequest request)
+        {
+            if (request == null || string.IsNullOrEmpty(request.Title) || string.IsNullOrEmpty(request.Content))
+            {
+                return BadRequest("Title and Content are required");
+            }
+
+            var doc = await _kbService.SuggestDocumentAsync(projectId, request.Title, request.Content, request.SourceUrl);
+            return Created($"/api/knowledge/{doc.Id}", doc);
+        }
+
         [HttpPut("knowledge/{id}/approve")]
         public async Task<IActionResult> ApproveDocument(Guid id)
         {

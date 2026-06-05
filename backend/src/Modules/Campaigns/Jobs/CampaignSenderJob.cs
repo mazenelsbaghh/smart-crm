@@ -187,11 +187,11 @@ namespace Modules.Campaigns.Jobs
                 message = messageText
             };
 
-            var jsonContent = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            var jsonPayload = JsonSerializer.Serialize(payload);
 
             try
             {
-                var response = await _httpClient.PostAsync($"{_gatewayUrl}/api/whatsapp/send", jsonContent);
+                var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{_gatewayUrl}/api/whatsapp/send", jsonPayload);
                 var responseBody = await response.Content.ReadAsStringAsync();
 
                 if (response.IsSuccessStatusCode)

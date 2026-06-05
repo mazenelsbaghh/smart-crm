@@ -256,4 +256,31 @@ test-phase-6: test-setup ## Run Phase 6 dashboard, SignalR, production & backup 
 	$(PYTEST) tests/phase_6/ -v --tb=short
 	@echo "✅ Phase 6 tests complete."
 
+push: ## Commit current branch, merge to main, and push to trigger CI/CD deploy
+	@CURRENT_BRANCH=$$(git branch --show-current); \
+	if [ -z "$$CURRENT_BRANCH" ]; then \
+		echo "⚠️  Could not determine current branch."; \
+		exit 1; \
+	fi; \
+	if [ "$$CURRENT_BRANCH" = "main" ]; then \
+		echo "Already on main branch. Committing and pushing..."; \
+		git add .; \
+		git commit -m "Auto-commit on main before push" || true; \
+		git push origin main; \
+	else \
+		echo "Current branch is $$CURRENT_BRANCH. Committing..."; \
+		git add .; \
+		git commit -m "Auto-commit on $$CURRENT_BRANCH" || true; \
+		echo "Switching to main branch..."; \
+		git checkout main; \
+		git pull origin main || true; \
+		echo "Merging $$CURRENT_BRANCH into main..."; \
+		git merge $$CURRENT_BRANCH -m "Merge $$CURRENT_BRANCH into main" || { echo "❌ Merge failed. Please resolve conflicts manually."; git checkout $$CURRENT_BRANCH; exit 1; }; \
+		echo "Pushing main to origin..."; \
+		git push origin main; \
+		echo "Switching back to $$CURRENT_BRANCH..."; \
+		git checkout $$CURRENT_BRANCH; \
+	fi
+
+
 

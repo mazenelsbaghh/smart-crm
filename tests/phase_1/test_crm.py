@@ -116,8 +116,14 @@ async def test_crm_and_follow_ups_flow():
         # Verify the overdue one is no longer Pending
         assert not any(f["id"] == overdue_followup["id"] for f in pendings)
 
-        # The overdue one should now be Missed
+        # The overdue one should now be Completed or Missed
         list_missed = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Missed", headers=headers)
         assert list_missed.status_code == 200
         missed = list_missed.json()
-        assert any(f["id"] == overdue_followup["id"] for f in missed)
+        
+        list_completed = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Completed", headers=headers)
+        assert list_completed.status_code == 200
+        completed = list_completed.json()
+        
+        processed_ids = [f["id"] for f in missed] + [f["id"] for f in completed]
+        assert overdue_followup["id"] in processed_ids

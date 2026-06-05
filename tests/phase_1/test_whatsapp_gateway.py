@@ -48,3 +48,5 @@ async def test_whatsapp_gateway_flow():
         send_data = send_resp.json()
         assert send_data["status"] == "Sent"
         assert "messageId" in send_data
+
+

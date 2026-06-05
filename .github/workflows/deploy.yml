@@ -1,0 +1,40 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install sshpass
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Deploy files to Server
+        env:
+          SSH_PASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@147.93.86.206 "mkdir -p /root/smart-crm"
+          sshpass -p "$SSH_PASS" rsync -avz -e "ssh -o StrictHostKeyChecking=no" \
+            --exclude='.git' \
+            --exclude='.venv' \
+            --exclude='.env' \
+            --exclude='node_modules' \
+            --exclude='bin' \
+            --exclude='obj' \
+            ./ root@147.93.86.206:/root/smart-crm/
+
+      - name: Initialize Environment and Restart Application
+        env:
+          SSH_PASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@147.93.86.206 "cd /root/smart-crm && if [ ! -f .env ]; then cp .env.example .env; fi && make restart"

@@ -468,18 +468,26 @@ namespace Modules.CRM.API
                 _context.Entry(fu).State = EntityState.Modified;
             }
 
-            // Schedule a new default follow-up 24 hours in the future
-            var defaultFollowUp = new FollowUp
+            // Schedule a new default follow-up 24 hours in the future only if AI auto-reply is enabled and customer is not blacklisted
+            var settings = await _context.ProjectSettings
+                .FirstOrDefaultAsync(s => s.ProjectId == followUp.ProjectId);
+            
+            bool shouldScheduleFollowUp = settings != null && settings.AiAutoReplyEnabled && !customer.IsBlacklisted;
+
+            if (shouldScheduleFollowUp)
             {
-                Id = Guid.NewGuid(),
-                ProjectId = followUp.ProjectId,
-                CustomerId = customer.Id,
-                Type = "Nurturing",
-                DueDate = DateTime.UtcNow.AddHours(24),
-                Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
-                Status = "Pending"
-            };
-            _context.FollowUps.Add(defaultFollowUp);
+                var defaultFollowUp = new FollowUp
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = followUp.ProjectId,
+                    CustomerId = customer.Id,
+                    Type = "Nurturing",
+                    DueDate = DateTime.UtcNow.AddHours(24),
+                    Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                    Status = "Pending"
+                };
+                _context.FollowUps.Add(defaultFollowUp);
+            }
 
             await _context.SaveChangesAsync();
 

@@ -10,6 +10,8 @@ namespace Modules.Conversations.Domain
         public string Direction { get; set; } // Incoming, Outgoing
         public string Content { get; set; }
         public string MessageType { get; set; } // Text, Image, Voice, Document
+        public Guid? AssetId { get; set; }
+        public string? Transcription { get; set; }
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     }
 }

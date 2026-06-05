@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/015-dynamic-followups/plan.md
+at specs/019-implement-missing-core-features/plan.md
 <!-- SPECKIT END -->

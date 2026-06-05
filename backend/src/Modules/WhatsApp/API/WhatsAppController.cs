@@ -53,8 +53,8 @@ namespace Modules.WhatsApp.API
         [HttpPost("send")]
         public async Task<IActionResult> SendMessage([FromBody] SendMessageRequest request)
         {
-            var content = new StringContent(JsonSerializer.Serialize(request, _jsonOptions), Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync($"{_gatewayUrl}/api/whatsapp/send", content);
+            var payload = JsonSerializer.Serialize(request, _jsonOptions);
+            var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{_gatewayUrl}/api/whatsapp/send", payload);
             var result = await response.Content.ReadAsStringAsync();
             return StatusCode((int)response.StatusCode, JsonDocument.Parse(result));
         }
@@ -104,6 +104,7 @@ namespace Modules.WhatsApp.API
         public Guid ProjectId { get; set; }
         public string To { get; set; } = default!;
         public string Message { get; set; } = default!;
+        public string[]? Buttons { get; set; }
     }
 
     public class MockSessionRequest

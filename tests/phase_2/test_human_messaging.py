@@ -180,3 +180,9 @@ async def test_human_messaging_blacklist():
 
         assert len(sent_messages) == 0, f"Expected 0 messages due to blacklist, got {len(sent_messages)}"
 
+        # 11. Verify that no pending follow-ups exist for this project (blacklisted customer skips scheduling)
+        followups_resp = await client.get(f"{BASE_URL}/projects/{proj_id}/reports/follow-ups")
+        assert followups_resp.status_code == 200
+        followup_data = followups_resp.json()
+        assert followup_data["pendingCount"] == 0
+

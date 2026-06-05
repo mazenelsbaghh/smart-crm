@@ -1,0 +1,120 @@
+.toastContainer {
+  position: fixed;
+  top: var(--space-md);
+  left: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 12px 18px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-strong);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+  box-shadow: var(--shadow-soft);
+  pointer-events: auto;
+  min-width: 280px;
+  max-width: 400px;
+  
+  /* Slide/Fade animation */
+  animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transition: transform var(--transition-normal), opacity var(--transition-normal);
+}
+
+.toastSuccess {
+  border-color: hsl(var(--accent-success));
+  box-shadow: 0 0 0 3px var(--success-soft), var(--shadow-panel);
+}
+
+.toastError {
+  border-color: hsl(var(--accent-danger));
+  box-shadow: 0 0 0 3px var(--danger-soft), var(--shadow-panel);
+}
+
+.toastInfo {
+  border-color: hsl(var(--accent-primary));
+  box-shadow: var(--shadow-neon);
+}
+
+.toastWarning {
+  border-color: hsl(var(--accent-warning));
+  box-shadow: 0 0 0 3px var(--warning-soft), var(--shadow-panel);
+}
+
+.iconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.iconSuccess {
+  color: hsl(var(--accent-success));
+}
+
+.iconError {
+  color: hsl(var(--accent-danger));
+}
+
+.iconInfo {
+  color: hsl(var(--accent-primary));
+}
+
+.iconWarning {
+  color: hsl(var(--accent-warning));
+}
+
+.content {
+  flex-grow: 1;
+  text-align: right;
+  line-height: 1.4;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: hsl(var(--text-muted));
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-fast);
+}
+
+.closeBtn:hover {
+  background-color: var(--accent-soft);
+  color: hsl(var(--text-primary));
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px) translateY(0) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}

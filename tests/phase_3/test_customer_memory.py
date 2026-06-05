@@ -3,12 +3,30 @@ import httpx
 import uuid
 import time
 import json
+import socket
 
-BASE_URL = "http://localhost:80/api"
+def get_base_urls():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    try:
+        s.connect(("localhost", 443))
+        s.close()
+        return "https://localhost:443/api", True
+    except Exception:
+        return "http://localhost:80/api", False
+
+BASE_URL, IS_HTTPS = get_base_urls()
+
+def get_client_kwargs():
+    kwargs = {}
+    if IS_HTTPS:
+        kwargs["verify"] = False
+    return kwargs
+
 
 @pytest.mark.asyncio
 async def test_customer_memory_generation_on_close():
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=15.0, **get_client_kwargs()) as client:
         # Create Project
         proj_name = f"Mem_Project_{uuid.uuid4().hex[:6]}"
         create_proj = await client.post(f"{BASE_URL}/projects", json={"name": proj_name})
@@ -95,6 +113,9 @@ async def test_customer_memory_generation_on_close():
         facts = json.loads(memory["factsJson"])
         objections = json.loads(memory["objectionsJson"])
 
+        print(f"DEBUG facts: {facts}")
+        print(f"DEBUG objections: {objections}")
+
         # Check keyword fallbacks/mock responses were triggered
         assert any("email" in f.lower() for f in facts)
         assert any("expensive" in o.lower() or "price" in o.lower() for o in objections)
@@ -102,7 +123,7 @@ async def test_customer_memory_generation_on_close():
 
 @pytest.mark.asyncio
 async def test_manual_customer_memory_generation():
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=15.0, **get_client_kwargs()) as client:
         # Create Project
         proj_name = f"Mem_Project_{uuid.uuid4().hex[:6]}"
         create_proj = await client.post(f"{BASE_URL}/projects", json={"name": proj_name})
@@ -144,7 +165,7 @@ async def test_manual_customer_memory_generation():
                 "projectId": proj_id,
                 "messageId": f"msg_{uuid.uuid4().hex[:6]}",
                 "sender": cust_phone,
-                "content": "عايز تفاصيل الدورة المكثفة والسعر كام للشحن للقاهرة؟",
+                "content": "معاك أدهم مدبولي، عايز احجز الدورة المكثفة للشحن للقاهرة؟",
                 "messageType": "Text",
                 "timestamp": int(time.time())
             }

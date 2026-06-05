@@ -198,19 +198,27 @@ namespace Modules.Conversations.API
                 _context.Entry(fu).State = EntityState.Modified;
             }
 
-            // Schedule default follow-up in 24 hours
-            var defaultFollowUp = new Modules.CRM.Domain.FollowUp
-            {
-                Id = Guid.NewGuid(),
-                ProjectId = payload.ProjectId,
-                CustomerId = customer.Id,
-                Type = "Nurturing",
-                DueDate = DateTime.UtcNow.AddHours(24),
-                Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
-                Status = "Pending"
-            };
+            // Schedule default follow-up in 24 hours only if AI auto-reply is enabled and customer is not blacklisted
+            var projSettings = await _context.ProjectSettings
+                .FirstOrDefaultAsync(s => s.ProjectId == payload.ProjectId);
 
-            _context.FollowUps.Add(defaultFollowUp);
+            bool shouldScheduleFollowUp = projSettings != null && projSettings.AiAutoReplyEnabled && !customer.IsBlacklisted;
+
+            if (shouldScheduleFollowUp)
+            {
+                var defaultFollowUp = new Modules.CRM.Domain.FollowUp
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = payload.ProjectId,
+                    CustomerId = customer.Id,
+                    Type = "Nurturing",
+                    DueDate = DateTime.UtcNow.AddHours(24),
+                    Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                    Status = "Pending"
+                };
+
+                _context.FollowUps.Add(defaultFollowUp);
+            }
             await _context.SaveChangesAsync();
 
             // 3.5 Broadcast via SignalR to the group

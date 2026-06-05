@@ -99,7 +99,10 @@ namespace Modules.Conversations.API
                     createdAt = m.Timestamp.ToString("o"),
                     status = m.Direction == "Incoming" ? "Delivered" : "Sent",
                     mediaUrl = (string)null,
-                    mediaType = (string)null,
+                    mediaType = m.MessageType == "Image" || m.MessageType == "Voice" ? m.MessageType : (string)null,
+                    messageType = m.MessageType,
+                    assetId = m.AssetId,
+                    transcription = m.Transcription,
                     direction = m.Direction,
                     timestamp = m.Timestamp
                 })
@@ -141,6 +144,43 @@ namespace Modules.Conversations.API
 
             await _context.SaveChangesAsync();
 
+            // Complete existing pending follow-ups for this customer
+            var pendingFollowUps = await _context.FollowUps
+                .IgnoreQueryFilters()
+                .Where(f => f.CustomerId == conversation.CustomerId && f.Status == "Pending")
+                .ToListAsync();
+
+            foreach (var fu in pendingFollowUps)
+            {
+                fu.Status = "Completed";
+                _context.Entry(fu).State = EntityState.Modified;
+            }
+
+            // Schedule default follow-up in 24 hours only if AI auto-reply is enabled and customer is not blacklisted
+            var settings = await _context.ProjectSettings
+                .FirstOrDefaultAsync(s => s.ProjectId == conversation.ProjectId);
+            var cust = await _context.Customers
+                .FirstOrDefaultAsync(c => c.Id == conversation.CustomerId);
+
+            bool shouldScheduleFollowUp = settings != null && settings.AiAutoReplyEnabled && (cust == null || !cust.IsBlacklisted);
+
+            if (shouldScheduleFollowUp)
+            {
+                var defaultFollowUp = new Modules.CRM.Domain.FollowUp
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = conversation.ProjectId,
+                    CustomerId = conversation.CustomerId,
+                    Type = "Nurturing",
+                    DueDate = DateTime.UtcNow.AddHours(24),
+                    Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                    Status = "Pending"
+                };
+
+                _context.FollowUps.Add(defaultFollowUp);
+            }
+            await _context.SaveChangesAsync();
+
             // Broadcast message via SignalR to project group
             var payload = new
             {
@@ -168,15 +208,11 @@ namespace Modules.Conversations.API
                     message = request.Content
                 };
                 
-                var jsonContent = new StringContent(
-                    JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
-                    Encoding.UTF8,
-                    "application/json"
-                );
+                var jsonPayload = JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
                 try
                 {
-                    var response = await _httpClient.PostAsync($"{gatewayUrl}/api/whatsapp/send", jsonContent);
+                    var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
                     if (!response.IsSuccessStatusCode)
                     {
                         var responseBody = await response.Content.ReadAsStringAsync();
@@ -249,6 +285,107 @@ namespace Modules.Conversations.API
 
             return Ok(conversation);
         }
+
+        [HttpPost("conversations/{id}/messages/{messageId}/react")]
+        public async Task<IActionResult> ReactToMessage(Guid id, string messageId, [FromBody] ReactToMessageRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.ReactionText))
+            {
+                return BadRequest("Reaction text is required.");
+            }
+
+            var conversation = await _context.Conversations
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.Id == id);
+            if (conversation == null)
+            {
+                return NotFound($"Conversation {id} not found.");
+            }
+
+            // Find the message in the DB to get its details (direction, external message id, etc.)
+            var targetMessage = await _context.Messages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(m => m.ConversationId == conversation.Id && m.ExternalMessageId == messageId);
+            if (targetMessage == null)
+            {
+                return NotFound($"Message {messageId} not found in conversation {id}.");
+            }
+
+            // Save the outgoing reaction message (represented as an informational message or reaction)
+            var reactionMessage = new Message
+            {
+                ConversationId = conversation.Id,
+                ExternalMessageId = $"msg_agent_react_{Guid.NewGuid().ToString("N")}",
+                Direction = "Outgoing",
+                Content = $"[تفاعل] {request.ReactionText}",
+                MessageType = "Reaction",
+                Timestamp = DateTime.UtcNow
+            };
+
+            _context.Messages.Add(reactionMessage);
+            await _context.SaveChangesAsync();
+
+            // Forward to WhatsApp Gateway
+            var customer = await _context.Customers
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.Id == conversation.CustomerId);
+            if (customer != null && !string.IsNullOrEmpty(customer.PhoneNumber))
+            {
+                var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+                
+                // In Baileys, we need to specify if the target message was sent by us (fromMe = true/false).
+                // If Direction is "Outgoing", then targetFromMe is true. If "Incoming", then targetFromMe is false.
+                bool targetFromMe = targetMessage.Direction == "Outgoing";
+
+                var gatewayPayload = new
+                {
+                    projectId = conversation.ProjectId,
+                    to = customer.PhoneNumber,
+                    reactionText = request.ReactionText,
+                    targetMessageId = targetMessage.ExternalMessageId,
+                    targetFromMe = targetFromMe
+                };
+                
+                var jsonPayload = JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+                try
+                {
+                    var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{gatewayUrl}/api/whatsapp/react", jsonPayload);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var responseBody = await response.Content.ReadAsStringAsync();
+                        Console.WriteLine($"[ConversationController] Gateway react returned error code {response.StatusCode}: {responseBody}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ConversationController] Exception while calling WhatsApp Gateway react: {ex.Message}");
+                }
+            }
+
+            // Broadcast via SignalR to project group
+            var payload = new
+            {
+                id = reactionMessage.Id,
+                conversationId = reactionMessage.ConversationId,
+                senderType = "Agent",
+                content = reactionMessage.Content,
+                createdAt = reactionMessage.Timestamp.ToString("o"),
+                status = "Sent",
+                mediaUrl = (string)null,
+                mediaType = (string)null,
+                messageType = "Reaction"
+            };
+
+            await _hubContext.Clients.Group($"project_{conversation.ProjectId}").SendAsync("ReceiveMessage", payload);
+
+            return Ok(payload);
+        }
+    }
+
+    public class ReactToMessageRequest
+    {
+        public string ReactionText { get; set; } = string.Empty;
     }
 
     public class SendMessageRequest

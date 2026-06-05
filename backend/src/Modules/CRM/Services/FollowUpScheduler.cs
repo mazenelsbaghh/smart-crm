@@ -95,8 +95,8 @@ namespace Modules.CRM.Services
                         message = messageContent
                     };
 
-                    var jsonContent = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                    var response = await httpClient.PostAsync($"{gatewayUrl}/api/whatsapp/send", jsonContent);
+                    var jsonPayload = JsonSerializer.Serialize(payload);
+                    var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
                     var responseBody = await response.Content.ReadAsStringAsync();
 
                     if (response.IsSuccessStatusCode)

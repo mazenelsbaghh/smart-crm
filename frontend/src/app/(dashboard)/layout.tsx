@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import Sidebar from '../../components/layout/Sidebar';
 import Header from '../../components/layout/Header';
+import PhantomLoader from '../../components/shared/PhantomLoader';
 import styles from '../../components/layout/layout.module.css';
 
 export default function DashboardLayout({
@@ -42,26 +43,32 @@ export default function DashboardLayout({
   if (loading || !user) {
     return (
       <div className={styles.loadingContainer}>
-        <div className={styles.spinner}></div>
-        <p style={{ marginTop: 'var(--space-md)', color: 'hsl(var(--text-secondary))' }}>
-          Verifying security credentials...
-        </p>
+        <PhantomLoader loading label="تحميل مساحة العمل">
+          <div className={styles.authLoadingCard}>
+            <div className={styles.authLoadingAvatar} />
+            <div className={styles.authLoadingContent}>
+              <div className={styles.authLoadingTitle}>تأمين اتصالك بلوحة التحكم</div>
+              <div className={styles.authLoadingLine}>مراجعة بيانات الجلسة والمشروع النشط</div>
+              <div className={styles.authLoadingMeta}>تجهيز أدوات المحادثات والعملاء</div>
+            </div>
+          </div>
+        </PhantomLoader>
       </div>
     );
   }
 
   const navItems = [
-    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-    { name: 'Realtime Inbox', path: '/inbox', icon: Inbox },
-    { name: 'Customers CRM', path: '/crm', icon: Users },
-    { name: 'Pipeline', path: '/crm/pipeline', icon: GitBranch },
-    { name: 'Follow-ups', path: '/management/follow-ups', icon: Calendar },
-    { name: 'Campaigns', path: '/management/campaigns', icon: Megaphone },
-    { name: 'Workflows', path: '/management/workflows', icon: GitFork },
-    { name: 'Knowledge Base', path: '/management/knowledge', icon: BookOpen },
-    { name: 'Approvals', path: '/management/approvals', icon: ShieldCheck },
-    { name: 'Reports', path: '/management/reports', icon: BarChart3 },
-    { name: 'Settings', path: '/settings', icon: Settings },
+    { name: 'لوحة التحكم', path: '/dashboard', icon: LayoutDashboard },
+    { name: 'صندوق المحادثات', path: '/inbox', icon: Inbox },
+    { name: 'العملاء CRM', path: '/crm', icon: Users },
+    { name: 'مسار الصفقات', path: '/crm/pipeline', icon: GitBranch },
+    { name: 'جدول المتابعات', path: '/management/follow-ups', icon: Calendar },
+    { name: 'الحملات التسويقية', path: '/management/campaigns', icon: Megaphone },
+    { name: 'أتمتة العمليات', path: '/management/workflows', icon: GitFork },
+    { name: 'قاعدة المعرفة', path: '/management/knowledge', icon: BookOpen },
+    { name: 'إدارة الموافقات', path: '/management/approvals', icon: ShieldCheck },
+    { name: 'التقارير والإحصائيات', path: '/management/reports', icon: BarChart3 },
+    { name: 'إعدادات المشروع', path: '/settings', icon: Settings },
   ];
 
   return (
@@ -85,7 +92,7 @@ export default function DashboardLayout({
         <div className={styles.mobileOverlay}>
           <aside className={`glass-panel ${styles.mobileDrawer}`}>
             <div className={styles.drawerHeader}>
-              <h2 className={styles.logoText}>Smart Customer</h2>
+              <h2 className={styles.logoText}>سمارت كاستمر</h2>
               <div onClick={() => setMobileMenuOpen(false)} className={styles.closeBtn}>
                 <X size={24} />
               </div>
@@ -104,7 +111,7 @@ export default function DashboardLayout({
                     }}
                     className={`${styles.navItem} ${isActive ? styles.navItemActive : ''}`}
                   >
-                    <Icon size={18} style={isActive ? { color: 'hsl(var(--accent-secondary))' } : {}} />
+                    <Icon size={18} style={isActive ? { color: 'hsl(var(--accent-primary))' } : {}} />
                     <span>{item.name}</span>
                   </div>
                 );
@@ -114,7 +121,7 @@ export default function DashboardLayout({
             <div className={styles.drawerFooter}>
               <div onClick={logout} className={styles.logoutBtn}>
                 <LogOut size={18} />
-                <span>Sign Out</span>
+                <span>تسجيل الخروج</span>
               </div>
             </div>
           </aside>

@@ -61,6 +61,12 @@ namespace Shared.Infrastructure
                 .Property(c => c.Embedding)
                 .HasColumnType("vector(768)");
 
+            modelBuilder.Entity<Modules.Conversations.Domain.Message>()
+                .HasOne<Modules.Media.Domain.Asset>()
+                .WithMany()
+                .HasForeignKey(m => m.AssetId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             // Apply global query filter for all entities implementing ITenantEntity
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {

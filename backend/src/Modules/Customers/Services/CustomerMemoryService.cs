@@ -200,12 +200,21 @@ Conversation Transcript:
                 throw new ArgumentException("لا توجد رسائل سابقة لهذا العميل لتوليد ملف التعريف.");
             }
 
+            // 3. Fetch existing customer labels to restrict options
+            var existingLabels = await _dbContext.Customers
+                .Where(c => c.ProjectId == projectId && c.Label != null && c.Label != "")
+                .Select(c => c.Label)
+                .Distinct()
+                .ToListAsync();
+
+            string labelsPrompt = "";
+
             var transcript = string.Join("\n", messages.Select(m => $"{m.Direction}: {m.Content}"));
 
             var prompt = $@"Analyze the following WhatsApp conversation between an Agent/AI and a Customer.
 Extract any notable facts (e.g. preferences, family info, business size), buying triggers, and customer objections mentioned.
 Also write a narrative summary of the relationship so far.
-Additionally, try to extract the customer's real name (only if mentioned, do not guess), city/location, budget amount (as a number if mentioned), lead score (estimate 0-100 based on interest/intent), pipeline stage (one of: ""New"", ""Contacted"", ""Proposal"", ""Negotiation"", ""Won"", ""Lost""), and a short Arabic classification label (e.g. ""طلب حجز"", ""استفسار عن السعر"", ""متابعة"", ""غير مهتم"").
+Additionally, try to extract the customer's real name (only if mentioned, do not guess), city/location, budget amount (as a number if mentioned), lead score (estimate 0-100 based on interest/intent), pipeline stage (one of: ""New"", ""Contacted"", ""Proposal"", ""Negotiation"", ""Won"", ""Lost""), and a short Arabic classification label (e.g. ""طلب حجز"", ""استفسار عن السعر"", ""متابعة"", ""غير مهتم"").{labelsPrompt}
 
 Return the output ONLY as a JSON object of this structure:
 {{
@@ -358,7 +367,7 @@ Conversation Transcript:
                     }
                     if (result.LeadScore.HasValue)
                     {
-                        customer.LeadScore = result.LeadScore.Value;
+                        customer.LeadScore = Math.Min(100, Math.Max(0, result.LeadScore.Value));
                     }
                     if (!string.IsNullOrEmpty(result.Label) && 
                         !result.Label.Contains("label", StringComparison.OrdinalIgnoreCase))

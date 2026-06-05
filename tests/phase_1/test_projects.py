@@ -91,3 +91,47 @@ async def test_project_isolation():
         get_b_with_a = await client.get(f"{BASE_URL}/{proj_b_id}", headers=headers_a)
         assert get_b_with_a.status_code == 200
         assert get_b_with_a.json()["settings"] is None
+
+
+@pytest.mark.asyncio
+async def test_project_custom_tone_and_audience_settings():
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # Create Project
+        proj_name = f"Proj_Custom_{uuid.uuid4().hex[:6]}"
+        create_resp = await client.post(BASE_URL, json={"name": proj_name})
+        assert create_resp.status_code == 201
+        proj_data = create_resp.json()
+        proj_id = proj_data["id"]
+
+        # Get settings initially - should have default values
+        headers = {"X-Project-Id": proj_id}
+        get_resp = await client.get(f"{BASE_URL}/{proj_id}", headers=headers)
+        assert get_resp.status_code == 200
+        settings = get_resp.json()["settings"]
+        assert settings["aiTonePreference"] == "العامية المصرية الروشة والصايعة"
+        assert settings["aiTargetAudience"] == "طلاب كورس كول سنتر يبحثون عن عمل"
+        assert settings["replyDelay"] == 3
+        assert settings["maxDailyMessages"] == 500
+
+        # Update settings with custom values
+        custom_tone = "خليجية مهذبة ومحترمة"
+        custom_audience = "عملاء VIP يبحثون عن عقارات"
+        update_resp = await client.put(f"{BASE_URL}/{proj_id}/settings", headers=headers, json={
+            "aiAutoReplyEnabled": True,
+            "timezone": "GST",
+            "geminiApiKey": "MOCK_KEY",
+            "aiTonePreference": custom_tone,
+            "aiTargetAudience": custom_audience,
+            "replyDelay": 5,
+            "maxDailyMessages": 100
+        })
+        assert update_resp.status_code == 200
+
+        # Get settings again and assert
+        get_updated_resp = await client.get(f"{BASE_URL}/{proj_id}", headers=headers)
+        assert get_updated_resp.status_code == 200
+        updated_settings = get_updated_resp.json()["settings"]
+        assert updated_settings["aiTonePreference"] == custom_tone
+        assert updated_settings["aiTargetAudience"] == custom_audience
+        assert updated_settings["replyDelay"] == 5
+        assert updated_settings["maxDailyMessages"] == 100

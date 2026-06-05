@@ -85,11 +85,17 @@ async def test_follow_ups_flow():
         assert any(f["id"] == future_followup["id"] for f in pendings)
         assert not any(f["id"] == overdue_followup["id"] for f in pendings)
 
-        # The overdue one should now be Missed
+        # The overdue one should now be Completed or Missed
         list_missed = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Missed", headers=headers)
         assert list_missed.status_code == 200
         missed = list_missed.json()
-        assert any(f["id"] == overdue_followup["id"] for f in missed)
+        
+        list_completed = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Completed", headers=headers)
+        assert list_completed.status_code == 200
+        completed = list_completed.json()
+        
+        processed_ids = [f["id"] for f in missed] + [f["id"] for f in completed]
+        assert overdue_followup["id"] in processed_ids
 
 @pytest.mark.asyncio
 async def test_dynamic_follow_ups_types():
@@ -175,3 +181,61 @@ async def test_dynamic_follow_ups_types():
         parsed_close_due = datetime.strptime(close_appt["dueDate"].rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S")
         # Due date should be very close to the current UTC time (e.g. within 5 seconds)
         assert abs((parsed_close_due - datetime.utcnow()).total_seconds()) < 5
+
+
+@pytest.mark.asyncio
+async def test_delete_follow_up_flow():
+    sender_phone = f"555{uuid.uuid4().hex[:6]}"
+    message_id = f"msg_{uuid.uuid4().hex}"
+    
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        # Create Project
+        proj_resp = await client.post(f"{BASE_URL}/projects", json={"name": f"DeleteFUTestProj_{uuid.uuid4().hex[:6]}"})
+        assert proj_resp.status_code == 201
+        proj_id = proj_resp.json()["id"]
+
+        # Ingest message via webhook to auto-create Customer
+        await client.post(
+            f"{BASE_URL}/webhooks/whatsapp/message",
+            json={
+                "projectId": proj_id,
+                "messageId": message_id,
+                "sender": sender_phone,
+                "content": "Hi, need to test delete.",
+                "messageType": "Text",
+                "timestamp": int(time.time())
+            }
+        )
+
+        headers = {"X-Project-Id": proj_id}
+        customers_resp = await client.get(f"{BASE_URL}/projects/{proj_id}/customers", headers=headers)
+        customer_id = customers_resp.json()[0]["id"]
+
+        # Schedule follow-up
+        due_time = (datetime.utcnow() + timedelta(days=1)).isoformat() + "Z"
+        fu_resp = await client.post(
+            f"{BASE_URL}/customers/{customer_id}/follow-ups",
+            headers=headers,
+            json={
+                "dueDate": due_time,
+                "notes": "To be deleted",
+                "type": "Nurturing"
+            }
+        )
+        assert fu_resp.status_code == 201
+        fu_id = fu_resp.json()["id"]
+
+        # Verify follow-up exists in pending list
+        list_resp = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Pending", headers=headers)
+        assert list_resp.status_code == 200
+        assert any(f["id"] == fu_id for f in list_resp.json())
+
+        # Delete follow-up
+        delete_resp = await client.delete(f"{BASE_URL}/follow-ups/{fu_id}", headers=headers)
+        assert delete_resp.status_code == 204
+
+        # Verify follow-up no longer exists
+        list_resp_after = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Pending", headers=headers)
+        assert list_resp_after.status_code == 200
+        assert not any(f["id"] == fu_id for f in list_resp_after.json())
+

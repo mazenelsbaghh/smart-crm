@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using Modules.Media.Services;
+using Shared.Security;
 
 namespace Modules.Media.API
 {
@@ -14,10 +15,12 @@ namespace Modules.Media.API
     public class AssetsController : ControllerBase
     {
         private readonly IAssetService _assetService;
+        private readonly ITenantContext _tenantContext;
 
-        public AssetsController(IAssetService assetService)
+        public AssetsController(IAssetService assetService, ITenantContext tenantContext)
         {
             _assetService = assetService;
+            _tenantContext = tenantContext;
         }
 
         [HttpPost("upload")]
@@ -35,6 +38,8 @@ namespace Modules.Media.API
                 return BadRequest(new { error = "ProjectId is required." });
             }
 
+            _tenantContext.SetProjectId(projectId);
+
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier) ?? User.FindFirst("sub");
             var uploadedBy = userIdClaim != null ? Guid.Parse(userIdClaim.Value) : Guid.Empty;
 
@@ -43,6 +48,70 @@ namespace Modules.Media.API
                 using var stream = file.OpenReadStream();
                 var asset = await _assetService.UploadAssetAsync(projectId, file.FileName, file.ContentType, stream, uploadedBy);
                 return StatusCode(201, asset);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        [HttpPost("/api/projects/{projectId}/assets/upload")]
+        [AllowAnonymous]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UploadAssetAnonymous(Guid projectId, [FromForm] IFormFile file)
+        {
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest(new { error = "No file was uploaded." });
+            }
+
+            if (projectId == Guid.Empty)
+            {
+                return BadRequest(new { error = "ProjectId is required." });
+            }
+
+            _tenantContext.SetProjectId(projectId);
+
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier) ?? User.FindFirst("sub");
+            var uploadedBy = userIdClaim != null ? Guid.Parse(userIdClaim.Value) : Guid.Empty;
+
+            try
+            {
+                using var stream = file.OpenReadStream();
+                var asset = await _assetService.UploadAssetAsync(projectId, file.FileName, file.ContentType, stream, uploadedBy);
+                return StatusCode(201, asset);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        [HttpGet("/api/projects/{projectId}/assets/{id}/url")]
+        [Authorize]
+        public async Task<IActionResult> GetPresignedUrl(Guid projectId, Guid id)
+        {
+            try
+            {
+                var downloadUrl = await _assetService.GetSignedUrlAsync(id);
+                return Ok(new
+                {
+                    assetId = id,
+                    url = downloadUrl,
+                    expiry = DateTime.UtcNow.AddHours(1)
+                });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { error = ex.Message });
             }
             catch (UnauthorizedAccessException)
             {

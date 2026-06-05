@@ -15,6 +15,7 @@ namespace Modules.Brain.Services
         Task<KnowledgeDocument> UpdateDocumentAsync(Guid id, string title, string content, string? sourceUrl);
         Task<KnowledgeDocument> ApproveDocumentAsync(Guid id);
         Task<KnowledgeDocument> RejectDocumentAsync(Guid id);
+        Task<KnowledgeDocument> SuggestDocumentAsync(Guid projectId, string title, string content, string? sourceUrl);
         Task DeleteDocumentAsync(Guid id);
     }
 
@@ -74,7 +75,7 @@ namespace Modules.Brain.Services
             var doc = await _dbContext.KnowledgeDocuments.FindAsync(id);
             if (doc == null) throw new ArgumentException("Document not found");
 
-            doc.Status = "Published";
+            doc.Status = "Approved";
             await _dbContext.SaveChangesAsync();
             return doc;
         }
@@ -84,8 +85,29 @@ namespace Modules.Brain.Services
             var doc = await _dbContext.KnowledgeDocuments.FindAsync(id);
             if (doc == null) throw new ArgumentException("Document not found");
 
-            doc.Status = "Draft";
+            doc.Status = "Rejected";
             await _dbContext.SaveChangesAsync();
+            return doc;
+        }
+
+        public async Task<KnowledgeDocument> SuggestDocumentAsync(Guid projectId, string title, string content, string? sourceUrl)
+        {
+            var doc = new KnowledgeDocument
+            {
+                ProjectId = projectId,
+                Title = title,
+                Content = content,
+                SourceUrl = sourceUrl,
+                Status = "PendingApproval",
+                Version = 1
+            };
+
+            _dbContext.KnowledgeDocuments.Add(doc);
+            await _dbContext.SaveChangesAsync();
+
+            // Generate chunks and embeddings
+            await GenerateChunksAndEmbeddingsAsync(doc);
+
             return doc;
         }
 
@@ -110,24 +132,36 @@ namespace Modules.Brain.Services
             _dbContext.KnowledgeChunks.RemoveRange(oldChunks);
             await _dbContext.SaveChangesAsync();
 
-            var chunksText = doc.Content.Split(new[] { ". " }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var chunkText in chunksText)
+            var paragraphs = doc.Content.Split(new[] { "\r\n\r\n", "\n\n", "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            var currentChunk = new System.Text.StringBuilder();
+            var chunks = new System.Collections.Generic.List<string>();
+
+            foreach (var p in paragraphs)
             {
-                var cleanText = chunkText.Trim();
-                if (!cleanText.EndsWith(".") && !string.IsNullOrEmpty(cleanText))
+                var clean = p.Trim();
+                if (string.IsNullOrEmpty(clean)) continue;
+
+                if (currentChunk.Length + clean.Length > 800 && currentChunk.Length > 0)
                 {
-                    cleanText += ".";
+                    chunks.Add(currentChunk.ToString().Trim());
+                    currentChunk.Clear();
                 }
+                currentChunk.AppendLine(clean);
+            }
+            if (currentChunk.Length > 0)
+            {
+                chunks.Add(currentChunk.ToString().Trim());
+            }
 
-                if (string.IsNullOrEmpty(cleanText)) continue;
-
-                var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(cleanText);
+            foreach (var chunkText in chunks)
+            {
+                var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(chunkText);
                 var embeddingVector = new Vector(embeddingFloats);
 
                 var chunk = new KnowledgeChunk
                 {
                     KnowledgeDocumentId = doc.Id,
-                    ChunkText = cleanText,
+                    ChunkText = chunkText,
                     Embedding = embeddingVector
                 };
 

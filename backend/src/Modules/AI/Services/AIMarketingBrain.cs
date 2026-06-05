@@ -22,6 +22,19 @@ namespace Modules.AI.Services
         public double Confidence { get; set; } = 1.0;
         public string Label { get; set; } = string.Empty;
         public string PipelineStage { get; set; } = "New";
+        public string? Transcription { get; set; }
+        public SuggestedFollowUpResult? SuggestedFollowUp { get; set; }
+        public string[] SuggestedButtons { get; set; } = Array.Empty<string>();
+        public string? SuggestedReaction { get; set; }
+    }
+
+    public class SuggestedFollowUpResult
+    {
+        public bool Needed { get; set; }
+        public string Type { get; set; } = "Nurturing"; // Nurturing, AppointmentReminder
+        public string? AppointmentTime { get; set; }
+        public string? DueDate { get; set; }
+        public string? Notes { get; set; }
     }
 
     public interface IAIMarketingBrain
@@ -33,7 +46,11 @@ namespace Modules.AI.Services
             string chatHistory = null, 
             string customerMemory = null,
             string[] existingLabels = null,
-            string customerProfile = null);
+            string customerProfile = null,
+            byte[] fileBytes = null,
+            string mimeType = null,
+            string aiTonePreference = null,
+            string aiTargetAudience = null);
     }
 
     public class AIMarketingBrain : IAIMarketingBrain
@@ -45,6 +62,56 @@ namespace Modules.AI.Services
             _geminiClient = geminiClient;
         }
 
+        private string GetCurrentAgentName()
+        {
+            TimeZoneInfo cairoZone;
+            try
+            {
+                cairoZone = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo");
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                try
+                {
+                    cairoZone = TimeZoneInfo.FindSystemTimeZoneById("Egypt Standard Time");
+                }
+                catch
+                {
+                    cairoZone = TimeZoneInfo.Utc;
+                }
+            }
+
+            var cairoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
+            int hour = cairoTime.Hour;
+
+            // Shifts (Cairo Local Time) using the 5 names:
+            // 00:00 - 05:00 -> ساجي
+            // 05:00 - 10:00 -> لارا
+            // 10:00 - 15:00 -> مادلين
+            // 15:00 - 19:00 -> شاهي
+            // 19:00 - 24:00 -> ساندي
+            if (hour >= 0 && hour < 5)
+            {
+                return "ساجي";
+            }
+            else if (hour >= 5 && hour < 10)
+            {
+                return "لارا";
+            }
+            else if (hour >= 10 && hour < 15)
+            {
+                return "مادلين";
+            }
+            else if (hour >= 15 && hour < 19)
+            {
+                return "شاهي";
+            }
+            else
+            {
+                return "ساندي";
+            }
+        }
+
         public async Task<MarketingAnalysisResult> AnalyzeAndGenerateReplyAsync(
             string messageContent, 
             string apiKeyOverride = null, 
@@ -52,9 +119,25 @@ namespace Modules.AI.Services
             string chatHistory = null, 
             string customerMemory = null,
             string[] existingLabels = null,
-            string customerProfile = null)
+            string customerProfile = null,
+            byte[] fileBytes = null,
+            string mimeType = null,
+            string aiTonePreference = null,
+            string aiTargetAudience = null)
         {
+            var agentName = GetCurrentAgentName();
+            Console.WriteLine($"[AIMarketingBrain] Active shift agent resolved: {agentName} (UTC hour: {DateTime.UtcNow.Hour})");
+
             var systemPrompt = @"You are a high-performing AI Marketing Brain and CRM assistant.
+Your name is [AGENT_NAME]. You MUST sign off your response with a signature as the very last line of your reply.
+- Normally, sign off with '- [AGENT_NAME] ✨'.
+- CRITICAL: If the customer's sentiment is 'angry' or 'negative', or if you classify the replyStyle as 'Complaint':
+  1. Set replyStyle to 'Complaint'.
+  2. Write an extremely apologetic, polite, and empathetic response.
+  3. Do NOT use any sparkles (✨) or cheerful/playful emojis anywhere in the replyContent.
+  4. Sign off with a plain signature '- [AGENT_NAME]' (without the '✨' sparkles) to maintain a respectful and serious tone.
+  5. Set suggestedFollowUp.needed to false (because complaints/angry customers require immediate human resolution and manual follow-up, never send them automated messages).
+
 Analyze the customer's message and generate a response.
 You MUST respond strictly in the following JSON format, and nothing else (no markdown blocks like ```json):
 {
@@ -69,10 +152,31 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
     ""timeline"": ""string | null""
   },
   ""replyContent"": ""your human-like helpful reply text here"",
-  ""confidence"": 0.95
+  ""confidence"": 0.95,
+  ""transcription"": ""string | null"",
+  ""suggestedFollowUp"": {
+    ""needed"": true | false,
+    ""type"": ""Nurturing | AppointmentReminder"",
+    ""appointmentTime"": ""ISO_DATETIME_STRING (UTC) | null"",
+    ""dueDate"": ""ISO_DATETIME_STRING (UTC)"",
+    ""notes"": ""Arabic message content customized to the customer's context and conversation state, to be sent to them automatically""
+  },
+  ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null""
 }
 
-Guidelines for replyStyle:
+Guidelines for suggestedReaction:
+- suggestedReaction: Set to a single emoji (👍, ❤️, 💖, 😢, 😂, 😮) or null. Suggest an emoji reaction to the customer's message only if it adds a warm, human-like touch (e.g. ❤️/💖 for gratitude, joy, or positive feedback; 😢 for sadness or complaints; 😂 for jokes; 👍 for agreement or simple acknowledgment). Otherwise, return null.
+
+Guidelines for suggestedFollowUp:
+- needed: Set to true if the customer booked an appointment/course (requires AppointmentReminder) OR if they are hesitant, cold, or waiting for feedback (requires Nurturing). Otherwise false.
+- type: Use 'AppointmentReminder' for booked appointments/courses. Use 'Nurturing' for re-engaging hesitant or cold leads.
+- appointmentTime: Specify the target datetime of the appointment/course in ISO format (UTC), only if type is 'AppointmentReminder'. Otherwise null.
+- dueDate:
+  - For AppointmentReminder: Must be exactly 24 hours prior to appointmentTime. If the appointment is less than 24 hours away, set dueDate to the current time.
+  - For Nurturing: Set to a reasonable re-engagement time (typically 1 to 3 days from the current time).
+- notes: Provide a warm, personalized message in friendly Arabic tailored specifically to the customer's context (e.g. reminding them of their specific session time, or asking them if they had time to review the details, tailored to their exact hesitation). Do not use placeholders.
+
+            Guidelines for replyStyle:
 - Fast: Short, immediate answers.
 - Casual: Friendly, informal tone.
 - Sales: Persuasive, highlighting benefits, includes a clear CTA.
@@ -81,23 +185,63 @@ Guidelines for replyStyle:
 - Complaint: Apologetic, resolution-focused, highly empathetic.
 - Follow-up: Re-engaging, curious.
 
+Guidelines for replyContent tone, style, and vocabulary:
+- TONE & DIALECT PREFERENCE: You must write in: [TONE_PREFERENCE]. Adjust your vocabulary, greetings, and syntax to perfectly match this dialect and tone.
+- TARGET AUDIENCE: You are talking to: [TARGET_AUDIENCE]. Tailor your message style, concerns, and persuasive arguments specifically to this audience's level, interests, and needs.
+- RESPECT & POLITENESS: Always remain polite, respectful, and professional. Avoid any offensive, overly casual, or inappropriate slang. The customer must feel respected and valued at all times.
+- NO CORPORATE DRYNESS: Avoid dry, formal Standard Arabic (الفصحى الجافة) and avoid structured corporate-style headings (e.g. NEVER use headings like ""1. نظام الدراسة:"" or ""2. التوظيف:"").
+- CONVERSATIONAL FLOW & TRANSITIONS: Present details as a single cohesive story or conversation, using natural, friendly connectors matching the chosen dialect (e.g. for Egyptian: ""بص يا سيدي..."", ""من الآخر...""; for Gulf: ""طال عمرك..."", ""تفضل يا طيب..."", etc.) instead of rigid academic lists.
+- PERSUASIVE WRITING: Present the details as an exciting opportunity rather than a dry list of facts. Keep the energy high and engaging!
+
 Guidelines for replyContent formatting and unity:
 - CRITICAL: Write a SINGLE cohesive response. Do NOT paste multiple different scripts, greeting scripts, or welcome templates together.
 - Do NOT repeat greetings (e.g. do not say 'أهلاً' or 'مرحباً' or 'نورتنا' more than once in the same response).
-- Do NOT include multiple signature lines or repeat agent names (e.g. never output '- ساندي ✨' more than once).
+- Do NOT include multiple signature lines or repeat agent names (e.g. never output '- [AGENT_NAME] ✨' or '- [AGENT_NAME]' more than once).
 - If the reference knowledge base contains multiple templates, scripts, or FAQs, synthesize their facts into a single natural message.
 - Strictly avoid repeating the same request/question (e.g. do not ask for the same customer details multiple times or in different styles).
 - Ensure there are no redundant paragraphs. Keep it professional, warm, and concise in Arabic.
-- Use double newlines ('\n\n') ONLY to separate logical paragraphs. Keep the number of paragraphs to a minimum (typically 1 to 3 paragraphs max) to avoid sending too many small message bubbles.
+- Use double newlines ('\n\n') ONLY to separate logical paragraphs. Keep the number of paragraphs to a minimum (typically 1 to 2 paragraphs max) to avoid sending too many small message bubbles.
 
 Ensure the replyContent is written in the same language as the customer's message. Don't use placeholders.
 Be concise, natural, and friendly. Do not repeat greetings or duplicate questions. Keep your replyContent focused on answering the customer's direct query without unnecessary fluff.";
 
-            if (existingLabels != null && existingLabels.Length > 0)
+            var tonePref = !string.IsNullOrEmpty(aiTonePreference) ? aiTonePreference : "العامية المصرية الروشة والصايعة";
+            var targetAud = !string.IsNullOrEmpty(aiTargetAudience) ? aiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل";
+
+            systemPrompt = systemPrompt.Replace("[AGENT_NAME]", agentName);
+            systemPrompt = systemPrompt.Replace("[TONE_PREFERENCE]", tonePref);
+            systemPrompt = systemPrompt.Replace("[TARGET_AUDIENCE]", targetAud);
+
+            var tonePrefLower = tonePref.ToLower();
+            if (tonePrefLower.Contains("روشة") || tonePrefLower.Contains("صايعة") || (tonePrefLower.Contains("مصر") && tonePrefLower.Contains("روشة")))
             {
-                var labelsList = string.Join(", ", System.Linq.Enumerable.Select(existingLabels, l => $"'{l}'"));
-                systemPrompt += $"\n\nExisting Customer Labels currently in use in our database:\n[{labelsList}]\nChoose ONE of these exact existing labels for the \"label\" field. Do not invent a new label if existing labels are provided above.";
+                systemPrompt += "\n\nSpecific guidelines for Egyptian Slang Tone (العامية المصرية الروشة والصايعة):\n" +
+                                 "- Use natural, cool, and highly conversational transitions like: \"بص يا سيدي...\", \"بص بقى يا صاحبي...\", \"سكة ودغري كدة...\", \"من الآخر...\", \"أول حاجة لازم تعرفها...\", \"تاني حاجة بقى ودي الأهم...\", \"هتطلع من الكورس ده بتتكلم إنجليزي زي الأجانب وبثقة...\", \"هندلعك في المتابعة والتاسكات...\", \"الشغل مضمون وفي جيبك...\".\n" +
+                                 "- Use warm, popular Egyptian words that build rapport and sound authentic, such as: \"يا غالي\", \"يا صديقي\", \"يا صاحبي\", \"باشا\", \"سكة ودغري\", \"في الرايق\", \"على الهادي\", \"تظبط الكلام\", \"في الجون\", \"حاجة عظمة\". Do not use offensive language.";
             }
+            else if (tonePrefLower.Contains("مهذب") || tonePrefLower.Contains("محترم") || tonePrefLower.Contains("لذيذ") || tonePrefLower.Contains("عامي") || (tonePrefLower.Contains("مصر") && (tonePrefLower.Contains("مهذب") || tonePrefLower.Contains("محترم"))))
+            {
+                systemPrompt += "\n\nSpecific guidelines for Polite Egyptian Colloquial Tone (العامية المصرية المهذبة والمحترمة):\n" +
+                                 "- Use polite, warm, and professional Egyptian colloquial Arabic (عامية مصرية راقية ومحترمة).\n" +
+                                 "- Use polite greetings and transitions like: \"أهلاً بك يا فندم...\", \"تحياتي لحضرتك...\", \"بص يا فندم...\", \"خليني أوضح لحضرتك...\", \"تحت أمرك في أي وقت...\".\n" +
+                                 "- Build trust and rapport without being overly casual or using street slang. Avoid words like \"روشة\", \"صايعة\", \"هندلعك\", \"في جيبك\". Use respectful terms like \"يا فندم\", \"حضرتك\", \"يسعدنا جداً\".";
+            }
+            else if (tonePrefLower.Contains("خليج") || tonePrefLower.Contains("سعودي"))
+            {
+                systemPrompt += "\n\nSpecific guidelines for Gulf Dialect (اللهجة الخليجية المهذبة):\n" +
+                                 "- Write in polite, warm, and authentic Gulf Arabic (لهجة خليجية بيضاء مهذبة).\n" +
+                                 "- Use common polite transitions and phrases like: \"طال عمرك...\", \"تفضل يا طيب...\", \"يا هلا ومرحبا فيك...\", \"حياك الله يا فندم...\", \"يسعدنا خدمتكم...\", \"أبشر بالخير...\".\n" +
+                                 "- Always address the customer respectfully using \"عمرك\", \"حضرتك\", or \"طال عمرك\".";
+            }
+            else if (tonePrefLower.Contains("فصحى") || tonePrefLower.Contains("عربية فصحى"))
+            {
+                systemPrompt += "\n\nSpecific guidelines for Simplified Modern Standard Arabic (العربية الفصحى المبسطة):\n" +
+                                 "- Write in clear, warm, and modern simplified standard Arabic (فصحى مبسطة وودودة).\n" +
+                                 "- Avoid overly rigid, archaic, or complex classical words, but maintain correct grammar.\n" +
+                                 "- Use warm expressions like: \"أهلاً بك عزيزي...\", \"يسعدنا جداً تواصلك معنا...\", \"يسرني أن أوضح لك...\", \"بكل تأكيد...\".";
+            }
+
+            systemPrompt += $"\n\nCRITICAL: The current UTC time is {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}. Use this as the reference time to calculate all relative dates/times for follow-ups (e.g. 'tomorrow at 7 PM' or 'in 2 days').";
 
             if (!string.IsNullOrEmpty(customerProfile))
             {
@@ -120,9 +264,29 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 systemPrompt += $"\n\nHere is the recent chat history between the customer and Agent/AI for context:\n{chatHistory}";
             }
 
+            if (fileBytes != null && mimeType != null)
+            {
+                if (mimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+                {
+                    systemPrompt += "\n\nCRITICAL: The attached file is a WhatsApp voice note. Transcribe it exactly in its original language, and include the transcription in your JSON response under the 'transcription' key.";
+                }
+                else if (mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                {
+                    systemPrompt += "\n\nCRITICAL: The attached file is an image sent by the customer. Analyze its visual details to extract CRM facts, billing values, city, budget, tags, etc. and map them to the CRM entities JSON payload.";
+                }
+            }
+
             var fullPrompt = $"{systemPrompt}\n\nCustomer Message: \"{messageContent}\"";
 
-            string rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, apiKeyOverride);
+            string rawResponse;
+            if (fileBytes != null && mimeType != null)
+            {
+                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, fileBytes, mimeType, apiKeyOverride);
+            }
+            else
+            {
+                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, apiKeyOverride);
+            }
 
             if (string.IsNullOrEmpty(rawResponse))
             {
@@ -162,6 +326,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     // Ensure entities is initialized
                     result.Entities ??= new CRMEntities();
                     result.Entities.Interests ??= Array.Empty<string>();
+                    result.SuggestedButtons ??= Array.Empty<string>();
                     if (string.IsNullOrEmpty(result.Label))
                     {
                         result.Label = "استفسار عام";
@@ -203,7 +368,8 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 ReplyContent = fallbackReply,
                 Confidence = 0.5,
                 Label = "استفسار عام",
-                PipelineStage = "New"
+                PipelineStage = "New",
+                SuggestedButtons = Array.Empty<string>()
             };
         }
     }

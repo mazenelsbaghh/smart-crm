@@ -86,6 +86,12 @@ async def test_intent_sentiment_lead_scoring_flow():
         assert convs_resp.status_code == 200
         conversations = convs_resp.json()
         
-        conversation = next((c for c in conversations if c["customerId"] == customer["id"]), None)
+        conversation = next((c for c in conversations if c["customer"]["id"] == customer["id"]), None)
         assert conversation is not None, "Conversation record was not created"
         assert conversation["status"] == "Pending", "Conversation was not flagged as Pending human attention"
+
+        # 9. Verify that no pending follow-ups exist for this project (angry customer cancels/deletes pending follow-ups)
+        followups_resp = await client.get(f"{BASE_URL}/projects/{proj_id}/reports/follow-ups")
+        assert followups_resp.status_code == 200
+        followup_data = followups_resp.json()
+        assert followup_data["pendingCount"] == 0

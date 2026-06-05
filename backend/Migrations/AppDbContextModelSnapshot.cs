@@ -602,6 +602,9 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text[]");
 
+                    b.Property<bool>("IsBlacklisted")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Label")
                         .HasColumnType("text");
 
@@ -641,6 +644,9 @@ namespace backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("AssetId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Content")
                         .IsRequired()
                         .HasColumnType("text");
@@ -663,7 +669,12 @@ namespace backend.Migrations
                     b.Property<DateTime>("Timestamp")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Transcription")
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("AssetId");
 
                     b.ToTable("Messages");
                 });
@@ -889,9 +900,23 @@ namespace backend.Migrations
                     b.Property<bool>("AiAutoReplyEnabled")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("AiTargetAudience")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AiTonePreference")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("GeminiApiKey")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<int>("MaxDailyMessages")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ReplyDelay")
+                        .HasColumnType("integer");
 
                     b.Property<string>("Timezone")
                         .IsRequired()
@@ -1002,6 +1027,14 @@ namespace backend.Migrations
                         .IsRequired();
 
                     b.Navigation("KnowledgeDocument");
+                });
+
+            modelBuilder.Entity("Modules.Conversations.Domain.Message", b =>
+                {
+                    b.HasOne("Modules.Media.Domain.Asset", null)
+                        .WithMany()
+                        .HasForeignKey("AssetId")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("Modules.Workflows.Domain.WorkflowExecutionLog", b =>

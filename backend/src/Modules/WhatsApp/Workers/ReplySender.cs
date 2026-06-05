@@ -38,10 +38,52 @@ namespace Modules.WhatsApp.Workers
 
             try
             {
-                var chunks = _messagingEngine.SplitIntoChunks(@event.Content);
-
-                foreach (var chunk in chunks)
+                // Fetch last incoming message to calculate Thinking/Reading delay
+                using (var scope = _serviceProvider.CreateScope())
                 {
+                    var tenantContext = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+                    tenantContext.SetProjectId(@event.ProjectId);
+
+                    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var customer = await dbContext.Customers
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.PhoneNumber == @event.Sender);
+
+                    if (customer != null)
+                    {
+                        var conversation = await dbContext.Conversations
+                            .IgnoreQueryFilters()
+                            .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+
+                        if (conversation != null)
+                        {
+                            var lastIncoming = await dbContext.Messages
+                                .IgnoreQueryFilters()
+                                .Where(m => m.ConversationId == conversation.Id && m.Direction == "Incoming")
+                                .OrderByDescending(m => m.Timestamp)
+                                .FirstOrDefaultAsync();
+
+                            if (lastIncoming != null)
+                            {
+                                int thinkingDelay = _messagingEngine.CalculateThinkingDelay(lastIncoming.Content, @event.ProjectId);
+                                Console.WriteLine($"[ReplySender] Simulating smart thinking delay of {thinkingDelay}ms...");
+                                await Task.Delay(thinkingDelay);
+                            }
+                        }
+                    }
+                }
+
+                var chunks = System.Linq.Enumerable.ToList(_messagingEngine.SplitIntoChunks(@event.Content));
+
+                for (int i = 0; i < chunks.Count; i++)
+                {
+                    var chunk = chunks[i];
+
+                    // Smart typing delay occurs BEFORE sending the chunk!
+                    int delayMs = _messagingEngine.CalculateTypingDelay(chunk, @event.ProjectId);
+                    Console.WriteLine($"[ReplySender] Simulating human typing delay of {delayMs}ms...");
+                    await Task.Delay(delayMs);
+
                     var payload = new
                     {
                         projectId = @event.ProjectId,
@@ -49,11 +91,11 @@ namespace Modules.WhatsApp.Workers
                         message = chunk
                     };
 
-                    var jsonContent = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                    var jsonPayload = JsonSerializer.Serialize(payload);
 
                     try
                     {
-                        var response = await _httpClient.PostAsync($"{_gatewayUrl}/api/whatsapp/send", jsonContent);
+                        var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{_gatewayUrl}/api/whatsapp/send", jsonPayload);
                         var responseBody = await response.Content.ReadAsStringAsync();
                         
                         if (response.IsSuccessStatusCode)
@@ -128,10 +170,31 @@ namespace Modules.WhatsApp.Workers
                         Console.WriteLine($"[ReplySender] Exception while calling WhatsApp Gateway: {ex.Message}");
                     }
 
-                    // Human typing delay
-                    int delayMs = _messagingEngine.CalculateTypingDelay(chunk, @event.ProjectId);
-                    Console.WriteLine($"[ReplySender] Simulating human typing delay of {delayMs}ms...");
-                    await Task.Delay(delayMs);
+                    // Stagger delay between consecutive message chunks to feel human-like
+                    if (i < chunks.Count - 1)
+                    {
+                        bool isTest = false;
+                        try
+                        {
+                            using (var scope = _serviceProvider.CreateScope())
+                            {
+                                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                                var project = dbContext.Projects.Find(@event.ProjectId);
+                                if (project != null && HumanMessagingEngine.IsTestProject(project.Name))
+                                {
+                                    isTest = true;
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // Fallback
+                        }
+
+                        int staggerDelayMs = isTest ? 100 : new Random().Next(3, 21) * 1000;
+                        Console.WriteLine($"[ReplySender] Waiting {staggerDelayMs}ms stagger delay between message chunks...");
+                        await Task.Delay(staggerDelayMs);
+                    }
                 }
             }
             finally

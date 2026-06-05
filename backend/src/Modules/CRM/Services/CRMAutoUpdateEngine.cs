@@ -127,7 +127,7 @@ namespace Modules.CRM.Services
             {
                 if (@event.Intent.Equals("purchase", StringComparison.OrdinalIgnoreCase))
                 {
-                    customer.LeadScore += 20;
+                    customer.LeadScore = Math.Min(100, customer.LeadScore + 20);
                 }
                 else if (@event.Intent.Equals("complaint", StringComparison.OrdinalIgnoreCase))
                 {
@@ -224,11 +224,11 @@ namespace Modules.CRM.Services
 
                 if (stage == null)
                 {
-                    int maxOrder = await _context.PipelineStages
+                    var orders = await _context.PipelineStages
                         .Where(s => s.ProjectId == @event.ProjectId)
                         .Select(s => s.Order)
-                        .DefaultIfEmpty(-1)
-                        .MaxAsync();
+                        .ToListAsync();
+                    int maxOrder = orders.Any() ? orders.Max() : -1;
 
                     stage = new PipelineStage
                     {
@@ -301,6 +301,86 @@ namespace Modules.CRM.Services
                 if (currentStage != null)
                 {
                     resolvedStageName = currentStage.Name;
+                }
+            }
+
+            // Enforce that complaints or angry/negative customers never get automated follow-ups
+            bool isComplaintOrNegative = 
+                (!string.IsNullOrEmpty(@event.Sentiment) && 
+                 (@event.Sentiment.Equals("angry", StringComparison.OrdinalIgnoreCase) || 
+                  @event.Sentiment.Equals("negative", StringComparison.OrdinalIgnoreCase))) ||
+                (!string.IsNullOrEmpty(@event.Intent) && 
+                 @event.Intent.Equals("complaint", StringComparison.OrdinalIgnoreCase));
+
+            if (isComplaintOrNegative)
+            {
+                Console.WriteLine($"[CRMAutoUpdateEngine] Overriding FollowUpNeeded to false due to Complaint/Negative sentiment.");
+                @event.FollowUpNeeded = false;
+            }
+
+            // Process Suggested Follow-up
+            var existingFollowUp = await _context.FollowUps
+                .FirstOrDefaultAsync(f => f.CustomerId == @event.CustomerId && f.Status == "Pending");
+
+            if (@event.FollowUpNeeded)
+            {
+                Console.WriteLine($"[CRMAutoUpdateEngine] Processing suggested follow-up for Customer: {@event.CustomerId}. Type: {@event.FollowUpType}");
+                try
+                {
+                    DateTime? appTime = null;
+                    if (!string.IsNullOrEmpty(@event.FollowUpAppointmentTime) && DateTime.TryParse(@event.FollowUpAppointmentTime, out var parsedAppTime))
+                    {
+                        appTime = DateTime.SpecifyKind(parsedAppTime, DateTimeKind.Utc);
+                    }
+
+                    DateTime dueDate = DateTime.UtcNow;
+                    if (!string.IsNullOrEmpty(@event.FollowUpDueDate) && DateTime.TryParse(@event.FollowUpDueDate, out var parsedDueDate))
+                    {
+                        dueDate = DateTime.SpecifyKind(parsedDueDate, DateTimeKind.Utc);
+                    }
+
+                    string followUpType = !string.IsNullOrEmpty(@event.FollowUpType) ? @event.FollowUpType : "Nurturing";
+
+                    if (existingFollowUp != null)
+                    {
+                        existingFollowUp.Type = followUpType;
+                        existingFollowUp.AppointmentTime = appTime;
+                        existingFollowUp.DueDate = dueDate;
+                        existingFollowUp.Notes = @event.FollowUpNotes ?? string.Empty;
+                        _context.Entry(existingFollowUp).State = EntityState.Modified;
+                        Console.WriteLine($"[CRMAutoUpdateEngine] Updated existing pending follow-up {existingFollowUp.Id} with new context.");
+                    }
+                    else
+                    {
+                        var newFollowUp = new FollowUp
+                        {
+                            Id = Guid.NewGuid(),
+                            ProjectId = @event.ProjectId,
+                            CustomerId = @event.CustomerId,
+                            Type = followUpType,
+                            AppointmentTime = appTime,
+                            DueDate = dueDate,
+                            Notes = @event.FollowUpNotes ?? string.Empty,
+                            Status = "Pending"
+                        };
+                        _context.FollowUps.Add(newFollowUp);
+                        Console.WriteLine($"[CRMAutoUpdateEngine] Created new pending follow-up {newFollowUp.Id} for customer {@event.CustomerId}.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[CRMAutoUpdateEngine] Error processing suggested follow-up: {ex.Message}");
+                }
+            }
+            else
+            {
+                var pendingFollowUps = await _context.FollowUps
+                    .Where(f => f.CustomerId == @event.CustomerId && f.Status == "Pending")
+                    .ToListAsync();
+                if (pendingFollowUps.Any())
+                {
+                    _context.FollowUps.RemoveRange(pendingFollowUps);
+                    Console.WriteLine($"[CRMAutoUpdateEngine] Deleted {pendingFollowUps.Count} pending follow-ups because AI suggested no follow-up is needed or sentiment was negative.");
                 }
             }
 

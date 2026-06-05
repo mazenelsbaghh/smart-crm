@@ -4,7 +4,7 @@
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.6);
+  background-color: var(--overlay);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
@@ -23,18 +23,96 @@
   max-width: 95vw;
   max-height: 90vh;
   border-radius: var(--radius-lg);
-  background-color: hsl(var(--bg-secondary));
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.8);
+  box-shadow: var(--shadow-soft);
   overflow: hidden;
 }
 
-.loadingSpinner {
-  padding: var(--space-xl);
-  text-align: center;
-  color: hsl(var(--text-secondary));
+.customerLoadingShell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 420px;
+}
+
+.customerLoadingHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.customerLoadingTitle {
+  width: 260px;
+  min-height: 24px;
+  color: var(--text-strong);
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.customerLoadingSubtitle {
+  width: 190px;
+  min-height: 16px;
+  margin-top: 8px;
+  color: var(--text-soft);
+  font-size: 0.85rem;
+}
+
+.customerLoadingAction {
+  width: 72px;
+  min-height: 34px;
+  border-radius: var(--radius-md);
+  color: var(--text-base);
+  font-size: 0.85rem;
+}
+
+.customerLoadingGrid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+}
+
+.customerLoadingColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.customerLoadingField,
+.customerLoadingArea,
+.customerLoadingPanel {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  color: var(--text-base);
+  font-size: 0.85rem;
+}
+
+.customerLoadingField {
+  min-height: 44px;
+  padding: var(--space-sm) var(--space-md);
+}
+
+.customerLoadingArea {
+  min-height: 126px;
+  padding: var(--space-md);
+}
+
+.customerLoadingPanel {
+  min-height: 128px;
+  padding: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .customerLoadingGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .header {
@@ -42,7 +120,7 @@
   align-items: center;
   justify-content: space-between;
   padding: var(--space-lg);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .title {
@@ -70,7 +148,7 @@
 }
 
 .closeBtn:hover {
-  background-color: rgba(255, 255, 255, 0.03);
+  background-color: var(--accent-soft);
   color: hsl(var(--text-primary));
 }
 
@@ -99,7 +177,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  border-left: 1px solid var(--border-subtle);
   padding-left: var(--space-lg);
 }
 
@@ -107,7 +185,7 @@
   .interactionsColumn {
     border-left: none;
     padding-left: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    border-top: 1px solid var(--border-subtle);
     padding-top: var(--space-lg);
   }
 }
@@ -140,8 +218,8 @@
 }
 
 .input {
-  background-color: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   color: hsl(var(--text-primary));
   padding: var(--space-sm) var(--space-md);
@@ -151,13 +229,14 @@
 }
 
 .input:focus {
-  border-color: hsl(var(--accent-primary));
-  background-color: rgba(255, 255, 255, 0.04);
+  border-color: var(--accent);
+  background-color: var(--surface-raised);
+  box-shadow: var(--focus-ring);
 }
 
 .select {
-  background-color: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   color: hsl(var(--text-primary));
   padding: var(--space-sm) var(--space-md);
@@ -167,12 +246,13 @@
 }
 
 .select:focus {
-  border-color: hsl(var(--accent-primary));
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .textarea {
-  background-color: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   color: hsl(var(--text-primary));
   padding: var(--space-sm) var(--space-md);
@@ -182,7 +262,8 @@
 }
 
 .textarea:focus {
-  border-color: hsl(var(--accent-primary));
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .tagInputRow {
@@ -191,8 +272,8 @@
 }
 
 .addTagBtn {
-  background-color: rgba(99, 102, 241, 0.15);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  background-color: var(--accent-soft);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   color: hsl(var(--accent-primary));
   padding: 0 var(--space-md);
@@ -204,7 +285,7 @@
 }
 
 .addTagBtn:hover {
-  background-color: rgba(99, 102, 241, 0.25);
+  background-color: var(--accent-soft-strong);
 }
 
 .tagCloud {
@@ -217,8 +298,8 @@
 .tag {
   display: flex;
   align-items: center;
-  background-color: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
   padding: 3px 8px;
   font-size: 0.75rem;
@@ -227,9 +308,9 @@
 
 .smartLabelBadge {
   font-size: 0.75rem;
-  background-color: hsla(262, 83%, 95%, 0.12);
-  color: hsl(262, 83%, 75%);
-  border: 1px solid rgba(168, 85, 247, 0.25);
+  background-color: var(--accent-secondary-soft);
+  color: hsl(var(--accent-secondary));
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 2px 8px;
   display: inline-flex;
@@ -249,8 +330,8 @@
 }
 
 .saveBtn {
-  background-color: hsl(var(--accent-primary));
-  color: white;
+  background-color: var(--accent);
+  color: var(--accent-ink);
   border: none;
   border-radius: var(--radius-md);
   padding: var(--space-md);
@@ -258,12 +339,12 @@
   font-weight: 700;
   cursor: pointer;
   margin-top: var(--space-md);
-  box-shadow: 0 4px 14px 0 rgba(99, 102, 241, 0.4);
+  box-shadow: var(--shadow-neon);
   transition: var(--transition-normal);
 }
 
 .saveBtn:hover:not(:disabled) {
-  background-color: hsl(var(--accent-primary-hover, 240, 80%, 65%));
+  background-color: var(--accent-hover);
   transform: translateY(-1px);
 }
 
@@ -273,8 +354,8 @@
 }
 
 .scoreIndicatorPanel {
-  background-color: rgba(255,255,255,0.01);
-  border: 1px solid rgba(255,255,255,0.04);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-md);
 }
@@ -286,7 +367,7 @@
 }
 
 .scoreCard {
-  background-color: rgba(255,255,255,0.02);
+  background-color: var(--surface);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
   display: flex;
@@ -306,15 +387,15 @@
 }
 
 .followUpFormBox {
-  background-color: rgba(255,255,255,0.01);
-  border: 1px solid rgba(255,255,255,0.04);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-md);
 }
 
 .scheduleBtn {
-  background-color: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   color: hsl(var(--text-primary));
   padding: var(--space-sm) var(--space-md);
@@ -328,8 +409,8 @@
 }
 
 .scheduleBtn:hover:not(:disabled) {
-  background-color: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.15);
+  background-color: var(--accent-soft);
+  border-color: var(--border-strong);
 }
 
 .scheduleBtn:disabled {
@@ -342,9 +423,9 @@
   text-align: center;
   color: hsl(var(--text-muted));
   font-size: 0.875rem;
-  background-color: rgba(255, 255, 255, 0.01);
+  background-color: var(--surface-muted);
   border-radius: var(--radius-md);
-  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border: 1px dashed var(--border-subtle);
 }
 
 .followUpList {
@@ -354,8 +435,8 @@
 }
 
 .followUpCard {
-  background-color: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-sm) var(--space-md);
 }
@@ -382,17 +463,17 @@
 }
 
 .statusPending {
-  background-color: rgba(245, 158, 11, 0.15);
+  background-color: var(--warning-soft);
   color: hsl(20, 100%, 60%);
 }
 
 .statusCompleted {
-  background-color: rgba(16, 185, 129, 0.15);
+  background-color: var(--success-soft);
   color: hsl(140, 100%, 60%);
 }
 
 .statusMissed {
-  background-color: rgba(239, 68, 68, 0.15);
+  background-color: var(--danger-soft);
   color: hsl(0, 100%, 65%);
 }
 
@@ -400,4 +481,49 @@
   margin: 0;
   font-size: 0.85rem;
   color: hsl(var(--text-muted));
+}
+
+.inlineCard {
+  width: 100%;
+  border-radius: var(--radius-lg);
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+  animation: fadeIn 0.25s ease;
+}
+
+body.light-theme .inlineCard {
+  border: 1px solid var(--border-subtle);
+}
+
+.backBtn {
+  display: flex;
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: hsl(var(--text-secondary));
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.backBtn:hover {
+  background: var(--accent-soft);
+  color: hsl(var(--text-primary));
+  border-color: var(--border-strong);
+}
+
+body.light-theme .backBtn {
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
+}
+
+body.light-theme .backBtn:hover {
+  background: var(--accent-soft);
 }

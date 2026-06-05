@@ -16,5 +16,10 @@ namespace Shared.Events
         public double Confidence { get; set; }
         public string Label { get; set; }
         public string PipelineStage { get; set; } = "New";
+        public bool FollowUpNeeded { get; set; }
+        public string? FollowUpType { get; set; }
+        public string? FollowUpAppointmentTime { get; set; }
+        public string? FollowUpDueDate { get; set; }
+        public string? FollowUpNotes { get; set; }
     }
 }

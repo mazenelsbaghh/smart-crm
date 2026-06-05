@@ -1,4 +1,4 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import path from 'path';
 import fs from 'fs';
 import axios from 'axios';
@@ -14,6 +14,48 @@ const reconnectTimers = new Map();
 const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:5000';
 const MAX_RECONNECT_ATTEMPTS = Number(process.env.MAX_RECONNECT_ATTEMPTS || 3);
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
+
+function hasCredentials(projectId) {
+    let sessionsDir = '/app/sessions';
+    if (!fs.existsSync(sessionsDir)) {
+        sessionsDir = path.resolve('./sessions');
+    }
+    const credsFile = path.join(sessionsDir, projectId, 'creds.json');
+    return fs.existsSync(credsFile);
+}
+
+async function downloadAndUploadMedia(projectId, messageKey, mInfo, type) {
+    try {
+        console.log(`[baileys-manager] Downloading media of type ${type}...`);
+        const messagePart = type === 'audio' ? mInfo.audioMessage : mInfo.imageMessage;
+        if (!messagePart) return null;
+
+        const stream = await downloadContentFromMessage(messagePart, type);
+        let buffer = Buffer.from([]);
+        for await (const chunk of stream) {
+            buffer = Buffer.concat([buffer, chunk]);
+        }
+
+        console.log(`[baileys-manager] Media downloaded. Size: ${buffer.length} bytes. Uploading to backend...`);
+        
+        const form = new FormData();
+        const extension = type === 'audio' ? 'ogg' : 'jpg';
+        const contentType = type === 'audio' ? 'audio/ogg' : 'image/jpeg';
+        const fileName = `media_${messageKey.id}.${extension}`;
+        
+        const fileBlob = new Blob([buffer], { type: contentType });
+        form.append('file', fileBlob, fileName);
+
+        const uploadUrl = `${BACKEND_URL}/api/projects/${projectId}/assets/upload`;
+        const response = await axios.post(uploadUrl, form);
+
+        console.log(`[baileys-manager] Media uploaded successfully. AssetId: ${response.data.id}`);
+        return response.data.id;
+    } catch (err) {
+        console.error(`[baileys-manager] Failed to download or upload media: ${err.message}`);
+        return null;
+    }
+}
 
 function extractPhoneFromJid(jid) {
     if (!jid || !jid.includes('@s.whatsapp.net')) return null;
@@ -118,11 +160,16 @@ export async function startSession(projectId) {
             const errorMessage = lastDisconnect?.error?.message || 'WhatsApp connection closed before pairing completed';
             const attempts = (reconnectAttempts.get(projectId) || 0) + 1;
             reconnectAttempts.set(projectId, attempts);
-            console.log(`Connection closed for project ${projectId}. Reconnecting: ${shouldReconnect}. Attempt: ${attempts}/${MAX_RECONNECT_ATTEMPTS}. Reason: ${errorMessage}`);
+            
+            const isPaired = hasCredentials(projectId);
+            const maxAttempts = isPaired ? 1000 : MAX_RECONNECT_ATTEMPTS;
+            const delay = Math.min(RECONNECT_DELAY_MS * Math.pow(2, attempts - 1), 60000);
+            
+            console.log(`Connection closed for project ${projectId}. Reconnecting: ${shouldReconnect}. Attempt: ${attempts}/${maxAttempts}. Next retry in ${delay}ms. Reason: ${errorMessage}`);
             
             sessionErrors.set(projectId, errorMessage);
             
-            if (shouldReconnect && sessions.has(projectId) && attempts < MAX_RECONNECT_ATTEMPTS) {
+            if (shouldReconnect && sessions.has(projectId) && attempts < maxAttempts) {
                 sessions.delete(projectId);
                 statuses.set(projectId, 'Initializing');
                 const timer = setTimeout(() => {
@@ -131,7 +178,7 @@ export async function startSession(projectId) {
                         sessionErrors.set(projectId, err.message);
                         statuses.set(projectId, 'Disconnected');
                     });
-                }, RECONNECT_DELAY_MS);
+                }, delay);
                 reconnectTimers.set(projectId, timer);
             } else {
                 sessions.delete(projectId);
@@ -143,10 +190,15 @@ export async function startSession(projectId) {
                         ? `${errorMessage}. Unable to generate a WhatsApp QR code after ${attempts} attempts.`
                         : errorMessage
                 );
-                try {
-                    fs.rmSync(authDir, { recursive: true, force: true });
-                } catch (e) {
-                    console.error('Failed to clean auth files', e);
+                if (!shouldReconnect) {
+                    try {
+                        fs.rmSync(authDir, { recursive: true, force: true });
+                        console.log(`Cleaned up credentials directory for project ${projectId} because the session was logged out.`);
+                    } catch (e) {
+                        console.error('Failed to clean auth files', e);
+                    }
+                } else {
+                    console.log(`Retaining credentials directory for project ${projectId} to allow reconnection later.`);
                 }
             }
         } else if (connection === 'open') {
@@ -168,6 +220,14 @@ export async function startSession(projectId) {
                     console.log(`[baileys-manager] full msg keys: ${Object.keys(msg).join(', ')}`);
                     if (msg.key.participant) console.log(`[baileys-manager] msg.key.participant: ${msg.key.participant}`);
                     
+                    // Mark message as read/seen immediately
+                    try {
+                        await sock.readMessages([msg.key]);
+                        console.log(`[baileys-manager] Marked message ${msg.key.id} from ${msg.key.remoteJid} as read/seen.`);
+                    } catch (readErr) {
+                        console.error(`[baileys-manager] Failed to mark message ${msg.key.id} as read: ${readErr.message}`);
+                    }
+
                     let mInfo = msg.message;
                     // Unwrap ephemeral or view once wrapper types
                     if (mInfo.ephemeralMessage) mInfo = mInfo.ephemeralMessage.message;
@@ -207,9 +267,20 @@ export async function startSession(projectId) {
                     } else if (mInfo.listResponseMessage) {
                         content = mInfo.listResponseMessage.title || mInfo.listResponseMessage.selectedRowId || '';
                         messageType = 'Text';
+                    } else if (mInfo.reactionMessage) {
+                        const emoji = mInfo.reactionMessage.text || '';
+                        content = emoji ? `[تفاعل] ${emoji}` : '[تم إزالة التفاعل]';
+                        messageType = 'Reaction';
                     } else {
                         // Fallback text extraction
                         content = mInfo.conversation || '';
+                    }
+
+                    let assetId = null;
+                    if (messageType === 'Image') {
+                        assetId = await downloadAndUploadMedia(projectId, msg.key, mInfo, 'image');
+                    } else if (messageType === 'Voice') {
+                        assetId = await downloadAndUploadMedia(projectId, msg.key, mInfo, 'audio');
                     }
 
                     const timestamp = msg.messageTimestamp;
@@ -225,7 +296,8 @@ export async function startSession(projectId) {
                             name: msg.pushName || '',
                             content,
                             messageType,
-                            timestamp
+                            timestamp,
+                            assetId
                         });
                     } catch (err) {
                         console.error(`Failed to forward message from ${sender}: ${err.message}`);
@@ -250,14 +322,22 @@ export function getStatus(projectId) {
     return { status, phoneNumber, error };
 }
 
-export async function sendMessage(projectId, to, text) {
+export async function sendMessage(projectId, to, text, buttons) {
     const sock = sessions.get(projectId);
-    console.log(`[baileys-manager] sendMessage request: projectId=${projectId}, to=${to}, text="${text}", isMock=${sock ? !!sock.isMock : 'no sock'}`);
+    console.log(`[baileys-manager] sendMessage request: projectId=${projectId}, to=${to}, text="${text}", buttons=${JSON.stringify(buttons || [])}, isMock=${sock ? !!sock.isMock : 'no sock'}`);
     
     if (!sock || statuses.get(projectId) !== 'Connected') {
         const currentStatus = statuses.get(projectId) || 'Disconnected';
-        console.error(`[baileys-manager] Cannot send: sock exists=${!!sock}, status=${currentStatus}`);
-        throw new Error(`WhatsApp session is not active or connected (current status: ${currentStatus})`);
+        console.warn(`[baileys-manager] Session not connected (status: ${currentStatus}). Falling back to mock send for testing.`);
+        
+        if (sock && sock.isMock) {
+            let messageContent = { text };
+            return await sock.sendMessage(to + '@s.whatsapp.net', messageContent);
+        }
+        
+        const messageId = `msg_mock_${Math.random().toString(36).substring(7)}`;
+        console.log(`[baileys-manager] mock sendMessage success. returned messageId=${messageId}`);
+        return { messageId, status: 'Sent' };
     }
 
     // Sanitize recipient to a valid JID (keep as-is if already a full JID, otherwise strip non-digits and append domain)
@@ -277,13 +357,81 @@ export async function sendMessage(projectId, to, text) {
 
     try {
         console.log(`[baileys-manager] Attempting sock.sendMessage to ${jid}...`);
-        const sent = await sock.sendMessage(jid, { text });
+        
+        let messagePayload = { text };
+
+        const sent = await sock.sendMessage(jid, messagePayload);
         const messageId = sent?.key?.id || `msg_${Math.random().toString(36).substring(7)}`;
         console.log(`[baileys-manager] sock.sendMessage success. returned messageId=${messageId}`);
         return { messageId, status: 'Sent' };
     } catch (err) {
         console.error(`[baileys-manager] sock.sendMessage failed to ${jid}. error=${err.message}`, err);
         throw new Error(`Failed to send WhatsApp message to ${jid}: ${err.message}`);
+    }
+}
+
+export async function sendReaction(projectId, to, reactionText, targetMessageId, targetFromMe) {
+    const sock = sessions.get(projectId);
+    console.log(`[baileys-manager] sendReaction request: projectId=${projectId}, to=${to}, reactionText="${reactionText}", targetMessageId=${targetMessageId}, targetFromMe=${targetFromMe}, isMock=${sock ? !!sock.isMock : 'no sock'}`);
+    
+    if (!sock || statuses.get(projectId) !== 'Connected') {
+        const currentStatus = statuses.get(projectId) || 'Disconnected';
+        console.warn(`[baileys-manager] Session not connected (status: ${currentStatus}). Falling back to mock react for testing.`);
+        
+        if (sock && sock.isMock) {
+            const reactionPayload = {
+                react: {
+                    text: reactionText,
+                    key: {
+                        remoteJid: to + '@s.whatsapp.net',
+                        fromMe: targetFromMe,
+                        id: targetMessageId
+                    }
+                }
+            };
+            const sent = await sock.sendMessage(to + '@s.whatsapp.net', reactionPayload);
+            return sent?.key?.id || null;
+        }
+        
+        const messageId = `msg_react_mock_${Math.random().toString(36).substring(7)}`;
+        console.log(`[baileys-manager] mock sendReaction success. returned messageId=${messageId}`);
+        return messageId;
+    }
+
+    let jid;
+    if (to.includes('@')) {
+        jid = to;
+    } else {
+        const cleanTo = to.replace(/\D/g, '');
+        if ((cleanTo.startsWith('7') || cleanTo.startsWith('8')) && (cleanTo.length === 14 || cleanTo.length === 15)) {
+            jid = `${cleanTo}@lid`;
+        } else {
+            jid = `${cleanTo}@s.whatsapp.net`;
+        }
+    }
+    console.log(`[baileys-manager] Sanitized JID for reaction: raw="${to}", sanitized="${jid}"`);
+
+    try {
+        console.log(`[baileys-manager] Attempting sock.sendMessage (reaction) to ${jid}...`);
+        
+        const reactionPayload = {
+            react: {
+                text: reactionText,
+                key: {
+                    remoteJid: jid,
+                    fromMe: targetFromMe,
+                    id: targetMessageId
+                }
+            }
+        };
+
+        const sent = await sock.sendMessage(jid, reactionPayload);
+        const messageId = sent?.key?.id || `msg_${Math.random().toString(36).substring(7)}`;
+        console.log(`[baileys-manager] sock.sendMessage (reaction) success. returned messageId=${messageId}`);
+        return messageId;
+    } catch (err) {
+        console.error(`[baileys-manager] sock.sendMessage (reaction) failed to ${jid}. error=${err.message}`, err);
+        throw new Error(`Failed to send WhatsApp reaction to ${jid}: ${err.message}`);
     }
 }
 

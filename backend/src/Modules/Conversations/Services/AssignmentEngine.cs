@@ -120,15 +120,38 @@ namespace Modules.Conversations.Services
             }
             else
             {
-                // Auto-routing: find online agent with the lowest active workload
-                var users = await _context.Users
+                var customer = await _context.Customers
                     .IgnoreQueryFilters()
-                    .Where(u => u.ProjectId == projectId)
-                    .ToListAsync();
+                    .FirstOrDefaultAsync(c => c.ProjectId == projectId && c.Id == conversation.CustomerId);
+
+                var usersQuery = _context.Users
+                    .IgnoreQueryFilters()
+                    .Where(u => u.ProjectId == projectId);
+
+                if (customer != null && customer.LeadScore >= 80)
+                {
+                    Console.WriteLine($"[AssignmentEngine] VIP customer detected (LeadScore: {customer.LeadScore}). Filtering to Admin/Owner role.");
+                    usersQuery = usersQuery.Where(u => u.Role == "Admin" || u.Role == "Owner");
+                }
+                else if (conversation.Status == "Pending" || (customer != null && (customer.Label == "شكوى" || customer.Label == "Complaint")))
+                {
+                    Console.WriteLine($"[AssignmentEngine] Complaint/Pending conversation detected. Filtering to Supervisor/Admin role.");
+                    usersQuery = usersQuery.Where(u => u.Role == "Supervisor" || u.Role == "Admin");
+                }
+
+                var eligibleUsers = await usersQuery.ToListAsync();
+
+                if (!eligibleUsers.Any())
+                {
+                    eligibleUsers = await _context.Users
+                        .IgnoreQueryFilters()
+                        .Where(u => u.ProjectId == projectId)
+                        .ToListAsync();
+                }
 
                 var onlineAgents = new List<(Guid Id, int Count)>();
 
-                foreach (var user in users)
+                foreach (var user in eligibleUsers)
                 {
                     var presenceKey = $"project:{projectId}:agent:{user.Id}:presence";
                     var isOnlineVal = await _redis.HashGetAsync(presenceKey, "IsOnline");
@@ -153,15 +176,21 @@ namespace Modules.Conversations.Services
 
                 if (onlineAgents.Any())
                 {
-                    // Select agent with lowest workload
                     var chosenAgent = onlineAgents.OrderBy(a => a.Count).First();
                     conversation.AssignedUserId = chosenAgent.Id;
                 }
                 else
                 {
-                    // No available agents, leave unassigned
-                    Console.WriteLine($"[AssignmentEngine] No online agents available to assign conversation {conversationId}");
-                    return null;
+                    if (eligibleUsers.Any())
+                    {
+                        conversation.AssignedUserId = eligibleUsers.First().Id;
+                        Console.WriteLine($"[AssignmentEngine] No online agents available. Assigned to offline eligible user: {conversation.AssignedUserId}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[AssignmentEngine] No agents found at all to assign conversation {conversationId}");
+                        return null;
+                    }
                 }
             }
 

@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import { AuthProvider } from '../context/auth-context';
+import { ToastProvider } from '../context/toast-context';
+import '@aejkatappaja/phantom-ui/ssr.css';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -16,7 +18,9 @@ export default function RootLayout({
     <html lang="ar" dir="rtl">
       <body suppressHydrationWarning>
         <AuthProvider>
-          {children}
+          <ToastProvider>
+            {children}
+          </ToastProvider>
         </AuthProvider>
       </body>
     </html>

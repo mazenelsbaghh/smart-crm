@@ -28,6 +28,8 @@ export interface Message {
   status: 'Sent' | 'Delivered' | 'Read';
   mediaUrl: string | null;
   mediaType: 'Image' | 'Voice' | 'Document' | null;
+  assetId?: string | null;
+  transcription?: string | null;
 }
 
 export interface AISuggestion {

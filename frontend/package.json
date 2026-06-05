@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@aejkatappaja/phantom-ui": "^1.0.0",
     "@microsoft/signalr": "^10.0.0",
     "axios": "^1.16.1",
     "lucide-react": "^1.16.0",

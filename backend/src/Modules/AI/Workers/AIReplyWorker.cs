@@ -39,6 +39,10 @@ namespace Modules.AI.Workers
 
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+            // Find customer to get customerId
+            var customer = await dbContext.Customers
+                .FirstOrDefaultAsync(c => c.PhoneNumber == @event.Sender);
+
             // Query ProjectSettings
             var settings = await dbContext.ProjectSettings
                 .FirstOrDefaultAsync(s => s.ProjectId == @event.ProjectId);
@@ -52,6 +56,10 @@ namespace Modules.AI.Workers
             if (!settings.AiAutoReplyEnabled)
             {
                 Console.WriteLine($"[AIReplyWorker] AI Auto-Reply is disabled for project {@event.ProjectId}. Skipping AI reply.");
+                if (customer != null)
+                {
+                    await CompletePendingFollowUpsAsync(dbContext, customer.Id);
+                }
                 return;
             }
 
@@ -75,13 +83,10 @@ namespace Modules.AI.Workers
                 Console.WriteLine($"[AIReplyWorker] Failed to query company brain: {ex.Message}");
             }
 
-            // Find customer to get customerId
-            var customer = await dbContext.Customers
-                .FirstOrDefaultAsync(c => c.PhoneNumber == @event.Sender);
-
             if (customer != null && customer.IsBlacklisted)
             {
                 Console.WriteLine($"[AIReplyWorker] Customer {@event.Sender} is blacklisted. Skipping AI reply.");
+                await CompletePendingFollowUpsAsync(dbContext, customer.Id);
                 return;
             }
 
@@ -347,6 +352,28 @@ namespace Modules.AI.Workers
                 {
                     Console.WriteLine($"[AIReplyWorker] Failed to process auto-reaction: {ex.Message}");
                 }
+            }
+        }
+
+        private async Task CompletePendingFollowUpsAsync(AppDbContext dbContext, Guid customerId)
+        {
+            try
+            {
+                var pending = await dbContext.FollowUps
+                    .IgnoreQueryFilters()
+                    .Where(f => f.CustomerId == customerId && f.Status == "Pending")
+                    .ToListAsync();
+
+                foreach (var fu in pending)
+                {
+                    dbContext.FollowUps.Remove(fu);
+                }
+                await dbContext.SaveChangesAsync();
+                Console.WriteLine($"[AIReplyWorker] Deleted {pending.Count} pending follow-ups for skipped customer {customerId}.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AIReplyWorker] Error completing/deleting follow-ups: {ex.Message}");
             }
         }
     }

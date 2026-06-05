@@ -2,7 +2,7 @@ import express from 'express';
 import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
-import { startSession, getQR, getStatus, sendMessage, disconnectSession, statuses, sessions, sessionErrors } from './baileys-manager.js';
+import { startSession, getQR, getStatus, sendMessage, sendReaction, disconnectSession, statuses, sessions, sessionErrors } from './baileys-manager.js';
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -61,18 +61,33 @@ app.get('/api/whatsapp/session/status', (req, res) => {
 });
 
 app.post('/api/whatsapp/send', async (req, res) => {
-    const { projectId, to, message } = req.body;
-    console.log(`[GATEWAY SEND] Request received. projectId: ${projectId}, to: ${to}, message: ${message}`);
+    const { projectId, to, message, buttons } = req.body;
+    console.log(`[GATEWAY SEND] Request received. projectId: ${projectId}, to: ${to}, message: ${message}, buttons: ${JSON.stringify(buttons || [])}`);
     console.log(`[GATEWAY SEND] Available sessions: ${Array.from(sessions.keys()).join(', ')}`);
     console.log(`[GATEWAY SEND] Available statuses: ${Array.from(statuses.entries()).map(([k, v]) => `${k}=${v}`).join(', ')}`);
     if (!projectId || !to || !message) {
         return res.status(400).json({ error: 'projectId, to, and message are required' });
     }
     try {
-        const result = await sendMessage(projectId, to, message);
+        const result = await sendMessage(projectId, to, message, buttons);
         res.json(result);
     } catch (err) {
         console.error(`[GATEWAY SEND] Error sending message: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/whatsapp/react', async (req, res) => {
+    const { projectId, to, reactionText, targetMessageId, targetFromMe } = req.body;
+    console.log(`[GATEWAY REACT] Request received. projectId: ${projectId}, to: ${to}, reactionText: ${reactionText}, targetMessageId: ${targetMessageId}, targetFromMe: ${targetFromMe}`);
+    if (!projectId || !to || !reactionText || !targetMessageId) {
+        return res.status(400).json({ error: 'projectId, to, reactionText, and targetMessageId are required' });
+    }
+    try {
+        const result = await sendReaction(projectId, to, reactionText, targetMessageId, targetFromMe === true);
+        res.json({ status: 'Reacted', messageId: result });
+    } catch (err) {
+        console.error(`[GATEWAY REACT] Error sending reaction: ${err.message}`);
         res.status(500).json({ error: err.message });
     }
 });
@@ -94,12 +109,27 @@ app.post('/api/whatsapp/session/mock', (req, res) => {
             isMock: true,
             user: { id: phoneNumber ? `${phoneNumber}:1` : '1234567890:1' },
             sendMessage: async (jid, content) => {
-                console.log(`[MOCK SEND] Sending to ${jid}: ${content.text}`);
+                if (content.react) {
+                    console.log(`[MOCK REACT] Reacting with ${content.react.text} to message ${content.react.key.id}`);
+                    const messageId = `msg_react_${Math.random().toString(36).substring(7)}`;
+                    mockSentMessages.push({
+                        projectId,
+                        to: jid.split('@')[0],
+                        reaction: content.react.text,
+                        targetMessageId: content.react.key.id,
+                        targetFromMe: content.react.key.fromMe,
+                        messageId,
+                        timestamp: new Date().toISOString()
+                    });
+                    return { key: { id: messageId } };
+                }
+                console.log(`[MOCK SEND] Sending to ${jid}: ${content.text}, buttons: ${JSON.stringify(content.buttons || [])}`);
                 const messageId = `msg_${Math.random().toString(36).substring(7)}`;
                 mockSentMessages.push({
                     projectId,
                     to: jid.split('@')[0],
                     message: content.text,
+                    buttons: content.buttons ? content.buttons.map(b => b.buttonText.displayText) : [],
                     messageId,
                     timestamp: new Date().toISOString()
                 });

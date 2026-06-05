@@ -249,9 +249,10 @@
   display: flex;
   gap: var(--space-sm);
   overflow-x: auto;
-  padding-bottom: var(--space-xs);
+  padding: 4px;
   margin-bottom: var(--space-md);
   scrollbar-width: thin;
+  flex-shrink: 0;
 }
 
 .labelCard {

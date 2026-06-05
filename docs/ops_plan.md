@@ -1,8 +1,16 @@
 # Operations & Deployment Master Plan
 
-**Last Updated**: 2026-05-25
+**Last Updated**: 2026-06-02
 
 ## Chronological Log
+
+### 2026-06-02: Resolve Frontend CORS & Network Errors & Enable WhatsApp Seen Status (Completed)
+- **Goal**: Address frontend Axios "Network Error" issues, SignalR drops, and enable WhatsApp "seen" status (read receipts) for incoming messages.
+- **Updates**:
+  - Configured ASP.NET Core backend `Program.cs` CORS policy to use dynamic origin matching (`SetIsOriginAllowed(origin => true)`) to natively support HTTP/HTTPS schemas, local IP redirects, and custom staging/production domains.
+  - Added missing `Access-Control-Allow-Credentials: true` to the Nginx OPTIONS preflight handler inside `nginx/production.conf` and `nginx/default.conf` so browser CORS verification passes on authenticated requests.
+  - Aligned development Nginx configuration `nginx/default.conf` with `production.conf` by removing redundant duplicate CORS headers for non-preflight requests, preventing console CORS block errors.
+  - Implemented automatic read receipts ("seen" status) in the WhatsApp gateway's `baileys-manager.js` by invoking `sock.readMessages([msg.key])` on every incoming WhatsApp message. This immediately marks messages as read/seen (triggering double blue checkmarks for the customer).
 
 ### 2026-05-25: Phase 6 Frontend Dashboard, Realtime & Production Hardening (Completed)
 - **Goal**: Configure Nginx reverse proxy with SSL termination, CORS controls, and rate-limiting zones; write automated backup/restore scripts for PostgreSQL, Redis, and MinIO storage; containerize frontend application with Docker.
