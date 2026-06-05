@@ -4,6 +4,15 @@
 
 ## Chronological Log
 
+### 2026-06-05: Group Appointments AI Integration (Completed)
+- **Goal**: Integrate active Group Appointments context and remaining seat counts into the Gemini AI chatbot on WhatsApp.
+- **Updates**:
+  - Imported `Modules.GroupAppointments.Domain` in `AIReplyWorker.cs`.
+  - Added logic to fetch active upcoming group appointments and bookings if `IsGroupAppointmentsEnabled` is true.
+  - Calculated remaining capacities and converted UTC datetimes to the project's local timezone.
+  - Formatted a detailed Arabic prompt block showing slots and the public booking URL, and prepended it to the LLM reference context.
+  - Created automated integration test `test_ai_group_appointments.py` and verified successful context injection and reply generation.
+
 ### 2026-06-05: Change Default Timezone to Africa/Cairo (Completed)
 - **Goal**: Change the default project timezone from UTC to Africa/Cairo.
 - **Updates**:

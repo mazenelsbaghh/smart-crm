@@ -132,7 +132,9 @@ export async function startSession(projectId) {
         version,
         auth: state,
         logger: pino({ level: process.env.BAILEYS_LOG_LEVEL || 'warn' }),
-        printQRInTerminal: false
+        printQRInTerminal: false,
+        browser: ['Smart Customer', 'Chrome', '10.0.0'],
+        syncFullHistory: false
     });
 
     sessions.set(projectId, sock);
@@ -163,15 +165,31 @@ export async function startSession(projectId) {
             
             const isPaired = hasCredentials(projectId);
             const maxAttempts = isPaired ? 1000 : MAX_RECONNECT_ATTEMPTS;
-            const delay = Math.min(RECONNECT_DELAY_MS * Math.pow(2, attempts - 1), 60000);
             
-            console.log(`Connection closed for project ${projectId}. Reconnecting: ${shouldReconnect}. Attempt: ${attempts}/${maxAttempts}. Next retry in ${delay}ms. Reason: ${errorMessage}`);
+            // Check if this is a conflict (session replaced by another device/connection)
+            const isConflict = errorMessage.toLowerCase().includes('conflict') || 
+                               errorMessage.toLowerCase().includes('replaced') ||
+                               disconnectStatusCode === 440;
+            
+            // Use longer delay for conflicts to avoid rapid reconnection loops
+            const baseDelay = isConflict ? 30000 : RECONNECT_DELAY_MS;
+            const delay = Math.min(baseDelay * Math.pow(2, Math.min(attempts - 1, 3)), 120000);
+            
+            console.log(`Connection closed for project ${projectId}. Reconnecting: ${shouldReconnect}. Attempt: ${attempts}/${maxAttempts}. Next retry in ${delay}ms. Reason: ${errorMessage}${isConflict ? ' [CONFLICT - using extended delay]' : ''}`);
             
             sessionErrors.set(projectId, errorMessage);
+
+            // Properly close the old socket to prevent ghost connections
+            try { sock.end(); } catch (e) { /* ignore */ }
             
-            if (shouldReconnect && sessions.has(projectId) && attempts < maxAttempts) {
+            if (shouldReconnect && attempts < maxAttempts) {
                 sessions.delete(projectId);
-                statuses.set(projectId, 'Initializing');
+                statuses.set(projectId, isConflict ? 'Reconnecting' : 'Initializing');
+                
+                // Clear any existing reconnect timer
+                const existingTimer = reconnectTimers.get(projectId);
+                if (existingTimer) clearTimeout(existingTimer);
+                
                 const timer = setTimeout(() => {
                     reconnectTimers.delete(projectId);
                     startSession(projectId).catch((err) => {
@@ -216,6 +234,17 @@ export async function startSession(projectId) {
         if (m.type === 'notify') {
             for (const msg of m.messages) {
                 if (!msg.key.fromMe && msg.message) {
+                    // Skip WhatsApp Status/Story updates (status@broadcast) and group messages (@g.us)
+                    const remoteJid = msg.key.remoteJid || '';
+                    if (remoteJid === 'status@broadcast' || remoteJid.endsWith('@broadcast')) {
+                        console.log(`[baileys-manager] Skipping status/story message from ${remoteJid}`);
+                        continue;
+                    }
+                    if (remoteJid.endsWith('@g.us')) {
+                        console.log(`[baileys-manager] Skipping group message from ${remoteJid}`);
+                        continue;
+                    }
+
                     console.log(`[baileys-manager] msg.key: ${JSON.stringify(msg.key)}`);
                     console.log(`[baileys-manager] full msg keys: ${Object.keys(msg).join(', ')}`);
                     if (msg.key.participant) console.log(`[baileys-manager] msg.key.participant: ${msg.key.participant}`);

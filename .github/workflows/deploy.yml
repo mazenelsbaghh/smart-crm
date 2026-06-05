@@ -45,4 +45,4 @@ jobs:
           SSH_PASS: ${{ secrets.SSH_PASSWORD }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
-          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@$SSH_HOST "cd /root/smart-crm && if [ ! -f .env ]; then cp .env.example .env; fi && make restart"
+          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@$SSH_HOST "cd /root/smart-crm && if [ ! -f .env ]; then cp .env.example .env; fi && make restart && docker image prune -af && echo '🧹 Old images cleaned up.'"

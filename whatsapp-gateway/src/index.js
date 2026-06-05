@@ -175,10 +175,14 @@ app.listen(PORT, async () => {
                     // Check if there are credentials in it (e.g. creds.json)
                     const credsFile = path.join(fullPath, 'creds.json');
                     if (fs.existsSync(credsFile)) {
-                        console.log(`[GATEWAY STARTUP] Found existing session directory for project: ${file}. Restoring connection...`);
-                        startSession(file).catch(err => {
-                            console.error(`[GATEWAY STARTUP] Failed to restore session for project ${file}: ${err.message}`);
-                        });
+                        console.log(`[GATEWAY STARTUP] Found existing session directory for project: ${file}. Will restore connection after delay...`);
+                        // Delay session restore to let WhatsApp servers release the old connection
+                        setTimeout(() => {
+                            console.log(`[GATEWAY STARTUP] Now restoring session for project: ${file}`);
+                            startSession(file).catch(err => {
+                                console.error(`[GATEWAY STARTUP] Failed to restore session for project ${file}: ${err.message}`);
+                            });
+                        }, 10000);
                     }
                 }
             }

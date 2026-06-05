@@ -15,6 +15,7 @@ namespace Modules.Projects.Domain
         public string AiTargetAudience { get; set; } = "طلاب كورس كول سنتر يبحثون عن عمل";
         public int ReplyDelay { get; set; } = 3;
         public int MaxDailyMessages { get; set; } = 500;
+        public bool IsGroupAppointmentsEnabled { get; set; } = false;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }

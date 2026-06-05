@@ -90,7 +90,8 @@ namespace Modules.Projects.API
                     settings.AiTonePreference,
                     settings.AiTargetAudience,
                     settings.ReplyDelay,
-                    settings.MaxDailyMessages
+                    settings.MaxDailyMessages,
+                    settings.IsGroupAppointmentsEnabled
                 } : null
             });
         }
@@ -124,6 +125,7 @@ namespace Modules.Projects.API
                     AiTargetAudience = request.AiTargetAudience ?? "طلاب كورس كول سنتر يبحثون عن عمل",
                     ReplyDelay = request.ReplyDelay ?? 3,
                     MaxDailyMessages = request.MaxDailyMessages ?? 500,
+                    IsGroupAppointmentsEnabled = request.IsGroupAppointmentsEnabled,
                     UpdatedAt = DateTime.UtcNow
                 };
                 _context.ProjectSettings.Add(settings);
@@ -137,6 +139,7 @@ namespace Modules.Projects.API
                 settings.AiTargetAudience = request.AiTargetAudience ?? "طلاب كورس كول سنتر يبحثون عن عمل";
                 if (request.ReplyDelay.HasValue) settings.ReplyDelay = request.ReplyDelay.Value;
                 if (request.MaxDailyMessages.HasValue) settings.MaxDailyMessages = request.MaxDailyMessages.Value;
+                settings.IsGroupAppointmentsEnabled = request.IsGroupAppointmentsEnabled;
                 settings.UpdatedAt = DateTime.UtcNow;
             }
 
@@ -160,5 +163,6 @@ namespace Modules.Projects.API
         public string? AiTargetAudience { get; set; }
         public int? ReplyDelay { get; set; }
         public int? MaxDailyMessages { get; set; }
+        public bool IsGroupAppointmentsEnabled { get; set; }
     }
 }

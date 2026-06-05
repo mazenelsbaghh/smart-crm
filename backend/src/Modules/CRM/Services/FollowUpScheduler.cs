@@ -32,7 +32,7 @@ namespace Modules.CRM.Services
             RecurringJob.AddOrUpdate<FollowUpScheduler>(
                 "check-overdue-followups",
                 s => s.CheckOverdueFollowUpsJobAsync(),
-                "*/5 * * * * *"); // 5-second interval for responsive testing in Hangfire (using custom 6-field cron if supported, or fall back to minutely)
+                Cron.Minutely); // Check every minute for overdue follow-ups
             
             RecurringJob.AddOrUpdate<FollowUpScheduler>(
                 "recalculate-lead-scores",
@@ -60,7 +60,11 @@ namespace Modules.CRM.Services
                 .Where(f => f.Status == "Pending" && f.DueDate < now)
                 .ToListAsync();
 
-            if (!overdueFollowUps.Any()) return;
+            if (!overdueFollowUps.Any())
+            {
+                Console.WriteLine($"[Hangfire Job] No overdue follow-ups found. {await dbContext.FollowUps.IgnoreQueryFilters().CountAsync(f => f.Status == "Pending")} pending follow-ups scheduled for future.");
+                return;
+            }
 
             Console.WriteLine($"[Hangfire Job] Found {overdueFollowUps.Count} pending follow-ups to execute.");
 
