@@ -19,13 +19,15 @@ namespace Modules.Conversations.API
         private readonly ITenantContext _tenantContext;
         private readonly IMessageAggregator _messageAggregator;
         private readonly IHubContext<NotificationHub> _hubContext;
+        private readonly IAssignmentEngine _assignmentEngine;
 
-        public WebhookController(AppDbContext context, ITenantContext tenantContext, IMessageAggregator messageAggregator, IHubContext<NotificationHub> hubContext)
+        public WebhookController(AppDbContext context, ITenantContext tenantContext, IMessageAggregator messageAggregator, IHubContext<NotificationHub> hubContext, IAssignmentEngine assignmentEngine)
         {
             _context = context;
             _tenantContext = tenantContext;
             _messageAggregator = messageAggregator;
             _hubContext = hubContext;
+            _assignmentEngine = assignmentEngine;
         }
 
         [HttpPost("message")]
@@ -51,7 +53,7 @@ namespace Modules.Conversations.API
                     ProjectId = payload.ProjectId,
                     PhoneNumber = normalizedSender,
                     Name = !string.IsNullOrWhiteSpace(payload.Name) 
-                        ? payload.Name 
+                        ? payload.Name.Trim() 
                         : $"WA Customer {normalizedSender.Substring(Math.Max(0, normalizedSender.Length - 4))}",
                     City = string.Empty,
                     Notes = string.Empty
@@ -59,15 +61,27 @@ namespace Modules.Conversations.API
                 _context.Customers.Add(customer);
                 await _context.SaveChangesAsync();
             }
-            else if (customer.PhoneNumber.EndsWith("@lid", StringComparison.OrdinalIgnoreCase) && normalizedSender != customer.PhoneNumber)
+            else
             {
-                customer.PhoneNumber = normalizedSender;
-                if (!string.IsNullOrWhiteSpace(payload.Name))
+                bool modified = false;
+                if (customer.PhoneNumber.EndsWith("@lid", StringComparison.OrdinalIgnoreCase) && normalizedSender != customer.PhoneNumber)
                 {
-                    customer.Name = payload.Name;
+                    customer.PhoneNumber = normalizedSender;
+                    modified = true;
                 }
-                _context.Entry(customer).State = EntityState.Modified;
-                await _context.SaveChangesAsync();
+
+                if (!string.IsNullOrWhiteSpace(payload.Name) && 
+                    (string.IsNullOrWhiteSpace(customer.Name) || customer.Name.StartsWith("WA Customer", StringComparison.OrdinalIgnoreCase)))
+                {
+                    customer.Name = payload.Name.Trim();
+                    modified = true;
+                }
+
+                if (modified)
+                {
+                    _context.Entry(customer).State = EntityState.Modified;
+                    await _context.SaveChangesAsync();
+                }
             }
 
             // 2. Resolve or create active Conversation thread
@@ -90,8 +104,71 @@ namespace Modules.Conversations.API
             else
             {
                 conversation.LastMessageTimestamp = DateTime.UtcNow;
+                if (conversation.Status != "Open")
+                {
+                    conversation.Status = "Open";
+                }
+
+                if (conversation.AssignedUserId.HasValue)
+                {
+                    bool reassign = false;
+
+                    var redisDb = (StackExchange.Redis.IDatabase?)HttpContext.RequestServices.GetService(typeof(StackExchange.Redis.IDatabase)) 
+                        ?? ((StackExchange.Redis.IConnectionMultiplexer?)HttpContext.RequestServices.GetService(typeof(StackExchange.Redis.IConnectionMultiplexer)))?.GetDatabase();
+                    
+                    if (redisDb != null)
+                    {
+                        var presenceKey = $"project:{payload.ProjectId}:agent:{conversation.AssignedUserId.Value}:presence";
+                        var isOnlineVal = await redisDb.HashGetAsync(presenceKey, "IsOnline");
+                        bool isOnline = isOnlineVal.HasValue && isOnlineVal.ToString() == "true";
+                        
+                        if (!isOnline)
+                        {
+                            Console.WriteLine($"[WebhookController] Agent {conversation.AssignedUserId.Value} is offline in Redis. Flagging for reassignment.");
+                            reassign = true;
+                        }
+                    }
+
+                    if (!reassign)
+                    {
+                        var lastAgentMessage = await _context.Messages
+                            .Where(m => m.ConversationId == conversation.Id && m.Direction == "Outgoing")
+                            .OrderByDescending(m => m.Timestamp)
+                            .FirstOrDefaultAsync();
+
+                        if (lastAgentMessage != null && (DateTime.UtcNow - lastAgentMessage.Timestamp).TotalMinutes > 10)
+                        {
+                            Console.WriteLine($"[WebhookController] Agent {conversation.AssignedUserId.Value} has been idle for >10 mins. Flagging for reassignment.");
+                            reassign = true;
+                        }
+                    }
+
+                    if (reassign)
+                    {
+                        conversation.AssignedUserId = null;
+                    }
+                }
+
                 _context.Entry(conversation).State = EntityState.Modified;
                 await _context.SaveChangesAsync();
+            }
+
+            if (conversation.AssignedUserId == null)
+            {
+                try
+                {
+                    var assignedAgentId = await _assignmentEngine.AssignConversationAsync(payload.ProjectId, conversation.Id);
+                    if (assignedAgentId.HasValue)
+                    {
+                        conversation.AssignedUserId = assignedAgentId.Value;
+                        _context.Entry(conversation).State = EntityState.Modified;
+                        await _context.SaveChangesAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[WebhookController] Auto-routing failed: {ex.Message}");
+                }
             }
 
             // 3. Save individual incoming message
@@ -102,10 +179,38 @@ namespace Modules.Conversations.API
                 Direction = "Incoming",
                 Content = payload.Content,
                 MessageType = payload.MessageType ?? "Text",
-                Timestamp = DateTimeOffset.FromUnixTimeSeconds(payload.Timestamp).UtcDateTime
+                Timestamp = DateTime.UtcNow,
+                AssetId = payload.AssetId
             };
 
             _context.Messages.Add(message);
+            await _context.SaveChangesAsync();
+
+            // Complete existing pending follow-ups for this customer
+            var pendingFollowUps = await _context.FollowUps
+                .IgnoreQueryFilters()
+                .Where(f => f.CustomerId == customer.Id && f.Status == "Pending")
+                .ToListAsync();
+
+            foreach (var fu in pendingFollowUps)
+            {
+                fu.Status = "Completed";
+                _context.Entry(fu).State = EntityState.Modified;
+            }
+
+            // Schedule default follow-up in 24 hours
+            var defaultFollowUp = new Modules.CRM.Domain.FollowUp
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = payload.ProjectId,
+                CustomerId = customer.Id,
+                Type = "Nurturing",
+                DueDate = DateTime.UtcNow.AddHours(24),
+                Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                Status = "Pending"
+            };
+
+            _context.FollowUps.Add(defaultFollowUp);
             await _context.SaveChangesAsync();
 
             // 3.5 Broadcast via SignalR to the group
@@ -118,24 +223,29 @@ namespace Modules.Conversations.API
                 createdAt = message.Timestamp.ToString("o"),
                 status = "Delivered",
                 mediaUrl = (string)null,
-                mediaType = (string)null
+                mediaType = message.MessageType == "Image" || message.MessageType == "Voice" ? message.MessageType : (string)null,
+                assetId = message.AssetId,
+                transcription = message.Transcription
             });
 
-            // 3.6 Broadcast AI typing if auto-reply is enabled
-            var settings = await _context.ProjectSettings
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(s => s.ProjectId == payload.ProjectId);
-            if (settings != null && settings.AiAutoReplyEnabled)
+            if (payload.MessageType != "Reaction")
             {
-                await _hubContext.Clients.Group($"project_{payload.ProjectId}").SendAsync("AITyping", new
+                // 3.6 Broadcast AI typing if auto-reply is enabled
+                var settings = await _context.ProjectSettings
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(s => s.ProjectId == payload.ProjectId);
+                if (settings != null && settings.AiAutoReplyEnabled && !customer.IsBlacklisted)
                 {
-                    conversationId = conversation.Id,
-                    isTyping = true
-                });
-            }
+                    await _hubContext.Clients.Group($"project_{payload.ProjectId}").SendAsync("AITyping", new
+                    {
+                        conversationId = conversation.Id,
+                        isTyping = true
+                    });
+                }
 
-            // 4. Pass message to aggregator for grouping window
-            await _messageAggregator.AggregateMessageAsync(payload.ProjectId, normalizedSender, payload.Content);
+                // 4. Pass message to aggregator for grouping window
+                await _messageAggregator.AggregateMessageAsync(payload.ProjectId, normalizedSender, payload.Content);
+            }
 
             return Ok(new { status = "Received" });
         }
@@ -168,5 +278,6 @@ namespace Modules.Conversations.API
         public string Content { get; set; } = default!;
         public string? MessageType { get; set; }
         public long Timestamp { get; set; }
+        public Guid? AssetId { get; set; }
     }
 }

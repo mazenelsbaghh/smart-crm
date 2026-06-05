@@ -15,5 +15,6 @@ namespace Modules.Conversations.Domain
         public decimal? Budget { get; set; }
         public string[] Interests { get; set; } = Array.Empty<string>();
         public string? Label { get; set; }
+        public bool IsBlacklisted { get; set; } = false;
     }
 }

@@ -1,8 +1,28 @@
 # Backend Master Plan
 
-**Last Updated**: 2026-05-25
+**Last Updated**: 2026-06-05
 
 ## Chronological Log
+
+### 2026-06-05: Customer Blacklist for AI Exclusion (Completed)
+- **Goal**: Implement customer blacklisting to bypass AI replies and suppress typing status.
+- **Updates**:
+  - Added `IsBlacklisted` boolean property to `Customer` domain model.
+  - Generated and applied EF Core migration `AddIsBlacklistedToCustomer`.
+  - Suppressed SignalR "AITyping" broadcast in `WebhookController.cs` if the customer is blacklisted.
+  - Added an early return check in `AIReplyWorker.cs` to skip AI reply generation for blacklisted customers.
+  - Updated `CRMController.cs` endpoints and request projection mapping to support reading and writing the `IsBlacklisted` status.
+  - Created a pytest integration test `test_human_messaging_blacklist` and verified blacklist bypass functionality.
+
+### 2026-06-05: AI Auto-Reply Delay Correction & Randomized Message Stagger Delay (Completed)
+- **Goal**:
+  1. Fix the delay bypass logic so that user live test projects (like `AlTestProj`) do not bypass the smart thinking/typing delays, while preserving fast delays for automated test suites.
+  2. Implement a natural, human-like random stagger delay between consecutive chunked messages, ranging from 3 to 20 seconds.
+- **Updates**:
+  - Defined a static HashSet of test-specific project names (`TestProjectNames`) in `HumanMessagingEngine.cs` and introduced the `IsTestProject` helper.
+  - Replaced the broad `.Contains("Proj") || .Contains("Test")` check in `HumanMessagingEngine.cs` with the precise `IsTestProject` check.
+  - Modified `ReplySender.cs` to execute a stagger delay between sending consecutive response chunks. The delay is set to 100ms for test projects (to keep test suites fast) and is randomized between 3 and 20 seconds for production/live projects.
+  - Rebuilt the backend Docker container, updated `test_human_messaging_flow` to use simple paragraphs to prevent over-chunking, and verified all Phase 2 integration tests pass.
 
 ### 2026-05-25: AI Auto-Reply Context Contextualization, Delay Tuning & Auto-CRM Deal Sync (Completed)
 - **Goal**:

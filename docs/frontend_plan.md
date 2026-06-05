@@ -1,12 +1,28 @@
 # Frontend Master Plan
 
-**Last Updated**: 2026-05-25
+**Last Updated**: 2026-06-05
 
 This document tracks all frontend requirements, design structures, pages, and implementation details.
 
 ---
 
 ## Chronological Log
+
+### 2026-06-05: Customer Blacklist visual toggle and indicators (Completed)
+- **State and API update**: Updated the `Customer` type in `crm.ts` to include the `isBlacklisted` property.
+- **Togglable Exclude Switch**: Added a checkbox toggle in [CustomerDetail.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/components/shared/CustomerDetail.tsx) labeled "حظر الرد الآلي بالذكاء الاصطناعي (Blacklist)" to persist blacklist status via the update customer API.
+- **Visual Table Badge**: Integrated the visual red/muted Arabic badge `حظر رد آلي` in the customer grid [CustomerList.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/crm/CustomerList.tsx) to indicate blocked AI status.
+
+### 2026-06-05: Table Pagination & Arabic Localization Controls (Completed)
+- **CSS-Module Shared Styles**: Added scoped pagination styling classes (`.pagination`, `.paginationInfo`, `.paginationSelect`, `.paginationControls`, `.paginationBtn`, `.paginationBtnActive`) to [crm.module.css](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/crm/crm.module.css) and [management.module.css](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/management/management.module.css).
+- **Arabic Pagination Footer**: Integrated user-friendly Arabic pagination footer controls across 5 main tables:
+  - CRM Customer Directory ([CustomerList.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/crm/CustomerList.tsx))
+  - Outbound Campaigns ([Campaigns.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/management/Campaigns.tsx))
+  - AI Suggestion Approvals Queue ([Approvals.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/management/Approvals.tsx))
+  - Scheduled Customer Follow-ups ([FollowUps.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/management/FollowUps.tsx))
+  - AI Gemini Knowledge Base documents ([KnowledgeBase.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/management/KnowledgeBase.tsx))
+- **Auto Page Resets**: Configured hooks that automatically reset the page counter back to page 1 whenever search terms, category tabs, dropdown status filters, or active projects change.
+- **RTL Arrow Alignment**: Handled chevron button alignment for Arabic RTL layouts, mapping previous to right (`ChevronRight`) and next to left (`ChevronLeft`).
 
 ### 2026-05-25: CrmX Admin Redesign, Full Arabic Translations & Real-time AI Typing (Completed)
 - **Visual Redesign**: Redesign `Sidebar.tsx`, `Header.tsx`, and `layout.module.css` to implement the white sidebar (with centered user profile, avatar, name, green active dot) and the solid deep blue header (with white items, project selector, and search bar). Set up active items right-border highlight for RTL.

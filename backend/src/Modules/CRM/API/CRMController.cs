@@ -8,6 +8,12 @@ using Shared.Queue;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.SignalR;
+using Modules.Conversations.Hubs;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 
 using Modules.Customers.Services;
 
@@ -20,12 +26,16 @@ namespace Modules.CRM.API
         private readonly AppDbContext _context;
         private readonly IEventBus _eventBus;
         private readonly ICustomerMemoryService _customerMemoryService;
+        private readonly IConfiguration _configuration;
+        private readonly IHubContext<NotificationHub> _hubContext;
 
-        public CRMController(AppDbContext context, IEventBus eventBus, ICustomerMemoryService customerMemoryService)
+        public CRMController(AppDbContext context, IEventBus eventBus, ICustomerMemoryService customerMemoryService, IConfiguration configuration, IHubContext<NotificationHub> hubContext)
         {
             _context = context;
             _eventBus = eventBus;
             _customerMemoryService = customerMemoryService;
+            _configuration = configuration;
+            _hubContext = hubContext;
         }
 
         [HttpGet("projects/{projectId}/customers")]
@@ -66,6 +76,7 @@ namespace Modules.CRM.API
                 c.Budget,
                 c.Interests,
                 c.Label,
+                c.IsBlacklisted,
                 pipelineStage = customerStages.TryGetValue(c.Id, out var stage) ? stage : "New"
             });
 
@@ -106,6 +117,7 @@ namespace Modules.CRM.API
                 customer.Budget,
                 customer.Interests,
                 customer.Label,
+                customer.IsBlacklisted,
                 pipelineStage = stageName
             });
         }
@@ -121,13 +133,17 @@ namespace Modules.CRM.API
 
             customer.Name = request.Name ?? customer.Name;
             customer.City = request.City ?? customer.City;
-            customer.LeadScore = request.LeadScore ?? customer.LeadScore;
+            customer.LeadScore = Math.Min(100, Math.Max(0, request.LeadScore ?? customer.LeadScore));
             customer.Tags = request.Tags ?? customer.Tags;
             customer.Notes = request.Notes ?? customer.Notes;
             customer.Label = request.Label ?? customer.Label;
             if (request.IsBudgetSet)
             {
                 customer.Budget = request.Budget;
+            }
+            if (request.IsBlacklisted.HasValue)
+            {
+                customer.IsBlacklisted = request.IsBlacklisted.Value;
             }
 
             // Handle pipeline stage update
@@ -139,11 +155,11 @@ namespace Modules.CRM.API
 
                 if (stage == null)
                 {
-                    int maxOrder = await _context.PipelineStages
+                    var orders = await _context.PipelineStages
                         .Where(s => s.ProjectId == customer.ProjectId)
                         .Select(s => s.Order)
-                        .DefaultIfEmpty(-1)
-                        .MaxAsync();
+                        .ToListAsync();
+                    int maxOrder = orders.Any() ? orders.Max() : -1;
 
                     stage = new PipelineStage
                     {
@@ -257,6 +273,7 @@ namespace Modules.CRM.API
                 customer.Budget,
                 customer.Interests,
                 customer.Label,
+                customer.IsBlacklisted,
                 pipelineStage = resolvedStageName
             });
         }
@@ -337,6 +354,153 @@ namespace Modules.CRM.API
             return Ok(followUp);
         }
 
+        [HttpDelete("follow-ups/{id}")]
+        public async Task<IActionResult> DeleteFollowUp(Guid id)
+        {
+            var followUp = await _context.FollowUps.FindAsync(id);
+            if (followUp == null) return NotFound();
+
+            _context.FollowUps.Remove(followUp);
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
+        [HttpPost("follow-ups/{id}/send")]
+        public async Task<IActionResult> SendFollowUp(Guid id)
+        {
+            var followUp = await _context.FollowUps
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(f => f.Id == id);
+            
+            if (followUp == null) return NotFound();
+
+            var customer = await _context.Customers
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.Id == followUp.CustomerId);
+
+            if (customer == null) return BadRequest("Customer not found");
+
+            // Define the message content
+            string messageContent = !string.IsNullOrEmpty(followUp.Notes) 
+                ? followUp.Notes 
+                : (followUp.Type == "AppointmentReminder"
+                    ? "مرحباً، نود تذكيرك بموعد الكورس غداً. ننتظر حضورك!"
+                    : "مرحباً، أردنا فقط المتابعة معك لمعرفة ما إذا كان لديك أي استفسار آخر.");
+
+            // Call WhatsApp Gateway
+            var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+            using var httpClient = new HttpClient();
+
+            var gatewayPayload = new
+            {
+                projectId = followUp.ProjectId,
+                to = customer.PhoneNumber,
+                message = messageContent
+            };
+
+            var jsonPayload = JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+            try
+            {
+                var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"[CRMController] WhatsApp Gateway returned error {response.StatusCode} for follow-up {followUp.Id}: {responseBody}");
+                    return StatusCode((int)response.StatusCode, $"Failed to send WhatsApp message: {responseBody}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CRMController] Exception while calling WhatsApp Gateway: {ex.Message}");
+                return StatusCode(500, $"Internal error communicating with WhatsApp Gateway: {ex.Message}");
+            }
+
+            // Create/get active conversation
+            var conversation = await _context.Conversations
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.ProjectId == followUp.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+
+            if (conversation == null)
+            {
+                conversation = new Conversation
+                {
+                    ProjectId = followUp.ProjectId,
+                    CustomerId = customer.Id,
+                    Status = "Open",
+                    LastMessageTimestamp = DateTime.UtcNow
+                };
+                _context.Conversations.Add(conversation);
+                await _context.SaveChangesAsync();
+            }
+            else
+            {
+                conversation.LastMessageTimestamp = DateTime.UtcNow;
+                _context.Entry(conversation).State = EntityState.Modified;
+            }
+
+            // Add outgoing message
+            var message = new Message
+            {
+                ConversationId = conversation.Id,
+                ExternalMessageId = $"msg_fu_{Guid.NewGuid().ToString("N")}",
+                Direction = "Outgoing",
+                Content = messageContent,
+                MessageType = "Text",
+                Timestamp = DateTime.UtcNow
+            };
+            _context.Messages.Add(message);
+
+            // Mark this specific follow-up as Completed
+            followUp.Status = "Completed";
+            _context.Entry(followUp).State = EntityState.Modified;
+
+            // Also complete any other pending follow-ups for this customer
+            var otherPending = await _context.FollowUps
+                .IgnoreQueryFilters()
+                .Where(f => f.CustomerId == customer.Id && f.Status == "Pending" && f.Id != followUp.Id)
+                .ToListAsync();
+
+            foreach (var fu in otherPending)
+            {
+                fu.Status = "Completed";
+                _context.Entry(fu).State = EntityState.Modified;
+            }
+
+            // Schedule a new default follow-up 24 hours in the future
+            var defaultFollowUp = new FollowUp
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = followUp.ProjectId,
+                CustomerId = customer.Id,
+                Type = "Nurturing",
+                DueDate = DateTime.UtcNow.AddHours(24),
+                Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                Status = "Pending"
+            };
+            _context.FollowUps.Add(defaultFollowUp);
+
+            await _context.SaveChangesAsync();
+
+            // Broadcast message via SignalR so the Chat Inbox updates in real-time
+            var signalrPayload = new
+            {
+                id = message.Id,
+                conversationId = message.ConversationId,
+                senderType = "Agent",
+                content = message.Content,
+                createdAt = message.Timestamp.ToString("o"),
+                status = "Sent",
+                mediaUrl = (string)null,
+                mediaType = (string)null
+            };
+
+            await _hubContext.Clients.Group($"project_{followUp.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
+
+            return Ok(followUp);
+        }
+
         [HttpGet("projects/{projectId}/crm-proposals")]
         public async Task<IActionResult> GetProposals(Guid projectId, [FromQuery] string status = null)
         {
@@ -356,7 +520,17 @@ namespace Modules.CRM.API
         {
             var memory = await _context.CustomerMemories
                 .FirstOrDefaultAsync(m => m.CustomerId == customerId);
-            if (memory == null) return NotFound();
+            if (memory == null)
+            {
+                return Ok(new
+                {
+                    CustomerId = customerId,
+                    LongTermSummary = string.Empty,
+                    FactsJson = "[]",
+                    TriggersJson = "[]",
+                    ObjectionsJson = "[]"
+                });
+            }
             return Ok(memory);
         }
 
@@ -427,6 +601,7 @@ namespace Modules.CRM.API
         public string[]? Tags { get; set; }
         public string? Notes { get; set; }
         public string? Label { get; set; }
+        public bool? IsBlacklisted { get; set; }
 
         private decimal? _budget;
         public bool IsBudgetSet { get; private set; }

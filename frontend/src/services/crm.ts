@@ -13,6 +13,7 @@ export interface Customer {
   interests: string[];
   pipelineStage?: string;
   label?: string;
+  isBlacklisted?: boolean;
 }
 
 export interface PipelineStage {

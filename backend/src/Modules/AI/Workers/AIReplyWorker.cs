@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using Modules.AI.Services;
 using Shared.Events;
 using Shared.Infrastructure;
@@ -8,6 +9,7 @@ using Shared.Security;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using Modules.Conversations.Domain;
 
 namespace Modules.AI.Workers
 {
@@ -77,16 +79,23 @@ namespace Modules.AI.Workers
             var customer = await dbContext.Customers
                 .FirstOrDefaultAsync(c => c.PhoneNumber == @event.Sender);
 
+            if (customer != null && customer.IsBlacklisted)
+            {
+                Console.WriteLine($"[AIReplyWorker] Customer {@event.Sender} is blacklisted. Skipping AI reply.");
+                return;
+            }
+
             Guid customerId = customer?.Id ?? Guid.Empty;
 
             // Fetch chat history for context
             string chatHistory = null;
+            Conversation conversation = null;
             if (customerId != Guid.Empty)
             {
                 try
                 {
-                    var conversation = await dbContext.Conversations
-                        .FirstOrDefaultAsync(c => c.CustomerId == customerId && c.Status == "Open");
+                    conversation = await dbContext.Conversations
+                        .FirstOrDefaultAsync(c => c.CustomerId == customerId && c.Status != "Closed");
 
                     if (conversation != null)
                     {
@@ -157,6 +166,48 @@ namespace Modules.AI.Workers
             string customerProfile = $"Name: {(string.IsNullOrEmpty(customer?.Name) ? "Missing" : customer.Name)}\n" +
                                      $"City: {(string.IsNullOrEmpty(customer?.City) ? "Missing" : customer.City)}";
 
+            // Check for media attachments in the active conversation
+            byte[] fileBytes = null;
+            string mimeType = null;
+            Message latestMediaMsg = null;
+
+            if (conversation != null)
+            {
+                latestMediaMsg = await dbContext.Messages
+                    .Where(m => m.ConversationId == conversation.Id && m.Direction == "Incoming" && m.AssetId != null)
+                    .OrderByDescending(m => m.Timestamp)
+                    .FirstOrDefaultAsync();
+
+                if (latestMediaMsg != null)
+                {
+                    var timeDiff = DateTime.UtcNow - latestMediaMsg.Timestamp;
+                    if (timeDiff.TotalMinutes <= 2.0)
+                    {
+                        var asset = await dbContext.Assets
+                            .IgnoreQueryFilters()
+                            .FirstOrDefaultAsync(a => a.Id == latestMediaMsg.AssetId);
+
+                        if (asset != null)
+                        {
+                            try
+                            {
+                                var storageService = scope.ServiceProvider.GetRequiredService<Modules.Media.Services.IMinIoStorageService>();
+                                using var stream = await storageService.DownloadFileAsync(asset.StoragePath);
+                                using var ms = new System.IO.MemoryStream();
+                                await stream.CopyToAsync(ms);
+                                fileBytes = ms.ToArray();
+                                mimeType = asset.ContentType;
+                                Console.WriteLine($"[AIReplyWorker] Downloaded multimodal media: {asset.FileName} ({fileBytes.Length} bytes) of type {mimeType}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[AIReplyWorker] Failed to download media asset from MinIO: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+            }
+
             Console.WriteLine($"[AIReplyWorker] Generating AI response using AIMarketingBrain...");
             var analysisResult = await _aiMarketingBrain.AnalyzeAndGenerateReplyAsync(
                 @event.Content, 
@@ -165,7 +216,19 @@ namespace Modules.AI.Workers
                 chatHistory, 
                 customerMemory,
                 existingLabels,
-                customerProfile);
+                customerProfile,
+                fileBytes,
+                mimeType,
+                settings.AiTonePreference,
+                settings.AiTargetAudience);
+
+            if (latestMediaMsg != null && !string.IsNullOrEmpty(analysisResult.Transcription))
+            {
+                latestMediaMsg.Transcription = analysisResult.Transcription;
+                dbContext.Entry(latestMediaMsg).State = EntityState.Modified;
+                await dbContext.SaveChangesAsync();
+                Console.WriteLine($"[AIReplyWorker] Saved voice note transcription: {latestMediaMsg.Transcription}");
+            }
 
             Console.WriteLine($"[AIReplyWorker] AI Response: {analysisResult.ReplyContent}");
 
@@ -183,7 +246,12 @@ namespace Modules.AI.Workers
                 Sentiment = analysisResult.Sentiment,
                 Confidence = analysisResult.Confidence,
                 Label = analysisResult.Label,
-                PipelineStage = analysisResult.PipelineStage
+                PipelineStage = analysisResult.PipelineStage,
+                FollowUpNeeded = analysisResult.SuggestedFollowUp?.Needed ?? false,
+                FollowUpType = analysisResult.SuggestedFollowUp?.Type,
+                FollowUpAppointmentTime = analysisResult.SuggestedFollowUp?.AppointmentTime,
+                FollowUpDueDate = analysisResult.SuggestedFollowUp?.DueDate,
+                FollowUpNotes = analysisResult.SuggestedFollowUp?.Notes
             };
             await _eventBus.PublishAsync(crmSuggestion);
             Console.WriteLine($"[AIReplyWorker] Published CRMUpdateSuggestedEvent for {@event.Sender}");
@@ -193,11 +261,93 @@ namespace Modules.AI.Workers
             {
                 ProjectId = @event.ProjectId,
                 Sender = @event.Sender,
-                Content = analysisResult.ReplyContent
+                Content = analysisResult.ReplyContent,
+                Buttons = analysisResult.SuggestedButtons ?? Array.Empty<string>()
             };
 
             await _eventBus.PublishAsync(replyGeneratedEvent);
             Console.WriteLine($"[AIReplyWorker] Published AIReplyGeneratedEvent for {@event.Sender}");
+
+            // 3. Process AI Auto-Reaction if suggested
+            if (!string.IsNullOrEmpty(analysisResult.SuggestedReaction))
+            {
+                try
+                {
+                    if (conversation != null)
+                    {
+                        var targetMessage = await dbContext.Messages
+                            .Where(m => m.ConversationId == conversation.Id && m.Direction == "Incoming")
+                            .OrderByDescending(m => m.Timestamp)
+                            .FirstOrDefaultAsync();
+
+                        if (targetMessage != null)
+                        {
+                            var reactionMessage = new Message
+                            {
+                                ConversationId = conversation.Id,
+                                ExternalMessageId = $"msg_ai_react_{Guid.NewGuid().ToString("N")}",
+                                Direction = "Outgoing",
+                                Content = $"[تفاعل] {analysisResult.SuggestedReaction}",
+                                MessageType = "Reaction",
+                                Timestamp = DateTime.UtcNow
+                            };
+
+                            dbContext.Messages.Add(reactionMessage);
+                            await dbContext.SaveChangesAsync();
+
+                            var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+                            var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+
+                            var gatewayPayload = new
+                            {
+                                projectId = conversation.ProjectId,
+                                to = @event.Sender,
+                                reactionText = analysisResult.SuggestedReaction,
+                                targetMessageId = targetMessage.ExternalMessageId,
+                                targetFromMe = false
+                            };
+
+                            var jsonPayload = System.Text.Json.JsonSerializer.Serialize(gatewayPayload, new System.Text.Json.JsonSerializerOptions 
+                            { 
+                                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase 
+                            });
+
+                            var httpClient = new System.Net.Http.HttpClient();
+                            var gatewayResponse = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(httpClient, $"{gatewayUrl}/api/whatsapp/react", jsonPayload);
+                            if (gatewayResponse.IsSuccessStatusCode)
+                            {
+                                Console.WriteLine($"[AIReplyWorker] Sent reaction {analysisResult.SuggestedReaction} to message {targetMessage.ExternalMessageId}");
+                            }
+                            else
+                            {
+                                var body = await gatewayResponse.Content.ReadAsStringAsync();
+                                Console.WriteLine($"[AIReplyWorker] Gateway reaction returned {gatewayResponse.StatusCode}: {body}");
+                            }
+
+                            // Broadcast via SignalR to project group
+                            var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                            var signalrPayload = new
+                            {
+                                id = reactionMessage.Id,
+                                conversationId = reactionMessage.ConversationId,
+                                senderType = "AI",
+                                content = reactionMessage.Content,
+                                createdAt = reactionMessage.Timestamp.ToString("o"),
+                                status = "Sent",
+                                mediaUrl = (string)null,
+                                mediaType = (string)null,
+                                messageType = "Reaction"
+                            };
+
+                            await hubContext.Clients.Group($"project_{conversation.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Failed to process auto-reaction: {ex.Message}");
+                }
+            }
         }
     }
 }

@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Customer, crmService } from '../../services/crm';
 import { api } from '../../services/api';
-import { X, Plus, Calendar, Tag, Sparkles } from 'lucide-react';
+import { X, Plus, Calendar, Tag, Sparkles, ArrowRight } from 'lucide-react';
+import { useToast } from '../../context/toast-context';
+import Tooltip from './Tooltip';
+import PhantomLoader from './PhantomLoader';
 import styles from './customer-detail.module.css';
 
 interface CustomerDetailProps {
@@ -9,6 +12,7 @@ interface CustomerDetailProps {
   projectId: string;
   onClose: () => void;
   onUpdate: () => void;
+  isInline?: boolean;
 }
 
 interface FollowUp {
@@ -21,7 +25,8 @@ interface FollowUp {
   appointmentTime?: string;
 }
 
-export default function CustomerDetail({ customerId, projectId, onClose, onUpdate }: CustomerDetailProps) {
+export default function CustomerDetail({ customerId, projectId, onClose, onUpdate, isInline = false }: CustomerDetailProps) {
+  const { showToast } = useToast();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,6 +41,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   const [tags, setTags] = useState<string[]>([]);
   const [pipelineStage, setPipelineStage] = useState('New');
   const [label, setLabel] = useState('');
+  const [isBlacklisted, setIsBlacklisted] = useState(false);
 
   // AI Memory / Profile fields
   const [editableSummary, setEditableSummary] = useState('');
@@ -69,6 +75,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       setTags(data.tags || []);
       setPipelineStage(data.pipelineStage || 'New');
       setLabel(data.label || '');
+      setIsBlacklisted(data.isBlacklisted || false);
 
       // Fetch followups
       const fuResp = await api.get<FollowUp[]>(`/api/projects/${projectId}/follow-ups`);
@@ -76,13 +83,17 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       setFollowUps(filtered);
 
       // Fetch AI Customer Memory
+      let hasMemory = false;
       try {
         setLoadingMemory(true);
         const memResp = await api.get(`/api/customers/${customerId}/memory`);
         if (memResp.data) {
-          setEditableSummary(memResp.data.longTermSummary || '');
+          const summary = memResp.data.longTermSummary || '';
+          setEditableSummary(summary);
+
+          let facts: string[] = [];
           try {
-            const facts = JSON.parse(memResp.data.factsJson || '[]');
+            facts = JSON.parse(memResp.data.factsJson || '[]');
             setEditableFacts(facts.join(', '));
           } catch { setEditableFacts(''); }
           try {
@@ -93,6 +104,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             const objections = JSON.parse(memResp.data.objectionsJson || '[]');
             setEditableObjections(objections.join(', '));
           } catch { setEditableObjections(''); }
+
+          if (summary.trim() !== '' || facts.length > 0) {
+            hasMemory = true;
+          }
         }
       } catch (err) {
         console.error('Customer memory not found or failed to load', err);
@@ -102,6 +117,47 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
         setEditableObjections('');
       } finally {
         setLoadingMemory(false);
+      }
+
+      if (!hasMemory) {
+        // Automatically trigger AI memory generation!
+        try {
+          setGeneratingMemory(true);
+          const resp = await api.post(`/api/projects/${projectId}/customers/${customerId}/memory/generate`);
+          if (resp.data) {
+            const mem = resp.data;
+            setEditableSummary(mem.longTermSummary || '');
+            try {
+              const facts = JSON.parse(mem.factsJson || '[]');
+              setEditableFacts(facts.join(', '));
+            } catch { setEditableFacts(''); }
+            try {
+              const triggers = JSON.parse(mem.triggersJson || '[]');
+              setEditableTriggers(triggers.join(', '));
+            } catch { setEditableTriggers(''); }
+            try {
+              const objections = JSON.parse(mem.objectionsJson || '[]');
+              setEditableObjections(objections.join(', '));
+            } catch { setEditableObjections(''); }
+
+            // Reload customer basic info to show updated name, city, budget, leadScore, etc.
+            const custResp = await crmService.getCustomer(customerId);
+            setCustomer(custResp);
+            setName(custResp.name || '');
+            setCity(custResp.city || '');
+            setBudget(custResp.budget ? custResp.budget.toString() : '');
+            setLeadScore(custResp.leadScore || 0);
+            setNotes(custResp.notes || '');
+            setTags(custResp.tags || []);
+            setPipelineStage(custResp.pipelineStage || 'New');
+            setLabel(custResp.label || '');
+            setIsBlacklisted(custResp.isBlacklisted || false);
+          }
+        } catch (genErr) {
+          console.error('Failed to auto-generate memory on load', genErr);
+        } finally {
+          setGeneratingMemory(false);
+        }
       }
 
     } catch (e) {
@@ -124,12 +180,13 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       await crmService.updateCustomer(customerId, {
         name,
         city,
-        leadScore,
+        leadScore: Math.min(100, Math.max(0, leadScore)),
         notes,
         tags,
         budget: budget ? parseFloat(budget) : null,
         pipelineStage,
         label,
+        isBlacklisted,
       });
       onUpdate();
       onClose();
@@ -152,10 +209,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
         objectionsJson: JSON.stringify(parseCsv(editableObjections)),
       };
       await api.put(`/api/customers/${customerId}/memory`, payload);
-      alert('تم تحديث ملف تعريف العميل بنجاح!');
+      showToast('تم تحديث ملف تعريف العميل بنجاح! ✨', 'success');
     } catch (err) {
       console.error('Failed to save customer memory', err);
-      alert('فشل حفظ تفاصيل ملف العميل.');
+      showToast('فشل حفظ تفاصيل ملف العميل.', 'error');
     } finally {
       setSavingMemory(false);
     }
@@ -167,12 +224,12 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       const resp = await api.post(`/api/projects/${projectId}/customers/${customerId}/memory/generate`);
       if (resp.data) {
         await fetchCustomerData();
-        alert('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح!');
+        showToast('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح! 🧠', 'success');
       }
     } catch (err: any) {
       console.error('Failed to generate customer profile', err);
       const errMsg = err.response?.data || 'فشل توليد ملف التعريف. تأكد من وجود رسائل سابقة للعميل.';
-      alert(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setGeneratingMemory(false);
     }
@@ -225,42 +282,88 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   };
 
   if (loading) {
+    const loadingMarkup = (
+      <PhantomLoader loading label="تحميل ملف العميل">
+        <div className={styles.customerLoadingShell}>
+          <div className={styles.customerLoadingHeader}>
+            <div>
+              <div className={styles.customerLoadingTitle}>ملف العميل والتفاصيل الأساسية</div>
+              <div className={styles.customerLoadingSubtitle}>بيانات التواصل وسجل المحادثات</div>
+            </div>
+            <div className={styles.customerLoadingAction}>إغلاق</div>
+          </div>
+          <div className={styles.customerLoadingGrid}>
+            <div className={styles.customerLoadingColumn}>
+              <div className={styles.customerLoadingField}>اسم العميل</div>
+              <div className={styles.customerLoadingField}>رقم الهاتف</div>
+              <div className={styles.customerLoadingField}>المدينة والميزانية</div>
+              <div className={styles.customerLoadingArea}>ملاحظات العميل وسياق المحادثة</div>
+            </div>
+            <div className={styles.customerLoadingColumn}>
+              <div className={styles.customerLoadingPanel}>ملخص AI ودرجة الاهتمام</div>
+              <div className={styles.customerLoadingPanel}>المتابعات القادمة وسجل الإجراءات</div>
+            </div>
+          </div>
+        </div>
+      </PhantomLoader>
+    );
+
+    if (isInline) {
+      return (
+        <div className={`glass-panel ${styles.inlineCard}`}>
+          {loadingMarkup}
+        </div>
+      );
+    }
     return (
       <div className={styles.backdrop}>
         <div className={`glass-panel ${styles.modal}`}>
-          <div className={styles.loadingSpinner}>Loading customer profile...</div>
+          {loadingMarkup}
         </div>
       </div>
     );
   }
 
-  return (
-    <div className={styles.backdrop}>
-      <div className={`glass-panel ${styles.modal}`}>
-        {/* Header */}
-        <div className={styles.header}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h2 className={styles.title}>{customer?.name || 'Customer Details'}</h2>
-              {customer?.label && (
-                <span className={styles.smartLabelBadge}>{customer.label}</span>
-              )}
-            </div>
-            <p className={styles.subtitle}>{customer?.phoneNumber}</p>
+  const clampedDisplayScore = Math.min(100, Math.max(0, leadScore));
+
+  const contentMarkup = (
+    <div className={`glass-panel ${isInline ? styles.inlineCard : styles.modal}`}>
+      {/* Header */}
+      <div className={styles.header}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h2 className={styles.title}>{customer?.name || 'تفاصيل العميل'}</h2>
+            {customer?.label && (
+              <span className={styles.smartLabelBadge}>{customer.label}</span>
+            )}
           </div>
+          <p className={styles.subtitle}>{customer?.phoneNumber}</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {isInline && (
+            <button
+              type="button"
+              onClick={onClose}
+              className={styles.backBtn}
+            >
+              <ArrowRight size={16} style={{ marginLeft: '6px' }} />
+              الرجوع للقائمة
+            </button>
+          )}
           <div onClick={onClose} className={styles.closeBtn}>
             <X size={20} />
           </div>
         </div>
+      </div>
 
         {/* Content Tabs / Split view */}
         <div className={styles.bodyGrid}>
           {/* Left Column: Profile Info Form */}
           <form onSubmit={handleSave} className={styles.formColumn}>
-            <h3 className={styles.sectionTitle}>Profile Context</h3>
+            <h3 className={styles.sectionTitle}>سياق الملف الشخصي</h3>
             
             <div className={styles.formGroup}>
-              <label className={styles.label}>Name</label>
+              <label className={styles.label}>الاسم الكامل</label>
               <input 
                 type="text" 
                 value={name} 
@@ -283,7 +386,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
             <div className={styles.formRow}>
               <div className={styles.formGroup}>
-                <label className={styles.label}>City</label>
+                <label className={styles.label}>المدينة</label>
                 <input 
                   type="text" 
                   value={city} 
@@ -293,7 +396,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>Budget ($)</label>
+                <label className={styles.label}>الميزانية ($)</label>
                 <input 
                   type="number" 
                   step="0.01"
@@ -306,51 +409,64 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
             <div className={styles.formRow}>
               <div className={styles.formGroup}>
-                <label className={styles.label}>Lead Score</label>
-                <input 
-                  type="number" 
-                  min="0" 
+                <label className={styles.label}>تقييم الاهتمام (Lead Score)</label>
+                <input
+                  type="number"
+                  min="0"
                   max="100"
-                  value={leadScore} 
-                  onChange={(e) => setLeadScore(parseInt(e.target.value) || 0)} 
-                  className={styles.input} 
+                  value={leadScore}
+                  onChange={(e) => setLeadScore(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                  className={styles.input}
                 />
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>Pipeline Stage</label>
-                <select 
-                  value={pipelineStage} 
-                  onChange={(e) => setPipelineStage(e.target.value)} 
+                <label className={styles.label}>مرحلة مسار المبيعات (Pipeline Stage)</label>
+                <select
+                  value={pipelineStage}
+                  onChange={(e) => setPipelineStage(e.target.value)}
                   className={styles.select}
                 >
-                  <option value="New">New</option>
-                  <option value="Contacted">Contacted</option>
-                  <option value="Proposal">Proposal</option>
-                  <option value="Negotiation">Negotiation</option>
-                  <option value="Won">Won</option>
-                  <option value="Lost">Lost</option>
+                  <option value="New">جديد (New)</option>
+                  <option value="Contacted">تم التواصل (Contacted)</option>
+                  <option value="Proposal">عرض سعر (Proposal)</option>
+                  <option value="Negotiation">تفاوض (Negotiation)</option>
+                  <option value="Won">تم البيع (Won)</option>
+                  <option value="Lost">خسارة (Lost)</option>
                 </select>
               </div>
             </div>
 
+            <div className={styles.formGroup} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0 12px 0' }}>
+              <input 
+                type="checkbox" 
+                id="isBlacklistedCheckbox"
+                checked={isBlacklisted} 
+                onChange={(e) => setIsBlacklisted(e.target.checked)} 
+                style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'hsl(var(--accent-primary))' }}
+              />
+              <label htmlFor="isBlacklistedCheckbox" className={styles.label} style={{ marginBottom: 0, cursor: 'pointer', fontWeight: '500' }}>
+                حظر الرد الآلي بالذكاء الاصطناعي (Blacklist)
+              </label>
+            </div>
+
             <div className={styles.formGroup}>
-              <label className={styles.label}>Conversation Notes</label>
-              <textarea 
-                value={notes} 
-                onChange={(e) => setNotes(e.target.value)} 
-                className={styles.textarea} 
+              <label className={styles.label}>ملاحظات المحادثة</label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className={styles.textarea}
                 rows={4}
               />
             </div>
 
             {/* Tag manager */}
             <div className={styles.formGroup}>
-              <label className={styles.label}>Tags</label>
+              <label className={styles.label}>الوسوم والكلمات الدلالية</label>
               <div className={styles.tagInputRow}>
-                <input 
-                  type="text" 
-                  placeholder="New tag..." 
+                <input
+                  type="text"
+                  placeholder="وسم جديد..."
                   value={newTag}
                   onChange={(e) => setNewTag(e.target.value)}
                   className={styles.input}
@@ -362,9 +478,11 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     }
                   }}
                 />
-                <button type="button" onClick={handleAddTag} className={styles.addTagBtn}>
-                  <Plus size={16} />
-                </button>
+                <Tooltip content="إضافة وسم جديد لتصنيف العميل" position="top">
+                  <button type="button" onClick={handleAddTag} className={styles.addTagBtn} style={{ height: '100%' }}>
+                    <Plus size={16} />
+                  </button>
+                </Tooltip>
               </div>
               <div className={styles.tagCloud}>
                 {tags.map(tag => (
@@ -377,9 +495,13 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               </div>
             </div>
 
-            <button type="submit" disabled={saving} className={styles.saveBtn}>
-              {saving ? 'Saving changes...' : 'Save Context'}
-            </button>
+            <Tooltip content="حفظ التغييرات في ملف العميل الحالي" position="top" style={{ width: '100%' }}>
+              <button type="submit" disabled={saving} className={styles.saveBtn} style={{ width: '100%' }}>
+                <PhantomLoader loading={saving} label="حفظ التغييرات">
+                  <span>حفظ التغييرات</span>
+                </PhantomLoader>
+              </button>
+            </Tooltip>
           </form>
 
           {/* Right Column: Followups & History */}
@@ -388,11 +510,11 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             <div className={styles.scoreIndicatorPanel}>
               <h3 className={styles.sectionTitle}>AI Summary & Profile</h3>
               <div className={styles.scoreCards} style={{ marginBottom: '12px' }}>
-                <div className={styles.scoreCard} style={{ borderLeft: '4px solid hsl(var(--accent-primary))' }}>
+                <div className={styles.scoreCard} style={{ border: '1px solid rgba(0, 243, 255, 0.2)', backgroundColor: 'rgba(0, 243, 255, 0.04)' }}>
                   <span className={styles.scoreLabel}>Lead Score</span>
-                  <span className={styles.scoreVal}>{leadScore}/100</span>
+                  <span className={styles.scoreVal}>{clampedDisplayScore}/100</span>
                 </div>
-                <div className={styles.scoreCard} style={{ borderLeft: '4px solid hsl(var(--accent-secondary))' }}>
+                <div className={styles.scoreCard} style={{ border: '1px solid rgba(255, 0, 127, 0.2)', backgroundColor: 'rgba(255, 0, 127, 0.04)' }}>
                   <span className={styles.scoreLabel}>System Stage</span>
                   <span className={styles.scoreVal}>{pipelineStage}</span>
                 </div>
@@ -443,13 +565,21 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                  <button type="submit" disabled={savingMemory || generatingMemory} className={styles.scheduleBtn} style={{ flex: 1, background: 'rgba(99, 102, 241, 0.12)', borderColor: 'rgba(99, 102, 241, 0.25)', color: 'hsl(239, 84%, 75%)' }}>
-                    {savingMemory ? 'جاري الحفظ...' : 'حفظ التعديلات'}
-                  </button>
-                  <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(168, 85, 247, 0.12)', borderColor: 'rgba(168, 85, 247, 0.25)', color: 'hsl(270, 84%, 75%)' }}>
-                    <Sparkles size={14} />
-                    {generatingMemory ? 'جاري التحليل...' : 'تحديث ذكي بالـ AI'}
-                  </button>
+                  <Tooltip content="حفظ الملخص المكتوب والبيانات الحالية للعميل" position="top" style={{ flex: 1 }}>
+                    <button type="submit" disabled={savingMemory || generatingMemory} className={styles.scheduleBtn} style={{ width: '100%', background: 'rgba(99, 102, 241, 0.12)', borderColor: 'rgba(99, 102, 241, 0.25)', color: 'hsl(239, 84%, 75%)' }}>
+                      <PhantomLoader loading={savingMemory} label="حفظ التعديلات">
+                        <span>حفظ التعديلات</span>
+                      </PhantomLoader>
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="تحليل المحادثات عبر الذكاء الاصطناعي وتحديث الملخص والسمات تلقائياً" position="top" style={{ flex: 1 }}>
+                    <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(168, 85, 247, 0.12)', borderColor: 'rgba(168, 85, 247, 0.25)', color: 'hsl(270, 84%, 75%)' }}>
+                      <Sparkles size={14} />
+                      <PhantomLoader loading={generatingMemory} label="تحديث ملف العميل بالذكاء الاصطناعي">
+                        <span>تحديث ذكي بالـ AI</span>
+                      </PhantomLoader>
+                    </button>
+                  </Tooltip>
                 </div>
               </form>
             </div>
@@ -568,7 +698,16 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             </div>
           </div>
         </div>
-      </div>
+    </div>
+  );
+
+  if (isInline) {
+    return contentMarkup;
+  }
+
+  return (
+    <div className={styles.backdrop}>
+      {contentMarkup}
     </div>
   );
 }
