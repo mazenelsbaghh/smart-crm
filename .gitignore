@@ -27,7 +27,7 @@ obj/
 *.user
 *.suo
 *.vs/
-packages/
+/packages/
 
 # === Docker ===
 docker-compose.override.local.yml

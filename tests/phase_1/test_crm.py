@@ -16,6 +16,7 @@ async def test_crm_and_follow_ups_flow():
         proj_resp = await client.post(f"{BASE_URL}/projects", json={"name": "CrmTestProj"})
         assert proj_resp.status_code == 201
         proj_id = proj_resp.json()["id"]
+        headers = {"X-Project-Id": proj_id}
 
         # Disable AI auto-reply so background worker doesn't delete follow-ups during test
         settings_resp = await client.put(
@@ -38,6 +39,10 @@ async def test_crm_and_follow_ups_flow():
             }
         )
         assert webhook_resp.status_code == 200
+
+        # Wait for the AI background worker to complete its run on the webhook message
+        # so it doesn't delete the follow-ups we are about to create.
+        await pytest.importorskip("asyncio").sleep(7.0)
 
         # 3. Retrieve customers for this project to get the auto-created customer ID
         headers = {"X-Project-Id": proj_id}
