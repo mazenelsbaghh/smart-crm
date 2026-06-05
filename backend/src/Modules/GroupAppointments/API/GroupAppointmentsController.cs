@@ -50,6 +50,7 @@ namespace Modules.GroupAppointments.API
                 g.Capacity,
                 g.IsActive,
                 g.Days,
+                g.Mode,
                 g.CreatedAt,
                 g.UpdatedAt,
                 BookedCount = g.Bookings.Count,
@@ -69,13 +70,16 @@ namespace Modules.GroupAppointments.API
         [HttpPost("group-appointments")]
         public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest request)
         {
+            var mode = request.Mode ?? "offline";
+            var autoName = mode == "online" ? "أونلاين" : "في السنتر";
             var group = new GroupAppointment
             {
-                Name = request.Name,
+                Name = string.IsNullOrEmpty(request.Name) ? autoName : request.Name,
                 DateTime = DateTime.SpecifyKind(request.DateTime, DateTimeKind.Utc),
                 Capacity = request.Capacity,
                 IsActive = request.IsActive,
-                Days = request.Days ?? string.Empty
+                Days = request.Days ?? string.Empty,
+                Mode = mode
             };
 
             _context.GroupAppointments.Add(group);
@@ -106,6 +110,14 @@ namespace Modules.GroupAppointments.API
             if (request.Days != null)
             {
                 group.Days = request.Days;
+            }
+            if (request.Mode != null)
+            {
+                group.Mode = request.Mode;
+                if (string.IsNullOrEmpty(request.Name))
+                {
+                    group.Name = request.Mode == "online" ? "أونلاين" : "في السنتر";
+                }
             }
 
             _context.Entry(group).State = EntityState.Modified;
@@ -166,6 +178,7 @@ namespace Modules.GroupAppointments.API
                 g.Name,
                 g.DateTime,
                 g.Capacity,
+                g.Mode,
                 BookedCount = g.Bookings.Count,
                 SlotsLeft = Math.Max(0, g.Capacity - g.Bookings.Count)
             });
@@ -315,11 +328,12 @@ namespace Modules.GroupAppointments.API
 
     public class CreateGroupRequest
     {
-        public string Name { get; set; } = null!;
+        public string? Name { get; set; }
         public DateTime DateTime { get; set; }
         public int Capacity { get; set; }
         public bool IsActive { get; set; } = true;
         public string? Days { get; set; }
+        public string? Mode { get; set; }
     }
 
     public class UpdateGroupRequest
@@ -329,6 +343,7 @@ namespace Modules.GroupAppointments.API
         public int? Capacity { get; set; }
         public bool? IsActive { get; set; }
         public string? Days { get; set; }
+        public string? Mode { get; set; }
     }
 
     public class PublicBookRequest

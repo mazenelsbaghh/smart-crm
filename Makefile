@@ -3,9 +3,11 @@
 # ============================================================================
 # Usage: make help
 # ============================================================================
+-include .env.deploy
 
 .PHONY: help env up down restart logs ps clean health \
-        test-setup test-all test-phase-0 test-coverage
+        test-setup test-all test-phase-0 test-coverage \
+        prod-logs prod-logs-all
 
 SHELL := /bin/bash
 COMPOSE := docker compose
@@ -282,5 +284,18 @@ push: ## Commit current branch, merge to main, and push to trigger CI/CD deploy
 		git checkout $$CURRENT_BRANCH; \
 	fi
 
+prod-logs: ## Tail production backend container logs from the server
+	@if [ -z "$(SSH_HOST)" ]; then \
+		echo "❌ SSH_HOST not found in .env.deploy"; \
+		exit 1; \
+	fi
+	@sshpass -p "$(SSH_PASS)" ssh -t -o StrictHostKeyChecking=no "$(SSH_USER)@$(SSH_HOST)" \
+		"docker compose -f $(REMOTE_DIR)/docker-compose.yml -f $(REMOTE_DIR)/docker-compose.production.yml logs -f --tail=100 backend"
 
-
+prod-logs-all: ## Tail all production container logs from the server
+	@if [ -z "$(SSH_HOST)" ]; then \
+		echo "❌ SSH_HOST not found in .env.deploy"; \
+		exit 1; \
+	fi
+	@sshpass -p "$(SSH_PASS)" ssh -t -o StrictHostKeyChecking=no "$(SSH_USER)@$(SSH_HOST)" \
+		"docker compose -f $(REMOTE_DIR)/docker-compose.yml -f $(REMOTE_DIR)/docker-compose.production.yml logs -f --tail=100"

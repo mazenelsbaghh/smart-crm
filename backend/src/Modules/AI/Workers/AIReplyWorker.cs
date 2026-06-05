@@ -104,7 +104,21 @@ namespace Modules.AI.Workers
                     }
                     catch
                     {
-                        projectZone = TimeZoneInfo.Utc;
+                        try
+                        {
+                            projectZone = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo");
+                        }
+                        catch
+                        {
+                            try
+                            {
+                                projectZone = TimeZoneInfo.FindSystemTimeZoneById("Egypt Standard Time");
+                            }
+                            catch
+                            {
+                                projectZone = TimeZoneInfo.Utc;
+                            }
+                        }
                     }
 
                     // Filter out full groups - don't show them to the AI at all
@@ -114,7 +128,8 @@ namespace Modules.AI.Workers
                     foreach (var g in availableGroups)
                     {
                         var localTime = TimeZoneInfo.ConvertTimeFromUtc(g.DateTime, projectZone);
-                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  اسم المجموعة: {g.Name}\n  الموعد: {localTime:dd/MM/yyyy h:mm tt}");
+                        var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
+                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}");
                     }
 
 
@@ -133,7 +148,7 @@ namespace Modules.AI.Workers
                         : "";
                     
                     var groupsContextText = "معلومات مواعيد المجموعات المتاحة للحجز (Group Appointments):\n" +
-                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه أسماء المجموعات المتاحة ومواعيدها فقط. لا تذكر أبداً عدد الأماكن المتبقية أو السعة أو أي أرقام. إذا أراد الحجز، ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً. لا ترسل أي رابط حجز للعميل. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
+                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه المجموعات المتاحة مع توضيح نوع كل مجموعة (سواء كانت أونلاين أو في السنتر) وموعدها فقط. لا تذكر أبداً عدد الأماكن المتبقية أو السعة أو أي أرقام. إذا أراد الحجز، ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً. لا ترسل أي رابط حجز للعميل. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
                                             alreadyBookedNote + "\n\n" +
                                             "قائمة المجموعات المتاحة حالياً:\n" +
                                             (groupsContextList.Any() ? string.Join("\n", groupsContextList) : "- لا توجد مجموعات متاحة حالياً للحجز.");

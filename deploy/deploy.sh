@@ -67,19 +67,18 @@ sshpass -p "$SSH_PASS" rsync -avz --progress -e "ssh -o StrictHostKeyChecking=no
 echo "✅ Files synced."
 
 # Step 3: Initialize .env if needed
-echo "⚙️  Step 3/5: Checking environment file..."
+echo "⚙️  Running remote deployment commands (ENV setup, container rebuild, prune)..."
 sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" \
-    "cd $REMOTE_DIR && if [ ! -f .env ]; then cp .env.example .env && echo '📝 Created .env from .env.example'; else echo '✅ .env already exists'; fi"
-
-# Step 4: Rebuild and restart containers (with production overrides for SSL/ports)
-echo "🔄 Step 4/5: Rebuilding and restarting containers..."
-sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" \
-    "cd $REMOTE_DIR && docker compose -f docker-compose.yml -f docker-compose.production.yml down && docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build"
-
-# Step 5: Clean old Docker images
-echo "🧹 Step 5/5: Cleaning old Docker images..."
-sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" \
-    "docker image prune -af && echo '🧹 Old images removed.'"
+    "cd $REMOTE_DIR && \
+     if [ ! -f .env ]; then cp .env.example .env && echo '📝 Created .env from .env.example'; else echo '✅ .env already exists'; fi && \
+     echo '🔑 Copying SSL certificates...' && \
+     cp -L /etc/letsencrypt/live/n8n-mazen.online/fullchain.pem nginx/certs/fullchain.pem && \
+     cp -L /etc/letsencrypt/live/n8n-mazen.online/privkey.pem nginx/certs/privkey.pem && \
+     echo '🔄 Rebuilding and restarting containers...' && \
+     docker compose -f docker-compose.yml -f docker-compose.production.yml down && \
+     docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build && \
+     echo '🧹 Cleaning old Docker images...' && \
+     docker image prune -af"
 
 echo ""
 echo "============================================"
