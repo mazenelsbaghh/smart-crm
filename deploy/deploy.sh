@@ -71,10 +71,10 @@ echo "⚙️  Step 3/5: Checking environment file..."
 sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" \
     "cd $REMOTE_DIR && if [ ! -f .env ]; then cp .env.example .env && echo '📝 Created .env from .env.example'; else echo '✅ .env already exists'; fi"
 
-# Step 4: Rebuild and restart containers
+# Step 4: Rebuild and restart containers (with production overrides for SSL/ports)
 echo "🔄 Step 4/5: Rebuilding and restarting containers..."
 sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" \
-    "cd $REMOTE_DIR && make restart"
+    "cd $REMOTE_DIR && docker compose -f docker-compose.yml -f docker-compose.production.yml down && docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build"
 
 # Step 5: Clean old Docker images
 echo "🧹 Step 5/5: Cleaning old Docker images..."

@@ -49,6 +49,7 @@ namespace Modules.GroupAppointments.API
                 g.DateTime,
                 g.Capacity,
                 g.IsActive,
+                g.Days,
                 g.CreatedAt,
                 g.UpdatedAt,
                 BookedCount = g.Bookings.Count,
@@ -73,7 +74,8 @@ namespace Modules.GroupAppointments.API
                 Name = request.Name,
                 DateTime = DateTime.SpecifyKind(request.DateTime, DateTimeKind.Utc),
                 Capacity = request.Capacity,
-                IsActive = request.IsActive
+                IsActive = request.IsActive,
+                Days = request.Days ?? string.Empty
             };
 
             _context.GroupAppointments.Add(group);
@@ -101,6 +103,10 @@ namespace Modules.GroupAppointments.API
             {
                 group.IsActive = request.IsActive.Value;
             }
+            if (request.Days != null)
+            {
+                group.Days = request.Days;
+            }
 
             _context.Entry(group).State = EntityState.Modified;
             await _context.SaveChangesAsync();
@@ -118,6 +124,19 @@ namespace Modules.GroupAppointments.API
             await _context.SaveChangesAsync();
 
             return NoContent();
+        }
+
+        [HttpPatch("group-appointments/{id}/toggle")]
+        public async Task<IActionResult> ToggleGroup(Guid id)
+        {
+            var group = await _context.GroupAppointments.FindAsync(id);
+            if (group == null) return NotFound();
+
+            group.IsActive = !group.IsActive;
+            _context.Entry(group).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { group.Id, group.IsActive });
         }
 
         // --- Anonymous Public Booking Endpoints ---
@@ -300,6 +319,7 @@ namespace Modules.GroupAppointments.API
         public DateTime DateTime { get; set; }
         public int Capacity { get; set; }
         public bool IsActive { get; set; } = true;
+        public string? Days { get; set; }
     }
 
     public class UpdateGroupRequest
@@ -308,6 +328,7 @@ namespace Modules.GroupAppointments.API
         public DateTime? DateTime { get; set; }
         public int? Capacity { get; set; }
         public bool? IsActive { get; set; }
+        public string? Days { get; set; }
     }
 
     public class PublicBookRequest
