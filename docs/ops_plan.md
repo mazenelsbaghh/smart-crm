@@ -4,6 +4,15 @@
 
 ## Chronological Log
 
+### 2026-06-05: Domain Configuration and SSL Setup (Completed)
+- **Goal**: Configure domain `n8n-mazen.online` and obtain Let's Encrypt SSL certificates.
+- **Updates**:
+  - Updated `nginx/production.conf` and `nginx/default.conf` server_name and CORS origins to include `n8n-mazen.online` and `www.n8n-mazen.online`.
+  - Installed `certbot` on the server host.
+  - Temporarily stopped Nginx container, ran `certbot certonly --standalone` to obtain a valid SSL certificate for `n8n-mazen.online` and `www.n8n-mazen.online`.
+  - Copied Let's Encrypt certificate/key files directly into `./nginx/certs/` to be mounted by the Nginx container.
+  - Started Nginx container and verified HTTPS access works perfectly (returning 200 OK).
+
 ### 2026-06-05: Manual Deployment and Server Recovery (Completed)
 - **Goal**: Manually deploy updates to the Hostinger server `147.93.86.206` via local rsync and rebuild docker services.
 - **Updates**:
