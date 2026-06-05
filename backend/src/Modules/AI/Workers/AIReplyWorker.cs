@@ -123,13 +123,67 @@ namespace Modules.AI.Workers
 
                     // Filter out full groups - don't show them to the AI at all
                     var availableGroups = activeGroups.Where(g => g.Bookings.Count < g.Capacity).ToList();
-                    Console.WriteLine($"[AIReplyWorker] Active groups: {activeGroups.Count}, Available (not full): {availableGroups.Count}");
+
+                    // Determine customer's city status and filter/adjust instructions accordingly
+                    var customerCity = customer?.City?.Trim();
+                    bool isCityKnown = !string.IsNullOrEmpty(customerCity) && !customerCity.Equals("Missing", StringComparison.OrdinalIgnoreCase);
+                    bool isFromAlexandria = false;
+                    if (isCityKnown)
+                    {
+                        var lowerCity = customerCity.ToLowerInvariant();
+                        if (lowerCity.Contains("اسكندرية") || lowerCity.Contains("إسكندرية") || lowerCity.Contains("alexandria"))
+                        {
+                            isFromAlexandria = true;
+                        }
+                    }
+
+                    // If customer is known and NOT from Alexandria, filter out offline (in center) groups completely
+                    if (isCityKnown && !isFromAlexandria)
+                    {
+                        availableGroups = availableGroups.Where(g => g.Mode == "online").ToList();
+                    }
+
+                    Console.WriteLine($"[AIReplyWorker] Active groups: {activeGroups.Count}, Available (not full): {availableGroups.Count}, CityKnown: {isCityKnown}, FromAlexandria: {isFromAlexandria}");
+
+                    string GetArabicDaysText(string daysCsv)
+                    {
+                        if (string.IsNullOrWhiteSpace(daysCsv))
+                            return string.Empty;
+
+                        var daysParts = daysCsv.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                        var dayNames = new System.Collections.Generic.List<string>();
+                        foreach (var part in daysParts)
+                        {
+                            if (int.TryParse(part.Trim(), out int dayIdx))
+                            {
+                                switch (dayIdx)
+                                {
+                                    case 0: dayNames.Add("الأحد"); break;
+                                    case 1: dayNames.Add("الاثنين"); break;
+                                    case 2: dayNames.Add("الثلاثاء"); break;
+                                    case 3: dayNames.Add("الأربعاء"); break;
+                                    case 4: dayNames.Add("الخميس"); break;
+                                    case 5: dayNames.Add("الجمعة"); break;
+                                    case 6: dayNames.Add("السبت"); break;
+                                }
+                            }
+                        }
+                        if (dayNames.Count == 0)
+                            return string.Empty;
+                        if (dayNames.Count == 1)
+                            return "يوم " + dayNames[0];
+                        if (dayNames.Count == 2)
+                            return "يومي " + dayNames[0] + " و " + dayNames[1];
+                        return "أيام " + string.Join(" و ", dayNames);
+                    }
 
                     foreach (var g in availableGroups)
                     {
                         var localTime = TimeZoneInfo.ConvertTimeFromUtc(g.DateTime, projectZone);
                         var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
-                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}");
+                        var daysText = GetArabicDaysText(g.Days);
+                        var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
+                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}");
                     }
 
 
@@ -147,8 +201,29 @@ namespace Modules.AI.Workers
                         ? $"\nملاحظة: هذا العميل مسجل بالفعل في {customerAlreadyBookedIn.Count} مجموعة/مجموعات. إذا طلب الحجز في مجموعة مسجل فيها بالفعل، أخبره أنه مسجل مسبقاً ولا تسجله مرة أخرى (اترك suggestedGroupBookingId = null)."
                         : "";
                     
+                    string cityInstruction = "";
+                    if (!isCityKnown)
+                    {
+                        cityInstruction = "قانون هام وصارم بشأن مدينة العميل وموقع المجموعات:\n" +
+                                          "بما أن مدينة العميل غير مسجلة في ملفه الشخصي (City: Missing)، يجب عليك أولاً معرفة المدينة أو المحافظة التي يعيش فيها قبل تقديم أي مواعيد للعميل.\n" +
+                                          "إذا سأل العميل عن المواعيد أو المجموعات أو تفاصيل الحجز، لا تذكر له أي مواعيد أو أوقات في ردك إطلاقاً، بل اسأله بلطف أولاً عن أين يعيش أو ما هي محافظته (مثال: 'علشان ننسق المواعيد المناسبة لحضرتك، ساكن في الإسكندرية ولا محافظة تانية؟').\n" +
+                                          "يُمنع منعاً باتاً عرض المواعيد أو ذكرها للعميل إلا بعد أن يخبرك صراحةً بمدينته.\n";
+                    }
+                    else if (!isFromAlexandria)
+                    {
+                        cityInstruction = $"قانون هام وصارم بشأن مدينة العميل وموقع المجموعات:\n" +
+                                          $"بما أن العميل يعيش في مدينة ({customerCity}) وهي ليست الإسكندرية، يُمنع منعاً باتاً عرض أو ذكر مواعيد 'في السنتر (Offline)' للعميل.\n" +
+                                          $"اعرض عليه مواعيد 'أونلاين (Online)' المتاحة فقط، ولا تأتي على ذكر السنتر أو المواعيد الأوفلاين إطلاقاً في حديثك.\n";
+                    }
+                    else
+                    {
+                        cityInstruction = "قانون هام وصارم بشأن مدينة العميل وموقع المجموعات:\n" +
+                                          "بما أن العميل يعيش في الإسكندرية، يمكنك عرض المجموعات المتاحة 'أونلاين (Online)' و'في السنتر (Offline)' معاً وخيره بينهما.\n";
+                    }
+
                     var groupsContextText = "معلومات مواعيد المجموعات المتاحة للحجز (Group Appointments):\n" +
-                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه المجموعات المتاحة مع توضيح نوع كل مجموعة (سواء كانت أونلاين أو في السنتر) وموعدها فقط. لا تذكر أبداً عدد الأماكن المتبقية أو السعة أو أي أرقام. إذا أراد الحجز، ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً. لا ترسل أي رابط حجز للعميل. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
+                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه المجموعات المتاحة المناسبة له مع توضيح نوع كل مجموعة (سواء كانت أونلاين أو في السنتر)، والأيام النشطة للمجموعة، وموعدها (الساعة والتوقيت) فقط. لا تذكر أبداً عدد الأماكن المتبقية أو السعة أو أي أرقام. إذا أراد الحجز في مجموعة محددة، ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً. لا ترسل أي رابط حجز للعميل. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
+                                            cityInstruction + "\n" +
                                             alreadyBookedNote + "\n\n" +
                                             "قائمة المجموعات المتاحة حالياً:\n" +
                                             (groupsContextList.Any() ? string.Join("\n", groupsContextList) : "- لا توجد مجموعات متاحة حالياً للحجز.");
