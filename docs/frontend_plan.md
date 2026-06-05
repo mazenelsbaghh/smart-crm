@@ -8,6 +8,15 @@ This document tracks all frontend requirements, design structures, pages, and im
 
 ## Chronological Log
 
+### 2026-06-05: Support Project Renaming in Settings (Completed)
+- **Goal**: Allow the user to view and update the current project's name from the Project Settings page.
+- **Updates**:
+  - Added `name` field to `ProjectSettingsResponse` type.
+  - Introduced `projectName` state in `Settings.tsx`.
+  - Added an "اسم المشروع" (Project Name) input field in the settings form.
+  - Sent the updated `projectName` in the PUT request to `/api/projects/${activeProject.id}/settings`.
+  - Called `refreshProjects()` upon successful settings save to update the header/sidebar project selector display.
+
 ### 2026-06-05: Customer Blacklist visual toggle and indicators (Completed)
 - **State and API update**: Updated the `Customer` type in `crm.ts` to include the `isBlacklisted` property.
 - **Togglable Exclude Switch**: Added a checkbox toggle in [CustomerDetail.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/components/shared/CustomerDetail.tsx) labeled "حظر الرد الآلي بالذكاء الاصطناعي (Blacklist)" to persist blacklist status via the update customer API.

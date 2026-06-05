@@ -4,6 +4,16 @@
 
 ## Chronological Log
 
+### 2026-06-05: Remove Sample Customers & Support Project Renaming in Settings (Completed)
+- **Goal**:
+  1. Remove automatic seeding of sample customers (`John Doe`, `Jane Smith`) from `DbSeeder.cs`.
+  2. Allow updating the project name via the project settings API.
+- **Updates**:
+  - Removed Customer seeding block in `DbSeeder.cs`.
+  - Updated `UpdateSettingsRequest` in `ProjectController.cs` to accept an optional `ProjectName`.
+  - Updated `ProjectController.UpdateSettings` to find the project and change its `Name` if `ProjectName` is supplied.
+  - Deleted the existing sample customers from the production database on the remote server.
+
 ### 2026-06-05: Customer Blacklist for AI Exclusion (Completed)
 - **Goal**: Implement customer blacklisting to bypass AI replies and suppress typing status.
 - **Updates**:

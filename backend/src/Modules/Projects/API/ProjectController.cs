@@ -98,6 +98,13 @@ namespace Modules.Projects.API
         [HttpPut("{id}/settings")]
         public async Task<IActionResult> UpdateSettings(Guid id, [FromBody] UpdateSettingsRequest request)
         {
+            var project = await _context.Projects.FindAsync(id);
+            if (project != null && !string.IsNullOrWhiteSpace(request.ProjectName))
+            {
+                project.Name = request.ProjectName;
+                project.UpdatedAt = DateTime.UtcNow;
+            }
+
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == id);
             if (settings == null)
             {
@@ -145,6 +152,7 @@ namespace Modules.Projects.API
 
     public class UpdateSettingsRequest
     {
+        public string? ProjectName { get; set; }
         public bool AiAutoReplyEnabled { get; set; }
         public string? Timezone { get; set; }
         public string? GeminiApiKey { get; set; }

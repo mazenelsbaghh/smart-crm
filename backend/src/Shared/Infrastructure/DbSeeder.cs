@@ -66,39 +66,6 @@ namespace Shared.Infrastructure
                 Console.WriteLine("✅ Default Admin User seeded (admin@smartcore.com / Password123).");
             }
 
-            // 4. Seed Sample Customers
-            var customerExists = await context.Customers.IgnoreQueryFilters().AnyAsync(c => c.ProjectId == defaultProjectId);
-            if (!customerExists)
-            {
-                var customer1 = new Modules.Conversations.Domain.Customer
-                {
-                    Id = Guid.NewGuid(),
-                    ProjectId = defaultProjectId,
-                    PhoneNumber = "555111222",
-                    Name = "John Doe",
-                    City = "Cairo",
-                    Notes = "Interested in pricing plan.",
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-
-                var customer2 = new Modules.Conversations.Domain.Customer
-                {
-                    Id = Guid.NewGuid(),
-                    ProjectId = defaultProjectId,
-                    PhoneNumber = "555333444",
-                    Name = "Jane Smith",
-                    City = "Alexandria",
-                    Notes = "Requires API integration info.",
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-
-                context.Customers.AddRange(customer1, customer2);
-                await context.SaveChangesAsync();
-                Console.WriteLine("✅ Sample Customers seeded.");
-            }
-
             Console.WriteLine("🌱 Seeding complete.");
         }
     }
