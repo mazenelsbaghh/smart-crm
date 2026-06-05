@@ -71,9 +71,6 @@ echo "⚙️  Running remote deployment commands (ENV setup, container rebuild, 
 sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" \
     "cd $REMOTE_DIR && \
      if [ ! -f .env ]; then cp .env.example .env && echo '📝 Created .env from .env.example'; else echo '✅ .env already exists'; fi && \
-     echo '🔑 Copying SSL certificates...' && \
-     cp -L /etc/letsencrypt/live/n8n-mazen.online/fullchain.pem nginx/certs/fullchain.pem && \
-     cp -L /etc/letsencrypt/live/n8n-mazen.online/privkey.pem nginx/certs/privkey.pem && \
      echo '🔄 Rebuilding and restarting containers...' && \
      docker compose -f docker-compose.yml -f docker-compose.production.yml down && \
      docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build && \

@@ -179,7 +179,8 @@ namespace Modules.AI.Workers
 
                     foreach (var g in availableGroups)
                     {
-                        var localTime = TimeZoneInfo.ConvertTimeFromUtc(g.DateTime, projectZone);
+                        // Use g.DateTime directly without timezone conversion to send exactly what the user saved.
+                        var localTime = g.DateTime;
                         var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
                         var daysText = GetArabicDaysText(g.Days);
                         var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
