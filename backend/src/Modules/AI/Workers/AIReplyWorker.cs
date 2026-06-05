@@ -10,6 +10,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Modules.Conversations.Domain;
+using Modules.GroupAppointments.Domain;
 
 namespace Modules.AI.Workers
 {
@@ -81,6 +82,76 @@ namespace Modules.AI.Workers
             catch (Exception ex)
             {
                 Console.WriteLine($"[AIReplyWorker] Failed to query company brain: {ex.Message}");
+            }
+
+            // Inject Group Appointments context if enabled
+            if (settings.IsGroupAppointmentsEnabled)
+            {
+                try
+                {
+                    var now = DateTime.UtcNow;
+                    var activeGroups = await dbContext.GroupAppointments
+                        .Include(g => g.Bookings)
+                        .Where(g => g.ProjectId == @event.ProjectId && g.IsActive && g.DateTime > now)
+                        .OrderBy(g => g.DateTime)
+                        .ToListAsync();
+
+                    var groupsContextList = new System.Collections.Generic.List<string>();
+                    TimeZoneInfo projectZone;
+                    try
+                    {
+                        projectZone = TimeZoneInfo.FindSystemTimeZoneById(settings.Timezone);
+                    }
+                    catch
+                    {
+                        projectZone = TimeZoneInfo.Utc;
+                    }
+
+                    // Filter out full groups - don't show them to the AI at all
+                    var availableGroups = activeGroups.Where(g => g.Bookings.Count < g.Capacity).ToList();
+                    Console.WriteLine($"[AIReplyWorker] Active groups: {activeGroups.Count}, Available (not full): {availableGroups.Count}");
+
+                    foreach (var g in availableGroups)
+                    {
+                        var localTime = TimeZoneInfo.ConvertTimeFromUtc(g.DateTime, projectZone);
+                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  اسم المجموعة: {g.Name}\n  الموعد: {localTime:dd/MM/yyyy h:mm tt}");
+                    }
+
+
+                    // Check if this customer is already booked in any active group
+                    var customerAlreadyBookedIn = new System.Collections.Generic.HashSet<Guid>();
+                    if (customer != null)
+                    {
+                        foreach (var g in activeGroups)
+                        {
+                            if (g.Bookings.Any(b => b.CustomerId == customer.Id))
+                                customerAlreadyBookedIn.Add(g.Id);
+                        }
+                    }
+                    var alreadyBookedNote = customerAlreadyBookedIn.Count > 0
+                        ? $"\nملاحظة: هذا العميل مسجل بالفعل في {customerAlreadyBookedIn.Count} مجموعة/مجموعات. إذا طلب الحجز في مجموعة مسجل فيها بالفعل، أخبره أنه مسجل مسبقاً ولا تسجله مرة أخرى (اترك suggestedGroupBookingId = null)."
+                        : "";
+                    
+                    var groupsContextText = "معلومات مواعيد المجموعات المتاحة للحجز (Group Appointments):\n" +
+                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه أسماء المجموعات المتاحة ومواعيدها فقط. لا تذكر أبداً عدد الأماكن المتبقية أو السعة أو أي أرقام. إذا أراد الحجز، ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً. لا ترسل أي رابط حجز للعميل. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
+                                            alreadyBookedNote + "\n\n" +
+                                            "قائمة المجموعات المتاحة حالياً:\n" +
+                                            (groupsContextList.Any() ? string.Join("\n", groupsContextList) : "- لا توجد مجموعات متاحة حالياً للحجز.");
+
+                    if (string.IsNullOrEmpty(brainContext))
+                    {
+                        brainContext = groupsContextText;
+                    }
+                    else
+                    {
+                        brainContext = groupsContextText + "\n\n" + brainContext;
+                    }
+                    Console.WriteLine($"[AIReplyWorker] Injected Group Appointments context (Found {activeGroups.Count} active, {availableGroups.Count} with slots).");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Failed to query active group appointments for AI context: {ex.Message}");
+                }
             }
 
             if (customer != null && customer.IsBlacklisted)
@@ -272,6 +343,89 @@ namespace Modules.AI.Workers
 
             await _eventBus.PublishAsync(replyGeneratedEvent);
             Console.WriteLine($"[AIReplyWorker] Published AIReplyGeneratedEvent for {@event.Sender}");
+
+            // 2.5. Process AI Auto-Booking if suggestedGroupBookingId is set
+            if (!string.IsNullOrEmpty(analysisResult.SuggestedGroupBookingId))
+            {
+                try
+                {
+                    if (Guid.TryParse(analysisResult.SuggestedGroupBookingId, out var groupId))
+                    {
+                        var group = await dbContext.GroupAppointments
+                            .Include(g => g.Bookings)
+                            .FirstOrDefaultAsync(g => g.Id == groupId && g.ProjectId == @event.ProjectId && g.IsActive);
+
+                        if (group == null)
+                        {
+                            Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group {groupId} not found or inactive.");
+                        }
+                        else if (group.Bookings.Count >= group.Capacity)
+                        {
+                            Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group '{group.Name}' is full ({group.Bookings.Count}/{group.Capacity}).");
+                        }
+                        else
+                        {
+                            // Resolve or create customer for the booking
+                            var bookingCustomerId = customer?.Id ?? Guid.Empty;
+                            var bookingCustomerName = customer?.Name ?? @event.Sender;
+                            var bookingCustomerPhone = @event.Sender;
+
+                            // Check if already booked
+                            var alreadyBooked = group.Bookings.Any(b => b.CustomerPhone == bookingCustomerPhone || b.CustomerId == bookingCustomerId);
+                            if (alreadyBooked)
+                            {
+                                Console.WriteLine($"[AIReplyWorker] Auto-booking skipped: Customer {bookingCustomerPhone} already booked in group '{group.Name}'.");
+                            }
+                            else
+                            {
+                                // Create the booking
+                                var booking = new GroupAppointmentBooking
+                                {
+                                    Id = Guid.NewGuid(),
+                                    ProjectId = @event.ProjectId,
+                                    GroupAppointmentId = groupId,
+                                    CustomerId = bookingCustomerId,
+                                    CustomerName = bookingCustomerName,
+                                    CustomerPhone = bookingCustomerPhone
+                                };
+
+                                dbContext.GroupAppointmentBookings.Add(booking);
+                                await dbContext.SaveChangesAsync();
+
+                                Console.WriteLine($"[AIReplyWorker] ✅ Auto-booked customer {bookingCustomerPhone} ('{bookingCustomerName}') into group '{group.Name}' ({group.Bookings.Count + 1}/{group.Capacity}).");
+
+                                // Broadcast update via SignalR to refresh dashboard
+                                try
+                                {
+                                    var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                                    await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("GroupBookingUpdated", new
+                                    {
+                                        groupId = groupId,
+                                        groupName = group.Name,
+                                        customerPhone = bookingCustomerPhone,
+                                        customerName = bookingCustomerName,
+                                        newBookedCount = group.Bookings.Count + 1,
+                                        capacity = group.Capacity,
+                                        isFull = (group.Bookings.Count + 1) >= group.Capacity
+                                    });
+                                }
+                                catch (Exception signalREx)
+                                {
+                                    Console.WriteLine($"[AIReplyWorker] SignalR broadcast for group booking failed: {signalREx.Message}");
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Invalid GUID '{analysisResult.SuggestedGroupBookingId}'.");
+                    }
+                }
+                catch (Exception bookingEx)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Auto-booking error: {bookingEx.Message}");
+                }
+            }
 
             // 3. Process AI Auto-Reaction if suggested
             if (!string.IsNullOrEmpty(analysisResult.SuggestedReaction))

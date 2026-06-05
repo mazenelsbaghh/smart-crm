@@ -26,6 +26,7 @@ namespace Modules.AI.Services
         public SuggestedFollowUpResult? SuggestedFollowUp { get; set; }
         public string[] SuggestedButtons { get; set; } = Array.Empty<string>();
         public string? SuggestedReaction { get; set; }
+        public string? SuggestedGroupBookingId { get; set; }
     }
 
     public class SuggestedFollowUpResult
@@ -161,11 +162,21 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
     ""dueDate"": ""ISO_DATETIME_STRING (UTC)"",
     ""notes"": ""Arabic message content customized to the customer's context and conversation state, to be sent to them automatically""
   },
-  ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null""
+  ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null"",
+  ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null""
 }
 
 Guidelines for suggestedReaction:
 - suggestedReaction: Set to a single emoji (👍, ❤️, 💖, 😢, 😂, 😮) or null. Suggest an emoji reaction to the customer's message only if it adds a warm, human-like touch (e.g. ❤️/💖 for gratitude, joy, or positive feedback; 😢 for sadness or complaints; 😂 for jokes; 👍 for agreement or simple acknowledgment). Otherwise, return null.
+
+Guidelines for suggestedGroupBookingId (Auto-Booking):
+- IMPORTANT: When the customer explicitly expresses intent to book or register in a group appointment (e.g. ""عايز أحجز"", ""سجلني"", ""أنا جاهز"", ""أيوه عايز"", ""احجزلي"", ""مواعيد المجموعات"", ""عندكم أماكن؟"", ""ينفع اشترك""), set suggestedGroupBookingId to the GUID of the appropriate group.
+- If there is only ONE available group with remaining slots, auto-select it directly and confirm the booking in your reply (e.g. ""تمام يا فندم، سجلتك في مجموعة X"").
+- If there are MULTIPLE available groups, first ask which group they prefer. Once they specify or confirm, set suggestedGroupBookingId to that group's GUID.
+- If ALL groups are full (or no groups are listed), set to null and tell the customer there are no available slots currently.
+- When you set suggestedGroupBookingId, write a warm confirmation in replyContent telling the customer they have been registered successfully. The system will handle the actual booking automatically.
+- NEVER set suggestedGroupBookingId if the customer hasn't explicitly asked to book/register.
+- NEVER mention any group that is marked as ""ممتلئة تماماً"" (full) to the customer.
 
 Guidelines for suggestedFollowUp:
 - needed: Set to true if the customer booked an appointment/course (requires AppointmentReminder) OR if they are hesitant, cold, or waiting for feedback (requires Nurturing). Otherwise false.

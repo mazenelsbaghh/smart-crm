@@ -755,6 +755,75 @@ namespace backend.Migrations
                     b.ToTable("CustomerMemories");
                 });
 
+            modelBuilder.Entity("Modules.GroupAppointments.Domain.GroupAppointment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Capacity")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("DateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("GroupAppointments");
+                });
+
+            modelBuilder.Entity("Modules.GroupAppointments.Domain.GroupAppointmentBooking", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CustomerName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CustomerPhone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("GroupAppointmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GroupAppointmentId");
+
+                    b.ToTable("GroupAppointmentBookings");
+                });
+
             modelBuilder.Entity("Modules.Integrations.Domain.ProjectIntegration", b =>
                 {
                     b.Property<Guid>("Id")
@@ -912,6 +981,9 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsGroupAppointmentsEnabled")
+                        .HasColumnType("boolean");
+
                     b.Property<int>("MaxDailyMessages")
                         .HasColumnType("integer");
 
@@ -1037,6 +1109,17 @@ namespace backend.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
                 });
 
+            modelBuilder.Entity("Modules.GroupAppointments.Domain.GroupAppointmentBooking", b =>
+                {
+                    b.HasOne("Modules.GroupAppointments.Domain.GroupAppointment", "GroupAppointment")
+                        .WithMany("Bookings")
+                        .HasForeignKey("GroupAppointmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GroupAppointment");
+                });
+
             modelBuilder.Entity("Modules.Workflows.Domain.WorkflowExecutionLog", b =>
                 {
                     b.HasOne("Modules.Workflows.Domain.AutomationWorkflow", "AutomationWorkflow")
@@ -1051,6 +1134,11 @@ namespace backend.Migrations
             modelBuilder.Entity("Modules.Brain.Domain.KnowledgeDocument", b =>
                 {
                     b.Navigation("Chunks");
+                });
+
+            modelBuilder.Entity("Modules.GroupAppointments.Domain.GroupAppointment", b =>
+                {
+                    b.Navigation("Bookings");
                 });
 #pragma warning restore 612, 618
         }

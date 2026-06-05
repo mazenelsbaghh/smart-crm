@@ -40,6 +40,8 @@ namespace Shared.Infrastructure
         public DbSet<Modules.Media.Domain.Asset> Assets { get; set; }
         public DbSet<Modules.Media.Domain.AssetVariant> AssetVariants { get; set; }
         public DbSet<Modules.Audit.Domain.AuditLog> AuditLogs { get; set; }
+        public DbSet<Modules.GroupAppointments.Domain.GroupAppointment> GroupAppointments { get; set; }
+        public DbSet<Modules.GroupAppointments.Domain.GroupAppointmentBooking> GroupAppointmentBookings { get; set; }
 
         public Guid CurrentProjectId => _tenantContext.ProjectId;
 
@@ -66,6 +68,12 @@ namespace Shared.Infrastructure
                 .WithMany()
                 .HasForeignKey(m => m.AssetId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<Modules.GroupAppointments.Domain.GroupAppointment>()
+                .HasMany(g => g.Bookings)
+                .WithOne(b => b.GroupAppointment)
+                .HasForeignKey(b => b.GroupAppointmentId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             // Apply global query filter for all entities implementing ITenantEntity
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
