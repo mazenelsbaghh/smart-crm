@@ -4,6 +4,12 @@
 
 ## Chronological Log
 
+### 2026-06-05: Manual Deployment Script (Completed)
+- **Goal**: Create a manual deployment script in `ops/deploy.sh` that automates file synchronization and Docker container rebuilds.
+- **Updates**:
+  - Wrote `ops/deploy.sh` containing the optimized `rsync` commands and container execution sequence.
+  - Made the script executable (`chmod +x ops/deploy.sh`).
+
 ### 2026-06-05: Domain Configuration and SSL Setup (Completed)
 - **Goal**: Configure domain `n8n-mazen.online` and obtain Let's Encrypt SSL certificates.
 - **Updates**:
