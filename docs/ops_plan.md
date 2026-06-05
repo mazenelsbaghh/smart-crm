@@ -4,12 +4,15 @@
 
 ## Chronological Log
 
-### 2026-06-05: Manual Deployment and Server Recovery (In Progress)
+### 2026-06-05: Manual Deployment and Server Recovery (Completed)
 - **Goal**: Manually deploy updates to the Hostinger server `147.93.86.206` via local rsync and rebuild docker services.
 - **Updates**:
-  - Run rsync to sync all code changes to server root (excluding caches/node_modules/dotenv).
-  - Rebuild and restart the Docker stack on the server using SSH.
-  - Check container health.
+  - Installed missing dependency `make` on the Hostinger server to support Makefiles.
+  - Installed Docker CE and Docker Compose plugin on the Hostinger server.
+  - Deployed the application files using `rsync` from the local workspace (with optimized exclusions for `.next` caches, node modules, and git files).
+  - Successfully built and started the production Docker containers on the server.
+  - Verified remote health status endpoint returns HTTP 200 OK.
+  - Integrated local and remote branches and pushed the updates to GitHub via `make push`.
 
 
 
