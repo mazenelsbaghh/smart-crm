@@ -381,11 +381,78 @@ namespace Modules.CRM.API
             if (customer == null) return BadRequest("Customer not found");
 
             // Define the message content
-            string messageContent = !string.IsNullOrEmpty(followUp.Notes) 
-                ? followUp.Notes 
-                : (followUp.Type == "AppointmentReminder"
+            string messageContent = string.Empty;
+            if (!string.IsNullOrEmpty(followUp.Notes))
+            {
+                var notesTrimmed = followUp.Notes.Trim();
+                bool looksLikeDirectMessage = notesTrimmed.StartsWith("مرحباً", StringComparison.OrdinalIgnoreCase) || 
+                                             notesTrimmed.StartsWith("أهلاً", StringComparison.OrdinalIgnoreCase) || 
+                                             notesTrimmed.StartsWith("يا فندم", StringComparison.OrdinalIgnoreCase) || 
+                                             notesTrimmed.StartsWith("صباح الخير", StringComparison.OrdinalIgnoreCase) || 
+                                             notesTrimmed.StartsWith("مساء الخير", StringComparison.OrdinalIgnoreCase) || 
+                                             notesTrimmed.StartsWith("السلام عليكم", StringComparison.OrdinalIgnoreCase);
+
+                if (looksLikeDirectMessage)
+                {
+                    messageContent = followUp.Notes;
+                }
+                else
+                {
+                    try
+                    {
+                        var geminiClient = HttpContext.RequestServices.GetService(typeof(Modules.AI.Services.IGeminiClient)) as Modules.AI.Services.IGeminiClient;
+                        if (geminiClient != null)
+                        {
+                            var projectSettings = await _context.ProjectSettings
+                                .IgnoreQueryFilters()
+                                .FirstOrDefaultAsync(s => s.ProjectId == followUp.ProjectId);
+                            string apiKey = projectSettings?.GeminiApiKey;
+                            if (string.IsNullOrEmpty(apiKey) || apiKey.StartsWith("mock_"))
+                            {
+                                apiKey = null; // Use default system key
+                            }
+
+                            var prompt = $@"أنت مساعد ذكاء اصطناعي محترف.
+لديك ملاحظة متابعة داخلية لعميل اسمه: ""{customer.Name}"".
+ملاحظة المتابعة الداخلية هي: ""{followUp.Notes}""
+
+قم بصياغة رسالة واتساب قصيرة وودية ومباشرة باللغة العربية (اللهجة المصرية الودية والمهنية) موجهة مباشرة للعميل بناءً على هذه الملاحظة.
+- يجب أن تكون الرسالة موجهة مباشرة للعميل بصيغة المخاطب (مثال: ""يا فندم""، ""حضرتك"").
+- لا تذكر أبداً اسم الموظف أو ملاحظات إدارية.
+- لا تضع أي توقيع أو علامات ترقيم زائدة.
+- اكتب نص الرسالة فقط التي سيتم إرسالها للعميل مباشرة وبدون أي مقدمات أو شرح خارجي.
+الرسالة:";
+
+                            var generatedMessage = await geminiClient.GenerateReplyAsync(prompt, apiKey);
+                            
+                            // If mock response returned, use a direct fallback
+                            if (!string.IsNullOrWhiteSpace(generatedMessage) && !generatedMessage.StartsWith("[Mock"))
+                            {
+                                messageContent = generatedMessage.Trim();
+                            }
+                            else
+                            {
+                                messageContent = $"مرحباً يا فندم، كنا حابين نتابع مع حضرتك بخصوص ميعاد المجموعة الأونلاين والسيشن التجريبية.";
+                            }
+                        }
+                        else
+                        {
+                            messageContent = followUp.Notes;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[CRMController] Failed to rewrite follow-up notes via Gemini: {ex.Message}");
+                        messageContent = followUp.Notes;
+                    }
+                }
+            }
+            else
+            {
+                messageContent = followUp.Type == "AppointmentReminder"
                     ? "مرحباً، نود تذكيرك بموعد الكورس غداً. ننتظر حضورك!"
-                    : "مرحباً، أردنا فقط المتابعة معك لمعرفة ما إذا كان لديك أي استفسار آخر.");
+                    : "مرحباً، أردنا فقط المتابعة معك لمعرفة ما إذا كان لديك أي استفسار آخر.";
+            }
 
             // Call WhatsApp Gateway
             var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
