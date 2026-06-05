@@ -299,3 +299,6 @@ prod-logs-all: ## Tail all production container logs from the server
 	fi
 	@sshpass -p "$(SSH_PASS)" ssh -t -o StrictHostKeyChecking=no "$(SSH_USER)@$(SSH_HOST)" \
 		"docker compose -f $(REMOTE_DIR)/docker-compose.yml -f $(REMOTE_DIR)/docker-compose.production.yml logs -f --tail=100"
+
+
+# sshpass -p "MazenElsbagh.12" ssh -o StrictHostKeyChecking=no root@147.93.86.206 "docker logs smartcustomercore-backend 2>&1 | grep -i -E 'exception|error|fail' | tail -n 100"
