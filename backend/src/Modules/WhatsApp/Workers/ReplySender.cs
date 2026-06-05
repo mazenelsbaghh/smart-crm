@@ -63,9 +63,48 @@ namespace Modules.WhatsApp.Workers
                                 .OrderByDescending(m => m.Timestamp)
                                 .FirstOrDefaultAsync();
 
+                            int thinkingDelay = 0;
                             if (lastIncoming != null)
                             {
-                                int thinkingDelay = _messagingEngine.CalculateThinkingDelay(lastIncoming.Content, @event.ProjectId);
+                                thinkingDelay = _messagingEngine.CalculateThinkingDelay(lastIncoming.Content, @event.ProjectId);
+                            }
+
+                            // Calculate total remaining typing delay for all chunks
+                            var allChunks = System.Linq.Enumerable.ToList(_messagingEngine.SplitIntoChunks(@event.Content));
+                            int totalTypingDelay = 0;
+                            for (int idx = 0; idx < allChunks.Count; idx++)
+                            {
+                                totalTypingDelay += _messagingEngine.CalculateTypingDelay(allChunks[idx], @event.ProjectId);
+                                if (idx > 0)
+                                {
+                                    totalTypingDelay += 3000; // Average stagger delay
+                                }
+                            }
+
+                            int totalRemainingMs = thinkingDelay + totalTypingDelay;
+                            int estSec = (int)Math.Ceiling(totalRemainingMs / 1000.0);
+
+                             var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                             try
+                             {
+                                 await redis.StringSetAsync($"ai_typing:{conversation.Id}", "typing", TimeSpan.FromSeconds(estSec));
+                             }
+                             catch (Exception redisEx)
+                             {
+                                 Console.WriteLine($"[ReplySender] Redis set initial failed: {redisEx.Message}");
+                             }
+
+                             var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<NotificationHub>>();
+                             await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                             {
+                                 conversationId = conversation.Id,
+                                 isTyping = true,
+                                 estimatedSeconds = estSec,
+                                 stage = "typing"
+                             });
+
+                            if (thinkingDelay > 0)
+                            {
                                 Console.WriteLine($"[ReplySender] Simulating smart thinking delay of {thinkingDelay}ms...");
                                 await Task.Delay(thinkingDelay);
                             }
@@ -82,6 +121,59 @@ namespace Modules.WhatsApp.Workers
                     // Smart typing delay occurs BEFORE sending the chunk!
                     int delayMs = _messagingEngine.CalculateTypingDelay(chunk, @event.ProjectId);
                     Console.WriteLine($"[ReplySender] Simulating human typing delay of {delayMs}ms...");
+
+                    // Broadcast remaining typing delay before delaying
+                    using (var scope = _serviceProvider.CreateScope())
+                    {
+                        var tenantContext = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+                        tenantContext.SetProjectId(@event.ProjectId);
+                        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<NotificationHub>>();
+
+                        var customer = await dbContext.Customers
+                            .IgnoreQueryFilters()
+                            .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.PhoneNumber == @event.Sender);
+
+                        if (customer != null)
+                        {
+                            var conversation = await dbContext.Conversations
+                                .IgnoreQueryFilters()
+                                .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+
+                            if (conversation != null)
+                            {
+                                int remainingTypingMs = 0;
+                                for (int j = i; j < chunks.Count; j++)
+                                {
+                                    remainingTypingMs += _messagingEngine.CalculateTypingDelay(chunks[j], @event.ProjectId);
+                                    if (j > i)
+                                    {
+                                        remainingTypingMs += 3000; // Average stagger delay
+                                    }
+                                }
+                                 int estSec = (int)Math.Ceiling(remainingTypingMs / 1000.0);
+
+                                 var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                                 try
+                                 {
+                                     await redis.StringSetAsync($"ai_typing:{conversation.Id}", "typing", TimeSpan.FromSeconds(estSec));
+                                 }
+                                 catch (Exception redisEx)
+                                 {
+                                     Console.WriteLine($"[ReplySender] Redis set loop failed: {redisEx.Message}");
+                                 }
+
+                                 await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                                 {
+                                     conversationId = conversation.Id,
+                                     isTyping = true,
+                                     estimatedSeconds = estSec,
+                                     stage = "typing"
+                                 });
+                            }
+                        }
+                    }
+
                     await Task.Delay(delayMs);
 
                     var payload = new
@@ -213,21 +305,33 @@ namespace Modules.WhatsApp.Workers
                         .IgnoreQueryFilters()
                         .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.PhoneNumber == @event.Sender);
 
-                    if (customer != null)
-                    {
-                        var conversation = await dbContext.Conversations
-                            .IgnoreQueryFilters()
-                            .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+                     if (customer != null)
+                     {
+                         var conversation = await dbContext.Conversations
+                             .IgnoreQueryFilters()
+                             .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
 
-                        if (conversation != null)
-                        {
-                            await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
-                            {
-                                conversationId = conversation.Id,
-                                isTyping = false
-                            });
-                        }
-                    }
+                         if (conversation != null)
+                         {
+                             var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                             try
+                             {
+                                 await redis.KeyDeleteAsync($"ai_typing:{conversation.Id}");
+                             }
+                             catch (Exception redisEx)
+                             {
+                                 Console.WriteLine($"[ReplySender] Redis delete finally failed: {redisEx.Message}");
+                             }
+
+                             await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                             {
+                                 conversationId = conversation.Id,
+                                 isTyping = false,
+                                 estimatedSeconds = 0,
+                                 stage = ""
+                             });
+                         }
+                     }
                 }
                 catch (Exception ex)
                 {

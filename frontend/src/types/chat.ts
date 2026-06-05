@@ -17,6 +17,9 @@ export interface Conversation {
   unreadCount: number;
   assignedAgentId: string | null;
   assignedAgentName: string | null;
+  isAiTyping?: boolean;
+  aiTypingCountdown?: number;
+  aiTypingStage?: 'generating' | 'typing';
 }
 
 export interface Message {

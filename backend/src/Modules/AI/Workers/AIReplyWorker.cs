@@ -40,7 +40,9 @@ namespace Modules.AI.Workers
 
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            // Find customer to get customerId
+            try
+            {
+                // Find customer to get customerId
             var customer = await dbContext.Customers
                 .FirstOrDefaultAsync(c => c.PhoneNumber == @event.Sender);
 
@@ -598,6 +600,53 @@ namespace Modules.AI.Workers
                 {
                     Console.WriteLine($"[AIReplyWorker] Failed to process auto-reaction: {ex.Message}");
                 }
+            }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AIReplyWorker] CRITICAL ERROR IN AI REPLY PROCESS: {ex.Message}");
+                try
+                {
+                    var customer = await dbContext.Customers.FirstOrDefaultAsync(c => c.PhoneNumber == @event.Sender);
+                    if (customer != null)
+                    {
+                        var conversation = await dbContext.Conversations
+                            .IgnoreQueryFilters()
+                            .FirstOrDefaultAsync(c => c.CustomerId == customer.Id && c.Status != "Closed");
+
+                        if (conversation != null)
+                        {
+                            try
+                            {
+                                var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                                await redis.KeyDeleteAsync($"ai_typing:{conversation.Id}");
+                            }
+                            catch (Exception redisEx)
+                            {
+                                Console.WriteLine($"[AIReplyWorker] Redis delete on error failed: {redisEx.Message}");
+                            }
+
+                            var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                            await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                            {
+                                conversationId = conversation.Id,
+                                isTyping = false
+                            });
+
+                            await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITypingError", new
+                            {
+                                conversationId = conversation.Id,
+                                message = $"فشل الرد التلقائي للعميل {customer.Name ?? @event.Sender}: {ex.Message}"
+                            });
+                        }
+                    }
+                }
+                catch (Exception handlerEx)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Error handler failed: {handlerEx.Message}");
+                }
+
+                throw;
             }
         }
 

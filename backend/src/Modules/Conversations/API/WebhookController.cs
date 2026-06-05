@@ -8,6 +8,7 @@ using Shared.Infrastructure;
 using Shared.Security;
 using System;
 using System.Threading.Tasks;
+using StackExchange.Redis;
 
 namespace Modules.Conversations.API
 {
@@ -20,14 +21,22 @@ namespace Modules.Conversations.API
         private readonly IMessageAggregator _messageAggregator;
         private readonly IHubContext<NotificationHub> _hubContext;
         private readonly IAssignmentEngine _assignmentEngine;
+        private readonly IDatabase _redis;
 
-        public WebhookController(AppDbContext context, ITenantContext tenantContext, IMessageAggregator messageAggregator, IHubContext<NotificationHub> hubContext, IAssignmentEngine assignmentEngine)
+        public WebhookController(
+            AppDbContext context, 
+            ITenantContext tenantContext, 
+            IMessageAggregator messageAggregator, 
+            IHubContext<NotificationHub> hubContext, 
+            IAssignmentEngine assignmentEngine,
+            IConnectionMultiplexer redisConnection)
         {
             _context = context;
             _tenantContext = tenantContext;
             _messageAggregator = messageAggregator;
             _hubContext = hubContext;
             _assignmentEngine = assignmentEngine;
+            _redis = redisConnection.GetDatabase();
         }
 
         [HttpPost("message")]
@@ -244,10 +253,22 @@ namespace Modules.Conversations.API
                     .FirstOrDefaultAsync(s => s.ProjectId == payload.ProjectId);
                 if (settings != null && settings.AiAutoReplyEnabled && !customer.IsBlacklisted)
                 {
+                    var redisKey = $"ai_typing:{conversation.Id}";
+                    try
+                    {
+                        await _redis.StringSetAsync(redisKey, "generating", TimeSpan.FromSeconds(120));
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[WebhookController] Redis set failed: {ex.Message}");
+                    }
+
                     await _hubContext.Clients.Group($"project_{payload.ProjectId}").SendAsync("AITyping", new
                     {
                         conversationId = conversation.Id,
-                        isTyping = true
+                        isTyping = true,
+                        estimatedSeconds = 11,
+                        stage = "generating"
                     });
                 }
 

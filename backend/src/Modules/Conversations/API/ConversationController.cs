@@ -25,13 +25,15 @@ namespace Modules.Conversations.API
         private readonly IHubContext<NotificationHub> _hubContext;
         private readonly IConfiguration _configuration;
         private readonly HttpClient _httpClient;
+        private readonly StackExchange.Redis.IDatabase _redis;
 
         public ConversationController(
             AppDbContext context, 
             Services.IAssignmentEngine assignmentEngine, 
             Shared.Queue.IEventBus eventBus, 
             IHubContext<NotificationHub> hubContext,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            StackExchange.Redis.IConnectionMultiplexer redis)
         {
             _context = context;
             _assignmentEngine = assignmentEngine;
@@ -39,6 +41,7 @@ namespace Modules.Conversations.API
             _hubContext = hubContext;
             _configuration = configuration;
             _httpClient = new HttpClient();
+            _redis = redis.GetDatabase();
         }
 
         [HttpGet("projects/{projectId}/conversations")]
@@ -68,28 +71,68 @@ namespace Modules.Conversations.API
                     })
                 .ToListAsync();
 
-            var mapped = conversations.Select(c => new
-            {
-                id = c.Id,
-                projectId = c.ProjectId,
-                status = c.Status,
-                lastMessageAt = c.LastMessageTimestamp.ToString("o"),
-                createdAt = c.CreatedAt.ToString("o"),
-                unreadCount = 0,
-                assignedAgentId = c.AssignedUserId,
-                assignedAgentName = (string)null,
-                customer = c.customer
+            var mapped = conversations.Select(c => {
+                var redisKey = $"ai_typing:{c.Id}";
+                var remainingSec = 0;
+                var isTyping = false;
+                var stage = "generating";
+                try
+                {
+                    var ttl = _redis.KeyTimeToLive(redisKey);
+                    if (ttl.HasValue && ttl.Value.TotalSeconds > 0)
+                    {
+                        isTyping = true;
+                        remainingSec = (int)Math.Ceiling(ttl.Value.TotalSeconds);
+                        var val = _redis.StringGet(redisKey);
+                        if (!val.IsNullOrEmpty)
+                        {
+                            stage = val.ToString();
+                        }
+                    }
+                }
+                catch
+                {
+                    // Fallback if Redis fails
+                }
+
+                return new
+                {
+                    id = c.Id,
+                    projectId = c.ProjectId,
+                    status = c.Status,
+                    lastMessageAt = c.LastMessageTimestamp.ToString("o"),
+                    createdAt = c.CreatedAt.ToString("o"),
+                    unreadCount = 0,
+                    assignedAgentId = c.AssignedUserId,
+                    assignedAgentName = (string)null,
+                    customer = c.customer,
+                    isAiTyping = isTyping,
+                    aiTypingCountdown = remainingSec,
+                    aiTypingStage = stage
+                };
             }).ToList();
 
             return Ok(mapped);
         }
 
         [HttpGet("conversations/{conversationId}/messages")]
-        public async Task<IActionResult> ListMessages(Guid conversationId)
+        public async Task<IActionResult> ListMessages(
+            Guid conversationId,
+            [FromQuery] DateTime? before = null,
+            [FromQuery] int limit = 10)
         {
-            var messages = await _context.Messages
-                .Where(m => m.ConversationId == conversationId)
-                .OrderBy(m => m.Timestamp)
+            var query = _context.Messages
+                .Where(m => m.ConversationId == conversationId);
+
+            if (before.HasValue)
+            {
+                var beforeUtc = before.Value.ToUniversalTime();
+                query = query.Where(m => m.Timestamp < beforeUtc);
+            }
+
+            var messages = await query
+                .OrderByDescending(m => m.Timestamp)
+                .Take(limit)
                 .Select(m => new
                 {
                     id = m.Id,
@@ -108,6 +151,7 @@ namespace Modules.Conversations.API
                 })
                 .ToListAsync();
 
+            messages.Reverse();
             return Ok(messages);
         }
 

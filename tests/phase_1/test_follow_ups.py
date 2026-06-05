@@ -17,6 +17,14 @@ async def test_follow_ups_flow():
         assert proj_resp.status_code == 201
         proj_id = proj_resp.json()["id"]
 
+        # Disable AI auto-reply so background worker doesn't delete follow-ups during test
+        settings_resp = await client.put(
+            f"{BASE_URL}/projects/{proj_id}/settings",
+            headers=headers,
+            json={"aiAutoReplyEnabled": False}
+        )
+        assert settings_resp.status_code == 200
+
         # 2. Ingest message via webhook (this should auto-create Customer)
         webhook_resp = await client.post(
             f"{BASE_URL}/webhooks/whatsapp/message",

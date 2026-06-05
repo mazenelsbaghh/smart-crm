@@ -14,7 +14,8 @@ export class SignalRService {
   private onAISuggestionCallback?: (suggestion: AISuggestion) => void;
   private onNotificationCallback?: (title: string, body: string, type: string) => void;
   private onPresenceCallback?: (agentId: string, status: 'Online' | 'Offline') => void;
-  private onAITypingCallback?: (convId: string, isTyping: boolean) => void;
+  private onAITypingCallback?: (convId: string, isTyping: boolean, estimatedSeconds?: number, stage?: 'generating' | 'typing') => void;
+  private onAITypingErrorCallback?: (convId: string, message: string) => void;
   private onCustomerCallback?: (customer: any) => void;
 
   constructor(projectId: string, token: string) {
@@ -57,9 +58,15 @@ export class SignalRService {
       }
     });
 
-    this.connection.on('AITyping', (data: { conversationId: string; isTyping: boolean }) => {
+    this.connection.on('AITyping', (data: { conversationId: string; isTyping: boolean; estimatedSeconds?: number; stage?: 'generating' | 'typing' }) => {
       if (this.onAITypingCallback) {
-        this.onAITypingCallback(data.conversationId, data.isTyping);
+        this.onAITypingCallback(data.conversationId, data.isTyping, data.estimatedSeconds, data.stage);
+      }
+    });
+
+    this.connection.on('AITypingError', (data: { conversationId: string; message: string }) => {
+      if (this.onAITypingErrorCallback) {
+        this.onAITypingErrorCallback(data.conversationId, data.message);
       }
     });
 
@@ -141,8 +148,12 @@ export class SignalRService {
     this.onPresenceCallback = callback;
   }
 
-  public registerOnAITyping(callback: (convId: string, isTyping: boolean) => void) {
+  public registerOnAITyping(callback: (convId: string, isTyping: boolean, estimatedSeconds?: number, stage?: 'generating' | 'typing') => void) {
     this.onAITypingCallback = callback;
+  }
+
+  public registerOnAITypingError(callback: (convId: string, message: string) => void) {
+    this.onAITypingErrorCallback = callback;
   }
 
   public registerOnCustomerUpdate(callback: (customer: any) => void) {
