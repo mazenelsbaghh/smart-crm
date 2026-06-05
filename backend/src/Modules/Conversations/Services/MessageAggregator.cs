@@ -46,7 +46,10 @@ namespace Modules.Conversations.Services
                 {
                     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                     var project = await dbContext.Projects.FindAsync(projectId);
-                    if (project != null && (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase) || project.Name.Contains("Proj", StringComparison.OrdinalIgnoreCase)))
+                    if (project != null && (
+                        project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase) || 
+                        project.Name.EndsWith("Proj", StringComparison.OrdinalIgnoreCase) || 
+                        project.Name.StartsWith("Campaign_Project", StringComparison.OrdinalIgnoreCase)))
                     {
                         minDelay = 2000;
                         maxDelay = 2000;
