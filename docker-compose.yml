@@ -113,10 +113,10 @@ services:
       MinIO__AccessKey: "${MINIO_ROOT_USER:-minioadmin}"
       MinIO__SecretKey: "${MINIO_ROOT_PASSWORD:-changeme_minio}"
       MinIO__BucketName: "${MINIO_BUCKET:-smartcore-media}"
-      MessageAggregation__MinDelayMs: "30000"
-      MessageAggregation__MaxDelayMs: "50000"
-      WhatsApp__MinTypingDelayMs: "3000"
-      WhatsApp__MaxTypingDelayMs: "5000"
+      MessageAggregation__MinDelayMs: "3000"
+      MessageAggregation__MaxDelayMs: "6000"
+      WhatsApp__MinTypingDelayMs: "1500"
+      WhatsApp__MaxTypingDelayMs: "3000"
     depends_on:
       postgres:
         condition: service_healthy

@@ -143,8 +143,8 @@ namespace Modules.WhatsApp.Services
         {
             if (string.IsNullOrEmpty(chunk)) return 0;
 
-            int minDelay = 3000;
-            int maxDelay = 5000;
+            int minDelay = 1500;
+            int maxDelay = 3000;
 
             try
             {
@@ -154,8 +154,8 @@ namespace Modules.WhatsApp.Services
                     var project = dbContext.Projects.Find(projectId);
                     if (project != null && IsTestProject(project.Name))
                     {
-                        minDelay = 1000;
-                        maxDelay = 1000;
+                        minDelay = 500;
+                        maxDelay = 500;
                     }
                     else
                     {
@@ -189,7 +189,7 @@ namespace Modules.WhatsApp.Services
                 }
             }
 
-            int delay = chunk.Length * 50;
+            int delay = chunk.Length * 30;
             return Math.Clamp(delay, minDelay, maxDelay);
         }
 
@@ -197,8 +197,8 @@ namespace Modules.WhatsApp.Services
         {
             if (string.IsNullOrEmpty(incomingMessage)) return 0;
 
-            int minDelay = 2000;
-            int maxDelay = 4000;
+            int minDelay = 1000;
+            int maxDelay = 2000;
 
             try
             {
@@ -214,8 +214,8 @@ namespace Modules.WhatsApp.Services
                     var settings = dbContext.ProjectSettings.Find(projectId);
                     if (settings != null)
                     {
-                        minDelay = Math.Max(1000, (settings.ReplyDelay * 1000) - 1000);
-                        maxDelay = (settings.ReplyDelay * 1000) + 1000;
+                        minDelay = Math.Max(500, (settings.ReplyDelay * 1000) - 1000);
+                        maxDelay = (settings.ReplyDelay * 1000) + 500;
                     }
                 }
             }
@@ -224,10 +224,10 @@ namespace Modules.WhatsApp.Services
                 // Fallback
             }
 
-            int readingDelay = incomingMessage.Length * 15;
+            int readingDelay = incomingMessage.Length * 10;
             int thinkingDelay = new Random().Next(minDelay, maxDelay);
 
-            return Math.Clamp(readingDelay + thinkingDelay, minDelay, maxDelay + 4000);
+            return Math.Clamp(readingDelay + thinkingDelay, minDelay, maxDelay + 2000);
         }
     }
 }

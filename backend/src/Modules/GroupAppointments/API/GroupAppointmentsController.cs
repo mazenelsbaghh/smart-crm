@@ -252,7 +252,32 @@ namespace Modules.GroupAppointments.API
                     tagsList.Add("حجز مجموعة");
                     customer.Tags = tagsList.ToArray();
                 }
-                customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم حجز موعد في مجموعة: {group.Name} بتاريخ {group.DateTime:yyyy-MM-dd HH:mm}";
+                TimeZoneInfo projectZone;
+                try
+                {
+                    projectZone = TimeZoneInfo.FindSystemTimeZoneById(settings?.Timezone ?? "Africa/Cairo");
+                }
+                catch
+                {
+                    try
+                    {
+                        projectZone = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo");
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            projectZone = TimeZoneInfo.FindSystemTimeZoneById("Egypt Standard Time");
+                        }
+                        catch
+                        {
+                            projectZone = TimeZoneInfo.Utc;
+                        }
+                    }
+                }
+                var utcTime = DateTime.SpecifyKind(group.DateTime, DateTimeKind.Utc);
+                var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
+                customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم حجز موعد في مجموعة: {group.Name} بتاريخ {localTime:yyyy-MM-dd HH:mm}";
                 _context.Entry(customer).State = EntityState.Modified;
             }
 

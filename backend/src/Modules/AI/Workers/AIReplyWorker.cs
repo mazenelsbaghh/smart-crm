@@ -179,8 +179,9 @@ namespace Modules.AI.Workers
 
                     foreach (var g in availableGroups)
                     {
-                        // Use g.DateTime directly without timezone conversion to send exactly what the user saved.
-                        var localTime = g.DateTime;
+                        // Convert the database UTC datetime back to the project's local timezone
+                        var utcTime = DateTime.SpecifyKind(g.DateTime, DateTimeKind.Utc);
+                        var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
                         var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
                         var daysText = GetArabicDaysText(g.Days);
                         var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";

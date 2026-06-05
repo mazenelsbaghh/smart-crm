@@ -191,7 +191,7 @@ namespace Modules.WhatsApp.Workers
                             // Fallback
                         }
 
-                        int staggerDelayMs = isTest ? 100 : new Random().Next(3, 21) * 1000;
+                        int staggerDelayMs = isTest ? 100 : new Random().Next(2, 5) * 1000;
                         Console.WriteLine($"[ReplySender] Waiting {staggerDelayMs}ms stagger delay between message chunks...");
                         await Task.Delay(staggerDelayMs);
                     }
