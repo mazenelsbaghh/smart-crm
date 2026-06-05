@@ -34,7 +34,7 @@ namespace Modules.Projects.API
             {
                 ProjectId = project.Id,
                 AiAutoReplyEnabled = false,
-                Timezone = "UTC",
+                Timezone = "Africa/Cairo",
                 ReplyDelay = 3,
                 MaxDailyMessages = 500
             };
@@ -71,7 +71,7 @@ namespace Modules.Projects.API
                     {
                         ProjectId = id,
                         AiAutoReplyEnabled = false,
-                        Timezone = "UTC"
+                        Timezone = "Africa/Cairo"
                     };
                     _context.ProjectSettings.Add(settings);
                     await _context.SaveChangesAsync();
@@ -118,7 +118,7 @@ namespace Modules.Projects.API
                 {
                     ProjectId = id,
                     AiAutoReplyEnabled = request.AiAutoReplyEnabled,
-                    Timezone = request.Timezone ?? "UTC",
+                    Timezone = request.Timezone ?? "Africa/Cairo",
                     GeminiApiKey = request.GeminiApiKey ?? string.Empty,
                     AiTonePreference = request.AiTonePreference ?? "العامية المصرية الروشة والصايعة",
                     AiTargetAudience = request.AiTargetAudience ?? "طلاب كورس كول سنتر يبحثون عن عمل",
@@ -131,7 +131,7 @@ namespace Modules.Projects.API
             else
             {
                 settings.AiAutoReplyEnabled = request.AiAutoReplyEnabled;
-                settings.Timezone = request.Timezone ?? "UTC";
+                settings.Timezone = request.Timezone ?? "Africa/Cairo";
                 settings.GeminiApiKey = request.GeminiApiKey ?? string.Empty;
                 settings.AiTonePreference = request.AiTonePreference ?? "العامية المصرية الروشة والصايعة";
                 settings.AiTargetAudience = request.AiTargetAudience ?? "طلاب كورس كول سنتر يبحثون عن عمل";

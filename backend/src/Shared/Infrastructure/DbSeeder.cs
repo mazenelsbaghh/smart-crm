@@ -37,7 +37,7 @@ namespace Shared.Infrastructure
                 {
                     ProjectId = defaultProjectId,
                     AiAutoReplyEnabled = true,
-                    Timezone = "UTC",
+                    Timezone = "Africa/Cairo",
                     GeminiApiKey = "mock_test_key",
                     UpdatedAt = DateTime.UtcNow
                 };

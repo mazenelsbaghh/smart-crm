@@ -4,6 +4,11 @@
 
 ## Chronological Log
 
+### 2026-06-05: Change Default Timezone to Africa/Cairo (In Progress)
+- **Goal**: Change the default project timezone from UTC to Africa/Cairo.
+- **Updates**:
+  - Update default timezone to `"Africa/Cairo"` in `DbSeeder.cs` and `ProjectController.cs`.
+
 ### 2026-06-05: Remove Sample Customers & Support Project Renaming in Settings (Completed)
 - **Goal**:
   1. Remove automatic seeding of sample customers (`John Doe`, `Jane Smith`) from `DbSeeder.cs`.
