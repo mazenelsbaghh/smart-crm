@@ -22,8 +22,9 @@ jobs:
       - name: Deploy files to Server
         env:
           SSH_PASS: ${{ secrets.SSH_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
-          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@147.93.86.206 "mkdir -p /root/smart-crm"
+          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@$SSH_HOST "mkdir -p /root/smart-crm"
           sshpass -p "$SSH_PASS" rsync -avz -e "ssh -o StrictHostKeyChecking=no" \
             --exclude='.git' \
             --exclude='.venv' \
@@ -31,10 +32,11 @@ jobs:
             --exclude='node_modules' \
             --exclude='bin' \
             --exclude='obj' \
-            ./ root@147.93.86.206:/root/smart-crm/
+            ./ root@$SSH_HOST:/root/smart-crm/
 
       - name: Initialize Environment and Restart Application
         env:
           SSH_PASS: ${{ secrets.SSH_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
-          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@147.93.86.206 "cd /root/smart-crm && if [ ! -f .env ]; then cp .env.example .env; fi && make restart"
+          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@$SSH_HOST "cd /root/smart-crm && if [ ! -f .env ]; then cp .env.example .env; fi && make restart"
