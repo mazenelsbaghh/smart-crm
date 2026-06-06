@@ -201,6 +201,20 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     return days.split(',').filter(Boolean).map(d => DAY_NAMES_SHORT[parseInt(d)] || '').join(' · ');
   };
 
+  const sortedGroups = [...groups].sort((a, b) => {
+    const getRank = (g: GroupAppointment) => {
+      if (!g.isActive) return 3;
+      if (g.bookedCount >= g.capacity) return 2;
+      return 1;
+    };
+    const rankA = getRank(a);
+    const rankB = getRank(b);
+    if (rankA !== rankB) {
+      return rankA - rankB;
+    }
+    return new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime();
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', width: '100%' }}>
       {/* Top Header Controls */}
@@ -245,6 +259,154 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
         </div>
       )}
 
+      {!loading && groups.length > 0 && (
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+          gap: 'var(--space-md)',
+          marginBottom: 'var(--space-xs)' 
+        }}>
+          {/* Card 1: Total Booked Students */}
+          <div className="glass-panel" style={{ 
+            padding: 'var(--space-lg)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 'var(--space-md)',
+            background: 'linear-gradient(135deg, hsla(var(--accent-primary-hsl), 0.1) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            border: '1px solid hsla(var(--accent-primary-hsl), 0.2)',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: '0 8px 32px 0 rgba(0, 243, 255, 0.05)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              position: 'absolute',
+              top: '-20px',
+              right: '-20px',
+              width: '60px',
+              height: '60px',
+              background: 'hsl(var(--accent-primary))',
+              filter: 'blur(30px)',
+              opacity: 0.15,
+              pointerEvents: 'none'
+            }}></div>
+            
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              width: '48px', 
+              height: '48px', 
+              borderRadius: 'var(--radius-md)', 
+              background: 'hsla(var(--accent-primary-hsl), 0.15)',
+              color: 'hsl(var(--accent-primary))'
+            }}>
+              <Users size={24} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>إجمالي الطلاب المحجوزين</span>
+              <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
+                {groups.reduce((sum, g) => sum + (g.bookedCount || 0), 0)}
+              </span>
+            </div>
+          </div>
+
+          {/* Card 2: Active Groups */}
+          <div className="glass-panel" style={{ 
+            padding: 'var(--space-lg)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 'var(--space-md)',
+            background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            border: '1px solid rgba(34, 197, 94, 0.15)',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: '0 8px 32px 0 rgba(34, 197, 94, 0.03)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              position: 'absolute',
+              top: '-20px',
+              right: '-20px',
+              width: '60px',
+              height: '60px',
+              background: 'rgb(34, 197, 94)',
+              filter: 'blur(30px)',
+              opacity: 0.12,
+              pointerEvents: 'none'
+            }}></div>
+
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              width: '48px', 
+              height: '48px', 
+              borderRadius: 'var(--radius-md)', 
+              background: 'rgba(34, 197, 94, 0.12)',
+              color: 'rgb(34, 197, 94)'
+            }}>
+              <Calendar size={24} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>المجموعات النشطة</span>
+              <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
+                {groups.filter(g => g.isActive).length} <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'hsl(var(--text-muted))' }}>/ {groups.length}</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Card 3: Booking Fill Rate */}
+          <div className="glass-panel" style={{ 
+            padding: 'var(--space-lg)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 'var(--space-md)',
+            background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            border: '1px solid rgba(168, 85, 247, 0.15)',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: '0 8px 32px 0 rgba(168, 85, 247, 0.03)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              position: 'absolute',
+              top: '-20px',
+              right: '-20px',
+              width: '60px',
+              height: '60px',
+              background: 'rgb(168, 85, 247)',
+              filter: 'blur(30px)',
+              opacity: 0.12,
+              pointerEvents: 'none'
+            }}></div>
+
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              width: '48px', 
+              height: '48px', 
+              borderRadius: 'var(--radius-md)', 
+              background: 'rgba(168, 85, 247, 0.12)',
+              color: 'rgb(168, 85, 247)'
+            }}>
+              <Clock size={24} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>نسبة إشغال المجموعات</span>
+              <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
+                {(() => {
+                  const totalCap = groups.reduce((sum, g) => sum + (g.capacity || 0), 0);
+                  const totalBooked = groups.reduce((sum, g) => sum + (g.bookedCount || 0), 0);
+                  return totalCap > 0 ? `${Math.round((totalBooked / totalCap) * 100)}%` : '0%';
+                })()}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem 0' }}>
           <div className={styles.spinner}></div>
@@ -283,7 +445,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                   </tr>
                 </thead>
                 <tbody>
-                  {groups.map((group) => {
+                  {sortedGroups.map((group) => {
                     const percent = Math.min(100, Math.round((group.bookedCount / group.capacity) * 100));
                     const isFull = group.bookedCount >= group.capacity;
 

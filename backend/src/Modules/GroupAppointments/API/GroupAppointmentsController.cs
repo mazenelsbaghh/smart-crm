@@ -165,10 +165,9 @@ namespace Modules.GroupAppointments.API
                 return Ok(Array.Empty<object>());
             }
 
-            var now = DateTime.UtcNow;
             var groups = await _context.GroupAppointments
                 .Include(g => g.Bookings)
-                .Where(g => g.ProjectId == projectId && g.IsActive && g.DateTime > now)
+                .Where(g => g.ProjectId == projectId && g.IsActive)
                 .OrderBy(g => g.DateTime)
                 .ToListAsync();
 
@@ -208,10 +207,6 @@ namespace Modules.GroupAppointments.API
                 return BadRequest(new { error = "المجموعة المطلوبة غير متوفرة" });
             }
 
-            if (group.DateTime < DateTime.UtcNow)
-            {
-                return BadRequest(new { error = "لقد انتهى موعد هذه المجموعة" });
-            }
 
             if (group.Bookings.Count >= group.Capacity)
             {
