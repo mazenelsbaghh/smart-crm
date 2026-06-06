@@ -203,8 +203,8 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
 
   const sortedGroups = [...groups].sort((a, b) => {
     const getRank = (g: GroupAppointment) => {
-      if (!g.isActive) return 3;
       if (g.bookedCount >= g.capacity) return 2;
+      if (!g.isActive) return 3;
       return 1;
     };
     const rankA = getRank(a);
