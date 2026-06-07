@@ -70,7 +70,7 @@ namespace Modules.CRM.API
 
             var completedCount = await _context.FollowUps
                 .IgnoreQueryFilters()
-                .CountAsync(f => f.ProjectId == projectId && (f.Status == "Completed" || f.Status == "Resolved"));
+                .CountAsync(f => f.ProjectId == projectId && (f.Status == "Completed" || f.Status == "Resolved" || f.Status == "Bypassed"));
 
             return Ok(new
             {

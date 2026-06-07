@@ -151,6 +151,46 @@ namespace Modules.GroupAppointments.API
             return Ok(new { group.Id, group.IsActive });
         }
 
+        [HttpDelete("group-appointments/bookings/{bookingId}")]
+        public async Task<IActionResult> DeleteBooking(Guid bookingId)
+        {
+            var booking = await _context.GroupAppointmentBookings
+                .Include(b => b.GroupAppointment)
+                .FirstOrDefaultAsync(b => b.Id == bookingId);
+
+            if (booking == null) return NotFound();
+
+            var group = booking.GroupAppointment;
+            var groupId = booking.GroupAppointmentId;
+            var projectId = booking.ProjectId;
+
+            _context.GroupAppointmentBookings.Remove(booking);
+            await _context.SaveChangesAsync();
+
+            try
+            {
+                var bookedCount = await _context.GroupAppointmentBookings
+                    .CountAsync(b => b.GroupAppointmentId == groupId);
+
+                await _hubContext.Clients.Group($"project_{projectId}").SendAsync("GroupBookingUpdated", new
+                {
+                    groupId,
+                    groupName = group?.Name,
+                    customerPhone = booking.CustomerPhone,
+                    customerName = booking.CustomerName,
+                    newBookedCount = bookedCount,
+                    capacity = group?.Capacity,
+                    isFull = group != null && bookedCount >= group.Capacity
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GroupAppointmentsController] SignalR booking delete error: {ex.Message}");
+            }
+
+            return NoContent();
+        }
+
         // --- Anonymous Public Booking Endpoints ---
 
         [AllowAnonymous]

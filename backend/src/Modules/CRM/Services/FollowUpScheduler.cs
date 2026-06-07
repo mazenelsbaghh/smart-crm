@@ -116,6 +116,7 @@ namespace Modules.CRM.Services
                                     {
                                         apiKey = null; // Use default system key
                                     }
+                                    string model = projectSettings?.GeminiModel;
 
                                     var prompt = $@"أنت مساعد ذكاء اصطناعي محترف.
 لديك ملاحظة متابعة داخلية لعميل اسمه: ""{customer.Name}"".
@@ -130,7 +131,7 @@ namespace Modules.CRM.Services
 - اكتب نص الرسالة فقط التي سيتم إرسالها للعميل مباشرة وبدون أي مقدمات أو شرح خارجي.
 الرسالة:";
 
-                                    var generatedMessage = await geminiClient.GenerateReplyAsync(prompt, apiKey);
+                                    var generatedMessage = await geminiClient.GenerateReplyAsync(prompt, apiKey, model);
                                     
                                     if (!string.IsNullOrWhiteSpace(generatedMessage) && !generatedMessage.StartsWith("[Mock"))
                                     {

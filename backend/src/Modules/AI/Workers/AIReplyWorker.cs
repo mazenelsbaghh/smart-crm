@@ -8,6 +8,7 @@ using Shared.Queue;
 using Shared.Security;
 using System;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Modules.Conversations.Domain;
 using Modules.GroupAppointments.Domain;
@@ -28,6 +29,84 @@ namespace Modules.AI.Workers
             _serviceProvider = serviceProvider;
             _aiMarketingBrain = aiMarketingBrain;
             _eventBus = eventBus;
+        }
+
+        private static bool IsPricingQuestion(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return false;
+            }
+
+            return Regex.IsMatch(
+                content,
+                "(سعر|اسعار|أسعار|الاسعار|الأسعار|بكام|تكلفة|تكلفه|قسط|اقساط|أقساط|دفع|price|cost|fees)",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static string? BuildPricingReplyFromKnowledgeText(string knowledgeText)
+        {
+            if (string.IsNullOrWhiteSpace(knowledgeText))
+            {
+                return null;
+            }
+
+            var monthlyMatch = Regex.Match(
+                knowledgeText,
+                @"الاشتراك\s+الشهري\s*:\s*([^\n\r.]+)",
+                RegexOptions.IgnoreCase);
+            var cashMatch = Regex.Match(
+                knowledgeText,
+                @"عرض\s+الكاش[^\n\r:]*:\s*([^\n\r.]+)",
+                RegexOptions.IgnoreCase);
+
+            if (!monthlyMatch.Success && !cashMatch.Success)
+            {
+                return null;
+            }
+
+            var monthly = monthlyMatch.Success ? monthlyMatch.Groups[1].Value.Trim() : null;
+            var cash = cashMatch.Success ? cashMatch.Groups[1].Value.Trim() : null;
+
+            if (!string.IsNullOrEmpty(monthly) && !string.IsNullOrEmpty(cash))
+            {
+                return $"أكيد يا فندم، الأسعار عندنا واضحة:\n\nالاشتراك الشهري: {monthly}.\nالكاش للكورس كامل: {cash}.\n\nتحب أمشي مع حضرتك على نظام الشهري ولا الكاش؟";
+            }
+
+            if (!string.IsNullOrEmpty(monthly))
+            {
+                return $"أكيد يا فندم، الاشتراك الشهري عندنا: {monthly}.\n\nتحب أعرفك المواعيد المتاحة؟";
+            }
+
+            return $"أكيد يا فندم، الكاش للكورس كامل: {cash}.\n\nتحب أعرفك المواعيد المتاحة؟";
+        }
+
+        private static async Task ApplyKnowledgePricingGuardAsync(AppDbContext dbContext, Guid projectId, string customerMessage, MarketingAnalysisResult analysisResult)
+        {
+            if (!IsPricingQuestion(customerMessage))
+            {
+                return;
+            }
+
+            var knowledgeText = await dbContext.KnowledgeDocuments
+                .IgnoreQueryFilters()
+                .Where(d => d.ProjectId == projectId)
+                .Select(d => d.Content)
+                .ToListAsync();
+
+            var pricingReply = BuildPricingReplyFromKnowledgeText(string.Join("\n\n", knowledgeText));
+            if (string.IsNullOrWhiteSpace(pricingReply))
+            {
+                return;
+            }
+
+            analysisResult.Intent = "inquiry";
+            analysisResult.Label = "استفسار عن السعر";
+            analysisResult.ReplyStyle = "Sales";
+            analysisResult.ReplyContent = pricingReply;
+            analysisResult.Confidence = Math.Max(analysisResult.Confidence, 0.99);
+            analysisResult.SuggestedReaction ??= "😮";
+            Console.WriteLine("[AIReplyWorker] Applied knowledge pricing guard to prevent hallucinated pricing.");
         }
 
         public async Task HandleAsync(MessageAggregatedEvent @event)
@@ -69,21 +148,119 @@ namespace Modules.AI.Workers
             // Decide which API key to use. Per-project key, or fall back to system default.
             string apiKeyOverride = !string.IsNullOrEmpty(settings.GeminiApiKey) ? settings.GeminiApiKey : null;
 
-            // Retrieve matching context from the Company Brain (Knowledge Base)
             string brainContext = null;
+            string cachedContentId = null;
+
             try
             {
-                var companyBrain = scope.ServiceProvider.GetRequiredService<Modules.Brain.Services.IAICompanyBrain>();
-                var chunks = await companyBrain.SearchBrainAsync(@event.ProjectId, @event.Content, limit: 3);
-                if (chunks != null && chunks.Any())
+                // Fetch all approved knowledge base chunks
+                var approvedChunksList = await dbContext.KnowledgeChunks
+                    .Include(c => c.KnowledgeDocument)
+                    .Where(c => c.KnowledgeDocument!.ProjectId == @event.ProjectId &&
+                                (c.KnowledgeDocument.Status == "Published" || c.KnowledgeDocument.Status == "Approved"))
+                    .OrderBy(c => c.Id)
+                    .Select(c => c.ChunkText)
+                    .ToListAsync();
+
+                var approvedChunksText = string.Join("\n\n", approvedChunksList.Select(text => $"- {text}"));
+                var tonePref = !string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية الروشة والصايعة";
+                var targetAud = !string.IsNullOrEmpty(settings.AiTargetAudience) ? settings.AiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل";
+                var agentName = _aiMarketingBrain.GetCurrentAgentName();
+                var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText);
+
+                var geminiClient = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IGeminiClient>();
+                int staticTokensCount = await geminiClient.CountTokensAsync(staticPrompt, apiKeyOverride, settings.GeminiModel);
+                Console.WriteLine($"[AIReplyWorker] Project {@event.ProjectId} static prompt token count: {staticTokensCount}");
+
+                if (staticTokensCount >= 32768)
                 {
-                    brainContext = string.Join("\n\n", chunks.Select(c => $"- {c.ChunkText}"));
-                    Console.WriteLine($"[AIReplyWorker] Injected {chunks.Count} knowledge chunks into AI prompt context.");
+                    // Compute MD5 hash of staticPrompt
+                    string contentHash;
+                    using (var md5 = System.Security.Cryptography.MD5.Create())
+                    {
+                        byte[] hashBytes = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(staticPrompt));
+                        contentHash = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+                    }
+
+                    try
+                    {
+                        var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                        string redisKey = $"gemini:cache:{@event.ProjectId}:{settings.GeminiModel}:{contentHash}";
+                        cachedContentId = await redis.StringGetAsync(redisKey);
+
+                        if (string.IsNullOrEmpty(cachedContentId))
+                        {
+                            Console.WriteLine($"[AIReplyWorker] Context cache not found/expired in Redis. Creating new cache on Gemini API...");
+                            // Create cache with 3600 seconds (1 hour) TTL
+                            cachedContentId = await geminiClient.CreateContextCacheAsync(staticPrompt, settings.GeminiModel, 3600, apiKeyOverride);
+                            
+                            // Store in Redis for 55 minutes
+                            await redis.StringSetAsync(redisKey, cachedContentId, TimeSpan.FromMinutes(55));
+                            Console.WriteLine($"[AIReplyWorker] Successfully cached static context. ID: {cachedContentId}");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[AIReplyWorker] Found active Context Cache in Redis: {cachedContentId}");
+                        }
+                    }
+                    catch (Exception cacheEx)
+                    {
+                        Console.WriteLine($"[AIReplyWorker] Error managing context cache: {cacheEx.Message}. Falling back to standard RAG...");
+                        cachedContentId = null;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(cachedContentId))
+                {
+                    // Fallback: Retrieve matching context from the Company Brain (Knowledge Base) via RAG search
+                    var companyBrain = scope.ServiceProvider.GetRequiredService<Modules.Brain.Services.IAICompanyBrain>();
+                    var chunks = await companyBrain.SearchBrainAsync(@event.ProjectId, @event.Content, limit: 3);
+                    
+                    var allChunks = new System.Collections.Generic.List<Modules.Brain.Services.KnowledgeChunkSearchDto>();
+                    if (chunks != null)
+                    {
+                        allChunks.AddRange(chunks);
+                    }
+
+                    // Explicitly pull pricing and location chunks as guards to prevent AI hallucination
+                    try
+                    {
+                        var pricingAndLocationChunks = await dbContext.KnowledgeChunks
+                            .Include(c => c.KnowledgeDocument)
+                            .Where(c => c.KnowledgeDocument!.ProjectId == @event.ProjectId &&
+                                        (c.KnowledgeDocument.Status == "Published" || c.KnowledgeDocument.Status == "Approved") &&
+                                        (c.ChunkText.Contains("الاشتراك الشهري") || c.ChunkText.Contains("عرض الكاش") || c.ChunkText.Contains("رابط اللوكيشن")))
+                            .ToListAsync();
+
+                        foreach (var pChunk in pricingAndLocationChunks)
+                        {
+                            if (!allChunks.Any(c => c.ChunkId == pChunk.Id))
+                            {
+                                allChunks.Add(new Modules.Brain.Services.KnowledgeChunkSearchDto
+                                {
+                                    ChunkId = pChunk.Id,
+                                    DocumentId = pChunk.KnowledgeDocumentId,
+                                    ChunkText = pChunk.ChunkText,
+                                    SimilarityScore = 1.0
+                                });
+                            }
+                        }
+                    }
+                    catch (Exception guardEx)
+                    {
+                        Console.WriteLine($"[AIReplyWorker] Failed to query pricing/location chunks: {guardEx.Message}");
+                    }
+
+                    if (allChunks.Any())
+                    {
+                        brainContext = string.Join("\n\n", allChunks.Select(c => $"- {c.ChunkText}"));
+                        Console.WriteLine($"[AIReplyWorker] Injected {allChunks.Count} knowledge chunks (with pricing/location guards) into AI prompt context.");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[AIReplyWorker] Failed to query company brain: {ex.Message}");
+                Console.WriteLine($"[AIReplyWorker] Failed to query company brain or process context cache: {ex.Message}");
             }
 
             // Inject Group Appointments context if enabled
@@ -390,7 +567,11 @@ namespace Modules.AI.Workers
                 fileBytes,
                 mimeType,
                 settings.AiTonePreference,
-                settings.AiTargetAudience);
+                settings.AiTargetAudience,
+                settings.GeminiModel,
+                cachedContentId);
+
+            await ApplyKnowledgePricingGuardAsync(dbContext, @event.ProjectId, @event.Content, analysisResult);
 
             if (latestMediaMsg != null && !string.IsNullOrEmpty(analysisResult.Transcription))
             {

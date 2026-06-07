@@ -227,6 +227,12 @@
   color: hsl(140, 100%, 65%);
 }
 
+.statusBypassed {
+  background-color: rgba(100, 116, 139, 0.16);
+  color: hsl(215, 20%, 72%);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+}
+
 .statusActive {
   background-color: rgba(99, 102, 241, 0.12);
   color: hsl(239, 84%, 75%);
@@ -436,4 +442,21 @@
   border-color: var(--accent) !important;
   color: var(--accent-ink) !important;
 }
+
+.statCardClickable {
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.statCardClickable:hover {
+  transform: translateY(-2px);
+  border-color: hsl(var(--accent-primary));
+  box-shadow: 0 4px 20px rgba(0, 243, 255, 0.1);
+}
+
+.statCardActive {
+  border-color: hsl(var(--accent-primary)) !important;
+  background: var(--accent-soft) !important;
+}
+
 

@@ -52,6 +52,8 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<GroupAppointment | null>(null);
+  const [pendingDeleteBookingId, setPendingDeleteBookingId] = useState<string | null>(null);
+  const [deletingBookingId, setDeletingBookingId] = useState<string | null>(null);
   
   // Form states
   const [mode, setMode] = useState<string>('offline');
@@ -160,6 +162,45 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       setMessage({ type: 'error', text: 'فشل حذف المجموعة.' });
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleDeleteBooking = async (booking: Booking) => {
+    if (pendingDeleteBookingId !== booking.id) {
+      setPendingDeleteBookingId(booking.id);
+      return;
+    }
+
+    try {
+      setDeletingBookingId(booking.id);
+      setMessage(null);
+      await api.delete(`/api/group-appointments/bookings/${booking.id}`);
+      setMessage({ type: 'success', text: `تم حذف ${booking.customerName || 'المشترك'} من المجموعة.` });
+
+      setSelectedGroup(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          bookedCount: Math.max(0, prev.bookedCount - 1),
+          bookings: prev.bookings.filter(item => item.id !== booking.id)
+        };
+      });
+
+      setGroups(prev => prev.map(group => {
+        if (!group.bookings.some(item => item.id === booking.id)) return group;
+        return {
+          ...group,
+          bookedCount: Math.max(0, group.bookedCount - 1),
+          bookings: group.bookings.filter(item => item.id !== booking.id)
+        };
+      }));
+      setPendingDeleteBookingId(null);
+      void fetchGroups();
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'فشل حذف المشترك من المجموعة.' });
+    } finally {
+      setDeletingBookingId(null);
     }
   };
 
@@ -578,7 +619,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                         <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>اسم العميل</th>
                         <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>رقم الواتساب</th>
                         <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>تاريخ الحجز</th>
-                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الدردشة</th>
+                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -590,13 +631,30 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                             {new Date(booking.createdAt).toLocaleDateString('ar-EG', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </td>
                           <td style={{ padding: '12px 6px', textAlign: 'center' }}>
-                            <a 
-                              href={`/inbox?customerId=${booking.customerId}`}
-                              className={`${styles.btn} ${styles.btnSecondary}`}
-                              style={{ padding: '4px 10px', fontSize: '0.75rem', backgroundColor: 'rgba(0, 243, 255, 0.05)' }}
-                            >
-                              فتح المحادثة
-                            </a>
+                            <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <a 
+                                href={`/inbox?customerId=${booking.customerId}`}
+                                className={`${styles.btn} ${styles.btnSecondary}`}
+                                style={{ padding: '4px 10px', fontSize: '0.75rem', backgroundColor: 'rgba(0, 243, 255, 0.05)' }}
+                              >
+                                فتح المحادثة
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteBooking(booking)}
+                                disabled={deletingBookingId === booking.id}
+                                className={`${styles.btn} ${styles.btnDanger}`}
+                                style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                                title={pendingDeleteBookingId === booking.id ? 'اضغط للتأكيد النهائي' : 'حذف المشترك من المجموعة'}
+                              >
+                                <Trash2 size={12} />
+                                {deletingBookingId === booking.id
+                                  ? 'جاري الحذف...'
+                                  : pendingDeleteBookingId === booking.id
+                                    ? 'تأكيد الحذف'
+                                    : 'حذف'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}

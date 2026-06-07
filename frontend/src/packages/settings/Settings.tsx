@@ -36,6 +36,7 @@ interface ProjectSettingsResponse {
     aiAutoReplyEnabled?: boolean;
     timezone?: string;
     geminiApiKey?: string;
+    geminiModel?: string;
     aiTonePreference?: string;
     aiTargetAudience?: string;
     replyDelay?: number;
@@ -65,6 +66,7 @@ export default function Settings() {
   const [projectName, setProjectName] = useState('');
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(true);
   const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [geminiModel, setGeminiModel] = useState('gemini-3.5-flash');
   const [timezone, setTimezone] = useState('Africa/Cairo');
   const [aiTonePreference, setAiTonePreference] = useState('العامية المصرية الروشة والصايعة');
   const [aiTargetAudience, setAiTargetAudience] = useState('طلاب كورس كول سنتر يبحثون عن عمل');
@@ -85,6 +87,7 @@ export default function Settings() {
       setAutoReplyEnabled(settings?.aiAutoReplyEnabled ?? true);
       setTimezone(settings?.timezone || 'Africa/Cairo');
       setGeminiApiKey(settings?.geminiApiKey || '');
+      setGeminiModel(settings?.geminiModel || 'gemini-3.5-flash');
       setAiTonePreference(settings?.aiTonePreference || 'العامية المصرية الروشة والصايعة');
       setAiTargetAudience(settings?.aiTargetAudience || 'طلاب كورس كول سنتر يبحثون عن عمل');
       setReplyDelay(settings?.replyDelay ?? 3);
@@ -227,6 +230,7 @@ export default function Settings() {
         aiAutoReplyEnabled: autoReplyEnabled,
         timezone,
         geminiApiKey: geminiApiKey.trim(),
+        geminiModel,
         aiTonePreference: aiTonePreference.trim(),
         aiTargetAudience: aiTargetAudience.trim(),
         replyDelay,
@@ -248,6 +252,7 @@ export default function Settings() {
         aiAutoReplyEnabled: autoReplyEnabled,
         timezone,
         geminiApiKey: geminiApiKey.trim(),
+        geminiModel,
         aiTonePreference: aiTonePreference.trim(),
         aiTargetAudience: aiTargetAudience.trim(),
         replyDelay,
@@ -477,8 +482,14 @@ export default function Settings() {
 
               <div className={styles.formGroup}>
                 <label className={styles.label}>نموذج الذكاء الاصطناعي</label>
-                <select className={styles.select} defaultValue="gemini-3.5-flash" disabled>
+                <select
+                  className={styles.select}
+                  value={geminiModel}
+                  onChange={(e) => setGeminiModel(e.target.value)}
+                >
                   <option value="gemini-3.5-flash">Gemini 3.5 Flash (المحرك الموحد)</option>
+                  <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (أرخص من 3.5)</option>
+                  <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (الأوفر)</option>
                 </select>
               </div>
 

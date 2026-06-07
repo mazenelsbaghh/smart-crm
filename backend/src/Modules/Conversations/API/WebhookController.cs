@@ -203,7 +203,7 @@ namespace Modules.Conversations.API
 
             foreach (var fu in pendingFollowUps)
             {
-                fu.Status = "Completed";
+                fu.Status = "Bypassed";
                 _context.Entry(fu).State = EntityState.Modified;
             }
 

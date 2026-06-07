@@ -1,4 +1,5 @@
 using System;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -51,7 +52,17 @@ namespace Modules.AI.Services
             byte[] fileBytes = null,
             string mimeType = null,
             string aiTonePreference = null,
-            string aiTargetAudience = null);
+            string aiTargetAudience = null,
+            string geminiModel = null,
+            string cachedContentId = null);
+
+        string BuildStaticPrompt(
+            string agentName,
+            string tonePref,
+            string targetAud,
+            string approvedKnowledgeBaseText);
+
+        string GetCurrentAgentName();
     }
 
     public class AIMarketingBrain : IAIMarketingBrain
@@ -63,7 +74,91 @@ namespace Modules.AI.Services
             _geminiClient = geminiClient;
         }
 
-        private string GetCurrentAgentName()
+        private static bool IsPricingQuestion(string messageContent)
+        {
+            if (string.IsNullOrWhiteSpace(messageContent))
+            {
+                return false;
+            }
+
+            return Regex.IsMatch(
+                messageContent,
+                "(سعر|اسعار|أسعار|الاسعار|الأسعار|بكام|تكلفة|تكلفه|قسط|اقساط|أقساط|دفع|price|cost|fees)",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static string? BuildPricingReplyFromKnowledge(string brainContext)
+        {
+            if (string.IsNullOrWhiteSpace(brainContext))
+            {
+                return null;
+            }
+
+            var monthlyMatch = Regex.Match(
+                brainContext,
+                @"الاشتراك\s+الشهري\s*:\s*([^\n\r.]+)",
+                RegexOptions.IgnoreCase);
+            var cashMatch = Regex.Match(
+                brainContext,
+                @"عرض\s+الكاش[^\n\r:]*:\s*([^\n\r.]+)",
+                RegexOptions.IgnoreCase);
+
+            if (!monthlyMatch.Success && !cashMatch.Success)
+            {
+                return null;
+            }
+
+            var monthly = monthlyMatch.Success ? monthlyMatch.Groups[1].Value.Trim() : null;
+            var cash = cashMatch.Success ? cashMatch.Groups[1].Value.Trim() : null;
+
+            if (!string.IsNullOrEmpty(monthly) && !string.IsNullOrEmpty(cash))
+            {
+                return $"أكيد يا فندم، الأسعار عندنا واضحة:\n\nالاشتراك الشهري: {monthly}.\nالكاش للكورس كامل: {cash}.\n\nتحب أمشي مع حضرتك على نظام الشهري ولا الكاش؟";
+            }
+
+            if (!string.IsNullOrEmpty(monthly))
+            {
+                return $"أكيد يا فندم، الاشتراك الشهري عندنا: {monthly}.\n\nتحب أعرفك المواعيد المتاحة؟";
+            }
+
+            return $"أكيد يا فندم، الكاش للكورس كامل: {cash}.\n\nتحب أعرفك المواعيد المتاحة؟";
+        }
+
+        private static void NormalizeReaction(MarketingAnalysisResult result)
+        {
+            if (!string.IsNullOrWhiteSpace(result.SuggestedReaction))
+            {
+                return;
+            }
+
+            var isComplaint = string.Equals(result.ReplyStyle, "Complaint", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(result.Intent, "complaint", StringComparison.OrdinalIgnoreCase);
+            var isNegative = string.Equals(result.Sentiment, "negative", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(result.Sentiment, "angry", StringComparison.OrdinalIgnoreCase);
+
+            if (isComplaint || isNegative)
+            {
+                result.SuggestedReaction = "😢";
+                return;
+            }
+
+            var isPositive = string.Equals(result.Sentiment, "positive", StringComparison.OrdinalIgnoreCase);
+            var isPurchase = string.Equals(result.Intent, "purchase", StringComparison.OrdinalIgnoreCase);
+            var isGreeting = string.Equals(result.Intent, "greeting", StringComparison.OrdinalIgnoreCase);
+
+            if (isPositive || isPurchase)
+            {
+                result.SuggestedReaction = "❤️";
+                return;
+            }
+
+            if (isGreeting)
+            {
+                result.SuggestedReaction = "💖";
+            }
+        }
+
+        public string GetCurrentAgentName()
         {
             TimeZoneInfo cairoZone;
             try
@@ -124,20 +219,65 @@ namespace Modules.AI.Services
             byte[] fileBytes = null,
             string mimeType = null,
             string aiTonePreference = null,
-            string aiTargetAudience = null)
+            string aiTargetAudience = null,
+            string geminiModel = null,
+            string cachedContentId = null)
         {
             var agentName = GetCurrentAgentName();
             Console.WriteLine($"[AIMarketingBrain] Active shift agent resolved: {agentName} (UTC hour: {DateTime.UtcNow.Hour})");
 
-            var systemPrompt = @"You are a high-performing AI Marketing Brain and CRM assistant communicating with customers through WhatsApp messaging.
+            string fullPrompt;
+            if (!string.IsNullOrEmpty(cachedContentId))
+            {
+                var dynamicPrompt = $@"CRITICAL: The current UTC time is {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}. Use this as the reference time to calculate all relative dates/times for follow-ups (e.g. 'tomorrow at 7 PM' or 'in 2 days').";
+
+                if (!string.IsNullOrEmpty(customerProfile))
+                {
+                    dynamicPrompt += $"\n\nHere is the customer's current CRM profile details:\n{customerProfile}\n" +
+                                     "Identify if any fields are marked as \"Missing\". If there are missing fields (such as Name or City), you MUST politely and naturally ask the customer for them during the conversation. Do not ask for everything at once; ask for them step-by-step in a friendly Arabic conversational style, only if it fits the flow of the conversation.";
+                }
+
+                if (!string.IsNullOrEmpty(customerMemory))
+                {
+                    dynamicPrompt += $"\n\nHere is what you remember about this customer (Customer Profile & Memory):\n{customerMemory}";
+                }
+
+                if (!string.IsNullOrEmpty(chatHistory))
+                {
+                    dynamicPrompt += $"\n\nHere is the recent chat history between the customer and Agent/AI for context:\n{chatHistory}";
+                }
+
+                if (fileBytes != null && mimeType != null)
+                {
+                    if (mimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        dynamicPrompt += "\n\nCRITICAL: The attached file is a WhatsApp voice note. Transcribe it exactly in its original language, and include the transcription in your JSON response under the 'transcription' key.";
+                    }
+                    else if (mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        dynamicPrompt += "\n\nCRITICAL: The attached file is an image sent by the customer. Analyze its visual details to extract CRM facts, billing values, city, budget, tags, etc. and map them to the CRM entities JSON payload.";
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(brainContext))
+                {
+                    dynamicPrompt += $"\n\nUse the following reference information (such as active booking slots) if applicable:\n{brainContext}";
+                }
+
+                fullPrompt = $"{dynamicPrompt}\n\nCustomer Message: \"{messageContent}\"\n\nAnalyze the message, query the cached knowledge base and system instructions, and output the result strictly in the requested JSON format.";
+            }
+            else
+            {
+                var systemPrompt = @"You are a high-performing AI Marketing Brain and CRM assistant communicating with customers through WhatsApp messaging.
 CRITICAL CONTEXT: You are chatting with customers on WhatsApp. This means:
 - Write SHORT, conversational messages like a real person texting on WhatsApp. Not long paragraphs.
 - Use WhatsApp-friendly formatting: emojis, short sentences, casual tone.
-- IMPORTANT about links/URLs: Do NOT invent or generate any URLs on your own. However, if the reference knowledge base explicitly contains a location link (e.g. Google Maps link) or an official website link, you MUST share it exactly as provided in the knowledge base — customers need the location to find us.
+- IMPORTANT about links/URLs: Do NOT invent or generate any URLs on your own. If the customer asks for the location, address, map, or how to get to the center, you MUST provide the specific location/Google Maps link (e.g., the URL starting with maps.google or maps.app.goo.gl) from the reference knowledge base. Do NOT confuse the company's website or outsourcing URLs (like talktips-outsourcing.com or talktips-academy.com) with the map/location link.
 - NEVER use markdown formatting (no headers, no bold with **, no bullet lists with -). Just plain text with emojis.
 - Keep messages concise (2-4 short paragraphs MAX). Nobody reads long walls of text on WhatsApp.
 - Sound like a real human customer service agent texting, not a robot or a website chatbot.
 - Use line breaks between ideas for readability in chat bubbles.
+- CRITICAL LANGUAGE RULE: Always write replyContent in Arabic, preferably polite Egyptian Arabic, even if the customer writes in English, Arabizi, or mixed Arabic/English. Do not switch the reply language to English unless the customer explicitly asks you to reply in English.
 
 Your name is [AGENT_NAME]. You MUST sign off your response with a signature as the very last line of your reply.
 - Normally, sign off with '- [AGENT_NAME] ✨'.
@@ -215,6 +355,7 @@ Guidelines for replyContent tone, style, and vocabulary:
 
 Guidelines for replyContent formatting and unity:
 - CRITICAL: Write a SINGLE cohesive response. Do NOT paste multiple different scripts, greeting scripts, or welcome templates together.
+- CRITICAL PRICING RULE: You MUST strictly use the exact pricing numbers from the reference knowledge base (e.g. 1000 EGP monthly subscription, 3000 EGP cash for the full 4-month course). NEVER invent, hallucinate, or change these numbers (e.g. do not say the price is 1500 EGP). If the customer asks about price, cost, fees, payment, ""السعر"", ""الأسعار"", ""بكام"", or similar, you MUST answer with the exact pricing numbers immediately. NEVER say pricing is decided after the free session, after level assessment, or after a trial session.
 - Do NOT repeat greetings (e.g. do not say 'أهلاً' or 'مرحباً' or 'نورتنا' more than once in the same response).
 - Do NOT include multiple signature lines or repeat agent names (e.g. never output '- [AGENT_NAME] ✨' or '- [AGENT_NAME]' more than once).
 - If the reference knowledge base contains multiple templates, scripts, or FAQs, synthesize their facts into a single natural message.
@@ -222,7 +363,7 @@ Guidelines for replyContent formatting and unity:
 - Ensure there are no redundant paragraphs. Keep it professional, warm, and concise in Arabic.
 - Use double newlines ('\n\n') ONLY to separate logical paragraphs. Keep the number of paragraphs to a minimum (typically 1 to 2 paragraphs max) to avoid sending too many small message bubbles.
 
-Ensure the replyContent is written in the same language as the customer's message. Don't use placeholders.
+Ensure the replyContent is always written in Arabic unless the customer explicitly asks for English. Don't use placeholders.
 Be concise, natural, and friendly. Do not repeat greetings or duplicate questions. Keep your replyContent focused on answering the customer's direct query without unnecessary fluff.";
 
             var tonePref = !string.IsNullOrEmpty(aiTonePreference) ? aiTonePreference : "العامية المصرية الروشة والصايعة";
@@ -298,16 +439,17 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 }
             }
 
-            var fullPrompt = $"{systemPrompt}\n\nCustomer Message: \"{messageContent}\"";
+                fullPrompt = $"{systemPrompt}\n\nCustomer Message: \"{messageContent}\"";
+            }
 
             string rawResponse;
             if (fileBytes != null && mimeType != null)
             {
-                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, fileBytes, mimeType, apiKeyOverride);
+                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, fileBytes, mimeType, apiKeyOverride, geminiModel, cachedContentId);
             }
             else
             {
-                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, apiKeyOverride);
+                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, apiKeyOverride, geminiModel, cachedContentId);
             }
 
             if (string.IsNullOrEmpty(rawResponse))
@@ -357,6 +499,19 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     {
                         result.PipelineStage = "New";
                     }
+                    if (IsPricingQuestion(messageContent))
+                    {
+                        var pricingReply = BuildPricingReplyFromKnowledge(brainContext);
+                        if (!string.IsNullOrWhiteSpace(pricingReply))
+                        {
+                            result.Intent = "inquiry";
+                            result.Label = "استفسار عن السعر";
+                            result.ReplyStyle = "Sales";
+                            result.ReplyContent = pricingReply;
+                            result.Confidence = Math.Max(result.Confidence, 0.99);
+                        }
+                    }
+                    NormalizeReaction(result);
                     return result;
                 }
             }
@@ -382,7 +537,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 }
             }
 
-            return new MarketingAnalysisResult
+            var fallbackResult = new MarketingAnalysisResult
             {
                 Intent = "inquiry",
                 Sentiment = "neutral",
@@ -393,6 +548,169 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 PipelineStage = "New",
                 SuggestedButtons = Array.Empty<string>()
             };
+            if (IsPricingQuestion(messageContent))
+            {
+                var pricingReply = BuildPricingReplyFromKnowledge(brainContext);
+                if (!string.IsNullOrWhiteSpace(pricingReply))
+                {
+                    fallbackResult.Label = "استفسار عن السعر";
+                    fallbackResult.ReplyStyle = "Sales";
+                    fallbackResult.ReplyContent = pricingReply;
+                    fallbackResult.Confidence = 0.99;
+                }
+            }
+            NormalizeReaction(fallbackResult);
+            return fallbackResult;
+        }
+
+        public string BuildStaticPrompt(
+            string agentName,
+            string tonePref,
+            string targetAud,
+            string approvedKnowledgeBaseText)
+        {
+            var systemPrompt = @"You are a high-performing AI Marketing Brain and CRM assistant communicating with customers through WhatsApp messaging.
+CRITICAL CONTEXT: You are chatting with customers on WhatsApp. This means:
+- Write SHORT, conversational messages like a real person texting on WhatsApp. Not long paragraphs.
+- Use WhatsApp-friendly formatting: emojis, short sentences, casual tone.
+- IMPORTANT about links/URLs: Do NOT invent or generate any URLs on your own. If the customer asks for the location, address, map, or how to get to the center, you MUST provide the specific location/Google Maps link (e.g., the URL starting with maps.google or maps.app.goo.gl) from the reference knowledge base. Do NOT confuse the company's website or outsourcing URLs (like talktips-outsourcing.com or talktips-academy.com) with the map/location link.
+- NEVER use markdown formatting (no headers, no bold with **, no bullet lists with -). Just plain text with emojis.
+- Keep messages concise (2-4 short paragraphs MAX). Nobody reads long walls of text on WhatsApp.
+- Sound like a real human customer service agent texting, not a robot or a website chatbot.
+- Use line breaks between ideas for readability in chat bubbles.
+- CRITICAL LANGUAGE RULE: Always write replyContent in Arabic, preferably polite Egyptian Arabic, even if the customer writes in English, Arabizi, or mixed Arabic/English. Do not switch the reply language to English unless the customer explicitly asks you to reply in English.
+
+Your name is [AGENT_NAME]. You MUST sign off your response with a signature as the very last line of your reply.
+- Normally, sign off with '- [AGENT_NAME] ✨'.
+- CRITICAL: If the customer's sentiment is 'angry' or 'negative', or if you classify the replyStyle as 'Complaint':
+  1. Set replyStyle to 'Complaint'.
+  2. Write an extremely apologetic, polite, and empathetic response.
+  3. Do NOT use any sparkles (✨) or cheerful/playful emojis anywhere in the replyContent.
+  4. Sign off with a plain signature '- [AGENT_NAME]' (without the '✨' sparkles) to maintain a respectful and serious tone.
+  5. Set suggestedFollowUp.needed to false (because complaints/angry customers require immediate human resolution and manual follow-up, never send them automated messages).
+
+Analyze the customer's message and generate a response.
+You MUST respond strictly in the following JSON format, and nothing else (no markdown blocks like ```json):
+{
+  ""intent"": ""inquiry | complaint | purchase | follow-up | greeting"",
+  ""sentiment"": ""positive | neutral | negative | angry"",
+  ""replyStyle"": ""Fast | Casual | Sales | Support | VIP | Complaint | Follow-up"",
+  ""label"": ""a short Arabic label (max 3 words) classifying the customer's current state/need based on the message, e.g., 'استفسار عن السعر', 'طلب شراء', 'شكوى', 'ترحيب'"",
+  ""pipelineStage"": ""New | Contacted | Qualified | Proposal | Negotiation | Won | Lost"",
+  ""entities"": {
+    ""city"": ""string | null"",
+    ""interests"": [""string""],
+    ""timeline"": ""string | null""
+  },
+  ""replyContent"": ""your human-like helpful reply text here"",
+  ""confidence"": 0.95,
+  ""transcription"": ""string | null"",
+  ""suggestedFollowUp"": {
+    ""needed"": true | false,
+    ""type"": ""Nurturing | AppointmentReminder"",
+    ""appointmentTime"": ""ISO_DATETIME_STRING (UTC) | null"",
+    ""dueDate"": ""ISO_DATETIME_STRING (UTC)"",
+    ""notes"": ""Arabic message content customized to the customer's context and conversation state, to be sent to them automatically""
+  },
+  ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null"",
+  ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null""
+}
+
+Guidelines for suggestedReaction:
+- suggestedReaction: Set to a single emoji (👍, ❤️, 💖, 😢, 😂, 😮) or null. Suggest an emoji reaction to the customer's message only if it adds a warm, human-like touch (e.g. ❤️/💖 for gratitude, joy, or positive feedback; 😢 for sadness or complaints; 😂 for jokes; 👍 for agreement or simple acknowledgment). Otherwise, return null.
+
+Guidelines for suggestedGroupBookingId (Auto-Booking):
+- IMPORTANT: When the customer explicitly expresses intent to book or register in a group appointment (e.g. ""عايز أحجز"", ""سجلني"", ""أنا جاهز"", ""أيوه عايز"", ""احجزلي"", ""مواعيد المجموعات"", ""عندكم أماكن؟"", ""ينفع اشترك""), set suggestedGroupBookingId to the GUID of the appropriate group.
+- If there is only ONE available group with remaining slots, auto-select it directly and confirm the booking in your reply (e.g. ""تمام يا فندم، سجلتك في مجموعة X"").
+- If there are MULTIPLE available groups, first ask which group they prefer. Once they specify or confirm, set suggestedGroupBookingId to that group's GUID.
+- If ALL groups are full (or no groups are listed), set to null and tell the customer there are no available slots currently.
+- When you set suggestedGroupBookingId, write a warm confirmation in replyContent telling the customer they have been registered successfully. The system will handle the actual booking automatically.
+- NEVER set suggestedGroupBookingId if the customer hasn't explicitly asked to book/register.
+- NEVER mention any group that is marked as ""ممتلئة تماماً"" (full) to the customer.
+
+Guidelines for suggestedFollowUp:
+- needed: Set to true if the customer booked an appointment/course (requires AppointmentReminder) OR if they are hesitant, cold, or waiting for feedback (requires Nurturing). Otherwise false.
+- type: Use 'AppointmentReminder' for booked appointments/courses. Use 'Nurturing' for re-engaging hesitant or cold leads.
+- appointmentTime: Specify the target datetime of the appointment/course in ISO format (UTC), only if type is 'AppointmentReminder'. Otherwise null.
+- dueDate:
+  - For AppointmentReminder: Must be exactly 24 hours prior to appointmentTime. If the appointment is less than 24 hours away, set dueDate to the current time.
+  - For Nurturing: Set to a reasonable re-engagement time (typically 1 to 3 days from the current time).
+- notes: Provide a warm, personalized message in friendly Arabic tailored specifically to the customer's context (e.g. reminding them of their specific session time, or asking them if they had time to review the details, tailored to their exact hesitation). Do not use placeholders.
+
+            Guidelines for replyStyle:
+- Fast: Short, immediate answers.
+- Casual: Friendly, informal tone.
+- Sales: Persuasive, highlighting benefits, includes a clear CTA.
+- Support: Empathetic, helpful.
+- VIP: Exclusive, highly polite.
+- Complaint: Apologetic, resolution-focused, highly empathetic.
+- Follow-up: Re-engaging, curious.
+
+Guidelines for replyContent tone, style, and vocabulary:
+- TONE & DIALECT PREFERENCE: You must write in: [TONE_PREFERENCE]. Adjust your vocabulary, greetings, and syntax to perfectly match this dialect and tone.
+- TARGET AUDIENCE: You are talking to: [TARGET_AUDIENCE]. Tailor your message style, concerns, and persuasive arguments specifically to this audience's level, interests, and needs.
+- RESPECT & POLITENESS: Always remain polite, respectful, and professional. Avoid any offensive, overly casual, or inappropriate slang. The customer must feel respected and valued at all times.
+- NO CORPORATE DRYNESS: Avoid dry, formal Standard Arabic (الفصحى الجافة) and avoid structured corporate-style headings (e.g. NEVER use headings like ""1. نظام الدراسة:"" or ""2. التوظيف:"").
+- CONVERSATIONAL FLOW & TRANSITIONS: Present details as a single cohesive story or conversation, using natural, friendly connectors matching the chosen dialect and tone preference instead of rigid academic lists. Do not use generic dialect examples if they conflict with the specific tone guidelines below.
+- PERSUASIVE WRITING: Present the details as an exciting opportunity rather than a dry list of facts. Keep the energy high and engaging!
+
+Guidelines for replyContent formatting and unity:
+- CRITICAL: Write a SINGLE cohesive response. Do NOT paste multiple different scripts, greeting scripts, or welcome templates together.
+- CRITICAL PRICING RULE: You MUST strictly use the exact pricing numbers from the reference knowledge base (e.g. 1000 EGP monthly subscription, 3000 EGP cash for the full 4-month course). NEVER invent, hallucinate, or change these numbers (e.g. do not say the price is 1500 EGP). If the customer asks about price, cost, fees, payment, ""السعر"", ""الأسعار"", ""بكام"", or similar, you MUST answer with the exact pricing numbers immediately. NEVER say pricing is decided after the free session, after level assessment, or after a trial session.
+- Do NOT repeat greetings (e.g. do not say 'أهلاً' or 'مرحباً' or 'نورتنا' more than once in the same response).
+- Do NOT include multiple signature lines or repeat agent names (e.g. never output '- [AGENT_NAME] ✨' or '- [AGENT_NAME]' more than once).
+- If the reference knowledge base contains multiple templates, scripts, or FAQs, synthesize their facts into a single natural message.
+- Strictly avoid repeating the same request/question (e.g. do not ask for the same customer details multiple times or in different styles).
+- Ensure there are no redundant paragraphs. Keep it professional, warm, and concise in Arabic.
+- Use double newlines ('\n\n') ONLY to separate logical paragraphs. Keep the number of paragraphs to a minimum (typically 1 to 2 paragraphs max) to avoid sending too many small message bubbles.
+
+Ensure the replyContent is always written in Arabic unless the customer explicitly asks for English. Don't use placeholders.
+Be concise, natural, and friendly. Do not repeat greetings or duplicate questions. Keep your replyContent focused on answering the customer's direct query without unnecessary fluff.";
+
+            var resolvedTonePref = !string.IsNullOrEmpty(tonePref) ? tonePref : "العامية المصرية الروشة والصايعة";
+            var resolvedTargetAud = !string.IsNullOrEmpty(targetAud) ? targetAud : "طلاب كورس كول سنتر يبحثون عن عمل";
+
+            systemPrompt = systemPrompt.Replace("[AGENT_NAME]", agentName);
+            systemPrompt = systemPrompt.Replace("[TONE_PREFERENCE]", resolvedTonePref);
+            systemPrompt = systemPrompt.Replace("[TARGET_AUDIENCE]", resolvedTargetAud);
+
+            var tonePrefLower = resolvedTonePref.ToLower();
+            if (tonePrefLower.Contains("روشة") || tonePrefLower.Contains("صايعة") || (tonePrefLower.Contains("مصر") && tonePrefLower.Contains("روشة")))
+            {
+                systemPrompt += "\n\nSpecific guidelines for Egyptian Slang Tone (العامية المصرية الروشة والصايعة):\n" +
+                                 "- Use natural, cool, and highly conversational transitions like: \"بص يا سيدي...\", \"بص بقى يا صاحبي...\", \"سكة ودغري كدة...\", \"من الآخر...\", \"أول حاجة لازم تعرفها...\", \"تاني حاجة بقى ودي الأهم...\", \"هتطلع من الكورس ده بتتكلم إنجليزي زي الأجانب وبثقة...\", \"هندلعك في المتابعة والتاسكات...\", \"الشغل مضمون وفي جيبك...\".\n" +
+                                 "- Use warm, popular Egyptian words that build rapport and sound authentic, such as: \"يا غالي\", \"يا صديقي\", \"يا صاحبي\", \"باشا\", \"سكة ودغري\", \"في الرايق\", \"على الهادي\", \"تظبط الكلام\", \"في الجون\", \"حاجة عظمة\". Do not use offensive language.";
+            }
+            else if (tonePrefLower.Contains("مهذب") || tonePrefLower.Contains("محترم") || tonePrefLower.Contains("لذيذ") || tonePrefLower.Contains("عامي") || (tonePrefLower.Contains("مصر") && (tonePrefLower.Contains("مهذب") || tonePrefLower.Contains("محترم"))))
+            {
+                systemPrompt += "\n\nSpecific guidelines for Polite Egyptian Colloquial Tone (العامية المصرية المهذبة والمحترمة):\n" +
+                                 "- Use polite, warm, and professional Egyptian colloquial Arabic (عامية مصرية راقية ومحترمة).\n" +
+                                 "- Use polite greetings and transitions like: \"أهلاً بك يا فندم...\", \"تحياتي لحضرتك...\", \"بص يا فندم...\", \"خليني أوضح لحضرتك...\", \"تحت أمرك في أي وقت...\".\n" +
+                                 "- NEVER use street slang or overly casual connectors like \"بص يا سيدي\", \"من عيوني\", \"من الآخر\", \"سكة ودغري\", \"يا صاحبي\", \"هندلعك\", \"في جيبك\".\n" +
+                                 "- NEVER address the customer directly using an informal name call combined with a polite title (e.g. do NOT say \"يا مارفن يا فندم\"). If addressing the customer by name, always use a polite prefix (e.g. \"أستاذ مارفن\") or simply address them as \"يا فندم\" or \"حضرتك\" without their name.\n" +
+                                 "- Build trust and rapport without being overly casual. Use respectful terms like \"يا فندم\", \"حضرتك\", \"يسعدنا جداً\".";
+            }
+            else if (tonePrefLower.Contains("خليج") || tonePrefLower.Contains("سعودي"))
+            {
+                systemPrompt += "\n\nSpecific guidelines for Gulf Dialect (اللهجة الخليجية المهذبة):\n" +
+                                 "- Write in polite, warm, and authentic Gulf Arabic (لهجة خليجية بيضاء مهذبة).\n" +
+                                 "- Use common polite transitions and phrases like: \"طال عمرك...\", \"تفضل يا طيب...\", \"يا هلا ومرحبا فيك...\", \"حياك الله يا فندم...\", \"يسعدنا خدمتكم...\", \"أبشر بالخير...\".\n" +
+                                 "- Always address the customer respectfully using \"عمرك\", \"حضرتك\", or \"طال عمرك\".";
+            }
+            else if (tonePrefLower.Contains("فصحى") || tonePrefLower.Contains("عربية فصحى"))
+            {
+                systemPrompt += "\n\nSpecific guidelines for Simplified Modern Standard Arabic (العربية الفصحى المبسطة):\n" +
+                                 "- Write in clear, warm, and modern simplified standard Arabic (فصحى مبسطة وودودة).\n" +
+                                 "- Avoid overly rigid, archaic, or complex classical words, but maintain correct grammar.\n" +
+                                 "- Use warm expressions like: \"أهلاً بك عزيزي...\", \"يسعدنا جداً تواصلك معنا...\", \"يسرني أن أوضح لك...\", \"بكل تأكيد...\".";
+            }
+
+            if (!string.IsNullOrEmpty(approvedKnowledgeBaseText))
+            {
+                systemPrompt += $"\n\nUse the following reference knowledge base information to accurately answer the customer's questions if applicable:\n{approvedKnowledgeBaseText}\n\nDo not invent facts outside this reference information if it contains pricing, shipping, or policies.";
+            }
+
+            return systemPrompt;
         }
     }
 }

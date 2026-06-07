@@ -1,8 +1,15 @@
 # Backend Master Plan
 
-**Last Updated**: 2026-06-05
+**Last Updated**: 2026-06-06
 
 ## Chronological Log
+
+### 2026-06-06: Pagination for Conversations list (Completed)
+- **Goal**: Implement server-side pagination (limit and cursor-based before parameter) for fetching conversations.
+- **Updates**:
+  - Update `ListConversations` in `ConversationController.cs` to accept optional `status`, `search`, `before` (DateTime?), and `limit` query parameters.
+  - Implement dynamic queries for filtering conversations by status and search (customer name/phone), ordering by `LastMessageTimestamp` descending, and returning a subset matching the limit.
+
 
 ### 2026-06-05: Group Appointments AI Integration (Completed)
 - **Goal**: Integrate active Group Appointments context and remaining seat counts into the Gemini AI chatbot on WhatsApp.

@@ -1,6 +1,13 @@
 # UI/UX Plan
 
-**Last Updated**: 2026-05-25
+**Last Updated**: 2026-06-06
+
+## 2026-06-06: Conversations list dynamic load more (Completed)
+- **Goal**: Implement smooth scrolling pagination for conversation cards.
+- **Updates**:
+  - Add a subtle loader at the bottom of the conversation list when loading the next page of conversations.
+  - Implement a clean scroll listener on the conversation list with standard debounced/throttled loading triggers.
+  - Maintain focus/active state smoothly without jarring visual shifts when new items are prepended or appended.
 
 ## 2026-05-25: CrmX Admin Redesign & AI Typing Indicator (Completed)
 - **CrmX Admin Sidebar**: Flat, solid white sidebar layout (`#ffffff`). Centers user's profile image avatar, name, and a green pulsing indicator with the label "نشط" (Active). Divides navigation items into semantic categories (لوحات وقوائم, أدوات الإدارة, النظام والإعدادات). Active items styled with a light blue background and a right-border highlight indicator (RTL).

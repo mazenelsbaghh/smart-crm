@@ -45,30 +45,64 @@ namespace Modules.Conversations.API
         }
 
         [HttpGet("projects/{projectId}/conversations")]
-        public async Task<IActionResult> ListConversations(Guid projectId)
+        public async Task<IActionResult> ListConversations(
+            Guid projectId,
+            [FromQuery] string status = "All",
+            [FromQuery] string search = null,
+            [FromQuery] DateTime? before = null,
+            [FromQuery] int limit = 20)
         {
-            var conversations = await _context.Conversations
-                .Where(c => c.ProjectId == projectId)
-                .Join(_context.Customers,
-                    c => c.CustomerId,
-                    cust => cust.Id,
-                    (c, cust) => new
+            IQueryable<Conversation> query = _context.Conversations
+                .Where(c => c.ProjectId == projectId);
+
+            if (!string.IsNullOrEmpty(status) && !status.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(c => c.Status == status);
+            }
+
+            var joinedQuery = query.Join(_context.Customers,
+                c => c.CustomerId,
+                cust => cust.Id,
+                (c, cust) => new
+                {
+                    Conversation = c,
+                    Customer = cust
+                });
+
+            if (!string.IsNullOrEmpty(search))
+            {
+                var searchLower = search.ToLower();
+                joinedQuery = joinedQuery.Where(x => 
+                    (x.Customer.Name != null && x.Customer.Name.ToLower().Contains(searchLower)) || 
+                    (x.Customer.PhoneNumber != null && x.Customer.PhoneNumber.Contains(searchLower)));
+            }
+
+            if (before.HasValue)
+            {
+                var beforeUtc = before.Value.ToUniversalTime();
+                joinedQuery = joinedQuery.Where(x => x.Conversation.LastMessageTimestamp < beforeUtc);
+            }
+
+            var conversations = await joinedQuery
+                .OrderByDescending(x => x.Conversation.LastMessageTimestamp)
+                .Take(limit)
+                .Select(x => new
+                {
+                    x.Conversation.Id,
+                    x.Conversation.ProjectId,
+                    x.Conversation.Status,
+                    x.Conversation.LastMessageTimestamp,
+                    x.Conversation.CreatedAt,
+                    x.Conversation.AssignedUserId,
+                    customer = new
                     {
-                        c.Id,
-                        c.ProjectId,
-                        c.Status,
-                        c.LastMessageTimestamp,
-                        c.CreatedAt,
-                        c.AssignedUserId,
-                        customer = new
-                        {
-                            id = cust.Id,
-                            name = cust.Name ?? cust.PhoneNumber,
-                            phone = cust.PhoneNumber,
-                            avatarUrl = (string)null,
-                            label = cust.Label
-                        }
-                    })
+                        id = x.Customer.Id,
+                        name = x.Customer.Name ?? x.Customer.PhoneNumber,
+                        phone = x.Customer.PhoneNumber,
+                        avatarUrl = (string)null,
+                        label = x.Customer.Label
+                    }
+                })
                 .ToListAsync();
 
             var mapped = conversations.Select(c => {
@@ -196,7 +230,7 @@ namespace Modules.Conversations.API
 
             foreach (var fu in pendingFollowUps)
             {
-                fu.Status = "Completed";
+                fu.Status = "Bypassed";
                 _context.Entry(fu).State = EntityState.Modified;
             }
 

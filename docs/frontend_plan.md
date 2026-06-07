@@ -1,12 +1,22 @@
 # Frontend Master Plan
 
-**Last Updated**: 2026-06-05
+**Last Updated**: 2026-06-06
 
 This document tracks all frontend requirements, design structures, pages, and implementation details.
 
 ---
 
 ## Chronological Log
+
+### 2026-06-06: Pagination for Conversations list (Completed)
+- **Goal**: Implement dynamic scrolling to load more conversations (latest 20 first, scroll down to load more).
+- **Updates**:
+  - Add pagination state variables (`hasMoreConvs`, `loadingMoreConvs`) in `Inbox.tsx`.
+  - Debounce the `searchQuery` state to `debouncedSearchQuery` to avoid rapid API requests.
+  - Modify `fetchConversations` to retrieve the first page (up to 20 conversations) using the active status filter and debounced search query.
+  - Implement `loadMoreConversations` that fetches conversations before the oldest timestamp of the currently loaded list.
+  - Hook scroll events on the `.convList` container to trigger loading more conversations.
+
 
 ### 2026-06-05: Support Project Renaming in Settings (Completed)
 - **Goal**: Allow the user to view and update the current project's name from the Project Settings page.

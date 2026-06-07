@@ -989,6 +989,10 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("GeminiModel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<bool>("IsGroupAppointmentsEnabled")
                         .HasColumnType("boolean");
 

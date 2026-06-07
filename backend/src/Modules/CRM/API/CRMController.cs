@@ -365,6 +365,67 @@ namespace Modules.CRM.API
             return NoContent();
         }
 
+        [HttpPut("follow-ups/{id}")]
+        public async Task<IActionResult> UpdateFollowUp(Guid id, [FromBody] UpdateFollowUpRequest request)
+        {
+            var followUp = await _context.FollowUps
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(f => f.Id == id);
+            
+            if (followUp == null) return NotFound();
+
+            if (!string.IsNullOrEmpty(request.Type))
+            {
+                followUp.Type = request.Type;
+            }
+
+            if (request.Notes != null)
+            {
+                followUp.Notes = request.Notes;
+            }
+
+            if (followUp.Type == "AppointmentReminder")
+            {
+                if (request.AppointmentTime.HasValue)
+                {
+                    followUp.AppointmentTime = DateTime.SpecifyKind(request.AppointmentTime.Value, DateTimeKind.Utc);
+                    var calculatedDueDate = followUp.AppointmentTime.Value.AddDays(-1);
+                    if (calculatedDueDate < DateTime.UtcNow)
+                    {
+                        calculatedDueDate = DateTime.UtcNow;
+                    }
+                    followUp.DueDate = calculatedDueDate;
+                }
+                else if (followUp.AppointmentTime.HasValue)
+                {
+                    var calculatedDueDate = followUp.AppointmentTime.Value.AddDays(-1);
+                    if (calculatedDueDate < DateTime.UtcNow)
+                    {
+                        calculatedDueDate = DateTime.UtcNow;
+                    }
+                    followUp.DueDate = calculatedDueDate;
+                }
+            }
+            else // Nurturing
+            {
+                if (request.DueDate.HasValue)
+                {
+                    followUp.DueDate = DateTime.SpecifyKind(request.DueDate.Value, DateTimeKind.Utc);
+                }
+                followUp.AppointmentTime = null;
+            }
+
+            if (!string.IsNullOrEmpty(request.Status))
+            {
+                followUp.Status = request.Status;
+            }
+
+            _context.Entry(followUp).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            return Ok(followUp);
+        }
+
         [HttpPost("follow-ups/{id}/send")]
         public async Task<IActionResult> SendFollowUp(Guid id)
         {
@@ -411,6 +472,7 @@ namespace Modules.CRM.API
                             {
                                 apiKey = null; // Use default system key
                             }
+                            string model = projectSettings?.GeminiModel;
 
                             var prompt = $@"أنت مساعد ذكاء اصطناعي محترف.
 لديك ملاحظة متابعة داخلية لعميل اسمه: ""{customer.Name}"".
@@ -425,7 +487,7 @@ namespace Modules.CRM.API
 - اكتب نص الرسالة فقط التي سيتم إرسالها للعميل مباشرة وبدون أي مقدمات أو شرح خارجي.
 الرسالة:";
 
-                            var generatedMessage = await geminiClient.GenerateReplyAsync(prompt, apiKey);
+                            var generatedMessage = await geminiClient.GenerateReplyAsync(prompt, apiKey, model);
                             
                             // If mock response returned, use a direct fallback
                             if (!string.IsNullOrWhiteSpace(generatedMessage) && !generatedMessage.StartsWith("[Mock"))
@@ -533,7 +595,7 @@ namespace Modules.CRM.API
 
             foreach (var fu in otherPending)
             {
-                fu.Status = "Completed";
+                fu.Status = "Bypassed";
                 _context.Entry(fu).State = EntityState.Modified;
             }
 
@@ -702,5 +764,14 @@ namespace Modules.CRM.API
         public string Notes { get; set; }
         public string? Type { get; set; }
         public DateTime? AppointmentTime { get; set; }
+    }
+
+    public class UpdateFollowUpRequest
+    {
+        public DateTime? DueDate { get; set; }
+        public string? Notes { get; set; }
+        public string? Type { get; set; }
+        public DateTime? AppointmentTime { get; set; }
+        public string? Status { get; set; }
     }
 }

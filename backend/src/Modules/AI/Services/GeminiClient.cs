@@ -9,20 +9,35 @@ namespace Modules.AI.Services
 {
     public interface IGeminiClient
     {
-        Task<string> GenerateReplyAsync(string messageContent, string apiKeyOverride = null);
-        Task<string> GenerateReplyAsync(string messageContent, byte[] fileBytes, string mimeType, string apiKeyOverride = null);
+        Task<string> GenerateReplyAsync(string messageContent, string apiKeyOverride = null, string modelOverride = null, string cachedContentId = null);
+        Task<string> GenerateReplyAsync(string messageContent, byte[] fileBytes, string mimeType, string apiKeyOverride = null, string modelOverride = null, string cachedContentId = null);
         Task<float[]> GenerateEmbeddingAsync(string text, string apiKeyOverride = null);
+        Task<int> CountTokensAsync(string messageContent, string apiKeyOverride = null, string modelOverride = null);
+        Task<string> CreateContextCacheAsync(string staticContent, string model, int ttlSeconds, string apiKeyOverride = null);
     }
 
     public class GeminiClient : IGeminiClient
     {
         private readonly HttpClient _httpClient;
         private readonly string _defaultApiKey;
+        private readonly string _defaultModel;
 
         public GeminiClient(IConfiguration configuration)
         {
             _httpClient = new HttpClient();
             _defaultApiKey = configuration["Gemini:ApiKey"];
+            _defaultModel = NormalizeModel(configuration["Gemini:Model"]);
+        }
+
+        private static string NormalizeModel(string model)
+        {
+            return model switch
+            {
+                "gemini-2.5-flash-lite" => "gemini-2.5-flash-lite",
+                "gemini-3.1-flash-lite" => "gemini-3.1-flash-lite",
+                "gemini-3.5-flash" => "gemini-3.5-flash",
+                _ => "gemini-3.5-flash"
+            };
         }
 
         public async Task<float[]> GenerateEmbeddingAsync(string text, string apiKeyOverride = null)
@@ -83,9 +98,10 @@ namespace Modules.AI.Services
             }
         }
 
-        public async Task<string> GenerateReplyAsync(string messageContent, string apiKeyOverride = null)
+        public async Task<string> GenerateReplyAsync(string messageContent, string apiKeyOverride = null, string modelOverride = null, string cachedContentId = null)
         {
             var apiKey = apiKeyOverride ?? _defaultApiKey;
+            var model = NormalizeModel(modelOverride ?? _defaultModel);
 
             // Fallback for testing environments when a real Google AI key is absent
             if (string.IsNullOrEmpty(apiKey) || apiKey == "your_gemini_api_key_here" || apiKey.StartsWith("mock_"))
@@ -285,21 +301,42 @@ namespace Modules.AI.Services
                 return $"[Mock Gemini Reply] Re: {messageContent}";
             }
 
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={apiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
-            var requestBody = new
+            object requestBody;
+            if (!string.IsNullOrEmpty(cachedContentId))
             {
-                contents = new[]
+                requestBody = new
                 {
-                    new
+                    cachedContent = cachedContentId,
+                    contents = new[]
                     {
-                        parts = new[]
+                        new
                         {
-                            new { text = messageContent }
+                            parts = new[]
+                            {
+                                new { text = messageContent }
+                            }
                         }
                     }
-                }
-            };
+                };
+            }
+            else
+            {
+                requestBody = new
+                {
+                    contents = new[]
+                    {
+                        new
+                        {
+                            parts = new[]
+                            {
+                                new { text = messageContent }
+                            }
+                        }
+                    }
+                };
+            }
 
             var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
 
@@ -326,9 +363,10 @@ namespace Modules.AI.Services
             }
         }
 
-        public async Task<string> GenerateReplyAsync(string messageContent, byte[] fileBytes, string mimeType, string apiKeyOverride = null)
+        public async Task<string> GenerateReplyAsync(string messageContent, byte[] fileBytes, string mimeType, string apiKeyOverride = null, string modelOverride = null, string cachedContentId = null)
         {
             var apiKey = apiKeyOverride ?? _defaultApiKey;
+            var model = NormalizeModel(modelOverride ?? _defaultModel);
 
             // Fallback for testing environments / mock keys
             if (string.IsNullOrEmpty(apiKey) || apiKey == "your_gemini_api_key_here" || apiKey.StartsWith("mock_"))
@@ -379,32 +417,61 @@ namespace Modules.AI.Services
                 }
 
                 // Default text fallback mock
-                return await GenerateReplyAsync(messageContent, apiKeyOverride);
+                return await GenerateReplyAsync(messageContent, apiKeyOverride, model);
             }
 
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={apiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
-            var requestBody = new
+            object requestBody;
+            if (!string.IsNullOrEmpty(cachedContentId))
             {
-                contents = new[]
+                requestBody = new
                 {
-                    new
+                    cachedContent = cachedContentId,
+                    contents = new[]
                     {
-                        parts = new object[]
+                        new
                         {
-                            new { text = messageContent },
-                            new
+                            parts = new object[]
                             {
-                                inlineData = new
+                                new { text = messageContent },
+                                new
                                 {
-                                    mimeType = mimeType,
-                                    data = Convert.ToBase64String(fileBytes)
+                                    inlineData = new
+                                    {
+                                        mimeType = mimeType,
+                                        data = Convert.ToBase64String(fileBytes)
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            };
+                };
+            }
+            else
+            {
+                requestBody = new
+                {
+                    contents = new[]
+                    {
+                        new
+                        {
+                            parts = new object[]
+                            {
+                                new { text = messageContent },
+                                new
+                                {
+                                    inlineData = new
+                                    {
+                                        mimeType = mimeType,
+                                        data = Convert.ToBase64String(fileBytes)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+            }
 
             var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
 
@@ -428,6 +495,108 @@ namespace Modules.AI.Services
             {
                 Console.WriteLine($"Error calling Gemini Multimodal API: {ex.Message}");
                 return "[AI_ERROR] Unable to reach AI engine.";
+            }
+        }
+
+        public async Task<int> CountTokensAsync(string messageContent, string apiKeyOverride = null, string modelOverride = null)
+        {
+            var apiKey = apiKeyOverride ?? _defaultApiKey;
+            var model = NormalizeModel(modelOverride ?? _defaultModel);
+
+            if (string.IsNullOrEmpty(apiKey) || apiKey == "your_gemini_api_key_here" || apiKey.StartsWith("mock_"))
+            {
+                // Simple approximation for mock key: 1 token ≈ 4 characters in mixed text
+                return messageContent.Length / 4;
+            }
+
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens?key={apiKey}";
+
+            var requestBody = new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        parts = new[]
+                        {
+                            new { text = messageContent }
+                        }
+                    }
+                }
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+
+            try
+            {
+                var response = await _httpClient.PostAsync(url, content);
+                response.EnsureSuccessStatusCode();
+
+                var responseString = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(responseString);
+                if (doc.RootElement.TryGetProperty("totalTokens", out var totalTokensProp))
+                {
+                    return totalTokensProp.GetInt32();
+                }
+                return messageContent.Length / 4;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error calling Gemini CountTokens API: {ex.Message}");
+                return messageContent.Length / 4;
+            }
+        }
+
+        public async Task<string> CreateContextCacheAsync(string staticContent, string model, int ttlSeconds, string apiKeyOverride = null)
+        {
+            var apiKey = apiKeyOverride ?? _defaultApiKey;
+            var normalizedModel = NormalizeModel(model);
+
+            if (string.IsNullOrEmpty(apiKey) || apiKey == "your_gemini_api_key_here" || apiKey.StartsWith("mock_"))
+            {
+                // Return a deterministic mock cache ID
+                return $"cachedContents/mock_cache_{Guid.NewGuid():N}";
+            }
+
+            var url = $"https://generativelanguage.googleapis.com/v1beta/cachedContents?key={apiKey}";
+
+            var requestBody = new
+            {
+                model = $"models/{normalizedModel}",
+                contents = new[]
+                {
+                    new
+                    {
+                        role = "user",
+                        parts = new[]
+                        {
+                            new { text = staticContent }
+                        }
+                    }
+                },
+                ttl = $"{ttlSeconds}s",
+                displayName = "project_kb_cache"
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+
+            try
+            {
+                var response = await _httpClient.PostAsync(url, content);
+                response.EnsureSuccessStatusCode();
+
+                var responseString = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(responseString);
+                if (doc.RootElement.TryGetProperty("name", out var nameProp))
+                {
+                    return nameProp.GetString() ?? throw new Exception("Cache creation response did not contain a name.");
+                }
+                throw new Exception("Cache creation response missing 'name' field.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error creating Gemini Context Cache: {ex.Message}");
+                throw;
             }
         }
     }

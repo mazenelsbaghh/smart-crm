@@ -128,22 +128,51 @@ export default function Inbox() {
   const [sending, setSending] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
+  const [hasMoreConvs, setHasMoreConvs] = useState(true);
+  const [loadingMoreConvs, setLoadingMoreConvs] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Refs
   const messageEndRef = useRef<HTMLDivElement>(null);
   const signalRServiceRef = useRef<SignalRService | null>(null);
   const activeConvRef = useRef<Conversation | null>(null);
+  const loadingMoreConvsRef = useRef(false);
+  const currentParamsRef = useRef({ status: 'All', search: '' });
 
   useEffect(() => {
     activeConvRef.current = activeConv;
   }, [activeConv]);
 
+  useEffect(() => {
+    currentParamsRef.current = { status: filterStatus, search: debouncedSearchQuery };
+  }, [filterStatus, debouncedSearchQuery]);
+
   // Load Conversations
   const fetchConversations = async () => {
     if (!activeProject) return;
+    const activeStatus = filterStatus;
+    const activeSearch = debouncedSearchQuery;
     try {
-      const response = await api.get<Conversation[]>(`/api/projects/${activeProject.id}/conversations`);
+      const response = await api.get<Conversation[]>(`/api/projects/${activeProject.id}/conversations`, {
+        params: {
+          status: activeStatus,
+          search: activeSearch || undefined,
+          limit: 20
+        }
+      });
+      if (activeStatus !== currentParamsRef.current.status || activeSearch !== currentParamsRef.current.search) {
+        return;
+      }
       setConversations(response.data);
+      setHasMoreConvs(response.data.length === 20);
 
       // Initialize typing status from server response
       const typingMap: Record<string, boolean> = {};
@@ -169,9 +198,46 @@ export default function Inbox() {
     }
   };
 
+  const loadMoreConversations = async () => {
+    if (!activeProject || !hasMoreConvs || loadingMoreConvsRef.current || conversations.length === 0) return;
+    loadingMoreConvsRef.current = true;
+    setLoadingMoreConvs(true);
+    const activeStatus = filterStatus;
+    const activeSearch = debouncedSearchQuery;
+    try {
+      const oldestTimestamp = conversations[conversations.length - 1].lastMessageAt;
+      const response = await api.get<Conversation[]>(`/api/projects/${activeProject.id}/conversations`, {
+        params: {
+          status: activeStatus,
+          search: activeSearch || undefined,
+          before: oldestTimestamp,
+          limit: 20
+        }
+      });
+      if (activeStatus !== currentParamsRef.current.status || activeSearch !== currentParamsRef.current.search) {
+        return;
+      }
+      if (response.data.length < 20) {
+        setHasMoreConvs(false);
+      }
+      if (response.data.length > 0) {
+        setConversations(prev => {
+          const existingIds = new Set(prev.map(c => c.id));
+          const uniqueNew = response.data.filter(c => !existingIds.has(c.id));
+          return [...prev, ...uniqueNew];
+        });
+      }
+    } catch (err) {
+      console.error('Error loading more conversations', err);
+    } finally {
+      loadingMoreConvsRef.current = false;
+      setLoadingMoreConvs(false);
+    }
+  };
+
   useEffect(() => {
     fetchConversations();
-  }, [activeProject]);
+  }, [activeProject, filterStatus, debouncedSearchQuery]);
 
   // Load Messages & Customer Details for Active Conversation
   useEffect(() => {
@@ -279,6 +345,14 @@ export default function Inbox() {
       requestAnimationFrame(() => {
         target.scrollTop = target.scrollHeight - prevScrollHeight;
       });
+    }
+  };
+
+  const handleConvListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    const isNearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 50;
+    if (isNearBottom && hasMoreConvs && !loadingMoreConvsRef.current) {
+      loadMoreConversations();
     }
   };
 
@@ -657,40 +731,49 @@ export default function Inbox() {
           </div>
         </div>
 
-        <div className={styles.convList}>
+        <div className={styles.convList} onScroll={handleConvListScroll}>
           {filteredConversations.length === 0 ? (
             <div className={styles.emptyState}>لا توجد محادثات</div>
           ) : (
-            filteredConversations.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => setActiveConv(c)}
-                className={`${styles.convCard} ${activeConv?.id === c.id ? styles.convCardActive : ''}`}
-              >
-                <div className={styles.avatar}>
-                  {c.customer.name.charAt(0).toUpperCase()}
-                </div>
-                <div className={styles.convMeta}>
-                  <div className={styles.convNameRow}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flex: 1 }}>
-                      <span className={styles.convName}>{c.customer.name}</span>
-                      {c.customer.label && (
-                        <span className={styles.convLabelBadge}>{c.customer.label}</span>
+            <>
+              {filteredConversations.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => setActiveConv(c)}
+                  className={`${styles.convCard} ${activeConv?.id === c.id ? styles.convCardActive : ''}`}
+                >
+                  <div className={styles.avatar}>
+                    {c.customer.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className={styles.convMeta}>
+                    <div className={styles.convNameRow}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flex: 1 }}>
+                        <span className={styles.convName}>{c.customer.name}</span>
+                        {c.customer.label && (
+                          <span className={styles.convLabelBadge}>{c.customer.label}</span>
+                        )}
+                      </div>
+                      <span className={styles.convTime}>
+                        {formatEgyptTime(c.lastMessageAt)}
+                      </span>
+                    </div>
+                    <div className={styles.convPreviewRow}>
+                      <span className={styles.convPhone}>{c.customer.phone}</span>
+                      {c.unreadCount > 0 && (
+                        <span className={styles.unreadBadge}>{c.unreadCount}</span>
                       )}
                     </div>
-                    <span className={styles.convTime}>
-                      {formatEgyptTime(c.lastMessageAt)}
-                    </span>
-                  </div>
-                  <div className={styles.convPreviewRow}>
-                    <span className={styles.convPhone}>{c.customer.phone}</span>
-                    {c.unreadCount > 0 && (
-                      <span className={styles.unreadBadge}>{c.unreadCount}</span>
-                    )}
                   </div>
                 </div>
-              </div>
-            ))
+              ))}
+              {loadingMoreConvs && (
+                <div style={{ padding: '12px', display: 'flex', justifyContent: 'center' }}>
+                  <PhantomLoader loading={loadingMoreConvs} label="تحميل المزيد من المحادثات...">
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)' }}>جاري تحميل محادثات إضافية...</div>
+                  </PhantomLoader>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

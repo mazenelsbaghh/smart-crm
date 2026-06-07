@@ -35,6 +35,7 @@ namespace Modules.Projects.API
                 ProjectId = project.Id,
                 AiAutoReplyEnabled = false,
                 Timezone = "Africa/Cairo",
+                GeminiModel = "gemini-3.5-flash",
                 ReplyDelay = 3,
                 MaxDailyMessages = 500
             };
@@ -87,6 +88,7 @@ namespace Modules.Projects.API
                     settings.AiAutoReplyEnabled,
                     settings.Timezone,
                     settings.GeminiApiKey,
+                    settings.GeminiModel,
                     settings.AiTonePreference,
                     settings.AiTargetAudience,
                     settings.ReplyDelay,
@@ -121,6 +123,7 @@ namespace Modules.Projects.API
                     AiAutoReplyEnabled = request.AiAutoReplyEnabled,
                     Timezone = request.Timezone ?? "Africa/Cairo",
                     GeminiApiKey = request.GeminiApiKey ?? string.Empty,
+                    GeminiModel = NormalizeGeminiModel(request.GeminiModel),
                     AiTonePreference = request.AiTonePreference ?? "العامية المصرية الروشة والصايعة",
                     AiTargetAudience = request.AiTargetAudience ?? "طلاب كورس كول سنتر يبحثون عن عمل",
                     ReplyDelay = request.ReplyDelay ?? 3,
@@ -135,6 +138,7 @@ namespace Modules.Projects.API
                 settings.AiAutoReplyEnabled = request.AiAutoReplyEnabled;
                 settings.Timezone = request.Timezone ?? "Africa/Cairo";
                 settings.GeminiApiKey = request.GeminiApiKey ?? string.Empty;
+                settings.GeminiModel = NormalizeGeminiModel(request.GeminiModel);
                 settings.AiTonePreference = request.AiTonePreference ?? "العامية المصرية الروشة والصايعة";
                 settings.AiTargetAudience = request.AiTargetAudience ?? "طلاب كورس كول سنتر يبحثون عن عمل";
                 if (request.ReplyDelay.HasValue) settings.ReplyDelay = request.ReplyDelay.Value;
@@ -145,6 +149,17 @@ namespace Modules.Projects.API
 
             await _context.SaveChangesAsync();
             return Ok(new { message = "Settings updated successfully" });
+        }
+
+        private static string NormalizeGeminiModel(string? model)
+        {
+            return model switch
+            {
+                "gemini-2.5-flash-lite" => "gemini-2.5-flash-lite",
+                "gemini-3.1-flash-lite" => "gemini-3.1-flash-lite",
+                "gemini-3.5-flash" => "gemini-3.5-flash",
+                _ => "gemini-3.5-flash"
+            };
         }
     }
 
@@ -159,6 +174,7 @@ namespace Modules.Projects.API
         public bool AiAutoReplyEnabled { get; set; }
         public string? Timezone { get; set; }
         public string? GeminiApiKey { get; set; }
+        public string? GeminiModel { get; set; }
         public string? AiTonePreference { get; set; }
         public string? AiTargetAudience { get; set; }
         public int? ReplyDelay { get; set; }
