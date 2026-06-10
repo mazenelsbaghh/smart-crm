@@ -5,6 +5,7 @@ import '../../../core/theme/typography.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../../core/services/api_client.dart';
+import '../../../core/services/push_notification_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -491,6 +492,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
             textAlign: TextAlign.right,
           ),
           const SizedBox(height: 12),
+          ValueListenableBuilder<String>(
+            valueListenable: PushNotificationService.statusNotifier,
+            builder: (context, status, child) {
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        status,
+                        style: AppTypography.body.copyWith(
+                          fontSize: 12,
+                          color: status.contains('فشل') 
+                              ? AppColors.error 
+                              : (status.contains('نشط') ? AppColors.success : AppColors.text),
+                        ),
+                        textAlign: TextAlign.left,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'حالة الإشعار:',
+                      style: AppTypography.bodyMuted.copyWith(fontSize: 12, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.right,
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
           ElevatedButton.icon(
             onPressed: _testingNotification ? null : _triggerTestNotification,
             icon: _testingNotification

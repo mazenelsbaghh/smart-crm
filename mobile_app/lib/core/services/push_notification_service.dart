@@ -12,6 +12,9 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 class PushNotificationService {
+  static final ValueNotifier<String> statusNotifier = ValueNotifier<String>('غير مسجل (Not Registered)');
+  static final ValueNotifier<String?> tokenNotifier = ValueNotifier<String?>(null);
+
   final ApiClient _apiClient;
   final String _projectId;
   final GlobalKey<NavigatorState> _navigatorKey;
@@ -29,6 +32,7 @@ class PushNotificationService {
 
   Future<void> initialize() async {
     try {
+      statusNotifier.value = 'جاري طلب الصلاحيات...';
       // 1. Request iOS permission
       final messaging = FirebaseMessaging.instance;
       final settings = await messaging.requestPermission(
@@ -38,11 +42,16 @@ class PushNotificationService {
       );
 
       print('[FCM] User notification permission status: ${settings.authorizationStatus}');
+      statusNotifier.value = 'تم الحصول على الصلاحيات. جاري جلب الرمز...';
 
       // 2. Fetch and register token
       final token = await messaging.getToken();
       if (token != null) {
+        tokenNotifier.value = token;
+        statusNotifier.value = 'جاري التسجيل في السيرفر...';
         await _registerTokenWithBackend(token);
+      } else {
+        statusNotifier.value = 'فشل: الرمز المسترجع فارغ (FCM Token is null)';
       }
 
       // 3. Listen for token refresh
@@ -89,6 +98,7 @@ class PushNotificationService {
       }
 
     } catch (e) {
+      statusNotifier.value = 'فشل التهيئة: $e';
       print('[FCM] Push Notification Service initialization failed: $e');
     }
   }
@@ -100,8 +110,10 @@ class PushNotificationService {
         '/api/projects/$_projectId/fcm-tokens',
         data: {'token': token},
       );
+      statusNotifier.value = 'مسجل ونشط (Registered & Active)';
       print('[FCM] Token registered successfully on backend.');
     } catch (e) {
+      statusNotifier.value = 'فشل التسجيل في السيرفر: $e';
       print('[FCM] Failed to register token on backend: $e');
     }
   }
