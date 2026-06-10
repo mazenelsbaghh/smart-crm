@@ -1,9 +1,11 @@
 import 'dart:async';
-import 'package:firebase_core/firebase_core.dart';
+import 'dart:io';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
-import 'api_client.dart';
+
 import '../widgets/notification_banner.dart';
+import 'api_client.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -44,7 +46,32 @@ class PushNotificationService {
       print('[FCM] User notification permission status: ${settings.authorizationStatus}');
       statusNotifier.value = 'تم الحصول على الصلاحيات. جاري جلب الرمز...';
 
+      // On iOS, wait for APNS token to be registered first before getting FCM token
+      if (Platform.isIOS) {
+        statusNotifier.value = 'جاري انتظار معرف APNS من آبل...';
+        String? apnsToken;
+        int retries = 0;
+        const maxRetries = 15; // Wait up to 15 seconds
+        
+        while (apnsToken == null && retries < maxRetries) {
+          apnsToken = await messaging.getAPNSToken();
+          if (apnsToken != null) {
+            print('[FCM] APNS Token retrieved successfully: $apnsToken');
+            break;
+          }
+          print('[FCM] APNS token not set yet. Waiting 1s... (Attempt ${retries + 1}/$maxRetries)');
+          await Future.delayed(const Duration(seconds: 1));
+          retries++;
+        }
+        
+        if (apnsToken == null) {
+          print('[FCM] Failed to retrieve APNS token after $maxRetries seconds.');
+          statusNotifier.value = 'فشل: لم يتم تعيين معرف APNS من آبل';
+        }
+      }
+
       // 2. Fetch and register token
+      statusNotifier.value = 'تم الحصول على الصلاحيات. جاري جلب الرمز...';
       final token = await messaging.getToken();
       if (token != null) {
         tokenNotifier.value = token;
