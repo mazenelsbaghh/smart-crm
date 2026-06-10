@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -74,6 +75,8 @@ class _MyAppState extends State<MyApp> {
   late final DashboardBloc _dashboardBloc;
 
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  StreamSubscription<AuthState>? _authSubscription;
+  String? _lastInitializedProjectId;
 
   @override
   void initState() {
@@ -136,10 +139,38 @@ class _MyAppState extends State<MyApp> {
         _bookingsBloc.add(BookingsFetchRequested());
       }
     };
+
+    _authSubscription = _authBloc.stream.listen(_handleAuthStateChange);
+    _handleAuthStateChange(_authBloc.state);
+  }
+
+  void _handleAuthStateChange(AuthState authState) {
+    if (authState is AuthAuthenticated) {
+      final projectId = authState.activeProject.id;
+      if (_lastInitializedProjectId != projectId) {
+        _lastInitializedProjectId = projectId;
+        _signalRService.start(projectId: projectId);
+
+        final pushService = PushNotificationService(
+          apiClient: _apiClient,
+          projectId: projectId,
+          navigatorKey: _navigatorKey,
+          onNavigate: (route) => _router.go(route),
+        );
+        pushService.initialize();
+      }
+    } else if (authState is AuthUnauthenticated) {
+      if (_lastInitializedProjectId != null) {
+        _lastInitializedProjectId = null;
+        _signalRService.stop();
+        _router.go('/');
+      }
+    }
   }
 
   @override
   void dispose() {
+    _authSubscription?.cancel();
     _authBloc.close();
     _inboxBloc.close();
     _crmBloc.close();
@@ -166,28 +197,7 @@ class _MyAppState extends State<MyApp> {
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
-          // Wrap with BlocListener to handle live SignalR triggers on authentication changes
-          return BlocListener<AuthBloc, AuthState>(
-            listener: (context, authState) {
-              if (authState is AuthAuthenticated) {
-                _signalRService.start(projectId: authState.activeProject.id);
-                
-                // Initialize FCM Push Notifications
-                final pushService = PushNotificationService(
-                  apiClient: _apiClient,
-                  projectId: authState.activeProject.id,
-                  navigatorKey: _navigatorKey,
-                  onNavigate: (route) => _router.go(route),
-                );
-                pushService.initialize();
-                
-              } else if (authState is AuthUnauthenticated) {
-                _signalRService.stop();
-                context.go('/');
-              }
-            },
-            child: AppShell(navigationShell: navigationShell),
-          );
+          return AppShell(navigationShell: navigationShell);
         },
         branches: [
           StatefulShellBranch(
