@@ -171,7 +171,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
 
   Widget _buildMessageBubble(Message msg) {
     final format = DateFormat('hh:mm a');
-    final timeStr = format.format(msg.createdAt);
+    final timeStr = format.format(msg.createdAt.toLocal());
 
     final isCustomer = msg.senderType == SenderType.Customer;
     final isAI = msg.senderType == SenderType.AI;

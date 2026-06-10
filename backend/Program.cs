@@ -131,6 +131,9 @@ builder.Services.AddScoped<Modules.Audit.Services.IAuditService, Modules.Audit.S
 // Register System Health Services
 builder.Services.AddScoped<Modules.SystemHealth.Services.ISystemHealthService, Modules.SystemHealth.Services.SystemHealthService>();
 
+// Register Gemini Mock Handler
+builder.Services.AddSingleton<Modules.AI.Services.IGeminiMockHandler, Modules.AI.Services.GeminiMockHandler>();
+
 // Register Gemini Client
 builder.Services.AddSingleton<Modules.AI.Services.IGeminiClient, Modules.AI.Services.GeminiClient>();
 

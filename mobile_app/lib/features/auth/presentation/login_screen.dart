@@ -18,6 +18,19 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = context.read<AuthBloc>().state;
+      if (state is AuthAuthenticated) {
+        context.go('/dashboard');
+      } else if (state is AuthProjectSelectionRequired) {
+        context.go('/project-select');
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();

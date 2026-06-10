@@ -40,6 +40,13 @@ class BookingsBookingCancelRequested extends BookingsEvent {
   List<Object?> get props => [bookingId];
 }
 
+class BookingsToggleRequested extends BookingsEvent {
+  final String id;
+  const BookingsToggleRequested(this.id);
+  @override
+  List<Object?> get props => [id];
+}
+
 // States
 class BookingsState extends Equatable {
   final List<GroupAppointment> appointments;
@@ -80,6 +87,7 @@ class BookingsBloc extends Bloc<BookingsEvent, BookingsState> {
     on<BookingsDeleteRequested>(_onDelete);
     on<BookingsBookingRequested>(_onBook);
     on<BookingsBookingCancelRequested>(_onCancelBooking);
+    on<BookingsToggleRequested>(_onToggle);
   }
 
   Future<void> _onFetch(BookingsFetchRequested event, Emitter<BookingsState> emit) async {
@@ -135,6 +143,38 @@ class BookingsBloc extends Bloc<BookingsEvent, BookingsState> {
       emit(state.copyWith(appointments: list, loading: false));
     } catch (e) {
       emit(state.copyWith(loading: false, error: () => e.toString()));
+    }
+  }
+
+  Future<void> _onToggle(BookingsToggleRequested event, Emitter<BookingsState> emit) async {
+    final originalAppointments = state.appointments;
+
+    // Optimistically toggle the isActive status of the clicked group
+    final updatedList = state.appointments.map((a) {
+      if (a.id == event.id) {
+        return GroupAppointment(
+          id: a.id,
+          projectId: a.projectId,
+          name: a.name,
+          dateTime: a.dateTime,
+          capacity: a.capacity,
+          isActive: !a.isActive,
+          days: a.days,
+          mode: a.mode,
+          bookings: a.bookings,
+        );
+      }
+      return a;
+    }).toList();
+
+    emit(state.copyWith(appointments: updatedList));
+
+    try {
+      await _bookingsRepository.toggleAppointment(event.id);
+      final list = await _bookingsRepository.getAppointments();
+      emit(state.copyWith(appointments: list));
+    } catch (e) {
+      emit(state.copyWith(appointments: originalAppointments, error: () => e.toString()));
     }
   }
 }

@@ -81,7 +81,10 @@ class _MyAppState extends State<MyApp> {
     _inboxBloc = InboxBloc(chatRepository: _chatRepository);
     _crmBloc = CrmBloc(crmRepository: _crmRepository);
     _bookingsBloc = BookingsBloc(bookingsRepository: _bookingsRepository);
-    _dashboardBloc = DashboardBloc(dashboardRepository: _dashboardRepository);
+    _dashboardBloc = DashboardBloc(
+      dashboardRepository: _dashboardRepository,
+      crmRepository: _crmRepository,
+    );
 
     // Bind SignalR callbacks to Bloc events
     _signalRService.onMessageReceived = (msg) {
@@ -214,7 +217,7 @@ class _MyAppState extends State<MyApp> {
           title: 'Smart CRM',
           debugShowCheckedModeBanner: false,
           theme: ThemeData(
-            brightness: Brightness.dark,
+            brightness: Brightness.light,
             scaffoldBackgroundColor: AppColors.background,
             primaryColor: AppColors.primary,
           ),

@@ -120,3 +120,28 @@ mobile_app/
 - Verify CRM operations (edit customer notes, tags, move pipeline stages).
 - Validate Group Appointments calendar bookings and slots display.
 - Validate Analytics dashboard charts display.
+
+## Mobile App Hardening & Parity Enhancements (2026-06-10)
+
+### 1. Default Light Theme Mode
+- Change `AppColors` in `lib/core/theme/colors.dart` to a clean light slate color palette (white background, slate text, professional teal primary).
+- Update the MaterialApp config in `lib/main.dart` to use `Brightness.light`.
+
+### 2. Auto-Login Check on Launch
+- Add a post-frame check in `LoginScreen`'s `initState` to immediately redirect authenticated users, preventing them from getting stuck on the login screen.
+
+### 3. Current Groups List & Chronological Sorting
+- Re-purpose `BookingsCalendarScreen` to show the list of all current groups (weekly sessions) instead of the TableCalendar view.
+- Sort events chronologically by time.
+- Display group type, days/time, bookings/capacity occupancy ratio progress bar, and status badge (Active vs. Full).
+- Add a subscribers button showing a list of registered customers.
+- Update `BookingFormDialog` to allow inputting days and picking a specific date/time.
+
+### 4. Real-time Dashboard CRM Stats
+- Inject `CrmRepository` into `DashboardBloc`.
+- Fetch active customers and deals to calculate and display: Total Customers, Open Deals, Closed Won Revenue, and Average Lead Score.
+
+### 5. Settings Screen Parity
+- Add all 10 settings fields to `SettingsScreen` matching the Next.js web settings page.
+- Fix cache staleness in `AuthBloc._onCheckStatus` by querying the latest project details from the network.
+

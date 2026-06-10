@@ -55,6 +55,27 @@ class MockAuthRepository implements AuthRepository {
   Future<Project?> getActiveProject() async => null;
 
   @override
+  Future<Project> getProject(String id) async {
+    return Project(
+      id: id,
+      name: 'Test Project',
+      whatsappConnected: false,
+      whatsappNumber: null,
+      settings: ProjectSettings(
+        aiAutoReplyEnabled: false,
+        timezone: 'UTC',
+        geminiApiKey: '',
+        geminiModel: 'gemini-1.5-flash',
+        aiTonePreference: '',
+        aiTargetAudience: '',
+        replyDelay: 3,
+        maxDailyMessages: 100,
+        isGroupAppointmentsEnabled: false,
+      ),
+    );
+  }
+
+  @override
   Future<User?> getAuthenticatedUser() async {
     return User(id: '123', email: 'test@example.com', fullName: 'Test User', role: 'Agent');
   }

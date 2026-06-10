@@ -1,12 +1,41 @@
 # Frontend Master Plan
 
-**Last Updated**: 2026-06-06
+**Last Updated**: 2026-06-10
 
 This document tracks all frontend requirements, design structures, pages, and implementation details.
 
 ---
 
 ## Chronological Log
+
+### 2026-06-10: Dashboard Connection Status, Timezone Correction & Bookings Summary Cards (Completed)
+- **Goal**: Fix WhatsApp connection status on the Dashboard, correct timezone offset for inbox messages, and add reservation summary cards to the Bookings screen.
+- **Updates**:
+  - Added dynamic WhatsApp status query to `DashboardRepository` checking `/api/whatsapp/session/status?projectId={projectId}`.
+  - Updated `DashboardBloc` and `DashboardState` to fetch and preserve the current session connection state.
+  - Modified `DashboardScreen` to reactively render connection status dot (green for connected, red for disconnected) directly from the bloc state.
+  - Implemented client-side timezone correction by applying `.toLocal()` on all inbox messages, conversation lists, and group booking times.
+  - Introduced 3 summary metrics cards at the top of `BookingsCalendarScreen` showing occupied bookings count, percentage occupancy, and active-to-total groups ratio.
+
+### 2026-06-10: Mobile App Hardening & Parity Enhancements (Completed)
+- **Goal**: Harden the Flutter Web/Mobile App to achieve 100% settings parity with the website, add light theme default, resolve settings toggle cache staleness, sort calendar events, and transition to a list of current groups.
+- **Updates**:
+  - Configured Light Mode as the default theme mode by updating `AppColors` to a light slate palette and configuring MaterialApp brightness to `Brightness.light`.
+  - Added a post-frame check on `LoginScreen` to bypass authentication and route immediately to `/dashboard` if user session is active.
+  - Sorted bookings/group appointments chronologically by time.
+  - Replaced TableCalendar on Bookings screen with a list of Current Groups, displaying occupancy percentage progress indicators, status badges, and action controls (Delete, Toggle, and a bottom sheet detailing Registered Subscribers).
+  - Integrated `CrmRepository` in `DashboardBloc` to compute and display real-time CRM KPI stats (Total Customers, Active Deals, Closed Won Revenue, Average Lead Score) on the Home Screen.
+  - Redesigned `SettingsScreen` to support all 10 settings fields, matching the Next.js web client.
+  - Updated `AuthBloc` status check to query the latest project settings from the API, eliminating cache staleness.
+
+### 2026-06-10: Complete Flutter Mobile Application Port (Active Plan)
+- **Goal**: Port the complete Next.js CRM frontend to a Flutter mobile application, ensuring absolute feature parity, robust state management with BLoC, secure session handling, and real-time messaging using SignalR.
+- **Updates**:
+  - Scaffold a new Flutter project in `mobile_app/`.
+  - Design visual screens conforming to `impeccable` dark/light design system guidelines (tinted neutrals, 60fps animations, paired Outfit/Inter fonts).
+  - Implement BLoC controllers for state synchronization, and `dio` API client with automatic token refresh.
+  - Port all features: Login/Register, Project Selector, Dashboard, WhatsApp Inbox, CRM directory, Deals pipeline board, and Bookings calendar.
+  - Implement full unit and widget test suites.
 
 ### 2026-06-06: Pagination for Conversations list (Completed)
 - **Goal**: Implement dynamic scrolling to load more conversations (latest 20 first, scroll down to load more).

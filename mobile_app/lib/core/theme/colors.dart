@@ -4,20 +4,20 @@ class AppColors {
   AppColors._();
 
   // Primary Cyber Accents
-  static const Color primary = Color(0xFF00F3FF); // Vibrant Cyber Cyan
-  static const Color secondary = Color(0xFFFF007F); // Vibrant Hot Pink
+  static const Color primary = Color(0xFF00838F); // Professional Dark Teal/Cyan for Light Mode readability
+  static const Color secondary = Color(0xFFD81B60); // Vibrant Magenta/Pink for details
 
-  // Neutrals (Space Navy Tinted)
-  static const Color background = Color(0xFF0A0E17); // Midnight Space Background
-  static const Color surface = Color(0xFF121824); // Slate Slate Surface
-  static const Color border = Color(0xFF1E293B); // Dark Slate Border
-  static const Color text = Color(0xFFF8FAFC); // Slate White
-  static const Color textMuted = Color(0xFF94A3B8); // Slate Muted
+  // Neutrals (Slate Light Theme)
+  static const Color background = Color(0xFFF8FAFC); // Clean Light Slate Background
+  static const Color surface = Color(0xFFFFFFFF); // Pure White Surface
+  static const Color border = Color(0xFFE2E8F0); // Slate 200 Border
+  static const Color text = Color(0xFF0F172A); // Slate 900 Text
+  static const Color textMuted = Color(0xFF64748B); // Slate 500 Muted Text
 
   // Semantic Statuses
-  static const Color success = Color(0xFF10B981); // Emerald Success
-  static const Color warning = Color(0xFFF59E0B); // Amber Warning
-  static const Color error = Color(0xFFEF4444); // Vibrant Red Error
+  static const Color success = Color(0xFF059669); // Green Success
+  static const Color warning = Color(0xFFD97706); // Amber Warning
+  static const Color error = Color(0xFFDC2626); // Red Error
 
   // Glow Helpers
   static BoxShadow neonGlow({Color color = primary}) {

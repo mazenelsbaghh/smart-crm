@@ -215,7 +215,7 @@ class _InboxListScreenState extends State<InboxListScreen> {
 
   Widget _buildConversationCard(BuildContext context, Conversation conv) {
     final format = DateFormat('hh:mm a');
-    final timeStr = format.format(conv.lastMessageAt);
+    final timeStr = format.format(conv.lastMessageAt.toLocal());
 
     return InkWell(
       onTap: () {

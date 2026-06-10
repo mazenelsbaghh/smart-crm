@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 using Modules.AI.Services;
 using Shared.Events;
 using Shared.Infrastructure;
@@ -20,70 +21,23 @@ namespace Modules.AI.Workers
         private readonly IServiceProvider _serviceProvider;
         private readonly IAIMarketingBrain _aiMarketingBrain;
         private readonly IEventBus _eventBus;
+        private readonly ILogger<AIReplyWorker> _logger;
 
         public AIReplyWorker(
             IServiceProvider serviceProvider,
             IAIMarketingBrain aiMarketingBrain,
-            IEventBus eventBus)
+            IEventBus eventBus,
+            ILogger<AIReplyWorker> logger)
         {
             _serviceProvider = serviceProvider;
             _aiMarketingBrain = aiMarketingBrain;
             _eventBus = eventBus;
+            _logger = logger;
         }
 
-        private static bool IsPricingQuestion(string content)
+        private async Task ApplyKnowledgePricingGuardAsync(AppDbContext dbContext, Guid projectId, string customerMessage, MarketingAnalysisResult analysisResult)
         {
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                return false;
-            }
-
-            return Regex.IsMatch(
-                content,
-                "(سعر|اسعار|أسعار|الاسعار|الأسعار|بكام|تكلفة|تكلفه|قسط|اقساط|أقساط|دفع|price|cost|fees)",
-                RegexOptions.IgnoreCase);
-        }
-
-        private static string? BuildPricingReplyFromKnowledgeText(string knowledgeText)
-        {
-            if (string.IsNullOrWhiteSpace(knowledgeText))
-            {
-                return null;
-            }
-
-            var monthlyMatch = Regex.Match(
-                knowledgeText,
-                @"الاشتراك\s+الشهري\s*:\s*([^\n\r.]+)",
-                RegexOptions.IgnoreCase);
-            var cashMatch = Regex.Match(
-                knowledgeText,
-                @"عرض\s+الكاش[^\n\r:]*:\s*([^\n\r.]+)",
-                RegexOptions.IgnoreCase);
-
-            if (!monthlyMatch.Success && !cashMatch.Success)
-            {
-                return null;
-            }
-
-            var monthly = monthlyMatch.Success ? monthlyMatch.Groups[1].Value.Trim() : null;
-            var cash = cashMatch.Success ? cashMatch.Groups[1].Value.Trim() : null;
-
-            if (!string.IsNullOrEmpty(monthly) && !string.IsNullOrEmpty(cash))
-            {
-                return $"أكيد يا فندم، الأسعار عندنا واضحة:\n\nالاشتراك الشهري: {monthly}.\nالكاش للكورس كامل: {cash}.\n\nتحب أمشي مع حضرتك على نظام الشهري ولا الكاش؟";
-            }
-
-            if (!string.IsNullOrEmpty(monthly))
-            {
-                return $"أكيد يا فندم، الاشتراك الشهري عندنا: {monthly}.\n\nتحب أعرفك المواعيد المتاحة؟";
-            }
-
-            return $"أكيد يا فندم، الكاش للكورس كامل: {cash}.\n\nتحب أعرفك المواعيد المتاحة؟";
-        }
-
-        private static async Task ApplyKnowledgePricingGuardAsync(AppDbContext dbContext, Guid projectId, string customerMessage, MarketingAnalysisResult analysisResult)
-        {
-            if (!IsPricingQuestion(customerMessage))
+            if (!PricingGuard.IsPricingQuestion(customerMessage))
             {
                 return;
             }
@@ -94,7 +48,7 @@ namespace Modules.AI.Workers
                 .Select(d => d.Content)
                 .ToListAsync();
 
-            var pricingReply = BuildPricingReplyFromKnowledgeText(string.Join("\n\n", knowledgeText));
+            var pricingReply = PricingGuard.BuildPricingReplyFromKnowledge(string.Join("\n\n", knowledgeText));
             if (string.IsNullOrWhiteSpace(pricingReply))
             {
                 return;
@@ -106,7 +60,7 @@ namespace Modules.AI.Workers
             analysisResult.ReplyContent = pricingReply;
             analysisResult.Confidence = Math.Max(analysisResult.Confidence, 0.99);
             analysisResult.SuggestedReaction ??= "😮";
-            Console.WriteLine("[AIReplyWorker] Applied knowledge pricing guard to prevent hallucinated pricing.");
+            _logger.LogInformation("Applied knowledge pricing guard to prevent hallucinated pricing.");
         }
 
         public async Task HandleAsync(MessageAggregatedEvent @event)
@@ -246,9 +200,9 @@ namespace Modules.AI.Workers
                             }
                         }
                     }
-                    catch (Exception guardEx)
+                    catch (Exception guardEx) when (guardEx is not System.Data.Common.DbException && !guardEx.ToString().Contains("EntityFrameworkCore"))
                     {
-                        Console.WriteLine($"[AIReplyWorker] Failed to query pricing/location chunks: {guardEx.Message}");
+                        _logger.LogWarning(guardEx, "Failed to query pricing/location chunks");
                     }
 
                     if (allChunks.Any())
@@ -258,9 +212,9 @@ namespace Modules.AI.Workers
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
             {
-                Console.WriteLine($"[AIReplyWorker] Failed to query company brain or process context cache: {ex.Message}");
+                _logger.LogWarning(ex, "Failed to query company brain or process context cache");
             }
 
             // Inject Group Appointments context if enabled
@@ -275,29 +229,7 @@ namespace Modules.AI.Workers
                         .ToListAsync();
 
                     var groupsContextList = new System.Collections.Generic.List<string>();
-                    TimeZoneInfo projectZone;
-                    try
-                    {
-                        projectZone = TimeZoneInfo.FindSystemTimeZoneById(settings.Timezone);
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            projectZone = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo");
-                        }
-                        catch
-                        {
-                            try
-                            {
-                                projectZone = TimeZoneInfo.FindSystemTimeZoneById("Egypt Standard Time");
-                            }
-                            catch
-                            {
-                                projectZone = TimeZoneInfo.Utc;
-                            }
-                        }
-                    }
+                    TimeZoneInfo projectZone = TimezoneHelper.GetTimeZone(settings.Timezone);
 
                     // Filter out full groups - don't show them to the AI at all
                     var availableGroups = activeGroups.Where(g => g.Bookings.Count < g.Capacity).ToList();
@@ -419,9 +351,9 @@ namespace Modules.AI.Workers
                     }
                     Console.WriteLine($"[AIReplyWorker] Injected Group Appointments context (Found {activeGroups.Count} active, {availableGroups.Count} with slots).");
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
                 {
-                    Console.WriteLine($"[AIReplyWorker] Failed to query active group appointments for AI context: {ex.Message}");
+                    _logger.LogWarning(ex, "Failed to query active group appointments for AI context");
                 }
             }
 
@@ -460,9 +392,9 @@ namespace Modules.AI.Workers
                         Console.WriteLine($"[AIReplyWorker] Injected {historyMessages.Count} history messages into AI prompt context.");
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
                 {
-                    Console.WriteLine($"[AIReplyWorker] Failed to query chat history: {ex.Message}");
+                    _logger.LogWarning(ex, "Failed to query chat history");
                 }
             }
 
@@ -488,9 +420,9 @@ namespace Modules.AI.Workers
                         Console.WriteLine($"[AIReplyWorker] Injected Customer Memory: {customerMemory}");
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
                 {
-                    Console.WriteLine($"[AIReplyWorker] Failed to query customer memory: {ex.Message}");
+                    _logger.LogWarning(ex, "Failed to query customer memory");
                 }
             }
 
@@ -504,9 +436,9 @@ namespace Modules.AI.Workers
                     .Distinct()
                     .ToArrayAsync();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
             {
-                Console.WriteLine($"[AIReplyWorker] Failed to query existing labels: {ex.Message}");
+                _logger.LogWarning(ex, "Failed to query existing labels");
             }
 
             // Construct customer profile description to probe for missing data
@@ -696,9 +628,9 @@ namespace Modules.AI.Workers
                         Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Invalid GUID '{analysisResult.SuggestedGroupBookingId}'.");
                     }
                 }
-                catch (Exception bookingEx)
+                catch (Exception bookingEx) when (bookingEx is not System.Data.Common.DbException && !bookingEx.ToString().Contains("EntityFrameworkCore"))
                 {
-                    Console.WriteLine($"[AIReplyWorker] Auto-booking error: {bookingEx.Message}");
+                    _logger.LogWarning(bookingEx, "Auto-booking error");
                 }
             }
 
@@ -847,9 +779,9 @@ namespace Modules.AI.Workers
                 await dbContext.SaveChangesAsync();
                 Console.WriteLine($"[AIReplyWorker] Deleted {pending.Count} pending follow-ups for skipped customer {customerId}.");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
             {
-                Console.WriteLine($"[AIReplyWorker] Error completing/deleting follow-ups: {ex.Message}");
+                _logger.LogWarning(ex, "Error completing/deleting follow-ups");
             }
         }
     }

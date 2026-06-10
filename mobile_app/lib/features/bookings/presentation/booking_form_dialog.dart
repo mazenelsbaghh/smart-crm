@@ -6,9 +6,9 @@ import '../../../core/theme/typography.dart';
 import '../bloc/bookings_bloc.dart';
 
 class BookingFormDialog extends StatefulWidget {
-  final DateTime selectedDate;
+  final DateTime? initialDate;
 
-  const BookingFormDialog({Key? key, required this.selectedDate}) : super(key: key);
+  const BookingFormDialog({Key? key, this.initialDate}) : super(key: key);
 
   @override
   State<BookingFormDialog> createState() => _BookingFormDialogState();
@@ -18,14 +18,23 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _capacityController = TextEditingController(text: '10');
+  final _daysController = TextEditingController(text: 'أحد، ثلاثاء');
   
-  TimeOfDay _selectedTime = const TimeOfDay(hour: 10, minute: 0);
+  late DateTime _selectedDate;
+  TimeOfDay _selectedTime = const TimeOfDay(hour: 18, minute: 0);
   String _selectedMode = 'offline';
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDate = widget.initialDate ?? DateTime.now();
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
     _capacityController.dispose();
+    _daysController.dispose();
     super.dispose();
   }
 
@@ -39,75 +48,119 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
       ),
       title: Text(
         'جدولة موعد جديد',
-        style: AppTypography.title.copyWith(fontWeight: FontWeight.bold),
+        style: AppTypography.title.copyWith(fontWeight: FontWeight.bold, fontSize: 18),
         textAlign: TextAlign.center,
       ),
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildTextField('عنوان الموعد / اسم الجلسة', _nameController),
-            const SizedBox(height: 16),
-            _buildTextField('السعة الاستيعابية (عدد المقاعد)', _capacityController, keyboardType: TextInputType.number),
-            const SizedBox(height: 16),
-            Text(
-              'وقت البدء',
-              style: AppTypography.label.copyWith(color: AppColors.text),
-              textAlign: TextAlign.right,
-            ),
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: () async {
-                final time = await showTimePicker(
-                  context: context,
-                  initialTime: _selectedTime,
-                );
-                if (time != null) {
-                  setState(() {
-                    _selectedTime = time;
-                  });
-                }
-              },
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.background,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Icon(Icons.access_time, color: AppColors.primary),
-                    Text(
-                      _selectedTime.format(context),
-                      style: AppTypography.body,
-                    ),
-                  ],
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildTextField('عنوان الموعد / اسم الجلسة', _nameController, hintText: 'مثال: في السنتر (Offline)'),
+              const SizedBox(height: 12),
+              _buildTextField('أيام الانعقاد', _daysController, hintText: 'مثال: سبت، إثنين، أربعاء'),
+              const SizedBox(height: 12),
+              _buildTextField('السعة الاستيعابية (عدد المقاعد)', _capacityController, keyboardType: TextInputType.number),
+              const SizedBox(height: 12),
+              Text(
+                'تاريخ البدء',
+                style: AppTypography.label.copyWith(color: AppColors.text),
+                textAlign: TextAlign.right,
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate,
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (date != null) {
+                    setState(() {
+                      _selectedDate = date;
+                    });
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.background,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Icon(Icons.calendar_today, color: AppColors.primary, size: 18),
+                      Text(
+                        DateFormat('yyyy-MM-dd').format(_selectedDate),
+                        style: AppTypography.body,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'نوع اللقاء',
-              style: AppTypography.label.copyWith(color: AppColors.text),
-              textAlign: TextAlign.right,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildModeButton('online', 'أونلاين (فيديو)'),
+              const SizedBox(height: 12),
+              Text(
+                'وقت البدء',
+                style: AppTypography.label.copyWith(color: AppColors.text),
+                textAlign: TextAlign.right,
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () async {
+                  final time = await showTimePicker(
+                    context: context,
+                    initialTime: _selectedTime,
+                  );
+                  if (time != null) {
+                    setState(() {
+                      _selectedTime = time;
+                    });
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.background,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Icon(Icons.access_time, color: AppColors.primary, size: 18),
+                      Text(
+                        _selectedTime.format(context),
+                        style: AppTypography.body,
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildModeButton('offline', 'حضوري (بالموقع)'),
-                ),
-              ],
-            ),
-          ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'نوع اللقاء',
+                style: AppTypography.label.copyWith(color: AppColors.text),
+                textAlign: TextAlign.right,
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildModeButton('online', 'أونلاين (فيديو)'),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildModeButton('offline', 'حضوري (بالموقع)'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -121,11 +174,10 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
         ElevatedButton(
           onPressed: () {
             if (_formKey.currentState!.validate()) {
-              final date = widget.selectedDate;
               final startDateTime = DateTime(
-                date.year,
-                date.month,
-                date.day,
+                _selectedDate.year,
+                _selectedDate.month,
+                _selectedDate.day,
                 _selectedTime.hour,
                 _selectedTime.minute,
               );
@@ -135,7 +187,7 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
                 'dateTime': startDateTime.toUtc().toIso8601String(),
                 'capacity': int.tryParse(_capacityController.text) ?? 10,
                 'mode': _selectedMode,
-                'days': '',
+                'days': _daysController.text.trim(),
                 'isActive': true,
               };
 
@@ -145,7 +197,7 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
           },
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primary,
-            foregroundColor: AppColors.background,
+            foregroundColor: AppColors.surface,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
@@ -160,6 +212,7 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
     String label,
     TextEditingController controller, {
     TextInputType keyboardType = TextInputType.text,
+    String? hintText,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -169,16 +222,18 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
           style: AppTypography.label.copyWith(color: AppColors.text),
           textAlign: TextAlign.right,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         TextFormField(
           controller: controller,
           keyboardType: keyboardType,
           style: AppTypography.body,
           textAlign: TextAlign.right,
           decoration: InputDecoration(
+            hintText: hintText,
+            hintStyle: AppTypography.bodyMuted.copyWith(fontSize: 12),
             filled: true,
             fillColor: AppColors.background,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: const BorderSide(color: AppColors.border),
@@ -212,9 +267,9 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
         });
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: isActive ? AppColors.primary.withOpacity(0.12) : AppColors.background,
+          color: isActive ? AppColors.primary.withOpacity(0.08) : AppColors.background,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: isActive ? AppColors.primary : AppColors.border,
@@ -227,6 +282,7 @@ class _BookingFormDialogState extends State<BookingFormDialog> {
             style: AppTypography.body.copyWith(
               color: isActive ? AppColors.primary : AppColors.text,
               fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+              fontSize: 12,
             ),
           ),
         ),

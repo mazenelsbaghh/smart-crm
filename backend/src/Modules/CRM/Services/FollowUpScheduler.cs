@@ -105,8 +105,8 @@ namespace Modules.CRM.Services
                         {
                             try
                             {
-                                var geminiClient = scope.ServiceProvider.GetService(typeof(Modules.AI.Services.IGeminiClient)) as Modules.AI.Services.IGeminiClient;
-                                if (geminiClient != null)
+                                var aiMarketingBrain = scope.ServiceProvider.GetService(typeof(Modules.AI.Services.IAIMarketingBrain)) as Modules.AI.Services.IAIMarketingBrain;
+                                if (aiMarketingBrain != null)
                                 {
                                     var projectSettings = await dbContext.ProjectSettings
                                         .IgnoreQueryFilters()
@@ -118,29 +118,11 @@ namespace Modules.CRM.Services
                                     }
                                     string model = projectSettings?.GeminiModel;
 
-                                    var prompt = $@"أنت مساعد ذكاء اصطناعي محترف.
-لديك ملاحظة متابعة داخلية لعميل اسمه: ""{customer.Name}"".
-ملاحظة المتابعة الداخلية هي: ""{followUp.Notes}""
-
-قم بصياغة رسالة واتساب قصيرة وودية ومباشرة باللغة العربية (اللهجة المصرية الودية والمهنية) موجهة مباشرة للعميل بناءً على هذه الملاحظة.
-- يجب أن تكون الرسالة موجهة مباشرة للعميل بصيغة المخاطب (مثال: ""يا فندم""، ""حضرتك"").
-- لا تخلط أبداً بين النداء غير الرسمي والنداء الرسمي (مثال: لا تقل ""يا مارفن يا فندم""، بل قل ""يا فندم"" أو ""أستاذ مارفن"").
-- لا تستخدم تعبيرات عامية غير رسمية أو شعبية مثل ""بص يا سيدي"" أو ""من عيوني"" أو ""يا غالي"" أو ""يا صاحبي"".
-- لا تذكر أبداً اسم الموظف أو ملاحظات إدارية.
-- لا تضع أي توقيع أو علامات ترقيم زائدة.
-- اكتب نص الرسالة فقط التي سيتم إرسالها للعميل مباشرة وبدون أي مقدمات أو شرح خارجي.
-الرسالة:";
-
-                                    var generatedMessage = await geminiClient.GenerateReplyAsync(prompt, apiKey, model);
-                                    
-                                    if (!string.IsNullOrWhiteSpace(generatedMessage) && !generatedMessage.StartsWith("[Mock"))
-                                    {
-                                        messageContent = generatedMessage.Trim();
-                                    }
-                                    else
-                                    {
-                                        messageContent = $"مرحباً يا فندم، كنا حابين نتابع مع حضرتك بخصوص ميعاد المجموعة الأونلاين والسيشن التجريبية.";
-                                    }
+                                    messageContent = await aiMarketingBrain.RewriteFollowUpNotesAsync(
+                                        customer.Name,
+                                        followUp.Notes,
+                                        apiKey,
+                                        model);
                                 }
                                 else
                                 {

@@ -201,3 +201,17 @@
 5. Add User Story 4 (Bookings Calendar) -> Service Scheduling Ready!
 6. Add User Story 5 (Dashboard & Settings) -> Admin Suite Ready!
 7. Complete Polish Phase -> Hardened Release Ready!
+
+---
+
+## Phase 9: Hardening & Parity Enhancements
+
+- [x] T040 Implement auto-login post-frame check on `LoginScreen` in `mobile_app/lib/features/auth/presentation/login_screen.dart`
+- [x] T041 Change theme mode to Light Theme by default in `mobile_app/lib/core/theme/colors.dart` and `mobile_app/lib/main.dart`
+- [x] T042 Sort bookings/events list chronologically in `mobile_app/lib/features/bookings/presentation/bookings_calendar_screen.dart`
+- [x] T043 Redesign booking screen to display list of Current Groups instead of a calendar view, including capacity occupancy ratio progress indicators and action buttons in `mobile_app/lib/features/bookings/presentation/bookings_calendar_screen.dart`
+- [x] T044 Add Days selection and Date/Time picker in `mobile_app/lib/features/bookings/presentation/booking_form_dialog.dart`
+- [x] T045 Integrate `CrmRepository` in `DashboardBloc` and calculate real-time CRM stats (total customers, active deals, closed won revenue, average lead score) in `mobile_app/lib/features/dashboard/bloc/dashboard_bloc.dart` and `mobile_app/lib/features/dashboard/presentation/dashboard_screen.dart`
+- [x] T046 Enhance settings screen to support all 10 project settings fields matching the web client in `mobile_app/lib/features/settings/presentation/settings_screen.dart`
+- [x] T047 Fix settings toggle cache staleness by updating status check in `mobile_app/lib/features/auth/bloc/auth_bloc.dart` to query latest project details from the network.
+

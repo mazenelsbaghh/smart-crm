@@ -31,7 +31,8 @@ class AuthRepository {
     try {
       final projects = await getProjects();
       if (projects.isNotEmpty) {
-        await _secureStorage.saveActiveProject(jsonEncode(projects.first.toJson()));
+        final fullProject = await getProject(projects.first.id);
+        await _secureStorage.saveActiveProject(jsonEncode(fullProject.toJson()));
       }
     } catch (_) {}
 
@@ -50,6 +51,11 @@ class AuthRepository {
     final response = await _apiClient.dio.get('/api/projects');
     final List list = response.data ?? [];
     return list.map((item) => Project.fromJson(item)).toList();
+  }
+
+  Future<Project> getProject(String id) async {
+    final response = await _apiClient.dio.get('/api/projects/$id');
+    return Project.fromJson(response.data);
   }
 
   Future<void> setActiveProject(Project project) async {

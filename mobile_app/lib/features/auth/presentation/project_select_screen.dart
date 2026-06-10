@@ -101,11 +101,11 @@ class ProjectSelectScreen extends StatelessWidget {
                           Row(
                             children: [
                               Text(
-                                project.settings.whatsappConnected
+                                project.whatsappConnected
                                     ? 'متصل بالواتساب'
                                     : 'غير متصل بالواتساب',
                                 style: AppTypography.label.copyWith(
-                                  color: project.settings.whatsappConnected
+                                  color: project.whatsappConnected
                                       ? AppColors.success
                                       : AppColors.textMuted,
                                 ),
@@ -116,7 +116,7 @@ class ProjectSelectScreen extends StatelessWidget {
                                 height: 8,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: project.settings.whatsappConnected
+                                  color: project.whatsappConnected
                                       ? AppColors.success
                                       : AppColors.textMuted,
                                 ),

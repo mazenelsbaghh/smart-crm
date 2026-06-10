@@ -51,43 +51,67 @@ class AuthSession {
 }
 
 class ProjectSettings {
-  final bool whatsappConnected;
-  final String? whatsappNumber;
   final bool aiAutoReplyEnabled;
-  final double leadScoreThreshold;
+  final String timezone;
+  final String geminiApiKey;
+  final String geminiModel;
+  final String aiTonePreference;
+  final String aiTargetAudience;
+  final int replyDelay;
+  final int maxDailyMessages;
+  final bool isGroupAppointmentsEnabled;
 
   ProjectSettings({
-    required this.whatsappConnected,
-    this.whatsappNumber,
     required this.aiAutoReplyEnabled,
-    required this.leadScoreThreshold,
+    required this.timezone,
+    required this.geminiApiKey,
+    required this.geminiModel,
+    required this.aiTonePreference,
+    required this.aiTargetAudience,
+    required this.replyDelay,
+    required this.maxDailyMessages,
+    required this.isGroupAppointmentsEnabled,
   });
 
   factory ProjectSettings.fromJson(Map<String, dynamic> json) {
     return ProjectSettings(
-      whatsappConnected: json['whatsappConnected'] ?? false,
-      whatsappNumber: json['whatsappNumber'],
       aiAutoReplyEnabled: json['aiAutoReplyEnabled'] ?? false,
-      leadScoreThreshold: (json['leadScoreThreshold'] ?? 0.0).toDouble(),
+      timezone: json['timezone'] ?? 'Africa/Cairo',
+      geminiApiKey: json['geminiApiKey'] ?? '',
+      geminiModel: json['geminiModel'] ?? 'gemini-3.5-flash',
+      aiTonePreference: json['aiTonePreference'] ?? 'العامية المصرية الروشة والصايعة',
+      aiTargetAudience: json['aiTargetAudience'] ?? 'طلاب كورس كول سنتر يبحثون عن عمل',
+      replyDelay: json['replyDelay'] ?? 3,
+      maxDailyMessages: json['maxDailyMessages'] ?? 500,
+      isGroupAppointmentsEnabled: json['isGroupAppointmentsEnabled'] ?? false,
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'whatsappConnected': whatsappConnected,
-        'whatsappNumber': whatsappNumber,
         'aiAutoReplyEnabled': aiAutoReplyEnabled,
-        'leadScoreThreshold': leadScoreThreshold,
+        'timezone': timezone,
+        'geminiApiKey': geminiApiKey,
+        'geminiModel': geminiModel,
+        'aiTonePreference': aiTonePreference,
+        'aiTargetAudience': aiTargetAudience,
+        'replyDelay': replyDelay,
+        'maxDailyMessages': maxDailyMessages,
+        'isGroupAppointmentsEnabled': isGroupAppointmentsEnabled,
       };
 }
 
 class Project {
   final String id;
   final String name;
+  final bool whatsappConnected;
+  final String? whatsappNumber;
   final ProjectSettings settings;
 
   Project({
     required this.id,
     required this.name,
+    required this.whatsappConnected,
+    this.whatsappNumber,
     required this.settings,
   });
 
@@ -95,6 +119,8 @@ class Project {
     return Project(
       id: json['id'] ?? '',
       name: json['name'] ?? '',
+      whatsappConnected: json['whatsappConnected'] ?? false,
+      whatsappNumber: json['whatsappNumber'],
       settings: ProjectSettings.fromJson(json['settings'] ?? {}),
     );
   }
@@ -102,6 +128,8 @@ class Project {
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        'whatsappConnected': whatsappConnected,
+        'whatsappNumber': whatsappNumber,
         'settings': settings.toJson(),
       };
 }

@@ -87,10 +87,13 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   Future<void> _onCheckStatus(AuthCheckStatus event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
     try {
-      final activeProject = await _authRepository.getActiveProject();
+      final cachedProject = await _authRepository.getActiveProject();
       final user = await _authRepository.getAuthenticatedUser();
-      if (user != null && activeProject != null) {
-        emit(AuthAuthenticated(user: user, activeProject: activeProject));
+      if (user != null && cachedProject != null) {
+        // Fetch the LATEST project details from the network to avoid cache staleness!
+        final latestProject = await _authRepository.getProject(cachedProject.id);
+        await _authRepository.setActiveProject(latestProject);
+        emit(AuthAuthenticated(user: user, activeProject: latestProject));
       } else {
         emit(AuthUnauthenticated());
       }
@@ -108,8 +111,9 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       if (projects.isEmpty) {
         emit(const AuthFailure('No projects associated with this account.'));
       } else if (projects.length == 1) {
-        await _authRepository.setActiveProject(projects.first);
-        emit(AuthAuthenticated(user: session.user, activeProject: projects.first));
+        final fullProject = await _authRepository.getProject(projects.first.id);
+        await _authRepository.setActiveProject(fullProject);
+        emit(AuthAuthenticated(user: session.user, activeProject: fullProject));
       } else {
         emit(AuthProjectSelectionRequired(user: session.user, projects: projects));
       }
@@ -132,10 +136,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   Future<void> _onProjectSelected(AuthProjectSelected event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
     try {
-      await _authRepository.setActiveProject(event.project);
+      final fullProject = await _authRepository.getProject(event.project.id);
+      await _authRepository.setActiveProject(fullProject);
       final user = await _authRepository.getAuthenticatedUser();
       if (user != null) {
-        emit(AuthAuthenticated(user: user, activeProject: event.project));
+        emit(AuthAuthenticated(user: user, activeProject: fullProject));
       } else {
         emit(AuthUnauthenticated());
       }

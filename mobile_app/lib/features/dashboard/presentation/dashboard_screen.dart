@@ -66,7 +66,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildProjectOverviewCard(),
+                _buildProjectOverviewCard(state),
                 const SizedBox(height: 16),
                 _buildMetricsGrid(state),
                 const SizedBox(height: 24),
@@ -93,12 +93,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildProjectOverviewCard() {
+  Widget _buildProjectOverviewCard(DashboardState state) {
     final authState = context.read<AuthBloc>().state;
     final projectName = authState is AuthAuthenticated ? authState.activeProject.name : 'مشروع غير محدد';
+    final isConnected = state.whatsappConnected;
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
@@ -109,21 +110,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
         children: [
           IconButton(
             icon: const Icon(Icons.logout, color: AppColors.error),
+            tooltip: 'تسجيل الخروج',
             onPressed: () {
               context.read<AuthBloc>().add(AuthLogoutRequested());
             },
+          ),
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: isConnected ? AppColors.success : AppColors.error,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isConnected ? 'متصل' : 'غير متصل',
+                style: AppTypography.bodyMuted.copyWith(
+                  fontSize: 12,
+                  color: isConnected ? AppColors.success : AppColors.error,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.cell_tower, size: 14, color: AppColors.textMuted),
+            ],
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
                 projectName,
-                style: AppTypography.headline.copyWith(fontSize: 20),
+                style: AppTypography.headline.copyWith(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),
               Text(
                 'المشروع النشط حالياً',
-                style: AppTypography.bodyMuted,
+                style: AppTypography.bodyMuted.copyWith(fontSize: 11),
               ),
             ],
           ),
@@ -133,9 +158,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildMetricsGrid(DashboardState state) {
-    final authState = context.read<AuthBloc>().state;
-    final isConnected = authState is AuthAuthenticated && authState.activeProject.settings.whatsappConnected;
-
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -145,30 +167,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
       mainAxisSpacing: 12,
       children: [
         _buildStatCard(
-          'حالة الواتساب',
-          isConnected ? 'متصل' : 'غير متصل',
-          icon: Icons.cell_tower,
-          textColor: isConnected ? AppColors.success : AppColors.error,
-        ),
-        _buildStatCard(
-          'معدل المبيعات',
-          '${state.salesData.fold<double>(0, (sum, item) => sum + (item['metricValue'] ?? 0.0)).toStringAsFixed(0)} ج.م',
-          icon: Icons.monetization_on_outlined,
+          'إجمالي العملاء',
+          '${state.totalCustomers}',
+          icon: Icons.people_outline,
           textColor: AppColors.primary,
         ),
         _buildStatCard(
-          'دقة الذكاء الاصطناعي',
-          state.aiAccuracyData.isNotEmpty
-              ? '${(state.aiAccuracyData.last['metricValue'] as num).toStringAsFixed(0)}%'
-              : '94%',
-          icon: Icons.psychology_outlined,
+          'الصفقات المفتوحة',
+          '${state.activeDeals}',
+          icon: Icons.track_changes,
           textColor: AppColors.secondary,
         ),
         _buildStatCard(
-          'الردود التلقائية',
-          '186 رد',
-          icon: Icons.bolt,
+          'الإيراد المغلق',
+          '${state.closedWonRevenue.toStringAsFixed(0)} ج.م',
+          icon: Icons.monetization_on_outlined,
           textColor: AppColors.success,
+        ),
+        _buildStatCard(
+          'متوسط التقييم',
+          '${state.avgLeadScore}/100',
+          icon: Icons.trending_up,
+          textColor: AppColors.warning,
         ),
       ],
     );
@@ -181,7 +201,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required Color textColor,
   }) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
@@ -191,13 +211,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: textColor, size: 24),
-          const SizedBox(height: 12),
+          Icon(icon, color: textColor, size: 22),
+          const SizedBox(height: 8),
           Text(
             value,
-            style: AppTypography.title.copyWith(color: textColor, fontWeight: FontWeight.bold),
+            style: AppTypography.title.copyWith(color: textColor, fontWeight: FontWeight.bold, fontSize: 16),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             label,
             style: AppTypography.label.copyWith(fontSize: 10),

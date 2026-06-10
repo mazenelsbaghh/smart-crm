@@ -1,11 +1,29 @@
 {
   "version": 1,
   "skills": {
+    "clean-code-guard": {
+      "source": "amElnagdy/guard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/clean-code-guard/SKILL.md",
+      "computedHash": "0418cdf1d9b88eb04ae8e90a49989e3023212c60690e216e1f773ac46e9a8850"
+    },
+    "docs-guard": {
+      "source": "amElnagdy/guard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/docs-guard/SKILL.md",
+      "computedHash": "606871a78cb8dbc6bde5219c670b76d42bba358483d024206dfffc205f61add0"
+    },
     "impeccable": {
       "source": "pbakaus/impeccable",
       "sourceType": "github",
       "skillPath": "skill/SKILL.md",
       "computedHash": "34e59a34b9705187e87039faa5d9585aebe0056ef657f761b905afef276a3362"
+    },
+    "test-guard": {
+      "source": "amElnagdy/guard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/test-guard/SKILL.md",
+      "computedHash": "acd22a565bf083f4b63e27ad455e9992664d9a5aae9db67170cbde70aa999657"
     }
   }
 }
