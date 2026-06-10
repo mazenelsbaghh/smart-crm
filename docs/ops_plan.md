@@ -10,6 +10,7 @@
   - Created `.github/workflows/build-ios.yml` supporting manual triggers (`workflow_dispatch`).
   - Configured setup steps for Flutter and building with `--no-codesign` on macOS runner.
   - Configured uploading the resulting `.ipa` file as a workflow artifact.
+  - Updated `ApiClient` default `baseUrl` in the mobile app to point to the production server `https://n8n-mazen.online` to fix connection timeouts on physical iOS devices.
 
 ### 2026-06-05: SSH Login Skill (Completed)
 - **Goal**: Create an agent skill (`ssh-server`) containing instructions and scripts for connecting to the remote server `147.93.86.206` using credentials in `.env.deploy`.

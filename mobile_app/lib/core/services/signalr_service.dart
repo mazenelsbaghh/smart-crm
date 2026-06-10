@@ -22,7 +22,7 @@ class SignalRService {
     required SecureStorageService secureStorage,
     String? wsUrl,
   })  : _secureStorage = secureStorage,
-        _wsUrl = wsUrl ?? (kIsWeb ? 'https://n8n-mazen.online/hubs' : 'http://10.0.2.2:5000/hubs');
+        _wsUrl = wsUrl ?? 'https://n8n-mazen.online/hubs';
 
   Future<void> start({required String projectId}) async {
     if (_connection != null && _connection!.state != HubConnectionState.Disconnected) return;
