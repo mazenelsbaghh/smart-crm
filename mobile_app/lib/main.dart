@@ -5,6 +5,9 @@ import 'package:intl/date_symbol_data_local.dart';
 
 import 'core/theme/colors.dart';
 import 'core/widgets/shell.dart';
+import 'core/widgets/notification_banner.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'core/services/push_notification_service.dart';
 
 // Services
 import 'core/services/secure_storage.dart';
@@ -37,6 +40,12 @@ import 'features/settings/presentation/settings_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('ar', null);
+  try {
+    await Firebase.initializeApp();
+    print('✅ Firebase initialized successfully.');
+  } catch (e) {
+    print('⚠️ Firebase initialization skipped/failed: $e');
+  }
   runApp(const MyApp());
 }
 
@@ -63,6 +72,8 @@ class _MyAppState extends State<MyApp> {
   late final CrmBloc _crmBloc;
   late final BookingsBloc _bookingsBloc;
   late final DashboardBloc _dashboardBloc;
+
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -107,6 +118,24 @@ class _MyAppState extends State<MyApp> {
     _signalRService.onCustomerUpdated = (cust) {
       _inboxBloc.add(InboxCustomerUpdated(cust));
     };
+    _signalRService.onNotificationReceived = (title, message, type) {
+      if (_navigatorKey.currentState != null) {
+        NotificationBanner.show(
+          navigatorState: _navigatorKey.currentState!,
+          title: title,
+          message: message,
+          type: type,
+          onTap: () {
+            if (type == 'Booking') {
+              _router.go('/bookings');
+            }
+          },
+        );
+      }
+      if (type == 'Booking') {
+        _bookingsBloc.add(BookingsFetchRequested());
+      }
+    };
   }
 
   @override
@@ -120,6 +149,7 @@ class _MyAppState extends State<MyApp> {
   }
 
   late final GoRouter _router = GoRouter(
+    navigatorKey: _navigatorKey,
     initialLocation: '/',
     routes: [
       GoRoute(
@@ -141,6 +171,16 @@ class _MyAppState extends State<MyApp> {
             listener: (context, authState) {
               if (authState is AuthAuthenticated) {
                 _signalRService.start(projectId: authState.activeProject.id);
+                
+                // Initialize FCM Push Notifications
+                final pushService = PushNotificationService(
+                  apiClient: _apiClient,
+                  projectId: authState.activeProject.id,
+                  navigatorKey: _navigatorKey,
+                  onNavigate: (route) => _router.go(route),
+                );
+                pushService.initialize();
+                
               } else if (authState is AuthUnauthenticated) {
                 _signalRService.stop();
                 context.go('/');
@@ -199,6 +239,7 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
+        RepositoryProvider.value(value: _apiClient),
         RepositoryProvider.value(value: _authRepository),
         RepositoryProvider.value(value: _chatRepository),
         RepositoryProvider.value(value: _crmRepository),

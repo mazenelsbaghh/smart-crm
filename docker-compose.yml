@@ -117,6 +117,9 @@ services:
       MessageAggregation__MaxDelayMs: "12000"
       WhatsApp__MinTypingDelayMs: "1500"
       WhatsApp__MaxTypingDelayMs: "3000"
+      Firebase__ServiceAccountPath: "/app/firebase-key.json"
+    volumes:
+      - ./firebase-key.json:/app/firebase-key.json:ro
     depends_on:
       postgres:
         condition: service_healthy

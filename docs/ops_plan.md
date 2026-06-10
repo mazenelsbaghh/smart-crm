@@ -4,6 +4,12 @@
 
 ## Chronological Log
 
+### 2026-06-10: Firebase Cloud Messaging Server Configuration & Container Mounts (Completed)
+- **Goal**: Configure the local/production Docker stack to initialize Firebase Admin by mounting the service account key file.
+- **Updates**:
+  - Modified `docker-compose.yml` to define `Firebase__ServiceAccountPath=/app/firebase-key.json` and mount the local credentials file `./firebase-key.json` to `/app/firebase-key.json` inside the backend container.
+  - Documented production key requirement `/root/smart-crm/firebase-key.json` in the FCM implementation plan.
+
 ### 2026-06-10: GitHub Actions iOS Build Workflow (Completed)
 - **Goal**: Create a GitHub Actions workflow to build the Flutter iOS application without requiring local Xcode installation or developer certificates.
 - **Updates**:

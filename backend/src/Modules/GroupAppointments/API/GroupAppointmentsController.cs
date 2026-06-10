@@ -10,6 +10,9 @@ using Shared.Security;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using FirebaseAdmin.Messaging;
+using StackExchange.Redis;
 
 namespace Modules.GroupAppointments.API
 {
@@ -20,15 +23,18 @@ namespace Modules.GroupAppointments.API
         private readonly AppDbContext _context;
         private readonly ITenantContext _tenantContext;
         private readonly IHubContext<NotificationHub> _hubContext;
+        private readonly IDatabase _redis;
 
         public GroupAppointmentsController(
             AppDbContext context, 
             ITenantContext tenantContext, 
-            IHubContext<NotificationHub> hubContext)
+            IHubContext<NotificationHub> hubContext,
+            IConnectionMultiplexer redis)
         {
             _context = context;
             _tenantContext = tenantContext;
             _hubContext = hubContext;
+            _redis = redis.GetDatabase();
         }
 
         // --- Admin/Agent Authorized Endpoints ---
@@ -354,6 +360,38 @@ namespace Modules.GroupAppointments.API
             catch (Exception ex)
             {
                 Console.WriteLine($"[GroupAppointmentsController] SignalR error: {ex.Message}");
+            }
+
+            // Broadcast Push Notifications via Firebase Cloud Messaging
+            try
+            {
+                var redisKey = $"fcm_tokens:{request.ProjectId}";
+                var tokens = await _redis.SetMembersAsync(redisKey);
+                if (tokens.Length > 0)
+                {
+                    var tokenList = tokens.Select(t => t.ToString()).ToList();
+                    var fcmMessage = new MulticastMessage
+                    {
+                        Tokens = tokenList,
+                        Notification = new Notification
+                        {
+                            Title = "حجز جديد 📅",
+                            Body = $"تم تسجيل حجز جديد باسم: {booking.CustomerName} في المجموعة {group.Name}"
+                        },
+                        Data = new Dictionary<string, string>
+                        {
+                            { "type", "Booking" },
+                            { "projectId", request.ProjectId.ToString() }
+                        }
+                    };
+
+                    await FirebaseMessaging.DefaultInstance.SendMulticastAsync(fcmMessage);
+                    Console.WriteLine($"[GroupAppointmentsController] Dispatched push notifications to {tokenList.Count} registered devices.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GroupAppointmentsController] Failed to dispatch FCM push notifications: {ex.Message}");
             }
 
             return Ok(new

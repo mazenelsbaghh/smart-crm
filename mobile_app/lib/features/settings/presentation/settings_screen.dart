@@ -4,6 +4,7 @@ import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
+import '../../../core/services/api_client.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -28,6 +29,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _obscureApiKey = true;
   String _selectedGeminiModel = 'gemini-3.5-flash';
   bool _saving = false;
+  bool _testingNotification = false;
 
   final List<String> _geminiModels = [
     'gemini-1.5-flash',
@@ -77,6 +79,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _selectedGeminiModel = model;
       } else {
         _selectedGeminiModel = _geminiModels.first;
+      }
+    }
+  }
+
+  Future<void> _triggerTestNotification() async {
+    final authState = context.read<AuthBloc>().state;
+    if (authState is AuthAuthenticated) {
+      setState(() {
+        _testingNotification = true;
+      });
+
+      try {
+        final apiClient = context.read<ApiClient>();
+        final projectId = authState.activeProject.id;
+        
+        await apiClient.dio.post('/api/projects/$projectId/fcm-tokens/test');
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم إرسال إشعار تجريبي بنجاح! 🧪'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('فشل إرسال الإشعار التجريبي: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      } finally {
+        setState(() {
+          _testingNotification = false;
+        });
       }
     }
   }
@@ -205,6 +241,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     });
                   },
                 ),
+                const SizedBox(height: 24),
+                
+                // Test Push Notifications Card
+                _buildTestNotificationsCard(),
                 
                 const SizedBox(height: 40),
                 ElevatedButton(
@@ -421,6 +461,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   textAlign: TextAlign.right,
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTestNotificationsCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'اختبار الإشعارات الفورية',
+            style: AppTypography.title.copyWith(fontWeight: FontWeight.bold, fontSize: 14),
+            textAlign: TextAlign.right,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'أرسل تنبيهاً تجريبياً لهاتفك للتأكد من عمل نظام الإشعارات في الخلفية',
+            style: AppTypography.bodyMuted.copyWith(fontSize: 11),
+            textAlign: TextAlign.right,
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: _testingNotification ? null : _triggerTestNotification,
+            icon: _testingNotification
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(AppColors.primary),
+                    ),
+                  )
+                : const Icon(Icons.send_to_mobile_rounded, size: 16),
+            label: const Text('إرسال إشعار تجريبي 🧪'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary.withOpacity(0.1),
+              foregroundColor: AppColors.primary,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
           ),
         ],

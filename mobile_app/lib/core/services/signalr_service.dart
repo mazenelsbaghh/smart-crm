@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:signalr_netcore/signalr_client.dart';
 import 'secure_storage.dart';
 
@@ -69,13 +68,26 @@ class SignalRService {
       }
     });
 
-    _connection!.on('NotificationReceived', (arguments) {
-      if (arguments != null && arguments.length >= 3 && onNotificationReceived != null) {
-        onNotificationReceived!(
-          arguments[0].toString(),
-          arguments[1].toString(),
-          arguments[2].toString(),
-        );
+    _connection!.on('ReceiveNotification', (arguments) {
+      if (arguments != null && arguments.isNotEmpty && onNotificationReceived != null) {
+        try {
+          final data = arguments[0];
+          if (data is Map) {
+            final type = data['type']?.toString() ?? 'General';
+            final message = data['message']?.toString() ?? '';
+            String title = 'تنبيه جديد';
+            if (type == 'Booking') {
+              title = 'حجز جديد 📅';
+            } else if (type == 'Complaint') {
+              title = 'شكوى جديدة ⚠️';
+            } else if (type == 'VIP') {
+              title = 'عميل VIP 🌟';
+            }
+            onNotificationReceived!(title, message, type);
+          }
+        } catch (e) {
+          print('[SignalR] Error parsing ReceiveNotification: $e');
+        }
       }
     });
 

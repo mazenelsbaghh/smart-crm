@@ -1,8 +1,18 @@
 # Backend Master Plan
 
-**Last Updated**: 2026-06-06
+**Last Updated**: 2026-06-10
 
 ## Chronological Log
+
+### 2026-06-10: Firebase Cloud Messaging Push Notifications (Completed)
+- **Goal**: Implement server-side support for native FCM push notifications on successful slot bookings and add a testing endpoint.
+- **Updates**:
+  - Integrated the official `FirebaseAdmin` SDK package into the C# project.
+  - Setup Firebase Admin initialization at startup in `Program.cs` reading from the configured `Firebase:ServiceAccountPath`.
+  - Created `FcmController.cs` exposing `POST /api/projects/{projectId}/fcm-tokens` to save/update active device tokens in a Redis Set under the project's namespace, avoiding database schema migrations.
+  - Implemented multicast push notification dispatching inside `GroupAppointmentsController.cs` when a slot booking succeeds.
+  - Updated `docker-compose.yml` to define environment variables and mount the credentials file (`firebase-key.json`) inside the container.
+  - Provided a `POST /api/projects/{projectId}/fcm-tokens/test` endpoint to trigger test push notifications to all registered project tokens.
 
 ### 2026-06-06: Pagination for Conversations list (Completed)
 - **Goal**: Implement server-side pagination (limit and cursor-based before parameter) for fetching conversations.

@@ -13,6 +13,8 @@ using System;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Serilog;
+using FirebaseAdmin;
+using Google.Apis.Auth.OAuth2;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +25,28 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 
 builder.Host.UseSerilog();
+
+// Initialize Firebase Admin SDK
+var firebaseKeyPath = builder.Configuration["Firebase:ServiceAccountPath"];
+if (!string.IsNullOrEmpty(firebaseKeyPath) && System.IO.File.Exists(firebaseKeyPath))
+{
+    try
+    {
+        FirebaseApp.Create(new AppOptions
+        {
+            Credential = GoogleCredential.FromFile(firebaseKeyPath)
+        });
+        Console.WriteLine("✅ Firebase Admin SDK initialized successfully.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"⚠️ Failed to initialize Firebase Admin SDK: {ex.Message}");
+    }
+}
+else
+{
+    Console.WriteLine("⚠️ Firebase:ServiceAccountPath key file not found or empty. Push notifications will be disabled.");
+}
 
 // Add services to the container.
 builder.Services.AddControllers();
