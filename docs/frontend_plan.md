@@ -12,6 +12,7 @@ This document tracks all frontend requirements, design structures, pages, and im
 - **Goal**: Implement native iOS push notifications using Firebase Cloud Messaging (FCM), configure Xcode to bundle `GoogleService-Info.plist`, and add settings testing UI.
 - **Updates**:
   - Registered `GoogleService-Info.plist` inside `mobile_app/ios/Runner.xcodeproj/project.pbxproj` with unique resource IDs (`F3C0123456789ABCDEF00001` and `F3C0123456789ABCDEF00002`) to ensure plist is compiled into iOS app package.
+  - Created and registered `Runner.entitlements` containing the `aps-environment` key and configured `CODE_SIGN_ENTITLEMENTS` in Xcode build settings to authorize push notifications on iOS devices.
   - Added `firebase_core` and `firebase_messaging` dependencies to `pubspec.yaml`.
   - Created `PushNotificationService` inside `lib/core/services/` to handle iOS push permissions request, fetch/refresh token, and post to backend project FCM registry.
   - Added notification callback mapping: foreground notifications display our premium `NotificationBanner`, and background/terminated clicks navigate users directly to the bookings screen.
