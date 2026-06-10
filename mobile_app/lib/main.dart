@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'core/theme/colors.dart';
 import 'core/widgets/shell.dart';
@@ -33,8 +34,9 @@ import 'features/crm/presentation/customer_list_screen.dart';
 import 'features/bookings/presentation/bookings_calendar_screen.dart';
 import 'features/settings/presentation/settings_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting('ar', null);
   runApp(const MyApp());
 }
 
