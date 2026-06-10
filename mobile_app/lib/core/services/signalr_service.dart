@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:signalr_netcore/signalr_netcore.dart';
 import 'secure_storage.dart';
 
@@ -19,9 +20,9 @@ class SignalRService {
 
   SignalRService({
     required SecureStorageService secureStorage,
-    String wsUrl = 'http://10.0.2.2:5000/hubs',
+    String? wsUrl,
   })  : _secureStorage = secureStorage,
-        _wsUrl = wsUrl;
+        _wsUrl = wsUrl ?? (kIsWeb ? 'https://n8n-mazen.online/hubs' : 'http://10.0.2.2:5000/hubs');
 
   Future<void> start({required String projectId}) async {
     if (_connection != null && _connection!.state != HubConnectionState.Disconnected) return;

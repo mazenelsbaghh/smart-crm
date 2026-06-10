@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'secure_storage.dart';
 
 class ApiClient {
@@ -7,7 +8,7 @@ class ApiClient {
   final SecureStorageService _secureStorage;
 
   // Change base URL to point to backend. In production or emulator, this will be adjusted.
-  static const String defaultBaseUrl = 'http://10.0.2.2:5000'; // Loopback for Android Emulator
+  static const String defaultBaseUrl = kIsWeb ? 'https://n8n-mazen.online' : 'http://10.0.2.2:5000'; // Loopback for Android Emulator
 
   ApiClient({required SecureStorageService secureStorage, String baseUrl = defaultBaseUrl})
       : _secureStorage = secureStorage,
