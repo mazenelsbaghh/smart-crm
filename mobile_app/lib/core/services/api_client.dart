@@ -7,8 +7,8 @@ class ApiClient {
   final Dio dio;
   final SecureStorageService _secureStorage;
 
-  // Change base URL to point to backend. In production or emulator, this will be adjusted.
-  static const String defaultBaseUrl = kIsWeb ? 'https://n8n-mazen.online' : 'http://10.0.2.2:5000'; // Loopback for Android Emulator
+  // Point to the production server by default.
+  static const String defaultBaseUrl = 'https://n8n-mazen.online';
 
   ApiClient({required SecureStorageService secureStorage, String baseUrl = defaultBaseUrl})
       : _secureStorage = secureStorage,
