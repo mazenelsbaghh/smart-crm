@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:signalr_netcore/signalr_netcore.dart';
+import 'package:signalr_netcore/signalr_client.dart';
 import 'secure_storage.dart';
 
 class SignalRService {
@@ -31,9 +31,8 @@ class SignalRService {
     final hubUrl = '$_wsUrl/notifications?projectId=$projectId';
 
     _connection = HubConnectionBuilder()
-        .withUrl(hubUrl, HttpConnectionOptions(
+        .withUrl(hubUrl, options: HttpConnectionOptions(
           accessTokenFactory: () async => token,
-          logging: (level, message) => print('[SignalR] $message'),
         ))
         .build();
 
