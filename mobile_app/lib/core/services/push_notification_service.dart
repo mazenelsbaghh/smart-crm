@@ -34,100 +34,144 @@ class PushNotificationService {
 
   Future<void> initialize() async {
     try {
-      statusNotifier.value = 'جاري طلب الصلاحيات...';
-      // 1. Request iOS permission
       final messaging = FirebaseMessaging.instance;
+
+      // ── 1. Set up onTokenRefresh EARLY as a reliable fallback ──
+      // On iOS, Firebase will fire this automatically once APNS is ready,
+      // even if our manual getToken() call below fails.
+      messaging.onTokenRefresh.listen((newToken) async {
+        print('[FCM] onTokenRefresh fired with token: $newToken');
+        tokenNotifier.value = newToken;
+        statusNotifier.value = 'جاري التسجيل في السيرفر...';
+        await _registerTokenWithBackend(newToken);
+      });
+
+      // ── 2. Request notification permission ──
+      statusNotifier.value = 'جاري طلب الصلاحيات...';
       final settings = await messaging.requestPermission(
         alert: true,
         badge: true,
         sound: true,
       );
+      print('[FCM] Permission status: ${settings.authorizationStatus}');
 
-      print('[FCM] User notification permission status: ${settings.authorizationStatus}');
-      statusNotifier.value = 'تم الحصول على الصلاحيات. جاري جلب الرمز...';
+      if (settings.authorizationStatus == AuthorizationStatus.denied) {
+        statusNotifier.value = 'تم رفض صلاحيات الإشعارات';
+        _setupMessageHandlers(messaging);
+        return;
+      }
 
-      // On iOS, wait for APNS token to be registered first before getting FCM token
+      // ── 3. On iOS, wait for APNS token from Apple ──
       if (Platform.isIOS) {
         statusNotifier.value = 'جاري انتظار معرف APNS من آبل...';
         String? apnsToken;
-        int retries = 0;
-        const maxRetries = 15; // Wait up to 15 seconds
-        
-        while (apnsToken == null && retries < maxRetries) {
+        const maxRetries = 20; // Wait up to 20 seconds
+
+        for (int i = 0; i < maxRetries; i++) {
           apnsToken = await messaging.getAPNSToken();
           if (apnsToken != null) {
-            print('[FCM] APNS Token retrieved successfully: $apnsToken');
+            print('[FCM] APNS Token retrieved on attempt ${i + 1}: $apnsToken');
             break;
           }
-          print('[FCM] APNS token not set yet. Waiting 1s... (Attempt ${retries + 1}/$maxRetries)');
+          print('[FCM] APNS token not ready yet (${i + 1}/$maxRetries)...');
           await Future.delayed(const Duration(seconds: 1));
-          retries++;
         }
-        
+
         if (apnsToken == null) {
-          print('[FCM] Failed to retrieve APNS token after $maxRetries seconds.');
-          statusNotifier.value = 'فشل: لم يتم تعيين معرف APNS من آبل';
+          // APNS token never arrived — don't try getToken(), it will crash.
+          // The onTokenRefresh listener above will pick it up later if it arrives.
+          print('[FCM] APNS token not available after $maxRetries seconds. '
+              'Relying on onTokenRefresh fallback.');
+          statusNotifier.value =
+              'في انتظار تسجيل APNS... (سيتم تلقائياً عند الجاهزية)';
+          _setupMessageHandlers(messaging);
+          return;
+        }
+
+        // Grace period — let Firebase internals sync with the APNS token
+        await Future.delayed(const Duration(seconds: 2));
+      }
+
+      // ── 4. Fetch FCM token (with retry) ──
+      statusNotifier.value = 'جاري جلب رمز FCM...';
+      String? token;
+      const tokenRetries = 3;
+
+      for (int i = 0; i < tokenRetries; i++) {
+        try {
+          token = await messaging.getToken();
+          if (token != null) break;
+        } catch (e) {
+          print('[FCM] getToken() attempt ${i + 1} failed: $e');
+          if (i < tokenRetries - 1) {
+            await Future.delayed(const Duration(seconds: 2));
+          }
         }
       }
 
-      // 2. Fetch and register token
-      statusNotifier.value = 'تم الحصول على الصلاحيات. جاري جلب الرمز...';
-      final token = await messaging.getToken();
       if (token != null) {
+        print('[FCM] FCM token obtained: $token');
         tokenNotifier.value = token;
         statusNotifier.value = 'جاري التسجيل في السيرفر...';
         await _registerTokenWithBackend(token);
       } else {
-        statusNotifier.value = 'فشل: الرمز المسترجع فارغ (FCM Token is null)';
+        print('[FCM] Could not get FCM token after retries. '
+            'Relying on onTokenRefresh fallback.');
+        statusNotifier.value =
+            'في انتظار رمز FCM... (سيتم تلقائياً عند الجاهزية)';
       }
 
-      // 3. Listen for token refresh
-      messaging.onTokenRefresh.listen((newToken) async {
-        await _registerTokenWithBackend(newToken);
-      });
-
-      // 4. Configure background message handler
-      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
-      // 5. Handle foreground notifications (show premium banner)
-      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-        print('[FCM] Foreground message received: ${message.messageId}');
-        
-        final notification = message.notification;
-        if (notification != null && _navigatorKey.currentState != null) {
-          final type = message.data['type']?.toString() ?? 'General';
-          
-          NotificationBanner.show(
-            navigatorState: _navigatorKey.currentState!,
-            title: notification.title ?? 'تنبيه جديد',
-            message: notification.body ?? '',
-            type: type,
-            onTap: () {
-              if (type == 'Booking') {
-                _onNavigate('/bookings');
-              }
-            },
-          );
-        }
-      });
-
-      // 6. Handle notification click events (when app is opened from background)
-      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-        print('[FCM] Notification clicked and app opened from background: ${message.messageId}');
-        _handleNotificationClick(message);
-      });
-
-      // 7. Check if app was opened from completely terminated state via notification
-      final initialMessage = await messaging.getInitialMessage();
-      if (initialMessage != null) {
-        print('[FCM] Terminated state app opened via notification: ${initialMessage.messageId}');
-        _handleNotificationClick(initialMessage);
-      }
+      // ── 5. Set up all message handlers ──
+      _setupMessageHandlers(messaging);
 
     } catch (e) {
       statusNotifier.value = 'فشل التهيئة: $e';
       print('[FCM] Push Notification Service initialization failed: $e');
     }
+  }
+
+  /// Sets up foreground, background, and notification-click handlers.
+  /// Called regardless of whether token registration succeeded, so that
+  /// notifications still work if the token arrives later via onTokenRefresh.
+  void _setupMessageHandlers(FirebaseMessaging messaging) {
+    // Background message handler
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+    // Foreground notifications → show premium banner
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print('[FCM] Foreground message: ${message.messageId}');
+
+      final notification = message.notification;
+      if (notification != null && _navigatorKey.currentState != null) {
+        final type = message.data['type']?.toString() ?? 'General';
+
+        NotificationBanner.show(
+          navigatorState: _navigatorKey.currentState!,
+          title: notification.title ?? 'تنبيه جديد',
+          message: notification.body ?? '',
+          type: type,
+          onTap: () {
+            if (type == 'Booking') {
+              _onNavigate('/bookings');
+            }
+          },
+        );
+      }
+    });
+
+    // Notification click from background
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('[FCM] Notification click (background): ${message.messageId}');
+      _handleNotificationClick(message);
+    });
+
+    // App launched from terminated state via notification
+    messaging.getInitialMessage().then((message) {
+      if (message != null) {
+        print('[FCM] Launched from notification (terminated): ${message.messageId}');
+        _handleNotificationClick(message);
+      }
+    });
   }
 
   Future<void> _registerTokenWithBackend(String token) async {
