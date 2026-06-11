@@ -13,5 +13,6 @@ namespace Modules.CRM.Domain
         public string Notes { get; set; }
         public string Type { get; set; } = "Nurturing"; // Nurturing, AppointmentReminder
         public DateTime? AppointmentTime { get; set; }
+        public string Tone { get; set; } = "Default"; // Default, Creative, Salesy
     }
 }

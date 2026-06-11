@@ -118,9 +118,14 @@ namespace Modules.CRM.Services
                                     }
                                     string model = projectSettings?.GeminiModel;
 
+                                    var hasAttended = await dbContext.GroupAppointmentBookings
+                                        .AnyAsync(b => b.CustomerId == customer.Id && b.IsAttended);
+
                                     messageContent = await aiMarketingBrain.RewriteFollowUpNotesAsync(
                                         customer.Name,
                                         followUp.Notes,
+                                        hasAttended,
+                                        followUp.Tone,
                                         apiKey,
                                         model);
                                 }

@@ -99,6 +99,18 @@ namespace Modules.AI.Workers
                 return;
             }
 
+            if (customer != null)
+            {
+                var isPaid = await dbContext.GroupAppointmentBookings
+                    .AnyAsync(b => b.CustomerId == customer.Id && b.IsPaid);
+                if (isPaid)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Customer {customer.Id} ({customer.PhoneNumber}) has a paid booking. Skipping AI reply.");
+                    await CompletePendingFollowUpsAsync(dbContext, customer.Id);
+                    return;
+                }
+            }
+
             // Decide which API key to use. Per-project key, or fall back to system default.
             string apiKeyOverride = !string.IsNullOrEmpty(settings.GeminiApiKey) ? settings.GeminiApiKey : null;
 
@@ -217,6 +229,8 @@ namespace Modules.AI.Workers
                 _logger.LogWarning(ex, "Failed to query company brain or process context cache");
             }
 
+            string bookedGroupInfo = null;
+
             // Inject Group Appointments context if enabled
             if (settings.IsGroupAppointmentsEnabled)
             {
@@ -299,19 +313,36 @@ namespace Modules.AI.Workers
                     }
 
 
-                    // Check if this customer is already booked in any active group
-                    var customerAlreadyBookedIn = new System.Collections.Generic.HashSet<Guid>();
+                    // Check if this customer is already booked in any group
+                    GroupAppointment bookedGroup = null;
                     if (customer != null)
                     {
-                        foreach (var g in activeGroups)
+                        var booking = await dbContext.GroupAppointmentBookings
+                            .Include(b => b.GroupAppointment)
+                            .FirstOrDefaultAsync(b => b.ProjectId == @event.ProjectId && (b.CustomerId == customer.Id || b.CustomerPhone == @event.Sender));
+                        if (booking != null)
                         {
-                            if (g.Bookings.Any(b => b.CustomerId == customer.Id))
-                                customerAlreadyBookedIn.Add(g.Id);
+                            bookedGroup = booking.GroupAppointment;
                         }
                     }
-                    var alreadyBookedNote = customerAlreadyBookedIn.Count > 0
-                        ? $"\nملاحظة: هذا العميل مسجل بالفعل في {customerAlreadyBookedIn.Count} مجموعة/مجموعات. إذا طلب الحجز في مجموعة مسجل فيها بالفعل، أخبره أنه مسجل مسبقاً ولا تسجله مرة أخرى (اترك suggestedGroupBookingId = null)."
-                        : "";
+
+                    string alreadyBookedNote = "";
+                    if (bookedGroup != null)
+                    {
+                        var utcTime = DateTime.SpecifyKind(bookedGroup.DateTime, DateTimeKind.Utc);
+                        var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
+                        var modeText = bookedGroup.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
+                        var daysText = GetArabicDaysText(bookedGroup.Days);
+                        var timeText = $"الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}";
+                        var scheduleInfo = $"مجموعة {modeText}" + (string.IsNullOrEmpty(daysText) ? "" : $" ({daysText})") + $" في {timeText}";
+
+                        bookedGroupInfo = $"Group Name: {bookedGroup.Name}\nGroup ID: {bookedGroup.Id}\nSchedule: {modeText}" + (string.IsNullOrEmpty(daysText) ? "" : $" ({daysText})") + $" at {timeText}";
+
+                        alreadyBookedNote = $"\nملاحظة هامة جداً وصارمة: العميل مسجل حالياً ومحجوز في الموعد التالي: {scheduleInfo} (اسم المجموعة: {bookedGroup.Name}، معرف المجموعة ID: {bookedGroup.Id})." +
+                                            $"\n- إذا سأل العميل عن موعده أو مجموعته أو متى تم حجزه، أخبره بدقة وصراحة تامة بالموعد الحالي المحجوز فيه: {scheduleInfo} (ولا تخمن أو تخترع أي موعد آخر من المجموعات المتاحة!)." +
+                                            $"\n- إذا طلب تغيير موعد المجموعة أو حجز مجموعة أخرى مختلفة، فقم بتسجيله في المجموعة الجديدة بوضع suggestedGroupBookingId = معرف المجموعة الجديد (ID). وسيقوم النظام بنقله تلقائياً." +
+                                            $"\n- أما إذا سأل أو طلب الحجز في نفس مجموعته الحالية، أخبره بلطف أنه مسجل ومحجوز بالفعل في هذا الموعد ولا تسجله مرة أخرى (اترك suggestedGroupBookingId = null).";
+                    }
                     
                     string cityInstruction = "";
                     if (!isCityKnown)
@@ -444,6 +475,10 @@ namespace Modules.AI.Workers
             // Construct customer profile description to probe for missing data
             string customerProfile = $"Name: {(string.IsNullOrEmpty(customer?.Name) ? "Missing" : customer.Name)}\n" +
                                      $"City: {(string.IsNullOrEmpty(customer?.City) ? "Missing" : customer.City)}";
+            if (!string.IsNullOrEmpty(bookedGroupInfo))
+            {
+                customerProfile += $"\nCurrent Booking:\n{bookedGroupInfo}";
+            }
 
             // Check for media attachments in the active conversation
             byte[] fileBytes = null;
@@ -577,11 +612,61 @@ namespace Modules.AI.Workers
                             var bookingCustomerName = customer?.Name ?? @event.Sender;
                             var bookingCustomerPhone = @event.Sender;
 
-                            // Check if already booked
-                            var alreadyBooked = group.Bookings.Any(b => b.CustomerPhone == bookingCustomerPhone || b.CustomerId == bookingCustomerId);
-                            if (alreadyBooked)
+                            // Check if already booked in ANY group for this project
+                            var existingBooking = await dbContext.GroupAppointmentBookings
+                                .FirstOrDefaultAsync(b => b.ProjectId == @event.ProjectId && (b.CustomerPhone == bookingCustomerPhone || b.CustomerId == bookingCustomerId));
+
+                            if (existingBooking != null)
                             {
-                                Console.WriteLine($"[AIReplyWorker] Auto-booking skipped: Customer {bookingCustomerPhone} already booked in group '{group.Name}'.");
+                                if (existingBooking.GroupAppointmentId == groupId)
+                                {
+                                    Console.WriteLine($"[AIReplyWorker] Auto-booking skipped: Customer {bookingCustomerPhone} already registered in the SAME group '{group.Name}'.");
+                                }
+                                else
+                                {
+                                    // Transfer booking to new group
+                                    existingBooking.GroupAppointmentId = groupId;
+                                    existingBooking.IsAttended = false; // Reset attendance
+                                    // Keep existingBooking.IsPaid as is so their payment status carries over!
+                                    existingBooking.CreatedAt = DateTime.UtcNow;
+
+                                    dbContext.Entry(existingBooking).State = EntityState.Modified;
+                                    
+                                    // Update customer notes to document the transfer
+                                    if (customer != null)
+                                    {
+                                        TimeZoneInfo projectZone = TimezoneHelper.GetTimeZone(settings?.Timezone);
+                                        var localTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
+                                        customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم نقل حجز الطالب من مجموعة إلى مجموعة: {group.Name} (تلقائياً بالـ AI) بتاريخ {localTime:yyyy-MM-dd HH:mm}";
+                                        dbContext.Entry(customer).State = EntityState.Modified;
+                                    }
+
+                                    await dbContext.SaveChangesAsync();
+                                    Console.WriteLine($"[AIReplyWorker] ✅ Auto-transferred customer {bookingCustomerPhone} ('{bookingCustomerName}') to group '{group.Name}'.");
+
+                                    // Broadcast update via SignalR to refresh dashboard
+                                    try
+                                    {
+                                        var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                                        await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("GroupBookingUpdated", new
+                                        {
+                                            groupId = groupId,
+                                            groupName = group.Name,
+                                            customerPhone = bookingCustomerPhone,
+                                            customerName = bookingCustomerName,
+                                            newBookedCount = group.Bookings.Count + 1,
+                                            capacity = group.Capacity,
+                                            isFull = (group.Bookings.Count + 1) >= group.Capacity,
+                                            bookingId = existingBooking.Id,
+                                            isAttended = existingBooking.IsAttended,
+                                            isPaid = existingBooking.IsPaid
+                                        });
+                                    }
+                                    catch (Exception signalREx)
+                                    {
+                                        Console.WriteLine($"[AIReplyWorker] SignalR broadcast for group booking transfer failed: {signalREx.Message}");
+                                    }
+                                }
                             }
                             else
                             {
@@ -613,7 +698,10 @@ namespace Modules.AI.Workers
                                         customerName = bookingCustomerName,
                                         newBookedCount = group.Bookings.Count + 1,
                                         capacity = group.Capacity,
-                                        isFull = (group.Bookings.Count + 1) >= group.Capacity
+                                        isFull = (group.Bookings.Count + 1) >= group.Capacity,
+                                        bookingId = booking.Id,
+                                        isAttended = booking.IsAttended,
+                                        isPaid = booking.IsPaid
                                     });
                                 }
                                 catch (Exception signalREx)

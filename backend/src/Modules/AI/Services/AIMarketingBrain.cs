@@ -66,6 +66,8 @@ namespace Modules.AI.Services
         Task<string> RewriteFollowUpNotesAsync(
             string customerName,
             string notes,
+            bool hasAttended,
+            string? tone = null,
             string? apiKeyOverride = null,
             string? modelOverride = null);
     }
@@ -561,18 +563,42 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
         public async Task<string> RewriteFollowUpNotesAsync(
             string customerName,
             string notes,
+            bool hasAttended,
+            string? tone = null,
             string? apiKeyOverride = null,
             string? modelOverride = null)
         {
+            var toneInstructions = "";
+            var resolvedTone = tone?.ToLower() ?? "default";
+            if (resolvedTone == "creative")
+            {
+                toneInstructions = "- أسلوب الرسالة يجب أن يكون إبداعي ومبتكر وجذاب ولطيف للغاية، يترك انطباعاً رائعاً لدى العميل.\n";
+            }
+            else if (resolvedTone == "salesy")
+            {
+                toneInstructions = "- أسلوب الرسالة يجب أن يكون سلزجي صايع، ذكي ومقنع ومحفز جداً، يركز على إظهار الفوائد وحث العميل على اتخاذ القرار وإتمام الحجز والدفع بذكاء ودهاء.\n" +
+                                   "- استخدم مصطلحات شعبية وودية جداً مثل \"يا غالي\"، \"يا صديقي\"، \"يا صاحبي\"، \"يا باشا\"، \"من الآخر\"، \"سكة ودغري\"، \"حاجة عظمة\".\n";
+            }
+            else
+            {
+                toneInstructions = "- لا تستخدم تعبيرات عامية غير رسمية أو شعبية مثل \"بص يا سيدي\" أو \"من عيوني\" أو \"يا غالي\" أو \"يا صاحبي\".\n";
+            }
+
+            var attendanceInstructions = "";
+            if (hasAttended)
+            {
+                attendanceInstructions = "تنبيه هام جداً: العميل (الطالب) حضر بالفعل الحصة/المجموعة. يجب أن تعكس الرسالة ترحيباً بحضوره والمتابعة معه بناءً على حضور الجلسة وتتمنى له التوفيق.\n";
+            }
+
             var prompt = $@"أنت مساعد ذكاء اصطناعي محترف.
 لديك ملاحظة متابعة داخلية لعميل اسمه: ""{customerName}"".
 ملاحظة المتابعة الداخلية هي: ""{notes}""
 
+{attendanceInstructions}
 قم بصياغة رسالة واتساب قصيرة وودية ومباشرة باللغة العربية (اللهجة المصرية الودية والمهنية) موجهة مباشرة للعميل بناءً على هذه الملاحظة.
 - يجب أن تكون الرسالة موجهة مباشرة للعميل بصيغة المخاطب (مثال: ""يا فندم""، ""حضرتك"").
 - لا تخلط أبداً بين النداء غير الرسمي والنداء الرسمي (مثال: لا تقل ""يا مارفن يا فندم""، بل قل ""يا فندم"" أو ""أستاذ مارفن"").
-- لا تستخدم تعبيرات عامية غير رسمية أو شعبية مثل ""بص يا سيدي"" أو ""من عيوني"" أو ""يا غالي"" أو ""يا صاحبي"".
-- لا تذكر أبداً اسم الموظف أو ملاحظات إدارية.
+{toneInstructions}- لا تذكر أبداً اسم الموظف أو ملاحظات إدارية.
 - لا تضع أي توقيع أو علامات ترقيم زائدة.
 - اكتب نص الرسالة فقط التي سيتم إرسالها للعميل مباشرة وبدون أي مقدمات أو شرح خارجي.
 الرسالة:";

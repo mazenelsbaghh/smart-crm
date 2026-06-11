@@ -13,7 +13,8 @@ import {
   Copy, 
   Check, 
   ArrowRight,
-  Clock
+  Clock,
+  Download
 } from 'lucide-react';
 import styles from './settings.module.css';
 
@@ -23,6 +24,8 @@ interface Booking {
   customerPhone: string;
   customerId: string;
   createdAt: string;
+  isAttended: boolean;
+  isPaid: boolean;
 }
 
 interface GroupAppointment {
@@ -204,6 +207,32 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     }
   };
 
+  const handleToggleBookingStatus = async (bookingId: string, updates: { isAttended?: boolean; isPaid?: boolean }) => {
+    try {
+      await api.patch(`/api/group-appointments/bookings/${bookingId}`, updates);
+      
+      // Update local state
+      setSelectedGroup(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          bookings: prev.bookings.map(b => b.id === bookingId ? { ...b, ...updates } : b)
+        };
+      });
+
+      setGroups(prev => prev.map(group => {
+        if (!group.bookings.some(b => b.id === bookingId)) return group;
+        return {
+          ...group,
+          bookings: group.bookings.map(b => b.id === bookingId ? { ...b, ...updates } : b)
+        };
+      }));
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'فشل تحديث حالة الحجز.' });
+    }
+  };
+
   const handleCopyLink = (groupId: string) => {
     if (!activeProject) return;
     const link = `${window.location.origin}/booking/${activeProject.id}`;
@@ -223,6 +252,44 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const handleExportCSV = (group: GroupAppointment) => {
+    if (!group || group.bookings.length === 0) return;
+    
+    // Header
+    const headers = ['اسم الطالب', 'رقم الهاتف', 'تاريخ الحجز', 'حالة الحضور', 'حالة الدفع'];
+    
+    // Rows
+    const rows = group.bookings.map(b => [
+      b.customerName,
+      `+${b.customerPhone}`,
+      new Date(b.createdAt).toLocaleString('ar-EG'),
+      b.isAttended ? 'حضر' : 'لم يحضر',
+      b.isPaid ? 'دفع' : 'لم يدفع'
+    ]);
+    
+    // Build CSV content
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(val => `"${val.replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+    
+    // Add UTF-8 BOM
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    
+    const formattedDate = new Date(group.dateTime);
+    const timeStr = `${formattedDate.getHours()}_${formattedDate.getMinutes()}`;
+    const fileName = `bookings_${group.mode}_${timeStr}.csv`;
+    
+    link.setAttribute('download', fileName);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -598,13 +665,23 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'hsl(var(--text-primary))' }}>
                   المشتركون في مَجموعة: <span style={{ color: 'hsl(var(--accent-primary))' }}>{selectedGroup.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)'}</span>
                 </h3>
-                <button
-                  onClick={() => setSelectedGroup(null)}
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                  style={{ padding: '2px 8px', fontSize: '0.75rem' }}
-                >
-                  إغلاق القائمة
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => handleExportCSV(selectedGroup)}
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                    style={{ padding: '4px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(34, 197, 94, 0.08)', color: 'rgb(34, 197, 94)', borderColor: 'rgba(34, 197, 94, 0.2)' }}
+                  >
+                    <Download size={12} />
+                    تصدير المشتركين (CSV)
+                  </button>
+                  <button
+                    onClick={() => setSelectedGroup(null)}
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                    style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                  >
+                    إغلاق القائمة
+                  </button>
+                </div>
               </div>
 
               {selectedGroup.bookings.length === 0 ? (
@@ -619,6 +696,8 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                         <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>اسم العميل</th>
                         <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>رقم الواتساب</th>
                         <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>تاريخ الحجز</th>
+                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>حضور</th>
+                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>دفع</th>
                         <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
                       </tr>
                     </thead>
@@ -629,6 +708,22 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                           <td style={{ padding: '12px 6px', fontSize: '0.85rem' }}>+{booking.customerPhone}</td>
                           <td style={{ padding: '12px 6px', fontSize: '0.85rem', color: 'hsl(var(--text-secondary))' }}>
                             {new Date(booking.createdAt).toLocaleDateString('ar-EG', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td style={{ padding: '12px 6px', textAlign: 'center' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={booking.isAttended || false} 
+                              onChange={(e) => handleToggleBookingStatus(booking.id, { isAttended: e.target.checked })} 
+                              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                            />
+                          </td>
+                          <td style={{ padding: '12px 6px', textAlign: 'center' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={booking.isPaid || false} 
+                              onChange={(e) => handleToggleBookingStatus(booking.id, { isPaid: e.target.checked })} 
+                              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                            />
                           </td>
                           <td style={{ padding: '12px 6px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'wrap' }}>

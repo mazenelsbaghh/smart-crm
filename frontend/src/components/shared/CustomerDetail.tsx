@@ -23,6 +23,7 @@ interface FollowUp {
   notes: string;
   type?: 'Nurturing' | 'AppointmentReminder';
   appointmentTime?: string;
+  tone?: string;
 }
 
 export default function CustomerDetail({ customerId, projectId, onClose, onUpdate, isInline = false }: CustomerDetailProps) {
@@ -58,6 +59,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
   const [newFollowUpType, setNewFollowUpType] = useState<'Nurturing' | 'AppointmentReminder'>('Nurturing');
   const [newAppointmentTime, setNewAppointmentTime] = useState('');
+  const [newFollowUpTone, setNewFollowUpTone] = useState<string>('Default');
 
   // New tag field
   const [newTag, setNewTag] = useState('');
@@ -261,13 +263,15 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
           : new Date(newAppointmentTime).toISOString(),
         appointmentTime: newFollowUpType === 'AppointmentReminder' 
           ? new Date(newAppointmentTime).toISOString() 
-          : undefined
+          : undefined,
+        tone: newFollowUpTone
       };
 
       await api.post(`/api/customers/${customerId}/follow-ups`, payload);
       setNewFollowUpDate('');
       setNewAppointmentTime('');
       setNewFollowUpNotes('');
+      setNewFollowUpTone('Default');
       setNewFollowUpType('Nurturing');
       
       // Reload follow-ups
@@ -628,6 +632,19 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 )}
 
                 <div className={styles.formGroup}>
+                  <label className={styles.label}>نبرة المتابعة (Tone)</label>
+                  <select
+                    value={newFollowUpTone}
+                    onChange={(e) => setNewFollowUpTone(e.target.value)}
+                    className={styles.select}
+                  >
+                    <option value="Default">الوضع الافتراضي (Default)</option>
+                    <option value="Creative">إبداعي (Creative)</option>
+                    <option value="Salesy">سلزجي صايع (Salesy)</option>
+                  </select>
+                </div>
+
+                <div className={styles.formGroup}>
                   <label className={styles.label}>نص الرسالة / ملاحظات</label>
                   <input 
                     type="text" 
@@ -682,6 +699,16 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                             fontSize: '0.7rem'
                           }}>
                             متابعة عميل
+                          </span>
+                        )}
+                        {f.tone && f.tone !== 'Default' && (
+                          <span className={styles.statusBadge} style={{
+                            backgroundColor: 'rgba(168, 85, 247, 0.12)',
+                            color: 'hsl(270, 84%, 75%)',
+                            padding: '2px 6px',
+                            fontSize: '0.7rem'
+                          }}>
+                            {f.tone === 'Creative' ? 'إبداعي' : 'سلزجي صايع'}
                           </span>
                         )}
                         {f.type === 'AppointmentReminder' && f.appointmentTime && (

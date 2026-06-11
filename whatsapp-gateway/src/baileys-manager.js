@@ -249,13 +249,15 @@ export async function startSession(projectId) {
                     console.log(`[baileys-manager] full msg keys: ${Object.keys(msg).join(', ')}`);
                     if (msg.key.participant) console.log(`[baileys-manager] msg.key.participant: ${msg.key.participant}`);
                     
-                    // Mark message as read/seen immediately
+                    // Mark message as read/seen immediately (DISABLED: "نشيل السين" as requested by user)
+                    /*
                     try {
                         await sock.readMessages([msg.key]);
                         console.log(`[baileys-manager] Marked message ${msg.key.id} from ${msg.key.remoteJid} as read/seen.`);
                     } catch (readErr) {
                         console.error(`[baileys-manager] Failed to mark message ${msg.key.id} as read: ${readErr.message}`);
                     }
+                    */
 
                     let mInfo = msg.message;
                     // Unwrap ephemeral or view once wrapper types

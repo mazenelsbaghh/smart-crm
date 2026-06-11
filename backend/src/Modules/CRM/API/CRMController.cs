@@ -312,7 +312,8 @@ namespace Modules.CRM.API
                 Status = "Pending",
                 Notes = request.Notes ?? string.Empty,
                 Type = resolvedType,
-                AppointmentTime = apptTime
+                AppointmentTime = apptTime,
+                Tone = request.Tone ?? "Default"
             };
 
             _context.FollowUps.Add(followUp);
@@ -420,6 +421,11 @@ namespace Modules.CRM.API
                 followUp.Status = request.Status;
             }
 
+            if (request.Tone != null)
+            {
+                followUp.Tone = request.Tone;
+            }
+
             _context.Entry(followUp).State = EntityState.Modified;
             await _context.SaveChangesAsync();
 
@@ -474,9 +480,14 @@ namespace Modules.CRM.API
                             }
                             string model = projectSettings?.GeminiModel;
 
+                            var hasAttended = await _context.GroupAppointmentBookings
+                                .AnyAsync(b => b.CustomerId == customer.Id && b.IsAttended);
+
                             messageContent = await aiMarketingBrain.RewriteFollowUpNotesAsync(
                                 customer.Name,
                                 followUp.Notes,
+                                hasAttended,
+                                followUp.Tone,
                                 apiKey,
                                 model);
                         }
@@ -745,6 +756,7 @@ namespace Modules.CRM.API
         public string Notes { get; set; }
         public string? Type { get; set; }
         public DateTime? AppointmentTime { get; set; }
+        public string? Tone { get; set; }
     }
 
     public class UpdateFollowUpRequest
@@ -754,5 +766,6 @@ namespace Modules.CRM.API
         public string? Type { get; set; }
         public DateTime? AppointmentTime { get; set; }
         public string? Status { get; set; }
+        public string? Tone { get; set; }
     }
 }

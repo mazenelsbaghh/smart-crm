@@ -13,5 +13,9 @@ namespace Modules.GroupAppointments.Domain
 
         // Navigation property for group appointment
         public GroupAppointment GroupAppointment { get; set; } = null!;
+
+        // Attendance & Payment status
+        public bool IsAttended { get; set; } = false;
+        public bool IsPaid { get; set; } = false;
     }
 }

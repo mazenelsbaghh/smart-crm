@@ -28,6 +28,7 @@ interface FollowUp {
   notes: string;
   type?: 'Nurturing' | 'AppointmentReminder';
   appointmentTime?: string;
+  tone?: string;
 }
 
 const statusMapAr: Record<string, string> = {
@@ -60,6 +61,7 @@ export default function FollowUps() {
   const [editDueDate, setEditDueDate] = useState('');
   const [editType, setEditType] = useState<'Nurturing' | 'AppointmentReminder'>('Nurturing');
   const [editAppointmentTime, setEditAppointmentTime] = useState('');
+  const [editTone, setEditTone] = useState<string>('Default');
 
   const fetchData = async () => {
     if (!activeProject) return;
@@ -139,6 +141,7 @@ export default function FollowUps() {
     }
     
     setEditType(fu.type || 'Nurturing');
+    setEditTone(fu.tone || 'Default');
     
     if (fu.appointmentTime) {
       const d = new Date(fu.appointmentTime);
@@ -165,7 +168,8 @@ export default function FollowUps() {
           : new Date(editAppointmentTime).toISOString(),
         appointmentTime: editType === 'AppointmentReminder'
           ? new Date(editAppointmentTime).toISOString()
-          : null
+          : null,
+        tone: editTone
       };
       
       await api.put(`/api/follow-ups/${editingFollowUp.id}`, payload);
@@ -431,23 +435,35 @@ export default function FollowUps() {
                         </div>
                       </td>
                       <td className={styles.td}>
-                        {fu.type === 'AppointmentReminder' ? (
-                          <span className={styles.statusBadge} style={{
-                            backgroundColor: 'rgba(16, 185, 129, 0.12)',
-                            color: 'hsl(140, 100%, 65%)',
-                            border: '1px solid rgba(16, 185, 129, 0.2)'
-                          }}>
-                            تذكير بموعد
-                          </span>
-                        ) : (
-                          <span className={styles.statusBadge} style={{
-                            backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                            color: 'hsl(239, 84%, 75%)',
-                            border: '1px solid rgba(99, 102, 241, 0.2)'
-                          }}>
-                            متابعة عميل
-                          </span>
-                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                          {fu.type === 'AppointmentReminder' ? (
+                            <span className={styles.statusBadge} style={{
+                              backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                              color: 'hsl(140, 100%, 65%)',
+                              border: '1px solid rgba(16, 185, 129, 0.2)'
+                            }}>
+                              تذكير بموعد
+                            </span>
+                          ) : (
+                            <span className={styles.statusBadge} style={{
+                              backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                              color: 'hsl(239, 84%, 75%)',
+                              border: '1px solid rgba(99, 102, 241, 0.2)'
+                            }}>
+                              متابعة عميل
+                            </span>
+                          )}
+                          {fu.tone && fu.tone !== 'Default' && (
+                            <span className={styles.statusBadge} style={{
+                              backgroundColor: 'rgba(168, 85, 247, 0.12)',
+                              color: 'hsl(270, 84%, 75%)',
+                              border: '1px solid rgba(168, 85, 247, 0.2)',
+                              fontSize: '0.7rem'
+                            }}>
+                              {fu.tone === 'Creative' ? 'إبداعي' : 'سلزجي صايع'}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className={styles.td}>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
@@ -628,6 +644,19 @@ export default function FollowUps() {
                   </span>
                 </div>
               )}
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>نبرة المتابعة (Tone)</label>
+                <select
+                  value={editTone}
+                  onChange={(e) => setEditTone(e.target.value)}
+                  className={styles.select}
+                >
+                  <option value="Default">الوضع الافتراضي (Default)</option>
+                  <option value="Creative">إبداعي (Creative)</option>
+                  <option value="Salesy">سلزجي صايع (Salesy)</option>
+                </select>
+              </div>
 
               <div className={styles.formGroup}>
                 <label className={styles.label}>نص الرسالة / ملاحظات</label>

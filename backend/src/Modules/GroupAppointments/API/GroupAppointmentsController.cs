@@ -66,7 +66,9 @@ namespace Modules.GroupAppointments.API
                     b.CustomerName,
                     b.CustomerPhone,
                     b.CustomerId,
-                    b.CreatedAt
+                    b.CreatedAt,
+                    b.IsAttended,
+                    b.IsPaid
                 })
             });
 
@@ -197,6 +199,65 @@ namespace Modules.GroupAppointments.API
             return NoContent();
         }
 
+        [HttpPatch("group-appointments/bookings/{bookingId}")]
+        public async Task<IActionResult> UpdateBookingStatus(Guid bookingId, [FromBody] UpdateBookingStatusRequest request)
+        {
+            var booking = await _context.GroupAppointmentBookings
+                .Include(b => b.GroupAppointment)
+                .FirstOrDefaultAsync(b => b.Id == bookingId);
+
+            if (booking == null) return NotFound();
+
+            if (request.IsAttended.HasValue)
+            {
+                booking.IsAttended = request.IsAttended.Value;
+            }
+
+            if (request.IsPaid.HasValue)
+            {
+                booking.IsPaid = request.IsPaid.Value;
+            }
+
+            _context.Entry(booking).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            // Broadcast SignalR update
+            try
+            {
+                var bookedCount = await _context.GroupAppointmentBookings
+                    .CountAsync(b => b.GroupAppointmentId == booking.GroupAppointmentId);
+
+                await _hubContext.Clients.Group($"project_{booking.ProjectId}").SendAsync("GroupBookingUpdated", new
+                {
+                    groupId = booking.GroupAppointmentId,
+                    groupName = booking.GroupAppointment?.Name,
+                    customerPhone = booking.CustomerPhone,
+                    customerName = booking.CustomerName,
+                    newBookedCount = bookedCount,
+                    capacity = booking.GroupAppointment?.Capacity,
+                    isFull = booking.GroupAppointment != null && bookedCount >= booking.GroupAppointment.Capacity,
+                    bookingId = booking.Id,
+                    isAttended = booking.IsAttended,
+                    isPaid = booking.IsPaid
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GroupAppointmentsController] SignalR booking update status error: {ex.Message}");
+            }
+
+            return Ok(new
+            {
+                booking.Id,
+                booking.CustomerName,
+                booking.CustomerPhone,
+                booking.CustomerId,
+                booking.IsAttended,
+                booking.IsPaid,
+                booking.CreatedAt
+            });
+        }
+
         // --- Anonymous Public Booking Endpoints ---
 
         [AllowAnonymous]
@@ -260,11 +321,8 @@ namespace Modules.GroupAppointments.API
             }
 
             var cleanPhone = request.CustomerPhone.Trim();
-            var alreadyBooked = group.Bookings.Any(b => b.CustomerPhone == cleanPhone);
-            if (alreadyBooked)
-            {
-                return BadRequest(new { error = "أنت مسجل بالفعل في هذه المجموعة" });
-            }
+            var existingBooking = await _context.GroupAppointmentBookings
+                .FirstOrDefaultAsync(b => b.ProjectId == request.ProjectId && b.CustomerPhone == cleanPhone);
 
             // Resolve customer
             var customer = await _context.Customers
@@ -296,30 +354,67 @@ namespace Modules.GroupAppointments.API
                 TimeZoneInfo projectZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone(settings?.Timezone);
                 var utcTime = DateTime.SpecifyKind(group.DateTime, DateTimeKind.Utc);
                 var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
-                customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم حجز موعد في مجموعة: {group.Name} بتاريخ {localTime:yyyy-MM-dd HH:mm}";
+
+                if (existingBooking != null && existingBooking.GroupAppointmentId != request.GroupAppointmentId)
+                {
+                    customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم نقل حجز الطالب من مجموعة إلى مجموعة: {group.Name} بتاريخ {localTime:yyyy-MM-dd HH:mm}";
+                }
+                else
+                {
+                    customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم حجز موعد في مجموعة: {group.Name} بتاريخ {localTime:yyyy-MM-dd HH:mm}";
+                }
                 _context.Entry(customer).State = EntityState.Modified;
             }
 
-            // Create booking
-            var booking = new GroupAppointmentBooking
-            {
-                ProjectId = request.ProjectId,
-                GroupAppointmentId = request.GroupAppointmentId,
-                CustomerId = customer.Id,
-                CustomerName = request.CustomerName.Trim(),
-                CustomerPhone = cleanPhone
-            };
+            GroupAppointmentBooking booking;
+            bool isTransfer = false;
 
-            _context.GroupAppointmentBookings.Add(booking);
-            await _context.SaveChangesAsync();
+            if (existingBooking != null)
+            {
+                if (existingBooking.GroupAppointmentId == request.GroupAppointmentId)
+                {
+                    return Ok(group); // Already in this group, do nothing
+                }
+
+                isTransfer = true;
+                // Transfer to new group
+                existingBooking.GroupAppointmentId = request.GroupAppointmentId;
+                existingBooking.IsAttended = false; // Reset attendance for the new group
+                // Keep existingBooking.IsPaid as is so their payment status carries over!
+                existingBooking.CreatedAt = DateTime.UtcNow; // Update booking date to now
+
+                _context.Entry(existingBooking).State = EntityState.Modified;
+                await _context.SaveChangesAsync();
+
+                booking = existingBooking;
+            }
+            else
+            {
+                // Create booking
+                booking = new GroupAppointmentBooking
+                {
+                    ProjectId = request.ProjectId,
+                    GroupAppointmentId = request.GroupAppointmentId,
+                    CustomerId = customer.Id,
+                    CustomerName = request.CustomerName.Trim(),
+                    CustomerPhone = cleanPhone
+                };
+
+                _context.GroupAppointmentBookings.Add(booking);
+                await _context.SaveChangesAsync();
+            }
 
             // Create alert
+            string alertMessage = isTransfer
+                ? $"تم نقل حجز الطالب: {booking.CustomerName} ({booking.CustomerPhone}) إلى المجموعة {group.Name}"
+                : $"تم تسجيل حجز جديد: {booking.CustomerName} ({booking.CustomerPhone}) في المجموعة {group.Name}";
+
             var alert = new NotificationAlert
             {
                 ProjectId = request.ProjectId,
                 UserId = Guid.Empty,
                 Type = "Booking",
-                Message = $"تم تسجيل حجز جديد: {booking.CustomerName} ({booking.CustomerPhone}) في المجموعة {group.Name}",
+                Message = alertMessage,
                 IsRead = false
             };
             _context.NotificationAlerts.Add(alert);
@@ -428,5 +523,11 @@ namespace Modules.GroupAppointments.API
         public Guid GroupAppointmentId { get; set; }
         public string CustomerName { get; set; } = null!;
         public string CustomerPhone { get; set; } = null!;
+    }
+
+    public class UpdateBookingStatusRequest
+    {
+        public bool? IsAttended { get; set; }
+        public bool? IsPaid { get; set; }
     }
 }
