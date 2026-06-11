@@ -261,7 +261,8 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     const headers = ['اسم الطالب', 'رقم الهاتف', 'تاريخ الحجز', 'حالة الحضور', 'حالة الدفع'];
     
     // Rows
-    const rows = group.bookings.map(b => [
+    const sortedBookings = [...group.bookings].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const rows = sortedBookings.map(b => [
       b.customerName,
       `+${b.customerPhone}`,
       new Date(b.createdAt).toLocaleString('ar-EG'),
@@ -702,7 +703,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedGroup.bookings.map((booking) => (
+                      {[...selectedGroup.bookings]
+                        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                        .map((booking) => (
                         <tr key={booking.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                           <td style={{ padding: '12px 6px', fontWeight: 600 }}>{booking.customerName}</td>
                           <td style={{ padding: '12px 6px', fontSize: '0.85rem' }}>+{booking.customerPhone}</td>

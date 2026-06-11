@@ -447,6 +447,18 @@ namespace Modules.CRM.API
 
             if (customer == null) return BadRequest("Customer not found");
 
+            // Check if customer has any paid group booking
+            var hasPaid = await _context.GroupAppointmentBookings
+                .AnyAsync(b => b.CustomerId == customer.Id && b.IsPaid && b.ProjectId == followUp.ProjectId);
+
+            if (hasPaid)
+            {
+                followUp.Status = "Cancelled";
+                _context.Entry(followUp).State = EntityState.Modified;
+                await _context.SaveChangesAsync();
+                return BadRequest("Customer has already paid. Follow-up is cancelled.");
+            }
+
             // Define the message content
             string messageContent = string.Empty;
             if (!string.IsNullOrEmpty(followUp.Notes))

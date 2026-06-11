@@ -28,6 +28,7 @@ namespace Modules.AI.Services
         public string[] SuggestedButtons { get; set; } = Array.Empty<string>();
         public string? SuggestedReaction { get; set; }
         public string? SuggestedGroupBookingId { get; set; }
+        public bool CancelGroupBooking { get; set; } = false;
     }
 
     public class SuggestedFollowUpResult
@@ -120,7 +121,8 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
     ""notes"": ""Arabic message content customized to the customer's context and conversation state, to be sent to them automatically""
   },
   ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null"",
-  ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null""
+  ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null"",
+  ""cancelGroupBooking"": true | false
 }
 
 Guidelines for suggestedReaction:
@@ -134,6 +136,10 @@ Guidelines for suggestedGroupBookingId (Auto-Booking):
 - When you set suggestedGroupBookingId, write a warm confirmation in replyContent telling the customer they have been registered successfully. The system will handle the actual booking automatically.
 - NEVER set suggestedGroupBookingId if the customer hasn't explicitly asked to book/register.
 - NEVER mention any group that is marked as ""ممتلئة تماماً"" (full) to the customer.
+
+Guidelines for cancelGroupBooking (Auto-Cancellation):
+- Set cancelGroupBooking to true ONLY if the customer explicitly requests to cancel their booking, delete their reservation, says they are not coming, or asks to be removed from the group (e.g., ""عايز ألغي الحجز"", ""مش جاي خلاص"", ""احذف حتة الحجز"", ""إلغاء الميعاد""). Otherwise, set to false.
+- When you set cancelGroupBooking to true, write a polite, empathetic, and comforting reply in replyContent confirming the cancellation, letting them know it is done, and friendly asking if they would like to reschedule/book a different time later, or how you can assist them further to adjust their schedule (""يظبط معاهم"").
 
 Guidelines for suggestedFollowUp:
 - needed: Set to true if the customer booked an appointment/course (requires AppointmentReminder) OR if they are hesitant, cold, or waiting for feedback (requires Nurturing). Otherwise false.

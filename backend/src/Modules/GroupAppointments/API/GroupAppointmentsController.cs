@@ -60,7 +60,7 @@ namespace Modules.GroupAppointments.API
                 g.CreatedAt,
                 g.UpdatedAt,
                 BookedCount = g.Bookings.Count,
-                Bookings = g.Bookings.Select(b => new
+                Bookings = g.Bookings.OrderByDescending(b => b.CreatedAt).Select(b => new
                 {
                     b.Id,
                     b.CustomerName,
@@ -216,6 +216,20 @@ namespace Modules.GroupAppointments.API
             if (request.IsPaid.HasValue)
             {
                 booking.IsPaid = request.IsPaid.Value;
+
+                if (booking.IsPaid)
+                {
+                    // Auto-cancel all pending follow-ups for this customer
+                    var pendingFollowUps = await _context.FollowUps
+                        .Where(f => f.CustomerId == booking.CustomerId && f.Status == "Pending" && f.ProjectId == booking.ProjectId)
+                        .ToListAsync();
+
+                    foreach (var f in pendingFollowUps)
+                    {
+                        f.Status = "Cancelled";
+                        _context.Entry(f).State = EntityState.Modified;
+                    }
+                }
             }
 
             _context.Entry(booking).State = EntityState.Modified;

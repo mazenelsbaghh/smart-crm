@@ -86,6 +86,19 @@ namespace Modules.CRM.Services
                         continue;
                     }
 
+                    // Check if customer has any paid group booking
+                    var hasPaid = await dbContext.GroupAppointmentBookings
+                        .AnyAsync(b => b.CustomerId == customer.Id && b.IsPaid && b.ProjectId == followUp.ProjectId);
+
+                    if (hasPaid)
+                    {
+                        Console.WriteLine($"[Hangfire Job] Customer {customer.PhoneNumber} has already paid. Cancelling follow-up {followUp.Id}.");
+                        followUp.Status = "Cancelled";
+                        dbContext.Entry(followUp).State = EntityState.Modified;
+                        await dbContext.SaveChangesAsync();
+                        continue;
+                    }
+
                     string messageContent = string.Empty;
                     if (!string.IsNullOrEmpty(followUp.Notes))
                     {

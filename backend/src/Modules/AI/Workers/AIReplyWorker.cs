@@ -722,6 +722,63 @@ namespace Modules.AI.Workers
                 }
             }
 
+            // 2.6. Process AI Auto-Cancellation if CancelGroupBooking is set to true
+            if (analysisResult.CancelGroupBooking)
+            {
+                try
+                {
+                    var bookingCustomerId = customer?.Id ?? Guid.Empty;
+                    var bookingCustomerPhone = @event.Sender;
+
+                    var existingBooking = await dbContext.GroupAppointmentBookings
+                        .Include(b => b.GroupAppointment)
+                        .FirstOrDefaultAsync(b => b.ProjectId == @event.ProjectId && (b.CustomerPhone == bookingCustomerPhone || b.CustomerId == bookingCustomerId));
+
+                    if (existingBooking != null)
+                    {
+                        var groupName = existingBooking.GroupAppointment?.Name ?? "المجموعة";
+                        var groupId = existingBooking.GroupAppointmentId;
+
+                        dbContext.GroupAppointmentBookings.Remove(existingBooking);
+                        
+                        // Update customer notes to document the cancellation
+                        if (customer != null)
+                        {
+                            TimeZoneInfo projectZone = TimezoneHelper.GetTimeZone(settings?.Timezone);
+                            var localTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
+                            customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم إلغاء حجز الطالب من مجموعة {groupName} (تلقائياً بالـ AI) بتاريخ {localTime:yyyy-MM-dd HH:mm}";
+                            dbContext.Entry(customer).State = EntityState.Modified;
+                        }
+
+                        await dbContext.SaveChangesAsync();
+                        Console.WriteLine($"[AIReplyWorker] ❌ Auto-cancelled booking for customer {bookingCustomerPhone} from group '{groupName}'.");
+
+                        // Broadcast update via SignalR to refresh dashboard
+                        try
+                        {
+                            var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                            await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("GroupBookingUpdated", new
+                            {
+                                groupId = groupId,
+                                groupName = groupName,
+                                customerPhone = bookingCustomerPhone,
+                                customerName = customer?.Name ?? bookingCustomerPhone,
+                                newBookedCount = existingBooking.GroupAppointment != null ? Math.Max(0, existingBooking.GroupAppointment.Bookings.Count - 1) : 0,
+                                isCancelled = true
+                            });
+                        }
+                        catch (Exception signalREx)
+                        {
+                            Console.WriteLine($"[AIReplyWorker] SignalR broadcast for group booking cancellation failed: {signalREx.Message}");
+                        }
+                    }
+                }
+                catch (Exception cancelEx)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Auto-cancellation failed: {cancelEx.Message}");
+                }
+            }
+
             // 3. Process AI Auto-Reaction if suggested
             if (!string.IsNullOrEmpty(analysisResult.SuggestedReaction))
             {
