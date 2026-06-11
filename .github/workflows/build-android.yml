@@ -1,0 +1,40 @@
+name: Build Flutter Android APK
+
+on:
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: 'stable'
+        cache: true
+
+    - name: Install dependencies
+      run: |
+        cd mobile_app
+        flutter pub get
+
+    - name: Build APK (Release)
+      run: |
+        cd mobile_app
+        flutter build apk --release
+
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: flutter-app-apk
+        path: mobile_app/build/app/outputs/flutter-apk/app-release.apk
