@@ -1,7 +1,10 @@
 name: Build Flutter Android APK
 
 on:
-  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+  push:
+    branches:
+      - 022-flutter-mobile-app
+  workflow_dispatch:
 
 jobs:
   build:
