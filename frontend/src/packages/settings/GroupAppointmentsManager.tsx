@@ -96,10 +96,8 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       setActionLoading(true);
       setMessage(null);
 
-      // Convert time-only value to today's date with the specified time
-      const [hours, minutes] = dateTime.split(':').map(Number);
-      const dateObj = new Date();
-      dateObj.setHours(hours, minutes, 0, 0);
+      // Parse full local date-time value
+      const dateObj = new Date(dateTime);
       const utcDate = dateObj.toISOString();
 
       const payload = {
@@ -138,11 +136,14 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     setEditingGroupId(group.id);
     setMode(group.mode || 'offline');
     
-    // Format UTC time to time-only (HH:mm)
+    // Format UTC time to datetime-local (YYYY-MM-DDTHH:mm)
     const localDate = new Date(group.dateTime);
+    const year = localDate.getFullYear();
+    const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
+    const date = localDate.getDate().toString().padStart(2, '0');
     const hours = localDate.getHours().toString().padStart(2, '0');
     const mins = localDate.getMinutes().toString().padStart(2, '0');
-    setDateTime(`${hours}:${mins}`);
+    setDateTime(`${year}-${month}-${date}T${hours}:${mins}`);
     setCapacity(group.capacity);
     setIsActive(group.isActive);
     setSelectedDays(group.days ? group.days.split(',').filter(Boolean).map(Number) : []);
@@ -302,7 +303,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   };
 
   const formatTime = (isoString: string) => {
-    return new Date(isoString).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const dateObj = new Date(isoString);
+    const dateStr = dateObj.toLocaleDateString('ar-EG', { month: 'long', day: 'numeric' });
+    const timeStr = dateObj.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    return `${dateStr} الساعة ${timeStr}`;
   };
 
   const formatDays = (days: string) => {
@@ -809,9 +813,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>الوقت</label>
+                <label className={styles.label}>التاريخ والوقت</label>
                 <input 
-                  type="time" 
+                  type="datetime-local" 
                   value={dateTime} 
                   onChange={(e) => setDateTime(e.target.value)} 
                   className={styles.input} 

@@ -72,7 +72,7 @@ backend/src/
 │   │   │   ├── IAIMarketingBrain.cs         # Modifying: adjust RewriteFollowUpNotesAsync signature
 │   │   │   └── AIMarketingBrain.cs          # Modifying: implement RewriteFollowUpNotesAsync with IsAttended and Tone prompt adjustments
 │   │   └── Workers/
-│   │       └── AIReplyWorker.cs             # Modifying: skip auto-reply if customer has paid group booking
+│   │       └── AIReplyWorker.cs             # Modifying: skip auto-reply if customer has paid booking; inject all active groups (both available and full) and add strict online/offline attendance instructions in system prompt.
 whatsapp-gateway/src/
 └── baileys-manager.js                        # Modifying: remove or disable sock.readMessages() call
 

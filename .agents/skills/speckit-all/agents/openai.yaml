@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Kit All"
+  short_description: "Deep Spec Kit workflow with strict planning"
+  default_prompt: "Use $speckit-all to run the full feature workflow with Arabic clarification, standalone speckit-plan deep planning, strict tasks, guards, and final tests."

@@ -245,8 +245,9 @@ namespace Modules.AI.Workers
                     var groupsContextList = new System.Collections.Generic.List<string>();
                     TimeZoneInfo projectZone = TimezoneHelper.GetTimeZone(settings.Timezone);
 
-                    // Filter out full groups - don't show them to the AI at all
+                    // Filter out full groups vs available groups
                     var availableGroups = activeGroups.Where(g => g.Bookings.Count < g.Capacity).ToList();
+                    var fullGroups = activeGroups.Where(g => g.Bookings.Count >= g.Capacity).ToList();
 
                     // Determine customer's city status and filter/adjust instructions accordingly
                     var customerCity = customer?.City?.Trim();
@@ -265,9 +266,10 @@ namespace Modules.AI.Workers
                     if (isCityKnown && !isFromAlexandria)
                     {
                         availableGroups = availableGroups.Where(g => g.Mode == "online").ToList();
+                        fullGroups = fullGroups.Where(g => g.Mode == "online").ToList();
                     }
 
-                    Console.WriteLine($"[AIReplyWorker] Active groups: {activeGroups.Count}, Available (not full): {availableGroups.Count}, CityKnown: {isCityKnown}, FromAlexandria: {isFromAlexandria}");
+                    Console.WriteLine($"[AIReplyWorker] Active groups: {activeGroups.Count}, Available: {availableGroups.Count}, Full: {fullGroups.Count}, CityKnown: {isCityKnown}, FromAlexandria: {isFromAlexandria}");
 
                     string GetArabicDaysText(string daysCsv)
                     {
@@ -312,6 +314,16 @@ namespace Modules.AI.Workers
                         groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
                     }
 
+                    var fullGroupsContextList = new System.Collections.Generic.List<string>();
+                    foreach (var g in fullGroups)
+                    {
+                        var utcTime = DateTime.SpecifyKind(g.DateTime, DateTimeKind.Utc);
+                        var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
+                        var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
+                        var daysText = GetArabicDaysText(g.Days);
+                        var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
+                        fullGroupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")} (مكتملة العدد تماماً - ممتلئة)\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
+                    }
 
                     // Check if this customer is already booked in any group
                     GroupAppointment bookedGroup = null;
@@ -370,7 +382,13 @@ namespace Modules.AI.Workers
                                             cityInstruction + "\n" +
                                             alreadyBookedNote + "\n\n" +
                                             "قائمة المجموعات المتاحة حالياً:\n" +
-                                            (groupsContextList.Any() ? string.Join("\n", groupsContextList) : "- لا توجد مجموعات متاحة حالياً للحجز.");
+                                            (groupsContextList.Any() ? string.Join("\n", groupsContextList) : "- لا توجد مجموعات متاحة حالياً للحجز.") + "\n\n" +
+                                            "قائمة المجموعات المكتملة العدد حالياً (كاملة العدد ويُمنع الحجز فيها تماماً):\n" +
+                                            (fullGroupsContextList.Any() ? string.Join("\n", fullGroupsContextList) : "- لا توجد مجموعات مكتملة العدد حالياً.") + "\n\n" +
+                                            "قوانين صارمة جداً بشأن حضور المجموعات والمجموعات المكتملة:\n" +
+                                            "1. المجموعات الأونلاين (Online) مخصصة فقط وحصرياً للحضور عبر الإنترنت. يُمنع منعاً باتاً إخبار أو إيحاء طلاب الأونلاين بإمكانية الحضور في السنتر/أوفلاين. يجب التأكيد التام عليهم أن حضورهم أونلاين فقط ولا يجوز حضورهم في السنتر.\n" +
+                                            "2. المجموعات في السنتر (Offline) مخصصة فقط وحصرياً للحضور الفعلي الجسدي داخل السنتر. ولا يوجد لها حضور أونلاين.\n" +
+                                            "3. المجموعات المكتملة العدد (ممتلئة) هي مجموعات موجودة بالفعل في النظام ولكنها ممتلئة تماماً. إذا سأل العميل عنها، أخبره صراحةً أنها مكتملة العدد وممتلئة حالياً، ولكن لا تقل له أنها غير موجودة أو لم تفتح بعد. يُمنع منعاً باتاً حجز العميل في مجموعة مكتملة العدد (أي لا تضع suggestedGroupBookingId لها).\n";
 
                     if (string.IsNullOrEmpty(brainContext))
                     {
@@ -380,7 +398,7 @@ namespace Modules.AI.Workers
                     {
                         brainContext = groupsContextText + "\n\n" + brainContext;
                     }
-                    Console.WriteLine($"[AIReplyWorker] Injected Group Appointments context (Found {activeGroups.Count} active, {availableGroups.Count} with slots).");
+                    Console.WriteLine($"[AIReplyWorker] Injected Group Appointments context (Found {activeGroups.Count} active, Available: {availableGroups.Count}, Full: {fullGroups.Count}).");
                 }
                 catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
                 {
@@ -601,13 +619,41 @@ namespace Modules.AI.Workers
                         {
                             Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group {groupId} not found or inactive.");
                         }
-                        else if (group.Bookings.Count >= group.Capacity)
-                        {
-                            Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group '{group.Name}' is full ({group.Bookings.Count}/{group.Capacity}).");
-                        }
                         else
                         {
-                            // Resolve or create customer for the booking
+                            // Adjust date if group date has passed
+                            var projectZone = TimezoneHelper.GetTimeZone(settings?.Timezone);
+                            var localGroupDateTime = TimeZoneInfo.ConvertTimeFromUtc(group.DateTime, projectZone);
+                            var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
+
+                            bool isGroupActive = true;
+                            if (localNow > localGroupDateTime)
+                            {
+                                var timeDiff = localNow - localGroupDateTime;
+                                if (timeDiff.TotalHours >= 24)
+                                {
+                                    if (group.IsActive)
+                                    {
+                                        group.IsActive = false;
+                                        dbContext.Entry(group).State = EntityState.Modified;
+                                        await dbContext.SaveChangesAsync();
+                                        Console.WriteLine($"[AIReplyWorker] Deactivated expired group {group.Id} because 24 hours have passed.");
+                                    }
+                                    isGroupActive = false;
+                                }
+                            }
+
+                            if (!isGroupActive)
+                            {
+                                Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group '{group.Name}' has passed completely.");
+                            }
+                            else if (group.Bookings.Count >= group.Capacity)
+                            {
+                                Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group '{group.Name}' is full ({group.Bookings.Count}/{group.Capacity}).");
+                            }
+                            else
+                            {
+                                // Resolve or create customer for the booking
                             var bookingCustomerId = customer?.Id ?? Guid.Empty;
                             var bookingCustomerName = customer?.Name ?? @event.Sender;
                             var bookingCustomerPhone = @event.Sender;
@@ -635,7 +681,6 @@ namespace Modules.AI.Workers
                                     // Update customer notes to document the transfer
                                     if (customer != null)
                                     {
-                                        TimeZoneInfo projectZone = TimezoneHelper.GetTimeZone(settings?.Timezone);
                                         var localTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
                                         customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم نقل حجز الطالب من مجموعة إلى مجموعة: {group.Name} (تلقائياً بالـ AI) بتاريخ {localTime:yyyy-MM-dd HH:mm}";
                                         dbContext.Entry(customer).State = EntityState.Modified;
@@ -711,16 +756,17 @@ namespace Modules.AI.Workers
                             }
                         }
                     }
-                    else
-                    {
-                        Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Invalid GUID '{analysisResult.SuggestedGroupBookingId}'.");
-                    }
                 }
-                catch (Exception bookingEx) when (bookingEx is not System.Data.Common.DbException && !bookingEx.ToString().Contains("EntityFrameworkCore"))
+                else
                 {
-                    _logger.LogWarning(bookingEx, "Auto-booking error");
+                    Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Invalid GUID '{analysisResult.SuggestedGroupBookingId}'.");
                 }
             }
+            catch (Exception bookingEx) when (bookingEx is not System.Data.Common.DbException && !bookingEx.ToString().Contains("EntityFrameworkCore"))
+            {
+                _logger.LogWarning(bookingEx, "Auto-booking error");
+            }
+        }
 
             // 2.6. Process AI Auto-Cancellation if CancelGroupBooking is set to true
             if (analysisResult.CancelGroupBooking)

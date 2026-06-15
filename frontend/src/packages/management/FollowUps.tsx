@@ -45,6 +45,7 @@ export default function FollowUps() {
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reEvaluating, setReEvaluating] = useState(false);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -79,6 +80,26 @@ export default function FollowUps() {
       setMessage({ type: 'error', text: 'فشل تحميل مواعيد المتابعات.' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleReEvaluateAll = async () => {
+    if (!activeProject) return;
+    if (!window.confirm('هل أنت متأكد من رغبتك في إعادة تقييم وضبط جميع المتابعات المعلقة بالذكاء الاصطناعي بناءً على محادثات الطلاب؟ قد يستغرق هذا بضع ثوانٍ.')) return;
+    
+    try {
+      setReEvaluating(true);
+      setMessage(null);
+      
+      const response = await api.post<{ message: string; count: number }>(`/api/projects/${activeProject.id}/follow-ups/re-evaluate-all`);
+      
+      setMessage({ type: 'success', text: `تم إعادة ضبط وتخصيص ${response.data.count} من المتابعات المعلقة بنجاح!` });
+      void fetchData();
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'حدث خطأ أثناء إعادة ضبط المتابعات.' });
+    } finally {
+      setReEvaluating(false);
     }
   };
 
@@ -216,11 +237,32 @@ export default function FollowUps() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
+      <div className={styles.header} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
         <div>
           <h1 className={styles.pageTitle}>جدول المتابعات</h1>
           <p className={styles.pageSubtitle}>إدارة مواعيد المتابعات المعلقة والمتأخرة للاتصال بالعملاء أو مراسلتهم</p>
         </div>
+        <button
+          onClick={handleReEvaluateAll}
+          disabled={reEvaluating || pendingCount === 0}
+          className={`${styles.btn} ${styles.btnPrimary}`}
+          style={{ 
+            padding: '10px 20px', 
+            fontSize: '0.85rem', 
+            backgroundColor: 'rgba(0, 243, 255, 0.1)', 
+            color: 'hsl(var(--accent-primary))',
+            borderColor: 'hsla(var(--accent-primary-hsl), 0.3)',
+            borderRadius: 'var(--radius-sm)',
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <Clock size={16} />
+          {reEvaluating ? 'جاري إعادة الضبط بالـ AI...' : 'ضبط المتابعات تلقائياً بالـ AI'}
+        </button>
       </div>
 
       {/* KPI Stats Cards */}

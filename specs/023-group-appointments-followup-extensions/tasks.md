@@ -26,8 +26,8 @@
 
 **Purpose**: Database and initial migrations setup
 
-- [ ] T001 Add EF Core migration for attendance and tone fields: run `dotnet ef migrations add AddGroupBookingAttendanceAndFollowUpTone --project backend`
-- [ ] T002 Apply PostgreSQL database migrations: run `make db-migrate`
+- [x] T001 Add EF Core migration for attendance and tone fields: run `dotnet ef migrations add AddGroupBookingAttendanceAndFollowUpTone --project backend`
+- [x] T002 Apply PostgreSQL database migrations: run `make db-migrate`
 
 ---
 
@@ -35,7 +35,7 @@
 
 **Purpose**: Disable automatic seen receipt on WhatsApp gateway
 
-- [ ] T003 In gateway file `whatsapp-gateway/src/baileys-manager.js`, comment out or delete the `await sock.readMessages([msg.key]);` seen receipt logic inside the upsert handler block.
+- [x] T003 In gateway file `whatsapp-gateway/src/baileys-manager.js`, comment out or delete the `await sock.readMessages([msg.key]);` seen receipt logic inside the upsert handler block.
 
 ---
 
@@ -47,7 +47,7 @@
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] Modify `BookGroupSlot` in `backend/src/Modules/GroupAppointments/API/GroupAppointmentsController.cs` to check if a booking with the same phone number already exists under the project. Use:
+- [x] T004 [US1] Modify `BookGroupSlot` in `backend/src/Modules/GroupAppointments/API/GroupAppointmentsController.cs` to check if a booking with the same phone number already exists under the project. Use:
   ```csharp
   var hasAnyGroupBooking = await _context.GroupAppointmentBookings
       .AnyAsync(b => b.ProjectId == request.ProjectId && b.CustomerPhone == cleanPhone);
@@ -66,10 +66,10 @@
 
 ### Implementation for User Story 2
 
-- [ ] T005 [US2] Update domain model `backend/src/Modules/GroupAppointments/Domain/GroupAppointmentBooking.cs` to include properties `public bool IsAttended { get; set; } = false;` and `public bool IsPaid { get; set; } = false;`.
-- [ ] T006 [US2] Update `GetGroups` query projection in `backend/src/Modules/GroupAppointments/API/GroupAppointmentsController.cs` to map and return `b.IsAttended` and `b.IsPaid` fields in the returned booking objects.
-- [ ] T007 [US2] Add a PATCH API route `PATCH /api/group-appointments/bookings/{bookingId}` in `backend/src/Modules/GroupAppointments/API/GroupAppointmentsController.cs` to accept a body `{ bool? isAttended, bool? isPaid }`, update the booking record, save changes, and trigger the SignalR `GroupBookingUpdated` broadcast to notify other clients.
-- [ ] T008 [US2] Update UI package `frontend/src/packages/settings/GroupAppointmentsManager.tsx` to include `isAttended: boolean` and `isPaid: boolean` in the `Booking` interface, and add checkboxes/toggles in the bookings table with API callbacks to update the status.
+- [x] T005 [US2] Update domain model `backend/src/Modules/GroupAppointments/Domain/GroupAppointmentBooking.cs` to include properties `public bool IsAttended { get; set; } = false;` and `public bool IsPaid { get; set; } = false;`.
+- [x] T006 [US2] Update `GetGroups` query projection in `backend/src/Modules/GroupAppointments/API/GroupAppointmentsController.cs` to map and return `b.IsAttended` and `b.IsPaid` fields in the returned booking objects.
+- [x] T007 [US2] Add a PATCH API route `PATCH /api/group-appointments/bookings/{bookingId}` in `backend/src/Modules/GroupAppointments/API/GroupAppointmentsController.cs` to accept a body `{ bool? isAttended, bool? isPaid }`, update the booking record, save changes, and trigger the SignalR `GroupBookingUpdated` broadcast to notify other clients.
+- [x] T008 [US2] Update UI package `frontend/src/packages/settings/GroupAppointmentsManager.tsx` to include `isAttended: boolean` and `isPaid: boolean` in the `Booking` interface, and add checkboxes/toggles in the bookings table with API callbacks to update the status.
 
 ---
 
@@ -81,7 +81,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T009 [US3] Modify `AIReplyWorker.cs` in `backend/src/Modules/AI/Workers/AIReplyWorker.cs` around line 92 to check if the customer has any group booking with `IsPaid == true`. If so, log the bypass and return early.
+- [x] T009 [US3] Modify `AIReplyWorker.cs` in `backend/src/Modules/AI/Workers/AIReplyWorker.cs` around line 92 to check if the customer has any group booking with `IsPaid == true`. If so, log the bypass and return early.
 
 ---
 
@@ -93,8 +93,8 @@
 
 ### Implementation for User Story 6
 
-- [ ] T010 [US4] Update `RewriteFollowUpNotesAsync` signature and implementation in `backend/src/Modules/AI/Services/IAIMarketingBrain.cs` and `backend/src/Modules/AI/Services/AIMarketingBrain.cs` to accept `bool hasAttended`. If `hasAttended` is true, append Arabic instructions telling Gemini to write a welcoming message acknowledging their attendance.
-- [ ] T011 [US4] Update the background runner in `backend/src/Modules/CRM/Services/FollowUpScheduler.cs` and manual send endpoint `SendFollowUp` in `backend/src/Modules/CRM/API/CRMController.cs` to query if the customer has any booking where `IsAttended == true` and pass that boolean as `hasAttended` to `RewriteFollowUpNotesAsync`.
+- [x] T010 [US4] Update `RewriteFollowUpNotesAsync` signature and implementation in `backend/src/Modules/AI/Services/IAIMarketingBrain.cs` and `backend/src/Modules/AI/Services/AIMarketingBrain.cs` to accept `bool hasAttended`. If `hasAttended` is true, append Arabic instructions telling Gemini to write a welcoming message acknowledging their attendance.
+- [x] T011 [US4] Update the background runner in `backend/src/Modules/CRM/Services/FollowUpScheduler.cs` and manual send endpoint `SendFollowUp` in `backend/src/Modules/CRM/API/CRMController.cs` to query if the customer has any booking where `IsAttended == true` and pass that boolean as `hasAttended` to `RewriteFollowUpNotesAsync`.
 
 ---
 
@@ -106,10 +106,10 @@
 
 ### Implementation for User Story 7
 
-- [ ] T012 [US5] Update domain model `backend/src/Modules/CRM/Domain/FollowUp.cs` to add `public string Tone { get; set; } = "Default";`.
-- [ ] T013 [US5] Update request DTOs and endpoints `CreateFollowUp`, `UpdateFollowUp` in `backend/src/Modules/CRM/API/CRMController.cs` to support receiving and saving the `Tone` parameter.
-- [ ] T014 [US5] Update the follow-up forms and models in `frontend/src/packages/management/FollowUps.tsx` or settings views to include a dropdown field for `Tone` selection with options (Default, Creative, Salesy).
-- [ ] T015 [US5] Update `RewriteFollowUpNotesAsync` in `backend/src/Modules/AI/Services/AIMarketingBrain.cs` to receive the `tone` parameter. If `tone` is `"Creative"`, append creative guidelines; if `tone` is `"Salesy"`, append salesy/cunning Egyptian slang guidelines.
+- [x] T012 [US5] Update domain model `backend/src/Modules/CRM/Domain/FollowUp.cs` to add `public string Tone { get; set; } = "Default";`.
+- [x] T013 [US5] Update request DTOs and endpoints `CreateFollowUp`, `UpdateFollowUp` in `backend/src/Modules/CRM/API/CRMController.cs` to support receiving and saving the `Tone` parameter.
+- [x] T014 [US5] Update the follow-up forms and models in `frontend/src/packages/management/FollowUps.tsx` or settings views to include a dropdown field for `Tone` selection with options (Default, Creative, Salesy).
+- [x] T015 [US5] Update `RewriteFollowUpNotesAsync` in `backend/src/Modules/AI/Services/AIMarketingBrain.cs` to receive the `tone` parameter. If `tone` is `"Creative"`, append creative guidelines; if `tone` is `"Salesy"`, append salesy/cunning Egyptian slang guidelines.
 
 ---
 
@@ -121,7 +121,20 @@
 
 ### Implementation for User Story 8
 
-- [ ] T016 [US6] Modify `frontend/src/packages/settings/GroupAppointmentsManager.tsx` to add a "تصدير CSV" button next to "إغلاق القائمة", and implement a `handleExportCSV` function that generates and downloads a CSV file containing bookings data.
+- [x] T016 [US6] Modify `frontend/src/packages/settings/GroupAppointmentsManager.tsx` to add a "تصدير CSV" button next to "إغلاق القائمة", and implement a `handleExportCSV` function that generates and downloads a CSV file containing bookings data.
+
+---
+
+## Phase 8.5: User Story 8 - Accurate Group Mode & Existence Communication (Priority: P1)
+
+**Goal**: Load both available and full groups into the AI reply worker's context, and provide strict instructions on online vs offline attendance.
+
+**Independent Test**: Send questions about full groups and check if the AI confirms their existence but marks them full. Verify that online students are told they are online-only.
+
+### Implementation for User Story 8
+
+- [x] T019 [US8] Update `AIReplyWorker.cs` to fetch all active groups (do not filter out full groups immediately). Separate active groups into `availableGroups` (not full) and `fullGroups` (full).
+- [x] T020 [US8] Update `AIReplyWorker.cs` to format and inject `availableGroups` under "قائمة المجموعات المتاحة حالياً" and `fullGroups` under "قائمة المجموعات المكتملة العدد حالياً". Add strict instructions in the system prompt asserting that Online is strictly online-only, Offline is center-only, online students cannot attend in the center, and full groups cannot be suggested/recommended for booking.
 
 ---
 
@@ -129,8 +142,11 @@
 
 **Purpose**: Verification and final build checks.
 
-- [ ] T017 Run full build check for both `backend` and `frontend` projects to ensure zero warnings or errors.
-- [ ] T018 Run the python test harness `make test-all` to verify no regressions were introduced.
+- [x] T017 Run full build check for both `backend` and `frontend` projects to ensure zero warnings or errors.
+- [x] T018 Run the python test harness `make test-all` to verify no regressions were introduced.
+- [x] T021 Run `clean-code-guard` in guard-pass mode against all modified production files to ensure clean code standards.
+- [x] T022 Run `test-guard` against all modified test files to verify test suite quality.
+- [x] T023 Perform feature tests covering the full feature test matrix and record results.
 
 ---
 

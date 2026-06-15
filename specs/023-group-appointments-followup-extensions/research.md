@@ -44,3 +44,14 @@
 
 ### 6. CSV Export
 - **Solution**: Implement client-side CSV export in `GroupAppointmentsManager.tsx` by generating the CSV content with `\uFEFF` (UTF-8 BOM) to support Arabic characters in Microsoft Excel, then downloading as a file blob.
+
+### 7. AI Group Mode & Existence Instruction Injection
+- **Problem**: The AI auto-reply system might claim groups do not exist because they are omitted when they are full, and online students are sometimes told they can attend in the center normally.
+- **Solution**:
+  1. Retrieve all active groups (both available and full) from the database in `AIReplyWorker.cs`.
+  2. For available groups, list them normally under "المجموعات المتاحة حالياً".
+  3. For full groups, list them under "المجموعات مكتملة العدد حالياً" and specify that they are full.
+  4. Inject strict prompt guidelines indicating:
+     - All online groups are online-only (Zoom/Meet/etc.). Under no circumstances should online students be told they can attend physically in the center.
+     - All offline groups are center-only (no online streaming/attendance).
+     - Full groups are closed for registration (do not suggest booking them), but they *do exist*. The AI must not say a group is missing if it is in the list of full groups, but rather explain that it is currently full.

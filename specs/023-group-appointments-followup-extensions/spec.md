@@ -98,12 +98,28 @@ As a project owner, I want to disable the automatic read receipts for incoming m
 
 ---
 
+### User Story 8 - Accurate Group Mode & Existence Communication (Priority: P1)
+As a project admin, I want the AI auto-reply to communicate correct group appointment details, ensuring it knows all active groups (even if full) to prevent claiming they don't exist, and strictly enforcing that online students attend online and offline students attend in the center.
+
+**Why this priority**: Preventing confusion for students is critical. Online students should not attend physically in the center, and the system should not claim groups do not exist when they are simply full.
+
+**Independent Test**:
+1. Check that the AI responds to questions about a full group by saying it is full (مكتملة) rather than saying it doesn't exist.
+2. Ask the AI if online students can attend in the center, and verify it replies that online registration is strictly online-only.
+
+**Acceptance Scenarios**:
+1. **Given** a group is active but full, **When** the customer asks about that group, **Then** the AI recognizes its existence but informs them it is full/completed.
+2. **Given** a customer is registered in an online group, **When** they ask about attending in the center, **Then** the AI strictly advises that their attendance is online-only.
+
+---
+
 ### Edge Cases
 
 - **Blacklisted Customer booking**: Blacklisted customers are already prevented from normal flow, but if a booking is added, their status should still behave under single booking rules.
 - **Toggling Attendance/Payment back and forth**: Toggling a paid status back to unpaid must re-enable the AI auto-reply for subsequent messages.
 - **Arabic characters in CSV**: When exporting Arabic student names to CSV, it must contain a UTF-8 BOM so Excel opens it without character corruption.
 - **No active bookings**: If a follow-up is run for a customer who does not have any group bookings, it defaults to normal nurturing style without attendance adjustments.
+- **Full groups in AI suggestions**: If a group is full, the AI must not recommend it or set `suggestedGroupBookingId` to its ID.
 
 ## Requirements *(mandatory)*
 
@@ -118,6 +134,8 @@ As a project owner, I want to disable the automatic read receipts for incoming m
 - **FR-007**: The follow-up entity MUST support a `Tone` field (string/enum: Default, Creative, Salesy).
 - **FR-008**: The gateway MUST NOT automatically mark incoming WhatsApp messages as read/seen.
 - **FR-009**: The Group Appointments page MUST include an export button that downloads a CSV file containing all bookings for that group.
+- **FR-010**: The AI reply worker MUST load all active group appointments (both available and full) into the AI context, marking full groups as full (مكتملة العدد) instead of omitting them from the context.
+- **FR-011**: The AI reply worker MUST include strict instructions in the system prompt stating that Online groups are online-only and Offline groups are center-only, and that online students cannot attend physically in the center.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -135,9 +153,11 @@ As a project owner, I want to disable the automatic read receipts for incoming m
 - **SC-002**: Marked "Paid" status disables AI auto-reply within 0 seconds (instantly on next message).
 - **SC-003**: Exported CSV sheets load correctly in Excel with Arabic characters.
 - **SC-004**: Incoming messages do not trigger seen receipts (blue ticks) on the sender's phone.
+- **SC-005**: 100% of queries about full groups receive confirmation that the group exists but is currently full, and the AI correctly instructs online students to attend online only.
 
 ## Assumptions
 
 - We assume that "نشيل السين" means turning off auto-seen completely for all projects.
 - We assume that the CSV export is done entirely client-side using JavaScript Blob since the bookings are already loaded in the UI.
 - We assume that the Flutter mobile app will use the updated API models, but the primary target for management operations is the Web dashboard.
+- We assume that the AI prompt should explicitly emphasize the difference between online and offline modes to avoid any student attending offline in a center if they are online.

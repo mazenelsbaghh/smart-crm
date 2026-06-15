@@ -5,6 +5,7 @@ using Modules.CRM.Domain;
 using Shared.Infrastructure;
 using Shared.Events;
 using Shared.Queue;
+using Shared.Security;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -28,14 +29,22 @@ namespace Modules.CRM.API
         private readonly ICustomerMemoryService _customerMemoryService;
         private readonly IConfiguration _configuration;
         private readonly IHubContext<NotificationHub> _hubContext;
+        private readonly ITenantContext _tenantContext;
 
-        public CRMController(AppDbContext context, IEventBus eventBus, ICustomerMemoryService customerMemoryService, IConfiguration configuration, IHubContext<NotificationHub> hubContext)
+        public CRMController(
+            AppDbContext context, 
+            IEventBus eventBus, 
+            ICustomerMemoryService customerMemoryService, 
+            IConfiguration configuration, 
+            IHubContext<NotificationHub> hubContext,
+            ITenantContext tenantContext)
         {
             _context = context;
             _eventBus = eventBus;
             _customerMemoryService = customerMemoryService;
             _configuration = configuration;
             _hubContext = hubContext;
+            _tenantContext = tenantContext;
         }
 
         [HttpGet("projects/{projectId}/customers")]
@@ -642,6 +651,175 @@ namespace Modules.CRM.API
             await _hubContext.Clients.Group($"project_{followUp.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
 
             return Ok(followUp);
+        }
+
+        [HttpPost("projects/{projectId}/follow-ups/re-evaluate-all")]
+        public async Task<IActionResult> ReEvaluateAllFollowUps(Guid projectId)
+        {
+            _tenantContext.SetProjectId(projectId);
+
+            var pendingFollowUps = await _context.FollowUps
+                .Where(f => f.ProjectId == projectId && f.Status == "Pending")
+                .ToListAsync();
+
+            if (!pendingFollowUps.Any())
+            {
+                return Ok(new { message = "No pending follow-ups found for this project.", count = 0 });
+            }
+
+            var projectSettings = await _context.ProjectSettings
+                .FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            string apiKey = projectSettings?.GeminiApiKey;
+            if (string.IsNullOrEmpty(apiKey) || apiKey.StartsWith("mock_"))
+            {
+                apiKey = null;
+            }
+            string model = projectSettings?.GeminiModel;
+
+            var geminiClient = HttpContext.RequestServices.GetService(typeof(Modules.AI.Services.IGeminiClient)) as Modules.AI.Services.IGeminiClient;
+            if (geminiClient == null)
+            {
+                return BadRequest("AI Engine client not found.");
+            }
+
+            int updatedCount = 0;
+            foreach (var followUp in pendingFollowUps)
+            {
+                try
+                {
+                    var customer = await _context.Customers
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(c => c.Id == followUp.CustomerId && c.ProjectId == projectId);
+
+                    if (customer == null) continue;
+
+                    // Skip/cancel if already paid
+                    var hasPaid = await _context.GroupAppointmentBookings
+                        .AnyAsync(b => b.CustomerId == customer.Id && b.IsPaid && b.ProjectId == projectId);
+
+                    if (hasPaid)
+                    {
+                        followUp.Status = "Cancelled";
+                        _context.Entry(followUp).State = EntityState.Modified;
+                        updatedCount++;
+                        continue;
+                    }
+
+                    // Fetch bookings
+                    var bookings = await _context.GroupAppointmentBookings
+                        .Include(b => b.GroupAppointment)
+                        .Where(b => b.CustomerId == customer.Id && b.ProjectId == projectId)
+                        .ToListAsync();
+
+                    var hasAttended = bookings.Any(b => b.IsAttended);
+                    var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone(projectSettings?.Timezone ?? "Africa/Cairo");
+                    var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
+
+                    var bookingsListStr = "";
+                    if (bookings.Any())
+                    {
+                        var listItems = bookings.Select(b => {
+                            var localSessionTime = TimeZoneInfo.ConvertTimeFromUtc(b.GroupAppointment.DateTime, cairoZone);
+                            return $"- Group: \"{b.GroupAppointment.Name}\", Time: {localSessionTime:yyyy-MM-dd HH:mm}, Status: {(b.IsPaid ? "Paid" : "Not Paid")}, Attended: {(b.IsAttended ? "Yes" : "No")}";
+                        });
+                        bookingsListStr = string.Join("\n", listItems);
+                    }
+                    else
+                    {
+                        bookingsListStr = "No group bookings found.";
+                    }
+
+                    // Fetch chat history
+                    var conversation = await _context.Conversations
+                        .FirstOrDefaultAsync(c => c.CustomerId == customer.Id && c.Status != "Closed" && c.ProjectId == projectId);
+
+                    string chatHistory = "No recent chat history found.";
+                    if (conversation != null)
+                    {
+                        var messages = await _context.Messages
+                            .Where(m => m.ConversationId == conversation.Id)
+                            .OrderByDescending(m => m.Timestamp)
+                            .Take(15)
+                            .ToListAsync();
+                        
+                        if (messages.Any())
+                        {
+                            messages.Reverse();
+                            chatHistory = string.Join("\n", messages.Select(m => $"{(m.Direction == "Incoming" ? "Customer" : "Agent/AI")}: {m.Content}"));
+                        }
+                    }
+
+                    // Build prompt for Gemini to evaluate and return new notes & time
+                    var prompt = $@"You are a high-performing CRM assistant.
+You need to re-evaluate and adjust a scheduled follow-up for the customer ""{customer.Name ?? customer.PhoneNumber}"".
+
+Current Local Time: {localNow:yyyy-MM-dd HH:mm}
+Customer City: {customer.City ?? "Missing"}
+Customer Lead Score: {customer.LeadScore}
+Has Student Attended Group session? {hasAttended}
+
+Customer's Active Group Bookings:
+{bookingsListStr}
+
+Current scheduled follow-up:
+- Type: {followUp.Type}
+- Target Date (Current): {followUp.DueDate}
+- Current message/note to send: {followUp.Notes}
+
+Here is the recent WhatsApp chat history between the customer and our AI/Agents:
+{chatHistory}
+
+Analyze the chat history and active bookings to understand:
+1. Did the customer ask for a specific time or day to contact them? Or did they confirm a booking? Or did they hesitate?
+2. Write a highly personalized, natural follow-up message (in polite Egyptian Arabic, following their tone preference: {followUp.Tone}). Make it fit the conversation status perfectly (e.g. if they already booked, remind them of their exact session time; if they didn't book, ask them if they need help booking or have questions).
+3. Determine a reasonable next follow-up date and time.
+   - If they booked a group, the follow-up should be scheduled exactly 24 hours BEFORE their booked group session (if any booked group exists). If that target time has already passed (or is in the next few hours), schedule it for 2 to 4 hours from now.
+   - If they are hesitant, follow up in 1 to 2 days.
+   - If the chat shows they asked to be contacted at a specific time, use that time!
+
+You MUST respond strictly in the following JSON format:
+{{
+  ""notes"": ""the rewritten personalized Egyptian Arabic message to send to the student"",
+  ""hoursFromNow"": 24
+}}
+Note: 'hoursFromNow' is the number of hours from the current local time ({localNow:yyyy-MM-dd HH:mm}) when this follow-up should be sent. Return an integer.
+
+JSON:";
+
+                    var reply = await geminiClient.GenerateReplyAsync(prompt, apiKey, model);
+                    if (!string.IsNullOrEmpty(reply) && !reply.StartsWith("[Mock") && !reply.StartsWith("[AI_ERROR]"))
+                    {
+                        var json = reply.Trim();
+                        if (json.StartsWith("```"))
+                        {
+                            var firstLineBreak = json.IndexOf('\n');
+                            var lastBackticks = json.LastIndexOf("```");
+                            if (firstLineBreak != -1 && lastBackticks != -1 && lastBackticks > firstLineBreak)
+                            {
+                                json = json.Substring(firstLineBreak + 1, lastBackticks - firstLineBreak - 1).Trim();
+                            }
+                        }
+
+                        using var doc = JsonDocument.Parse(json);
+                        if (doc.RootElement.TryGetProperty("notes", out var notesProp) &&
+                            doc.RootElement.TryGetProperty("hoursFromNow", out var hoursProp))
+                        {
+                            followUp.Notes = notesProp.GetString() ?? followUp.Notes;
+                            var hours = hoursProp.GetInt32();
+                            followUp.DueDate = DateTime.UtcNow.AddHours(hours);
+                            _context.Entry(followUp).State = EntityState.Modified;
+                            updatedCount++;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[CRMController] Error during follow-up re-evaluation for customer {followUp.CustomerId}: {ex.Message}");
+                }
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = $"Re-evaluated and updated {updatedCount} pending follow-ups.", count = updatedCount });
         }
 
         [HttpGet("projects/{projectId}/crm-proposals")]

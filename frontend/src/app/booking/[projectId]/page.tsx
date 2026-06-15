@@ -327,7 +327,7 @@ export default function PublicBookingPage({ params }: PageProps) {
                         >
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                             <span style={{ fontWeight: 700, fontSize: '0.925rem', color: isSelected ? '#00f3ff' : '#fff' }}>
-                              {group.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)'}
+                              {group.name || (group.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)')}
                             </span>
                             <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <Clock size={12} />

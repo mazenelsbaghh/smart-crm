@@ -42,12 +42,26 @@ namespace Modules.GroupAppointments.API
         [HttpGet("group-appointments")]
         public async Task<IActionResult> GetGroups()
         {
+            var projectId = _tenantContext.ProjectId;
+            var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            var timezone = settings?.Timezone ?? "Africa/Cairo";
+
             var groups = await _context.GroupAppointments
                 .Include(g => g.Bookings)
                 .OrderBy(g => g.DateTime)
                 .ToListAsync();
 
-            var result = groups.Select(g => new
+            var adjustedGroups = new List<GroupAppointment>();
+            foreach (var g in groups)
+            {
+                var adjusted = await AdjustGroupIfPassedAsync(g, timezone);
+                if (adjusted != null)
+                {
+                    adjustedGroups.Add(adjusted);
+                }
+            }
+
+            var result = adjustedGroups.Select(g => new
             {
                 g.Id,
                 g.ProjectId,
@@ -286,13 +300,25 @@ namespace Modules.GroupAppointments.API
                 return Ok(Array.Empty<object>());
             }
 
+            var timezone = settings.Timezone ?? "Africa/Cairo";
+
             var groups = await _context.GroupAppointments
                 .Include(g => g.Bookings)
                 .Where(g => g.ProjectId == projectId && g.IsActive)
                 .OrderBy(g => g.DateTime)
                 .ToListAsync();
 
-            var result = groups.Select(g => new
+            var adjustedGroups = new List<GroupAppointment>();
+            foreach (var g in groups)
+            {
+                var adjusted = await AdjustGroupIfPassedAsync(g, timezone);
+                if (adjusted != null && adjusted.IsActive)
+                {
+                    adjustedGroups.Add(adjusted);
+                }
+            }
+
+            var result = adjustedGroups.Select(g => new
             {
                 g.Id,
                 g.Name,
@@ -328,6 +354,13 @@ namespace Modules.GroupAppointments.API
                 return BadRequest(new { error = "المجموعة المطلوبة غير متوفرة" });
             }
 
+            var timezone = settings.Timezone ?? "Africa/Cairo";
+            var adjustedGroup = await AdjustGroupIfPassedAsync(group, timezone);
+            if (adjustedGroup == null || !adjustedGroup.IsActive)
+            {
+                return BadRequest(new { error = "عذراً، لقد انتهى موعد هذه المجموعة بالفعل" });
+            }
+            group = adjustedGroup;
 
             if (group.Bookings.Count >= group.Capacity)
             {
@@ -390,17 +423,7 @@ namespace Modules.GroupAppointments.API
                     return Ok(group); // Already in this group, do nothing
                 }
 
-                isTransfer = true;
-                // Transfer to new group
-                existingBooking.GroupAppointmentId = request.GroupAppointmentId;
-                existingBooking.IsAttended = false; // Reset attendance for the new group
-                // Keep existingBooking.IsPaid as is so their payment status carries over!
-                existingBooking.CreatedAt = DateTime.UtcNow; // Update booking date to now
-
-                _context.Entry(existingBooking).State = EntityState.Modified;
-                await _context.SaveChangesAsync();
-
-                booking = existingBooking;
+                return BadRequest(new { error = "عذراً، لا يمكن التسجيل في أكثر من مجموعة واحدة" });
             }
             else
             {
@@ -508,6 +531,29 @@ namespace Modules.GroupAppointments.API
                 message = "تم الحجز بنجاح",
                 bookingId = booking.Id
             });
+        }
+
+        private async Task<GroupAppointment?> AdjustGroupIfPassedAsync(GroupAppointment group, string timezone)
+        {
+            var projectZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone(timezone);
+            var localGroupDateTime = TimeZoneInfo.ConvertTimeFromUtc(group.DateTime, projectZone);
+            var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
+
+            if (localNow > localGroupDateTime)
+            {
+                var timeDiff = localNow - localGroupDateTime;
+                if (timeDiff.TotalHours >= 24)
+                {
+                    if (group.IsActive)
+                    {
+                        group.IsActive = false;
+                        _context.Entry(group).State = EntityState.Modified;
+                        await _context.SaveChangesAsync();
+                        Console.WriteLine($"[GroupAppointments] Deactivated expired group {group.Id} because 24 hours have passed.");
+                    }
+                }
+            }
+            return group;
         }
     }
 
