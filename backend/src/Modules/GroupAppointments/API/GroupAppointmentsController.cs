@@ -423,7 +423,17 @@ namespace Modules.GroupAppointments.API
                     return Ok(group); // Already in this group, do nothing
                 }
 
-                return BadRequest(new { error = "عذراً، لا يمكن التسجيل في أكثر من مجموعة واحدة" });
+                isTransfer = true;
+                // Transfer to new group
+                existingBooking.GroupAppointmentId = request.GroupAppointmentId;
+                existingBooking.IsAttended = false; // Reset attendance for the new group
+                // Keep existingBooking.IsPaid as is so their payment status carries over!
+                existingBooking.CreatedAt = DateTime.UtcNow; // Update booking date to now
+
+                _context.Entry(existingBooking).State = EntityState.Modified;
+                await _context.SaveChangesAsync();
+
+                booking = existingBooking;
             }
             else
             {
