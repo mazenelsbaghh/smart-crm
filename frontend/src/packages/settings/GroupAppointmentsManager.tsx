@@ -14,7 +14,8 @@ import {
   Check, 
   ArrowRight,
   Clock,
-  Download
+  Download,
+  Search
 } from 'lucide-react';
 import styles from './settings.module.css';
 
@@ -66,6 +67,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
   const DAY_NAMES_SHORT = ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
@@ -87,6 +89,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   useEffect(() => {
     fetchGroups();
   }, [fetchGroups]);
+
+  useEffect(() => {
+    setSearchQuery('');
+  }, [selectedGroup?.id]);
 
   const handleSaveGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -327,6 +333,19 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     }
     return new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime();
   });
+
+  const filteredBookings = selectedGroup
+    ? [...selectedGroup.bookings]
+        .filter(b => {
+          const query = searchQuery.trim().toLowerCase();
+          if (!query) return true;
+          return (
+            (b.customerName || '').toLowerCase().includes(query) ||
+            (b.customerPhone || '').includes(query)
+          );
+        })
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    : [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', width: '100%' }}>
@@ -689,9 +708,36 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                 </div>
               </div>
 
+              <div style={{ position: 'relative', marginBottom: 'var(--space-md)' }}>
+                <input
+                  type="text"
+                  placeholder={selectedGroup.bookings.length === 0 ? "لا يوجد مشتركون للبحث" : "البحث باسم الطالب أو رقم الهاتف..."}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  disabled={selectedGroup.bookings.length === 0}
+                  className={styles.input}
+                  style={{ width: '100%', paddingLeft: '2.5rem', paddingRight: '1rem' }}
+                />
+                <Search 
+                  size={16} 
+                  style={{ 
+                    position: 'absolute', 
+                    left: '12px', 
+                    top: '50%', 
+                    transform: 'translateY(-50%)', 
+                    color: 'hsl(var(--text-muted))', 
+                    pointerEvents: 'none' 
+                  }} 
+                />
+              </div>
+
               {selectedGroup.bookings.length === 0 ? (
                 <p style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', textAlign: 'center', padding: '2rem 0' }}>
                   لا يوجد مشتركون مسجلون في هذه المجموعة بعد.
+                </p>
+              ) : filteredBookings.length === 0 ? (
+                <p style={{ fontSize: '0.85rem', color: 'hsl(var(--accent-danger))', textAlign: 'center', padding: '2rem 0', fontWeight: 600 }}>
+                  لم يتم العثور على نتائج تطابق البحث "{searchQuery}"
                 </p>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
@@ -707,9 +753,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                       </tr>
                     </thead>
                     <tbody>
-                      {[...selectedGroup.bookings]
-                        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                        .map((booking) => (
+                      {filteredBookings.map((booking) => (
                         <tr key={booking.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                           <td style={{ padding: '12px 6px', fontWeight: 600 }}>{booking.customerName}</td>
                           <td style={{ padding: '12px 6px', fontSize: '0.85rem' }}>+{booking.customerPhone}</td>
