@@ -271,6 +271,21 @@ namespace Modules.AI.Workers
 
                     Console.WriteLine($"[AIReplyWorker] Active groups: {activeGroups.Count}, Available: {availableGroups.Count}, Full: {fullGroups.Count}, CityKnown: {isCityKnown}, FromAlexandria: {isFromAlexandria}");
 
+                    string GetArabicDayName(DayOfWeek day)
+                    {
+                        switch (day)
+                        {
+                            case DayOfWeek.Sunday: return "الأحد";
+                            case DayOfWeek.Monday: return "الاثنين";
+                            case DayOfWeek.Tuesday: return "الثلاثاء";
+                            case DayOfWeek.Wednesday: return "الأربعاء";
+                            case DayOfWeek.Thursday: return "الخميس";
+                            case DayOfWeek.Friday: return "الجمعة";
+                            case DayOfWeek.Saturday: return "السبت";
+                            default: return string.Empty;
+                        }
+                    }
+
                     string GetArabicDaysText(string daysCsv)
                     {
                         if (string.IsNullOrWhiteSpace(daysCsv))
@@ -311,7 +326,8 @@ namespace Modules.AI.Workers
                         var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
                         var daysText = GetArabicDaysText(g.Days);
                         var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
-                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
+                        var dateText = $"{GetArabicDayName(localTime.DayOfWeek)} {localTime:d/M}";
+                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  تاريخ الموعد: {dateText}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
                     }
 
                     var fullGroupsContextList = new System.Collections.Generic.List<string>();
@@ -322,7 +338,8 @@ namespace Modules.AI.Workers
                         var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
                         var daysText = GetArabicDaysText(g.Days);
                         var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
-                        fullGroupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")} (مكتملة العدد تماماً - ممتلئة)\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
+                        var dateText = $"{GetArabicDayName(localTime.DayOfWeek)} {localTime:d/M}";
+                        fullGroupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  تاريخ الموعد: {dateText}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")} (مكتملة العدد تماماً - ممتلئة)\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
                     }
 
                     // Check if this customer is already booked in any group
@@ -344,18 +361,18 @@ namespace Modules.AI.Workers
                         var utcTime = DateTime.SpecifyKind(bookedGroup.DateTime, DateTimeKind.Utc);
                         var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
                         var modeText = bookedGroup.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
-                        var daysText = GetArabicDaysText(bookedGroup.Days);
+                        var bookedArabicDay = GetArabicDayName(localTime.DayOfWeek);
+                        var bookedDateText = $"{bookedArabicDay} {localTime:d/M}";
                         var timeText = $"الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}";
-                        var scheduleInfo = $"مجموعة {modeText}" + (string.IsNullOrEmpty(daysText) ? "" : $" ({daysText})") + $" في {timeText}";
+                        var scheduleInfo = $"مجموعة {modeText} ({bookedDateText} {timeText})";
 
-                        bookedGroupInfo = $"Group Name: {bookedGroup.Name}\nGroup ID: {bookedGroup.Id}\nSchedule: {modeText}" + (string.IsNullOrEmpty(daysText) ? "" : $" ({daysText})") + $" at {timeText}";
+                        bookedGroupInfo = $"Group Name: {bookedGroup.Name}\nGroup ID: {bookedGroup.Id}\nSchedule: {modeText} ({bookedDateText} at {timeText})";
 
                         alreadyBookedNote = $"\nملاحظة هامة جداً وصارمة: العميل مسجل حالياً ومحجوز في الموعد التالي: {scheduleInfo} (اسم المجموعة: {bookedGroup.Name}، معرف المجموعة ID: {bookedGroup.Id})." +
                                             $"\n- إذا سأل العميل عن موعده أو مجموعته أو متى تم حجزه، أخبره بدقة وصراحة تامة بالموعد الحالي المحجوز فيه: {scheduleInfo} (ولا تخمن أو تخترع أي موعد آخر من المجموعات المتاحة!)." +
                                             $"\n- إذا طلب تغيير موعد المجموعة أو حجز مجموعة أخرى مختلفة، فقم بتسجيله في المجموعة الجديدة بوضع suggestedGroupBookingId = معرف المجموعة الجديد (ID). وسيقوم النظام بنقله تلقائياً." +
                                             $"\n- أما إذا سأل أو طلب الحجز في نفس مجموعته الحالية، أخبره بلطف أنه مسجل ومحجوز بالفعل في هذا الموعد ولا تسجله مرة أخرى (اترك suggestedGroupBookingId = null).";
                     }
-                    
                     string cityInstruction = "";
                     if (!isCityKnown)
                     {
