@@ -668,7 +668,6 @@ namespace Modules.AI.Workers
             await _eventBus.PublishAsync(crmSuggestion);
             Console.WriteLine($"[AIReplyWorker] Published CRMUpdateSuggestedEvent for {@event.Sender}");
 
-            // 2. Publish AI Reply
             var replyGeneratedEvent = new AIReplyGeneratedEvent
             {
                 ProjectId = @event.ProjectId,
@@ -677,7 +676,8 @@ namespace Modules.AI.Workers
                 Buttons = analysisResult.SuggestedButtons ?? Array.Empty<string>(),
                 Channel = @event.Channel ?? "WhatsApp",
                 ChannelMetadata = @event.ChannelMetadata,
-                Reaction = analysisResult.SuggestedReaction
+                Reaction = analysisResult.SuggestedReaction,
+                PublicCommentReply = analysisResult.PublicCommentReply
             };
 
             await _eventBus.PublishAsync(replyGeneratedEvent);

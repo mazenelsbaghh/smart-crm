@@ -12,5 +12,6 @@ namespace Shared.Events
         public string Channel { get; set; } = "WhatsApp"; // WhatsApp, Messenger, FacebookComment
         public string? ChannelMetadata { get; set; } // JSON with channel-specific data
         public string? Reaction { get; set; }
+        public string? PublicCommentReply { get; set; }
     }
 }

@@ -20,6 +20,7 @@ namespace Modules.AI.Services
         public string ReplyStyle { get; set; } = "Casual"; // Fast, Casual, Sales, Support, VIP, Complaint, Follow-up
         public CRMEntities Entities { get; set; } = new CRMEntities();
         public string ReplyContent { get; set; } = string.Empty;
+        public string? PublicCommentReply { get; set; }
         public double Confidence { get; set; } = 1.0;
         public string Label { get; set; } = string.Empty;
         public string PipelineStage { get; set; } = "New";
@@ -110,7 +111,8 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
     ""interests"": [""string""],
     ""timeline"": ""string | null""
   },
-  ""replyContent"": ""your human-like helpful reply text here"",
+  ""replyContent"": ""your human-like helpful reply text here (used as the private DM when channel is FacebookComment, and as the main message for WhatsApp/Messenger)"",
+  ""publicCommentReply"": ""brief public comment reply in Arabic here (ONLY when channel is FacebookComment, e.g. 'تم الرد في الخاص يا فندم! 🌸') or null otherwise"",
   ""confidence"": 0.95,
   ""transcription"": ""string | null"",
   ""suggestedFollowUp"": {
@@ -124,6 +126,16 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
   ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null"",
   ""cancelGroupBooking"": true | false
 }
+
+Guidelines for publicCommentReply:
+- Set this field ONLY when the communication channel is a Facebook comment (i.e. 'Facebook Comment').
+- Write a short, friendly, and welcoming public comment in polite Arabic/Colloquial Egyptian dialect that refers the user to check their private message inbox (e.g. ""تم الرد في الرسائل الخاصة يا فندم! 🌸"", ""تواصلنا مع حضرتك في الرسائل للتفاصيل كاملة! ✨"", ""أهلاً بك يا فندم! أرسلنا لحضرتك التفاصيل كاملة في رسالة خاصة، يرجى مراجعة صندوق الرسائل."").
+- Keep it to a single, polite public comment.
+- If the communication channel is WhatsApp or Messenger, set publicCommentReply to null.
+- CRITICAL RULE FOR APOLOGIES, GREETINGS AND SHORT ACKNOWLEDGMENTS: If the customer is apologizing (e.g., saying they cannot attend, canceling their appointment, apologizing for a delay), greeting, or just saying thank you without asking for details:
+  1. Do NOT dump long course details, prices, or links in replyContent.
+  2. Reply to them contextually and concisely within the limits of their message (e.g., ""حصل خير يا فندم تنورنا في أي وقت!"" or ""ولا يهمك يا غالي تتعوض إن شاء الله"").
+  3. For Facebook Comments: Write this contextual response directly in the publicCommentReply field, and set replyContent (private DM) to null or a very brief greeting like ""تحت أمرك يا فندم في أي وقت!"" to avoid spamming their inbox with duplicate details.
 
 Guidelines for suggestedReaction:
 - suggestedReaction: Set to a single emoji (👍, ❤️, 💖, 😢, 😂, 😮) or null. Suggest an emoji reaction to the customer's message only if it adds a warm, human-like touch (e.g. ❤️/💖 for gratitude, joy, or positive feedback; 😢 for sadness or complaints; 😂 for jokes; 👍 for agreement or simple acknowledgment). Otherwise, return null.

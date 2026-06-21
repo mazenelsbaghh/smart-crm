@@ -279,17 +279,25 @@ namespace Modules.Facebook.Workers
             await Task.Delay(4000);
 
             // 1. Reply publicly to the comment
-            await _graphService.ReplyToCommentAsync(connectedPage.PageAccessToken, commentId, @event.Content);
+            var publicReply = !string.IsNullOrEmpty(@event.PublicCommentReply) 
+                ? @event.PublicCommentReply 
+                : "تم الرد في الخاص يا فندم! ❤️"; // Fallback to a default message
+
+            await _graphService.ReplyToCommentAsync(connectedPage.PageAccessToken, commentId, publicReply);
 
             // 2. React to the comment (LOVE only as per user request)
             await _graphService.ReactToCommentAsync(connectedPage.PageAccessToken, commentId, "LOVE");
 
-            // 3. Send private DM
-            await _graphService.SendPrivateReplyAsync(
-                connectedPage.FacebookPageId,
-                connectedPage.PageAccessToken,
-                commentId,
-                @event.Content);
+            // 3. Send private DM (only if not empty/null)
+            bool sentPrivate = !string.IsNullOrEmpty(@event.Content);
+            if (sentPrivate)
+            {
+                await _graphService.SendPrivateReplyAsync(
+                    connectedPage.FacebookPageId,
+                    connectedPage.PageAccessToken,
+                    commentId,
+                    @event.Content);
+            }
 
             if (customer != null && commentConvId.HasValue)
             {
@@ -316,7 +324,7 @@ namespace Modules.Facebook.Workers
                     ConversationId = commentConvId.Value,
                     ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
                     Direction = "Outgoing",
-                    Content = @event.Content,
+                    Content = publicReply,
                     MessageType = "Text",
                     FacebookPostId = postId,
                     FacebookCommentId = commentId,
@@ -336,40 +344,9 @@ namespace Modules.Facebook.Workers
                 };
                 _context.Messages.Add(reactMsg);
 
-                // 3. Find or create Messenger conversation for private DM
-                var messengerConv = await _context.Conversations
-                    .IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Channel == "Messenger"
-                        && (c.Status == "Open" || c.Status == "Pending"));
-
-                if (messengerConv == null)
-                {
-                    messengerConv = new Modules.Conversations.Domain.Conversation
-                    {
-                        ProjectId = @event.ProjectId,
-                        CustomerId = customer.Id,
-                        Channel = "Messenger",
-                        Status = "Open",
-                        LastMessageTimestamp = DateTime.UtcNow
-                    };
-                    _context.Conversations.Add(messengerConv);
-                    await _context.SaveChangesAsync();
-                }
-
-                var privateMsg = new Modules.Conversations.Domain.Message
-                {
-                    ConversationId = messengerConv.Id,
-                    ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
-                    Direction = "Outgoing",
-                    Content = @event.Content,
-                    MessageType = "Text",
-                    Timestamp = DateTime.UtcNow
-                };
-                _context.Messages.Add(privateMsg);
-
                 await _context.SaveChangesAsync();
 
-                // Broadcast messages via SignalR
+                // Broadcast public comment reply via SignalR
                 await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
                 {
                     id = publicMsg.Id,
@@ -383,6 +360,7 @@ namespace Modules.Facebook.Workers
                     facebookCommentId = commentId
                 });
 
+                // Broadcast reaction via SignalR
                 await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
                 {
                     id = reactMsg.Id,
@@ -395,19 +373,55 @@ namespace Modules.Facebook.Workers
                     channel = "FacebookComment"
                 });
 
-                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                // 3. Find/Create Messenger Conversation & Save private DM if sent
+                if (sentPrivate)
                 {
-                    id = privateMsg.Id,
-                    conversationId = messengerConv.Id,
-                    senderType = "AI",
-                    content = privateMsg.Content,
-                    createdAt = privateMsg.Timestamp.ToString("o"),
-                    status = "Sent",
-                    channel = "Messenger"
-                });
+                    var messengerConv = await _context.Conversations
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Channel == "Messenger"
+                            && (c.Status == "Open" || c.Status == "Pending"));
+
+                    if (messengerConv == null)
+                    {
+                        messengerConv = new Modules.Conversations.Domain.Conversation
+                        {
+                            ProjectId = @event.ProjectId,
+                            CustomerId = customer.Id,
+                            Channel = "Messenger",
+                            Status = "Open",
+                            LastMessageTimestamp = DateTime.UtcNow
+                        };
+                        _context.Conversations.Add(messengerConv);
+                        await _context.SaveChangesAsync();
+                    }
+
+                    var privateMsg = new Modules.Conversations.Domain.Message
+                    {
+                        ConversationId = messengerConv.Id,
+                        ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
+                        Direction = "Outgoing",
+                        Content = @event.Content,
+                        MessageType = "Text",
+                        Timestamp = DateTime.UtcNow
+                    };
+                    _context.Messages.Add(privateMsg);
+                    await _context.SaveChangesAsync();
+
+                    // Broadcast private DM via SignalR
+                    await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                    {
+                        id = privateMsg.Id,
+                        conversationId = messengerConv.Id,
+                        senderType = "AI",
+                        content = privateMsg.Content,
+                        createdAt = privateMsg.Timestamp.ToString("o"),
+                        status = "Sent",
+                        channel = "Messenger"
+                    });
+                }
             }
 
-            _logger.LogInformation("[FacebookReplySender] Comment reply (public+DM+reaction LOVE) sent for comment {CommentId}", commentId);
+            _logger.LogInformation("[FacebookReplySender] Comment reply (public+reaction LOVE, private DM sent: {SentPrivate}) sent for comment {CommentId}", sentPrivate, commentId);
         }
     }
 }
