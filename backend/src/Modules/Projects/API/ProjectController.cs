@@ -93,7 +93,11 @@ namespace Modules.Projects.API
                     settings.AiTargetAudience,
                     settings.ReplyDelay,
                     settings.MaxDailyMessages,
-                    settings.IsGroupAppointmentsEnabled
+                    settings.IsGroupAppointmentsEnabled,
+                    settings.MessengerAiAutoReplyEnabled,
+                    settings.MessengerReplyDelay,
+                    settings.CommentsAiAutoReplyEnabled,
+                    settings.CommentsReplyDelay
                 } : null
             });
         }
@@ -144,6 +148,10 @@ namespace Modules.Projects.API
                 if (request.ReplyDelay.HasValue) settings.ReplyDelay = request.ReplyDelay.Value;
                 if (request.MaxDailyMessages.HasValue) settings.MaxDailyMessages = request.MaxDailyMessages.Value;
                 settings.IsGroupAppointmentsEnabled = request.IsGroupAppointmentsEnabled;
+                settings.MessengerAiAutoReplyEnabled = request.MessengerAiAutoReplyEnabled;
+                if (request.MessengerReplyDelay.HasValue) settings.MessengerReplyDelay = request.MessengerReplyDelay.Value;
+                settings.CommentsAiAutoReplyEnabled = request.CommentsAiAutoReplyEnabled;
+                if (request.CommentsReplyDelay.HasValue) settings.CommentsReplyDelay = request.CommentsReplyDelay.Value;
                 settings.UpdatedAt = DateTime.UtcNow;
             }
 
@@ -180,5 +188,9 @@ namespace Modules.Projects.API
         public int? ReplyDelay { get; set; }
         public int? MaxDailyMessages { get; set; }
         public bool IsGroupAppointmentsEnabled { get; set; }
+        public bool MessengerAiAutoReplyEnabled { get; set; }
+        public int? MessengerReplyDelay { get; set; }
+        public bool CommentsAiAutoReplyEnabled { get; set; }
+        public int? CommentsReplyDelay { get; set; }
     }
 }

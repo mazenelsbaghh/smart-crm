@@ -75,9 +75,21 @@ namespace Modules.AI.Workers
 
             try
             {
-                // Find customer to get customerId
-            var customer = await dbContext.Customers
-                .FirstOrDefaultAsync(c => c.PhoneNumber == @event.Sender);
+                // Determine channel (defaults to WhatsApp for backward compatibility)
+                var channel = @event.Channel ?? "WhatsApp";
+
+                // Find customer — lookup by PhoneNumber for WhatsApp, by FacebookPSID for Facebook channels
+                Customer customer;
+                if (channel == "WhatsApp")
+                {
+                    customer = await dbContext.Customers
+                        .FirstOrDefaultAsync(c => c.PhoneNumber == @event.Sender);
+                }
+                else
+                {
+                    customer = await dbContext.Customers
+                        .FirstOrDefaultAsync(c => c.FacebookPSID == @event.Sender);
+                }
 
             // Query ProjectSettings
             var settings = await dbContext.ProjectSettings
@@ -89,9 +101,24 @@ namespace Modules.AI.Workers
                 return;
             }
 
-            if (!settings.AiAutoReplyEnabled)
+            // Check per-channel AI auto-reply toggle
+            bool isAiEnabled;
+            switch (channel)
             {
-                Console.WriteLine($"[AIReplyWorker] AI Auto-Reply is disabled for project {@event.ProjectId}. Skipping AI reply.");
+                case "Messenger":
+                    isAiEnabled = settings.MessengerAiAutoReplyEnabled;
+                    break;
+                case "FacebookComment":
+                    isAiEnabled = settings.CommentsAiAutoReplyEnabled;
+                    break;
+                default: // WhatsApp
+                    isAiEnabled = settings.AiAutoReplyEnabled;
+                    break;
+            }
+
+            if (!isAiEnabled)
+            {
+                Console.WriteLine($"[AIReplyWorker] AI Auto-Reply is disabled for channel {channel} in project {@event.ProjectId}. Skipping.");
                 if (customer != null)
                 {
                     await CompletePendingFollowUpsAsync(dbContext, customer.Id);
@@ -615,7 +642,9 @@ namespace Modules.AI.Workers
                 ProjectId = @event.ProjectId,
                 Sender = @event.Sender,
                 Content = analysisResult.ReplyContent,
-                Buttons = analysisResult.SuggestedButtons ?? Array.Empty<string>()
+                Buttons = analysisResult.SuggestedButtons ?? Array.Empty<string>(),
+                Channel = @event.Channel ?? "WhatsApp",
+                ChannelMetadata = @event.ChannelMetadata
             };
 
             await _eventBus.PublishAsync(replyGeneratedEvent);

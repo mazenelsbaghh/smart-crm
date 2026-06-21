@@ -26,6 +26,7 @@ namespace Modules.Conversations.API
         private readonly IConfiguration _configuration;
         private readonly HttpClient _httpClient;
         private readonly StackExchange.Redis.IDatabase _redis;
+        private readonly Modules.Facebook.Services.IFacebookGraphService _facebookGraphService;
 
         public ConversationController(
             AppDbContext context, 
@@ -33,7 +34,8 @@ namespace Modules.Conversations.API
             Shared.Queue.IEventBus eventBus, 
             IHubContext<NotificationHub> hubContext,
             IConfiguration configuration,
-            StackExchange.Redis.IConnectionMultiplexer redis)
+            StackExchange.Redis.IConnectionMultiplexer redis,
+            Modules.Facebook.Services.IFacebookGraphService facebookGraphService)
         {
             _context = context;
             _assignmentEngine = assignmentEngine;
@@ -42,18 +44,26 @@ namespace Modules.Conversations.API
             _configuration = configuration;
             _httpClient = new HttpClient();
             _redis = redis.GetDatabase();
+            _facebookGraphService = facebookGraphService;
         }
 
         [HttpGet("projects/{projectId}/conversations")]
         public async Task<IActionResult> ListConversations(
             Guid projectId,
             [FromQuery] string status = "All",
+            [FromQuery] string channel = "WhatsApp",
             [FromQuery] string search = null,
             [FromQuery] DateTime? before = null,
             [FromQuery] int limit = 20)
         {
             IQueryable<Conversation> query = _context.Conversations
                 .Where(c => c.ProjectId == projectId);
+
+            // Filter by channel
+            if (!string.IsNullOrEmpty(channel) && !channel.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(c => c.Channel == channel);
+            }
 
             if (!string.IsNullOrEmpty(status) && !status.Equals("All", StringComparison.OrdinalIgnoreCase))
             {
@@ -91,6 +101,7 @@ namespace Modules.Conversations.API
                     x.Conversation.Id,
                     x.Conversation.ProjectId,
                     x.Conversation.Status,
+                    x.Conversation.Channel,
                     x.Conversation.LastMessageTimestamp,
                     x.Conversation.CreatedAt,
                     x.Conversation.AssignedUserId,
@@ -100,7 +111,9 @@ namespace Modules.Conversations.API
                         name = x.Customer.Name ?? x.Customer.PhoneNumber,
                         phone = x.Customer.PhoneNumber,
                         avatarUrl = (string)null,
-                        label = x.Customer.Label
+                        label = x.Customer.Label,
+                        facebookPSID = x.Customer.FacebookPSID,
+                        facebookName = x.Customer.FacebookName
                     }
                 })
                 .ToListAsync();
@@ -274,36 +287,170 @@ namespace Modules.Conversations.API
 
             await _hubContext.Clients.Group($"project_{conversation.ProjectId}").SendAsync("ReceiveMessage", payload);
 
-            // Forward to WhatsApp Gateway
-            var customer = await _context.Customers.FindAsync(conversation.CustomerId);
-            if (customer != null && !string.IsNullOrEmpty(customer.PhoneNumber))
+            // Route to appropriate gateway based on channel
+            if (conversation.Channel == "Messenger")
             {
-                var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
-                var gatewayPayload = new
+                // Send via Facebook Messenger
+                var customer = await _context.Customers.FindAsync(conversation.CustomerId);
+                if (customer != null && !string.IsNullOrEmpty(customer.FacebookPSID))
                 {
-                    projectId = conversation.ProjectId,
-                    to = customer.PhoneNumber,
-                    message = request.Content
-                };
-                
-                var jsonPayload = JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-
-                try
-                {
-                    var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
-                    if (!response.IsSuccessStatusCode)
+                    try
                     {
-                        var responseBody = await response.Content.ReadAsStringAsync();
-                        Console.WriteLine($"[ConversationController] Gateway returned error code {response.StatusCode}: {responseBody}");
+                        var connectedPage = await _context.ConnectedPages
+                            .IgnoreQueryFilters()
+                            .FirstOrDefaultAsync(cp => cp.ProjectId == conversation.ProjectId && cp.IsActive);
+                        if (connectedPage != null)
+                        {
+                            await _facebookGraphService.SendMessageAsync(
+                                connectedPage.FacebookPageId,
+                                connectedPage.PageAccessToken,
+                                customer.FacebookPSID,
+                                request.Content);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ConversationController] Exception while calling Facebook Graph: {ex.Message}");
                     }
                 }
-                catch (Exception ex)
+            }
+            else
+            {
+                // Forward to WhatsApp Gateway (default)
+                var customer = await _context.Customers.FindAsync(conversation.CustomerId);
+                if (customer != null && !string.IsNullOrEmpty(customer.PhoneNumber))
                 {
-                    Console.WriteLine($"[ConversationController] Exception while calling WhatsApp Gateway: {ex.Message}");
+                    var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+                    var gatewayPayload = new
+                    {
+                        projectId = conversation.ProjectId,
+                        to = customer.PhoneNumber,
+                        message = request.Content
+                    };
+                    
+                    var jsonPayload = JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+                    try
+                    {
+                        var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            var responseBody = await response.Content.ReadAsStringAsync();
+                            Console.WriteLine($"[ConversationController] Gateway returned error code {response.StatusCode}: {responseBody}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ConversationController] Exception while calling WhatsApp Gateway: {ex.Message}");
+                    }
                 }
             }
 
             return Ok(payload);
+        }
+
+        /// <summary>
+        /// Composite comment reply: public comment + private DM + reaction
+        /// </summary>
+        [HttpPost("projects/{projectId}/conversations/{id}/comment-reply")]
+        public async Task<IActionResult> CommentReply(Guid projectId, Guid id, [FromBody] CommentReplyRequest request)
+        {
+            var conversation = await _context.Conversations.FindAsync(id);
+            if (conversation == null || conversation.Channel != "FacebookComment")
+                return NotFound("Comment conversation not found");
+
+            var connectedPage = await _context.ConnectedPages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(cp => cp.ProjectId == projectId && cp.IsActive);
+
+            if (connectedPage == null)
+                return BadRequest(new { error = "No connected Facebook page" });
+
+            // Get the latest incoming comment
+            var lastComment = await _context.Messages
+                .Where(m => m.ConversationId == id && m.Direction == "Incoming" && m.FacebookCommentId != null)
+                .OrderByDescending(m => m.Timestamp)
+                .FirstOrDefaultAsync();
+
+            if (lastComment == null)
+                return BadRequest(new { error = "No incoming comment found" });
+
+            bool publicSent = false, dmSent = false, reactionApplied = false;
+
+            // 1. Public comment reply
+            if (!string.IsNullOrEmpty(request.PublicComment))
+            {
+                try
+                {
+                    await _facebookGraphService.ReplyToCommentAsync(
+                        connectedPage.PageAccessToken,
+                        lastComment.FacebookCommentId!,
+                        request.PublicComment);
+                    publicSent = true;
+
+                    // Save as outgoing message
+                    var publicMsg = new Message
+                    {
+                        ConversationId = id,
+                        Direction = "Outgoing",
+                        Content = request.PublicComment,
+                        MessageType = "Text",
+                        FacebookPostId = lastComment.FacebookPostId,
+                        FacebookCommentId = lastComment.FacebookCommentId,
+                        Timestamp = DateTime.UtcNow
+                    };
+                    _context.Messages.Add(publicMsg);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[CommentReply] Public reply failed: {ex.Message}");
+                }
+            }
+
+            // 2. Private DM
+            if (!string.IsNullOrEmpty(request.PrivateDM))
+            {
+                try
+                {
+                    await _facebookGraphService.SendPrivateReplyAsync(
+                        connectedPage.FacebookPageId,
+                        connectedPage.PageAccessToken,
+                        lastComment.FacebookCommentId!,
+                        request.PrivateDM);
+                    dmSent = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[CommentReply] Private DM failed: {ex.Message}");
+                }
+            }
+
+            // 3. Reaction
+            if (!string.IsNullOrEmpty(request.Reaction))
+            {
+                try
+                {
+                    await _facebookGraphService.ReactToCommentAsync(
+                        connectedPage.PageAccessToken,
+                        lastComment.FacebookCommentId!,
+                        request.Reaction);
+                    reactionApplied = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[CommentReply] Reaction failed: {ex.Message}");
+                }
+            }
+
+            conversation.LastMessageTimestamp = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                publicCommentSent = publicSent,
+                privateDMSent = dmSent,
+                reactionApplied = reactionApplied
+            });
         }
 
         [HttpPost("conversations/{id}/assign")]
@@ -469,6 +616,14 @@ namespace Modules.Conversations.API
     public class SendMessageRequest
     {
         public string Content { get; set; } = string.Empty;
+        public string? Channel { get; set; }
+    }
+
+    public class CommentReplyRequest
+    {
+        public string? PublicComment { get; set; }
+        public string? PrivateDM { get; set; }
+        public string? Reaction { get; set; }
     }
 
     public class AssignConversationRequest

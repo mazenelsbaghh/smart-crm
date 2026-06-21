@@ -42,6 +42,7 @@ namespace Shared.Infrastructure
         public DbSet<Modules.Audit.Domain.AuditLog> AuditLogs { get; set; }
         public DbSet<Modules.GroupAppointments.Domain.GroupAppointment> GroupAppointments { get; set; }
         public DbSet<Modules.GroupAppointments.Domain.GroupAppointmentBooking> GroupAppointmentBookings { get; set; }
+        public DbSet<Modules.Facebook.Domain.ConnectedPage> ConnectedPages { get; set; }
 
         public Guid CurrentProjectId => _tenantContext.ProjectId;
 
@@ -74,6 +75,13 @@ namespace Shared.Infrastructure
                 .WithOne(b => b.GroupAppointment)
                 .HasForeignKey(b => b.GroupAppointmentId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<Modules.Facebook.Domain.ConnectedPage>()
+                .HasIndex(cp => cp.ProjectId);
+
+            modelBuilder.Entity<Modules.Facebook.Domain.ConnectedPage>()
+                .HasIndex(cp => cp.FacebookPageId)
+                .IsUnique();
 
             // Apply global query filter for all entities implementing ITenantEntity
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())

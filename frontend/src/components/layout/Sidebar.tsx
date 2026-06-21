@@ -17,6 +17,8 @@ import {
   Settings,
   LogOut,
   User,
+  MessageCircle,
+  MessageSquareMore,
 } from 'lucide-react';
 import styles from './layout.module.css';
 
@@ -31,6 +33,8 @@ export default function Sidebar() {
       items: [
         { name: 'لوحة التحكم', path: '/dashboard', icon: LayoutDashboard },
         { name: 'صندوق المحادثات', path: '/inbox', icon: Inbox },
+        { name: 'صندوق الماسنجر', path: '/inbox/messenger', icon: MessageCircle },
+        { name: 'صندوق التعليقات', path: '/inbox/comments', icon: MessageSquareMore },
         { name: 'العملاء CRM', path: '/crm', icon: Users },
         { name: 'مسار الصفقات', path: '/crm/pipeline', icon: GitBranch },
       ]

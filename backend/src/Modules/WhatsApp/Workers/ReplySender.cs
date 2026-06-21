@@ -34,6 +34,14 @@ namespace Modules.WhatsApp.Workers
 
         public async Task HandleAsync(AIReplyGeneratedEvent @event)
         {
+            // Skip non-WhatsApp channels — handled by FacebookReplySender
+            var channel = @event.Channel ?? "WhatsApp";
+            if (channel != "WhatsApp")
+            {
+                Console.WriteLine($"[ReplySender] Skipping non-WhatsApp channel: {channel}");
+                return;
+            }
+
             Console.WriteLine($"[ReplySender] Received AIReplyGeneratedEvent for Project: {@event.ProjectId}, Sender: {@event.Sender}");
 
             try

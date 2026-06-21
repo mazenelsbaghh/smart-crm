@@ -12,6 +12,9 @@ namespace Modules.Conversations.Domain
         public string MessageType { get; set; } // Text, Image, Voice, Document
         public Guid? AssetId { get; set; }
         public string? Transcription { get; set; }
+        public string? FacebookPostId { get; set; }
+        public string? FacebookCommentId { get; set; }
+        public string? ParentCommentId { get; set; }
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     }
 }

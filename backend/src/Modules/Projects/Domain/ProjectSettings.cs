@@ -17,6 +17,10 @@ namespace Modules.Projects.Domain
         public int ReplyDelay { get; set; } = 3;
         public int MaxDailyMessages { get; set; } = 500;
         public bool IsGroupAppointmentsEnabled { get; set; } = false;
+        public bool MessengerAiAutoReplyEnabled { get; set; } = false;
+        public int MessengerReplyDelay { get; set; } = 5;
+        public bool CommentsAiAutoReplyEnabled { get; set; } = false;
+        public int CommentsReplyDelay { get; set; } = 10;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }

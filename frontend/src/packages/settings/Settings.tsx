@@ -14,6 +14,12 @@ import {
   LogOut,
   Zap
 } from 'lucide-react';
+
+const FacebookIcon = ({ size = 20 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="#1877F2">
+    <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+  </svg>
+);
 import styles from './settings.module.css';
 
 import Addons from './Addons';
@@ -42,6 +48,10 @@ interface ProjectSettingsResponse {
     replyDelay?: number;
     maxDailyMessages?: number;
     isGroupAppointmentsEnabled?: boolean;
+    messengerAiAutoReplyEnabled?: boolean;
+    messengerReplyDelay?: number;
+    commentsAiAutoReplyEnabled?: boolean;
+    commentsReplyDelay?: number;
   } | null;
 }
 
@@ -73,6 +83,14 @@ export default function Settings() {
   const [replyDelay, setReplyDelay] = useState(3);
   const [maxDailyMessages, setMaxDailyMessages] = useState(500);
   const [isGroupAppointmentsEnabled, setIsGroupAppointmentsEnabled] = useState(false);
+  const [messengerAutoReplyEnabled, setMessengerAutoReplyEnabled] = useState(false);
+  const [messengerReplyDelay, setMessengerReplyDelay] = useState(3);
+  const [commentsAutoReplyEnabled, setCommentsAutoReplyEnabled] = useState(false);
+  const [commentsReplyDelay, setCommentsReplyDelay] = useState(3);
+
+  // Facebook Pages state
+  const [connectedPages, setConnectedPages] = useState<Array<{ pageId: string; pageName: string; connectedAt: string }>>([]);
+  const [fbLoading, setFbLoading] = useState(false);
 
   // Tabs / Navigation state
   const [activeTab, setActiveTab] = useState<'general' | 'addons'>('general');
@@ -93,8 +111,25 @@ export default function Settings() {
       setReplyDelay(settings?.replyDelay ?? 3);
       setMaxDailyMessages(settings?.maxDailyMessages ?? 500);
       setIsGroupAppointmentsEnabled(settings?.isGroupAppointmentsEnabled ?? false);
+      setMessengerAutoReplyEnabled(settings?.messengerAiAutoReplyEnabled ?? false);
+      setMessengerReplyDelay(settings?.messengerReplyDelay ?? 3);
+      setCommentsAutoReplyEnabled(settings?.commentsAiAutoReplyEnabled ?? false);
+      setCommentsReplyDelay(settings?.commentsReplyDelay ?? 3);
     } catch {
       setMessage({ type: 'error', text: 'تعذر تحميل إعدادات الرد الآلي.' });
+    }
+  }, [activeProject]);
+
+  const fetchConnectedPages = useCallback(async () => {
+    if (!activeProject) return;
+    try {
+      const res = await api.get<Array<{ pageId: string; pageName: string; connectedAt: string }>>(
+        `/api/facebook/pages?projectId=${activeProject.id}`
+      );
+      setConnectedPages(res.data || []);
+    } catch {
+      // Silently handle - no pages connected yet
+      setConnectedPages([]);
     }
   }, [activeProject]);
 
@@ -148,6 +183,7 @@ export default function Settings() {
     queueMicrotask(() => {
       void fetchStatus(true);
       void fetchProjectSettings();
+      void fetchConnectedPages();
     });
     
     const interval = setInterval(() => {
@@ -155,7 +191,7 @@ export default function Settings() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [fetchStatus, fetchProjectSettings]);
+  }, [fetchStatus, fetchProjectSettings, fetchConnectedPages]);
 
   const handleStartSession = async () => {
     if (!activeProject) return;
@@ -221,6 +257,51 @@ export default function Settings() {
     }
   };
 
+  const handleConnectFacebook = () => {
+    if (!activeProject) return;
+    setFbLoading(true);
+    const popup = window.open(
+      `/api/facebook/oauth/login?projectId=${activeProject.id}`,
+      'fbConnect',
+      'width=600,height=700,scrollbars=yes'
+    );
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'FACEBOOK_OAUTH_SUCCESS') {
+        setMessage({ type: 'success', text: `تم ربط صفحة فيسبوك بنجاح: ${event.data.pageName || 'صفحة جديدة'}` });
+        void fetchConnectedPages();
+        popup?.close();
+      } else if (event.data?.type === 'FACEBOOK_OAUTH_ERROR') {
+        setMessage({ type: 'error', text: event.data.error || 'تعذر ربط صفحة فيسبوك.' });
+      }
+      setFbLoading(false);
+      window.removeEventListener('message', handleMessage);
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    // Fallback: if popup closed without message
+    const checkPopup = setInterval(() => {
+      if (popup?.closed) {
+        clearInterval(checkPopup);
+        setFbLoading(false);
+        window.removeEventListener('message', handleMessage);
+        void fetchConnectedPages();
+      }
+    }, 1000);
+  };
+
+  const handleDisconnectPage = async (pageId: string) => {
+    if (!activeProject) return;
+    try {
+      await api.delete(`/api/facebook/pages/${pageId}?projectId=${activeProject.id}`);
+      setConnectedPages(prev => prev.filter(p => p.pageId !== pageId));
+      setMessage({ type: 'success', text: 'تم فصل الصفحة بنجاح.' });
+    } catch {
+      setMessage({ type: 'error', text: 'تعذر فصل الصفحة.' });
+    }
+  };
+
   const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeProject) return;
@@ -236,6 +317,10 @@ export default function Settings() {
         replyDelay,
         maxDailyMessages,
         isGroupAppointmentsEnabled,
+        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
+        messengerReplyDelay,
+        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
+        commentsReplyDelay,
       });
       setMessage({ type: 'success', text: 'تم حفظ إعدادات الرد الآلي بنجاح.' });
       void refreshProjects();
@@ -257,7 +342,11 @@ export default function Settings() {
         aiTargetAudience: aiTargetAudience.trim(),
         replyDelay,
         maxDailyMessages,
-        isGroupAppointmentsEnabled: enabled
+        isGroupAppointmentsEnabled: enabled,
+        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
+        messengerReplyDelay,
+        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
+        commentsReplyDelay
       });
       setIsGroupAppointmentsEnabled(enabled);
     } catch (e) {
@@ -460,6 +549,71 @@ export default function Settings() {
             )}
           </div>
 
+          {/* Facebook Page Connection Card */}
+          <div className={`glass-panel ${styles.card}`}>
+            <h2 className={styles.cardTitle}>
+              <FacebookIcon size={20} />
+              ربط صفحة فيسبوك
+            </h2>
+
+            {connectedPages.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
+                  <CheckCircle size={16} style={{ color: 'hsl(var(--accent-success))' }} />
+                  <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'hsl(var(--accent-success))' }}>
+                    {connectedPages.length} صفحة مربوطة
+                  </span>
+                </div>
+
+                {connectedPages.map(page => (
+                  <div key={page.pageId} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '10px 12px', borderRadius: 'var(--radius-md)',
+                    background: 'var(--surface-muted)', border: '1px solid var(--border-subtle)'
+                  }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-strong)' }}>{page.pageName}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-soft)' }}>ID: {page.pageId}</div>
+                    </div>
+                    <button
+                      onClick={() => void handleDisconnectPage(page.pageId)}
+                      className={`${styles.btn} ${styles.btnDanger}`}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                    >
+                      <LogOut size={14} />
+                      فصل
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  onClick={handleConnectFacebook}
+                  disabled={fbLoading}
+                  className={`${styles.btn} ${styles.btnSecondary}`}
+                  style={{ gap: '6px' }}
+                >
+                  <FacebookIcon size={16} />
+                  {fbLoading ? 'جاري الربط...' : 'ربط صفحة أخرى'}
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                <p style={{ fontSize: '0.9rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
+                  اربط صفحة فيسبوك عشان تقدر ترد على رسائل الماسنجر والتعليقات تلقائياً.
+                </p>
+                <button
+                  onClick={handleConnectFacebook}
+                  disabled={fbLoading}
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  style={{ gap: '6px', backgroundColor: '#1877F2' }}
+                >
+                  <FacebookIcon size={18} />
+                  {fbLoading ? 'جاري فتح نافذة فيسبوك...' : 'ربط صفحة فيسبوك'}
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Right Side: General Preferences */}
           <div className={`glass-panel ${styles.card}`}>
             <h2 className={styles.cardTitle}>
@@ -603,8 +757,66 @@ export default function Settings() {
                     onChange={(e) => setAutoReplyEnabled(e.target.checked)}
                     className={styles.checkbox} 
                   />
-                  <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل الرد الآلي بالذكاء الاصطناعي</span>
+                  <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل الرد الآلي بالذكاء الاصطناعي (واتساب)</span>
                 </label>
+              </div>
+
+              {/* Messenger AI Settings */}
+              <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)' }}>
+                <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 'var(--space-sm)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  💬 إعدادات ماسنجر
+                </h3>
+                <div className={styles.formGroup}>
+                  <label className={styles.checkboxGroup}>
+                    <input 
+                      type="checkbox" 
+                      checked={messengerAutoReplyEnabled}
+                      onChange={(e) => setMessengerAutoReplyEnabled(e.target.checked)}
+                      className={styles.checkbox} 
+                    />
+                    <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل الرد الآلي على الماسنجر</span>
+                  </label>
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>تأخير الرد (ماسنجر)</label>
+                  <input 
+                    type="number" 
+                    min={0}
+                    max={60}
+                    value={messengerReplyDelay}
+                    onChange={(e) => setMessengerReplyDelay(Number(e.target.value))}
+                    className={styles.input} 
+                  />
+                </div>
+              </div>
+
+              {/* Comments AI Settings */}
+              <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)' }}>
+                <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 'var(--space-sm)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  📝 إعدادات التعليقات
+                </h3>
+                <div className={styles.formGroup}>
+                  <label className={styles.checkboxGroup}>
+                    <input 
+                      type="checkbox" 
+                      checked={commentsAutoReplyEnabled}
+                      onChange={(e) => setCommentsAutoReplyEnabled(e.target.checked)}
+                      className={styles.checkbox} 
+                    />
+                    <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل الرد الآلي على التعليقات</span>
+                  </label>
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>تأخير الرد (تعليقات)</label>
+                  <input 
+                    type="number" 
+                    min={0}
+                    max={60}
+                    value={commentsReplyDelay}
+                    onChange={(e) => setCommentsReplyDelay(Number(e.target.value))}
+                    className={styles.input} 
+                  />
+                </div>
               </div>
 
               <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`} style={{ marginTop: 'var(--space-sm)' }}>

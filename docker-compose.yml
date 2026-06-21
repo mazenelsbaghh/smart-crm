@@ -118,6 +118,12 @@ services:
       WhatsApp__MinTypingDelayMs: "1500"
       WhatsApp__MaxTypingDelayMs: "3000"
       Firebase__ServiceAccountPath: "/app/firebase-key.json"
+      FACEBOOK_APP_ID: "${FACEBOOK_APP_ID:-1008993075392358}"
+      FACEBOOK_APP_SECRET: "${FACEBOOK_APP_SECRET:-cdf99f6c2708e1dc146204488262ec45}"
+      FACEBOOK_VERIFY_TOKEN: "${FACEBOOK_VERIFY_TOKEN:-smartcrm_verify_2026}"
+      FACEBOOK_OAUTH_REDIRECT_URI: "${FACEBOOK_OAUTH_REDIRECT_URI:-http://localhost/api/facebook/oauth/callback}"
+      FACEBOOK_GRAPH_API_VERSION: "v20.0"
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:3000}"
     volumes:
       - ./firebase-key.json:/app/firebase-key.json:ro
     depends_on:

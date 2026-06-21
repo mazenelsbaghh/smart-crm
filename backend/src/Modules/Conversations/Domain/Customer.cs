@@ -16,5 +16,7 @@ namespace Modules.Conversations.Domain
         public string[] Interests { get; set; } = Array.Empty<string>();
         public string? Label { get; set; }
         public bool IsBlacklisted { get; set; } = false;
+        public string? FacebookPSID { get; set; }
+        public string? FacebookName { get; set; }
     }
 }

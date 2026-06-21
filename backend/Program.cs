@@ -201,6 +201,11 @@ builder.Services.AddScoped<Modules.CRM.Workers.CRMWorker>();
 builder.Services.AddScoped<Modules.Workflows.Services.IWorkflowEngine, Modules.Workflows.Services.WorkflowEngine>();
 builder.Services.AddScoped<Modules.Workflows.Workers.WorkflowWorker>();
 
+// Register Facebook Module Services
+builder.Services.AddScoped<Modules.Facebook.Services.IFacebookGraphService, Modules.Facebook.Services.FacebookGraphService>();
+builder.Services.AddScoped<Modules.Facebook.Services.IFacebookOAuthService, Modules.Facebook.Services.FacebookOAuthService>();
+builder.Services.AddScoped<Modules.Facebook.Workers.FacebookReplySender>();
+
 // Register CRM/Follow-up Hosted Services
 builder.Services.AddHostedService<Modules.CRM.Services.FollowUpScheduler>();
 
@@ -316,6 +321,7 @@ using (var scope = app.Services.CreateScope())
     eventBus.Subscribe<Shared.Events.CustomerTagAddedEvent, Modules.Workflows.Workers.WorkflowWorker>();
     eventBus.Subscribe<Shared.Events.ConversationClosedEvent, Modules.Customers.Workers.CustomerMemoryWorker>();
     eventBus.Subscribe<Shared.Events.EntityIndexedEvent, Modules.Search.Workers.ElasticsearchIndexerWorker>();
+    eventBus.Subscribe<Shared.Events.AIReplyGeneratedEvent, Modules.Facebook.Workers.FacebookReplySender>();
 }
 
 // Register Hangfire Daily Analytics snapshot recurring job
