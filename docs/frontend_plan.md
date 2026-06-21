@@ -8,13 +8,14 @@ This document tracks all frontend requirements, design structures, pages, and im
 
 ## Chronological Log
 
-### 2026-06-22: Complete Dashboard & Side Screens Theme Redesign (Active Plan)
+### 2026-06-22: Complete Dashboard & Side Screens Theme Redesign (Completed)
 - **Goal**: Redesign all remaining dashboard pages (CRM, Settings, Follow-ups, Campaigns, Workflows, Knowledge Base, Approvals, Reports, Dashboard) to match the dark neon premium crm theme of the inbox.
-- **Proposed Changes**:
-  - Update `variables.css` HSL and OKLCH properties to map to matte black background `#0F1115`, translucent dark card `#171A21`, border `rgba(255,255,255,0.06)`, and neon lime-green `#D8F15D`.
-  - Update body rule to use flat background `#0F1115`.
-  - Refactor `crm.module.css` and `settings.module.css` to replace hardcoded cyan (`0, 243, 255`) and pink (`255, 0, 127`) values with CSS variable theme colors.
-  - Review all sidebar pages for layout and visual consistency.
+- **Updates**:
+  - Transition global backgrounds to deep matte charcoal `#0F1115`.
+  - Harmonize card components to translucent dark gray `#171A21` with subtle borders `rgba(255,255,255,0.06)`.
+  - Shift accent borders/hover highlights from cyan/pink to neon lime-green `#D8F15D`.
+  - Retain the thin 80px sidebar as the unified global navigation.
+  - [x] **Theme Token Extraction**: Extracted and consolidated all hardcoded `#D8F15D` neon lime-green accent color codes into the design system variables (`var(--accent)`), refactoring `inbox.module.css` and `ThinSidebar.tsx`.
 
 ### 2026-06-10: Firebase Cloud Messaging Push Notifications & Xcode Bundling (Completed)
 - **Goal**: Implement native iOS push notifications using Firebase Cloud Messaging (FCM), configure Xcode to bundle `GoogleService-Info.plist`, and add settings testing UI.

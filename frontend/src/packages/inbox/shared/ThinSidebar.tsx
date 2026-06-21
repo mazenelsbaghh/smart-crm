@@ -57,7 +57,7 @@ export default function ThinSidebar() {
         <svg viewBox="0 0 100 100" className={styles.sidebarLogo}>
           {/* Flower/Star logo from screenshot */}
           <path
-            fill="#D8F15D"
+            fill="var(--accent)"
             d="M50 0 L60 30 L90 20 L70 50 L90 80 L60 70 L50 100 L40 70 L10 80 L30 50 L10 20 L40 30 Z"
           />
         </svg>
