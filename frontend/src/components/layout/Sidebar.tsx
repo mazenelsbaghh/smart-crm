@@ -31,11 +31,11 @@ export default function Sidebar() {
     {
       title: 'لوحات وقوائم',
       items: [
-        { name: 'لوحة التحكم', path: '/dashboard', icon: LayoutDashboard },
-        { name: 'صندوق المحادثات', path: '/inbox', icon: Inbox },
-        { name: 'صندوق الماسنجر', path: '/inbox/messenger', icon: MessageCircle },
-        { name: 'صندوق التعليقات', path: '/inbox/comments', icon: MessageSquareMore },
-        { name: 'العملاء CRM', path: '/crm', icon: Users },
+        { name: 'لوحة التحكم', path: '/dashboard', icon: LayoutDashboard, shortcut: '⌥1' },
+        { name: 'صندوق المحادثات', path: '/inbox', icon: Inbox, shortcut: '⌥2' },
+        { name: 'صندوق الماسنجر', path: '/inbox/messenger', icon: MessageCircle, shortcut: '⌥3' },
+        { name: 'صندوق التعليقات', path: '/inbox/comments', icon: MessageSquareMore, shortcut: '⌥4' },
+        { name: 'العملاء CRM', path: '/crm', icon: Users, shortcut: '⌥5' },
         { name: 'مسار الصفقات', path: '/crm/pipeline', icon: GitBranch },
       ]
     },
@@ -85,14 +85,19 @@ export default function Sidebar() {
                 const Icon = item.icon;
                 const isActive = pathname === item.path || pathname?.startsWith(item.path + '/');
                 return (
-                  <div
+                  <button
                     key={item.path}
+                    type="button"
                     onClick={() => router.push(item.path)}
                     className={`${styles.navItem} ${isActive ? styles.navItemActive : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', alignItems: 'center' }}
                   >
                     <Icon size={16} style={isActive ? { color: 'hsl(var(--accent-primary))' } : {}} />
                     <span>{item.name}</span>
-                  </div>
+                    {item.shortcut && (
+                      <kbd style={{ marginRight: 'auto', fontSize: '0.65rem' }}>{item.shortcut}</kbd>
+                    )}
+                  </button>
                 );
               })}
             </div>
@@ -101,10 +106,15 @@ export default function Sidebar() {
       </nav>
 
       <div className={styles.sidebarFooter}>
-        <div onClick={logout} className={styles.logoutBtn}>
+        <button 
+          type="button"
+          onClick={logout} 
+          className={styles.logoutBtn}
+          style={{ background: 'none', border: 'none', width: '100%', display: 'flex', alignItems: 'center' }}
+        >
           <LogOut size={16} />
           <span>تسجيل الخروج</span>
-        </div>
+        </button>
         <p className={styles.copyrightText}>سمارت كاستمر &copy; ٢٠٢٦</p>
       </div>
     </aside>

@@ -146,6 +146,8 @@ export default function Inbox() {
   const activeConvRef = useRef<Conversation | null>(null);
   const loadingMoreConvsRef = useRef(false);
   const currentParamsRef = useRef({ status: 'All', search: '' });
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const composerInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     activeConvRef.current = activeConv;
@@ -154,6 +156,46 @@ export default function Inbox() {
   useEffect(() => {
     currentParamsRef.current = { status: filterStatus, search: debouncedSearchQuery };
   }, [filterStatus, debouncedSearchQuery]);
+
+  // Keyboard Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. "/" focuses search input
+      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+
+      // 2. Escape to unselect active conversation or blur input fields
+      if (e.key === 'Escape') {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        setActiveConv(null);
+      }
+
+      // 3. "R" focuses composer input when a conversation is active
+      if ((e.key === 'r' || e.key === 'R' || e.key === 'ق') && activeConvRef.current && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        composerInputRef.current?.focus();
+      }
+
+      // 4. "B" toggles blacklist when a conversation is active
+      if ((e.key === 'b' || e.key === 'B' || e.key === 'لا') && activeConvRef.current && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        handleToggleBlacklist();
+      }
+
+      // 5. Cmd+Enter / Ctrl+Enter to send message
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && document.activeElement === composerInputRef.current) {
+        e.preventDefault();
+        void handleSendMessage();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isBlacklisted, inputMessage, activeConv]);
 
   // Load Conversations
   const fetchConversations = async () => {
@@ -710,6 +752,7 @@ export default function Inbox() {
           <div className={styles.searchWrapper}>
             <Search size={16} className={styles.searchIcon} />
             <input
+              ref={searchInputRef}
               type="text"
               placeholder="ابحث في المحادثات..."
               className={`neon-input ${styles.searchInput}`}
@@ -737,10 +780,12 @@ export default function Inbox() {
           ) : (
             <>
               {filteredConversations.map((c) => (
-                <div
+                <button
                   key={c.id}
+                  type="button"
                   onClick={() => setActiveConv(c)}
                   className={`${styles.convCard} ${activeConv?.id === c.id ? styles.convCardActive : ''}`}
+                  style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', font: 'inherit', color: 'inherit' }}
                 >
                   <div className={styles.avatar}>
                     {c.customer.name.charAt(0).toUpperCase()}
@@ -764,7 +809,7 @@ export default function Inbox() {
                       )}
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
               {loadingMoreConvs && (
                 <div style={{ padding: '12px', display: 'flex', justifyContent: 'center' }}>
@@ -958,6 +1003,7 @@ export default function Inbox() {
               </button>
               <div style={{ position: 'relative', display: 'flex', alignItems: 'center', flexGrow: 1 }}>
                 <input
+                  ref={composerInputRef}
                   type="text"
                   placeholder="اكتب رسالة..."
                   className={`neon-input ${styles.composerInput}`}

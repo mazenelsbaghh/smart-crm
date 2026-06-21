@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { crmService, Customer } from '../../services/crm';
 import { 
   Calendar, 
@@ -47,6 +48,11 @@ export default function FollowUps() {
   const [loading, setLoading] = useState(true);
   const [reEvaluating, setReEvaluating] = useState(false);
 
+  // Confirmation States
+  const [confirmReEvaluateOpen, setConfirmReEvaluateOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [followUpToDelete, setFollowUpToDelete] = useState<string | null>(null);
+
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -83,10 +89,14 @@ export default function FollowUps() {
     }
   };
 
-  const handleReEvaluateAll = async () => {
+  const triggerReEvaluateAll = () => {
     if (!activeProject) return;
-    if (!window.confirm('هل أنت متأكد من رغبتك في إعادة تقييم وضبط جميع المتابعات المعلقة بالذكاء الاصطناعي بناءً على محادثات الطلاب؟ قد يستغرق هذا بضع ثوانٍ.')) return;
-    
+    setConfirmReEvaluateOpen(true);
+  };
+
+  const handleConfirmReEvaluateAll = async () => {
+    setConfirmReEvaluateOpen(false);
+    if (!activeProject) return;
     try {
       setReEvaluating(true);
       setMessage(null);
@@ -104,11 +114,14 @@ export default function FollowUps() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
     setCurrentPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCurrentPage(1);
   }, [filter, searchQuery]);
 
@@ -124,7 +137,7 @@ export default function FollowUps() {
       await api.post(`/api/follow-ups/${id}/send`);
       setMessage({ type: 'success', text: 'تم إرسال رسالة المتابعة بنجاح.' });
       await fetchData();
-    } catch (e: any) {
+    } catch (e) {
       console.error('Failed to send follow-up', e);
       setMessage({ type: 'error', text: 'فشل إرسال رسالة المتابعة.' });
     } finally {
@@ -132,8 +145,16 @@ export default function FollowUps() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من مسح هذه المتابعة؟')) return;
+  const triggerDelete = (id: string) => {
+    setFollowUpToDelete(id);
+    setConfirmDeleteOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!followUpToDelete) return;
+    const id = followUpToDelete;
+    setConfirmDeleteOpen(false);
+    setFollowUpToDelete(null);
     try {
       setActionLoadingId(id);
       setMessage(null);
@@ -243,7 +264,8 @@ export default function FollowUps() {
           <p className={styles.pageSubtitle}>إدارة مواعيد المتابعات المعلقة والمتأخرة للاتصال بالعملاء أو مراسلتهم</p>
         </div>
         <button
-          onClick={handleReEvaluateAll}
+          type="button"
+          onClick={triggerReEvaluateAll}
           disabled={reEvaluating || pendingCount === 0}
           className={`${styles.btn} ${styles.btnPrimary}`}
           style={{ 
@@ -552,7 +574,8 @@ export default function FollowUps() {
                           )}
 
                           <button
-                            onClick={() => handleDelete(fu.id)}
+                            type="button"
+                            onClick={() => triggerDelete(fu.id)}
                             disabled={actionLoadingId !== null}
                             className={`${styles.btn} ${styles.btnDanger}`}
                             style={{ padding: '4px 10px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
@@ -642,9 +665,15 @@ export default function FollowUps() {
           <div className={`glass-panel ${styles.modal}`}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>تعديل تفاصيل المتابعة</h3>
-              <div onClick={() => setEditingFollowUp(null)} className={styles.closeBtn}>
+              <button 
+                type="button"
+                onClick={() => setEditingFollowUp(null)} 
+                className={styles.closeBtn}
+                aria-label="إغلاق"
+                style={{ background: 'none', border: 'none', padding: 0 }}
+              >
                 <X size={20} />
-              </div>
+              </button>
             </div>
             
             <form onSubmit={handleSaveEdit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
@@ -652,7 +681,7 @@ export default function FollowUps() {
                 <label className={styles.label}>نوع المتابعة</label>
                 <select
                   value={editType}
-                  onChange={(e) => setEditType(e.target.value as any)}
+                  onChange={(e) => setEditType(e.target.value as 'Nurturing' | 'AppointmentReminder')}
                   className={styles.select}
                 >
                   <option value="Nurturing">متابعة لتنشيط العميل (Nurturing)</option>
@@ -731,6 +760,26 @@ export default function FollowUps() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog 
+        isOpen={confirmReEvaluateOpen}
+        title="تأكيد إعادة الضبط بالـ AI"
+        message="هل أنت متأكد من رغبتك في إعادة تقييم وضبط جميع المتابعات المعلقة بالذكاء الاصطناعي بناءً على محادثات الطلاب؟ قد يستغرق هذا بضع ثوانٍ."
+        confirmLabel="تأكيد الضبط"
+        cancelLabel="إلغاء"
+        onConfirm={handleConfirmReEvaluateAll}
+        onCancel={() => setConfirmReEvaluateOpen(false)}
+      />
+
+      <ConfirmDialog 
+        isOpen={confirmDeleteOpen}
+        title="تأكيد الحذف"
+        message="هل أنت متأكد من مسح هذه المتابعة؟ لا يمكن التراجع عن هذا الإجراء."
+        confirmLabel="مسح"
+        cancelLabel="إلغاء"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => { setConfirmDeleteOpen(false); setFollowUpToDelete(null); }}
+      />
     </div>
   );
 }

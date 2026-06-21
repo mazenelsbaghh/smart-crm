@@ -63,6 +63,8 @@ export default function CommentsInbox() {
   const messageEndRef = useRef<HTMLDivElement>(null);
   const signalRServiceRef = useRef<SignalRService | null>(null);
   const activeConvRef = useRef<Conversation | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const publicCommentInputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     activeConvRef.current = activeConv;
@@ -72,6 +74,37 @@ export default function CommentsInbox() {
     const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Keyboard Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDownGlobal = (e: KeyboardEvent) => {
+      // 1. "/" focuses search input
+      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+
+      // 2. Escape to blur active fields and close active conversation
+      if (e.key === 'Escape') {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        setActiveConv(null);
+      }
+
+      // 3. "R" focuses public reply textarea when conversation is active
+      if ((e.key === 'r' || e.key === 'R' || e.key === 'ق') && activeConvRef.current && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        publicCommentInputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      handleKeyDownGlobal(e);
+    }
+  }, [activeConv]);
 
   // Fetch conversations with channel=FacebookComment
   const fetchConversations = async () => {
@@ -239,6 +272,7 @@ export default function CommentsInbox() {
           <div className={styles.searchBox}>
             <Search size={14} />
             <input
+              ref={searchInputRef}
               type="text"
               placeholder="بحث بالاسم..."
               value={searchQuery}
@@ -269,10 +303,12 @@ export default function CommentsInbox() {
             </div>
           ) : (
             conversations.map(conv => (
-              <div
+              <button
                 key={conv.id}
+                type="button"
                 className={`${styles.conversationItem} ${activeConv?.id === conv.id ? styles.active : ''}`}
                 onClick={() => setActiveConv(conv)}
+                style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', font: 'inherit', color: 'inherit' }}
               >
                 <div className={styles.avatar}>
                   <User size={20} />
@@ -286,7 +322,7 @@ export default function CommentsInbox() {
                     <span className={`${styles.statusBadge} ${styles[`status${conv.status}`]}`}>{statusLabels[conv.status] || conv.status}</span>
                   </div>
                 </div>
-              </div>
+              </button>
             ))
           )}
         </div>
@@ -349,6 +385,7 @@ export default function CommentsInbox() {
                     <Reply size={14} /> رد عام (تعليق)
                   </label>
                   <textarea
+                    ref={publicCommentInputRef}
                     className={styles.messageInput}
                     placeholder="اكتب رد عام على التعليق..."
                     value={publicComment}

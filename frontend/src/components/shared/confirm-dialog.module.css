@@ -1,0 +1,113 @@
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--overlay);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn var(--transition-fast) ease-out;
+}
+
+.modal {
+  width: min(440px, calc(100vw - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  box-shadow: var(--shadow-panel);
+  animation: scaleUp var(--transition-normal) cubic-bezier(0.16, 1, 0.3, 1);
+  direction: rtl;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.body {
+  min-height: 48px;
+}
+
+.message {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-base);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.confirmBtn,
+.cancelBtn {
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  outline: none;
+  transition: var(--transition-normal);
+  border: 1px solid transparent;
+}
+
+.confirmBtn {
+  background-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.confirmBtn:hover {
+  background-color: var(--accent-hover);
+  box-shadow: var(--shadow-neon);
+  transform: translateY(-1px);
+}
+
+.confirmBtn:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.cancelBtn {
+  background-color: var(--surface-muted);
+  border-color: var(--border-subtle);
+  color: var(--text-base);
+}
+
+.cancelBtn:hover {
+  background-color: var(--accent-soft);
+  border-color: var(--border-strong);
+  color: var(--accent);
+}
+
+.cancelBtn:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleUp {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}

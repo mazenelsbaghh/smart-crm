@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { 
   BookOpen, 
   Upload, 
@@ -165,12 +166,21 @@ export default function KnowledgeBase() {
     }
   };
 
-  const handleDeleteDocument = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذا المستند؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [docToDelete, setDocToDelete] = useState<string | null>(null);
+
+  const handleDeleteDocument = (id: string) => {
+    setDocToDelete(id);
+    setConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!docToDelete) return;
+    setConfirmOpen(false);
     try {
       setActionLoading(true);
       setMessage(null);
-      await api.delete(`/api/knowledge/${id}`);
+      await api.delete(`/api/knowledge/${docToDelete}`);
       setMessage({ type: 'success', text: 'تم حذف المستند بنجاح.' });
       fetchDocuments();
     } catch (e: any) {
@@ -178,6 +188,7 @@ export default function KnowledgeBase() {
       setMessage({ type: 'error', text: e.response?.data?.message || 'فشل حذف المستند.' });
     } finally {
       setActionLoading(false);
+      setDocToDelete(null);
     }
   };
 
@@ -491,9 +502,15 @@ export default function KnowledgeBase() {
               <h3 className={styles.modalTitle}>
                 {editingDocumentId ? 'تعديل مستند معرفي' : 'إضافة مستند معرفي'}
               </h3>
-              <div onClick={() => { setIsModalOpen(false); setEditingDocumentId(null); }} className={styles.closeBtn}>
+              <button 
+                type="button"
+                onClick={() => { setIsModalOpen(false); setEditingDocumentId(null); }} 
+                className={styles.closeBtn}
+                aria-label="إغلاق"
+                style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
+              >
                 &times;
-              </div>
+              </button>
             </div>
 
             <form onSubmit={handleSaveDocument} className={styles.form}>
@@ -552,6 +569,16 @@ export default function KnowledgeBase() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog 
+        isOpen={confirmOpen}
+        title="تأكيد الحذف"
+        message="هل أنت متأكد من حذف هذا المستند؟ لا يمكن التراجع عن هذا الإجراء."
+        confirmLabel="حذف"
+        cancelLabel="إلغاء"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => { setConfirmOpen(false); setDocToDelete(null); }}
+      />
     </div>
   );
 }

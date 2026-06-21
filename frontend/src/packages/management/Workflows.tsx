@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { 
   GitFork, 
   Plus, 
@@ -86,16 +87,27 @@ export default function Workflows() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('هل أنت متأكد من رغبتك في حذف قاعدة الأتمتة هذه؟')) return;
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [workflowToDelete, setWorkflowToDelete] = useState<string | null>(null);
+
+  const handleDelete = (id: string) => {
+    setWorkflowToDelete(id);
+    setConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!workflowToDelete) return;
+    setConfirmOpen(false);
     try {
       setMessage(null);
-      await api.delete(`/api/workflows/${id}`);
-      setWorkflows(prev => prev.filter(w => w.id !== id));
+      await api.delete(`/api/workflows/${workflowToDelete}`);
+      setWorkflows(prev => prev.filter(w => w.id !== workflowToDelete));
       setMessage({ type: 'success', text: 'تم حذف قاعدة سير العمل بنجاح.' });
     } catch (e) {
       console.error('Failed to delete workflow', e);
       setMessage({ type: 'error', text: 'فشل حذف قاعدة سير العمل.' });
+    } finally {
+      setWorkflowToDelete(null);
     }
   };
 
@@ -283,9 +295,15 @@ export default function Workflows() {
           <div className={`glass-panel ${styles.modal}`}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>تهيئة قاعدة الأتمتة</h3>
-              <div onClick={() => setIsModalOpen(false)} className={styles.closeBtn}>
+              <button 
+                type="button"
+                onClick={() => setIsModalOpen(false)} 
+                className={styles.closeBtn}
+                aria-label="إغلاق"
+                style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
+              >
                 &times;
-              </div>
+              </button>
             </div>
 
             <form onSubmit={handleCreateWorkflow} className={styles.form}>
@@ -382,6 +400,16 @@ export default function Workflows() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog 
+        isOpen={confirmOpen}
+        title="تأكيد الحذف"
+        message="هل أنت متأكد من رغبتك في حذف قاعدة الأتمتة هذه؟"
+        confirmLabel="حذف"
+        cancelLabel="إلغاء"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => { setConfirmOpen(false); setWorkflowToDelete(null); }}
+      />
     </div>
   );
 }

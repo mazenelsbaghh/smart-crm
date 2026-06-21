@@ -40,6 +40,33 @@ export default function DashboardLayout({
     }
   }, [user, loading, router]);
 
+  // Global Navigation Keyboard Shortcuts (Option + 1..5)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        if (e.key === '1') {
+          e.preventDefault();
+          router.push('/dashboard');
+        } else if (e.key === '2') {
+          e.preventDefault();
+          router.push('/inbox');
+        } else if (e.key === '3') {
+          e.preventDefault();
+          router.push('/inbox/messenger');
+        } else if (e.key === '4') {
+          e.preventDefault();
+          router.push('/inbox/comments');
+        } else if (e.key === '5') {
+          e.preventDefault();
+          router.push('/crm');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [router]);
+
   if (loading || !user) {
     return (
       <div className={styles.loadingContainer}>
@@ -89,13 +116,18 @@ export default function DashboardLayout({
 
       {/* Mobile Drawer Navigation Menu */}
       {mobileMenuOpen && (
-        <div className={styles.mobileOverlay}>
-          <aside className={`glass-panel ${styles.mobileDrawer}`}>
+        <div className={styles.mobileOverlay} onClick={() => setMobileMenuOpen(false)}>
+          <aside className={`glass-panel ${styles.mobileDrawer}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.drawerHeader}>
               <h2 className={styles.logoText}>سمارت كاستمر</h2>
-              <div onClick={() => setMobileMenuOpen(false)} className={styles.closeBtn}>
+              <button 
+                type="button"
+                onClick={() => setMobileMenuOpen(false)} 
+                className={styles.closeBtn}
+                aria-label="إغلاق القائمة"
+              >
                 <X size={24} />
-              </div>
+              </button>
             </div>
 
             <nav className={styles.nav}>
@@ -103,26 +135,33 @@ export default function DashboardLayout({
                 const Icon = item.icon;
                 const isActive = pathname === item.path || pathname?.startsWith(item.path + '/');
                 return (
-                  <div
+                  <button
                     key={item.path}
+                    type="button"
                     onClick={() => {
                       router.push(item.path);
                       setMobileMenuOpen(false);
                     }}
                     className={`${styles.navItem} ${isActive ? styles.navItemActive : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', alignItems: 'center' }}
                   >
                     <Icon size={18} style={isActive ? { color: 'hsl(var(--accent-primary))' } : {}} />
                     <span>{item.name}</span>
-                  </div>
+                  </button>
                 );
               })}
             </nav>
 
             <div className={styles.drawerFooter}>
-              <div onClick={logout} className={styles.logoutBtn}>
+              <button 
+                type="button"
+                onClick={logout} 
+                className={styles.logoutBtn}
+                style={{ background: 'none', border: 'none', width: '100%', display: 'flex', alignItems: 'center' }}
+              >
                 <LogOut size={18} />
                 <span>تسجيل الخروج</span>
-              </div>
+              </button>
             </div>
           </aside>
         </div>

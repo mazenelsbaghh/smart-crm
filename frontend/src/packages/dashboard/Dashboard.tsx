@@ -125,7 +125,7 @@ export default function Dashboard() {
 
         <div className={`glass-panel ${styles.statCard}`}>
           <div className={styles.statIconContainer}>
-            <DollarSign size={24} style={{ color: 'hsl(140, 100%, 65%)' }} />
+            <DollarSign size={24} style={{ color: 'hsl(var(--accent-success))' }} />
           </div>
           <div>
             <span className={styles.statLabel}>الإيراد المغلق</span>
@@ -135,7 +135,7 @@ export default function Dashboard() {
 
         <div className={`glass-panel ${styles.statCard}`}>
           <div className={styles.statIconContainer}>
-            <TrendingUp size={24} style={{ color: 'hsl(200, 100%, 60%)' }} />
+            <TrendingUp size={24} style={{ color: 'hsl(var(--accent-primary))' }} />
           </div>
           <div>
             <span className={styles.statLabel}>متوسط تقييم العملاء</span>
@@ -158,7 +158,13 @@ export default function Dashboard() {
               <div className={styles.emptyLeads}>لا توجد عملاء في قاعدة البيانات</div>
             ) : (
               recentCustomers.map(c => (
-                <div key={c.id} className={styles.leadItem} onClick={() => router.push('/crm')}>
+                <button 
+                  key={c.id} 
+                  type="button"
+                  className={styles.leadItem} 
+                  onClick={() => router.push('/crm')}
+                  style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', font: 'inherit', color: 'inherit' }}
+                >
                   <div className={styles.leadDetails}>
                     <span className={styles.leadName}>{c.name || 'عميل بدون اسم'}</span>
                     <span className={styles.leadPhone}>{c.phoneNumber}</span>
@@ -170,7 +176,7 @@ export default function Dashboard() {
                       التقييم: {c.leadScore}
                     </div>
                   </div>
-                </div>
+                </button>
               ))
             )}
           </div>
@@ -181,9 +187,11 @@ export default function Dashboard() {
           <div className={`glass-panel ${styles.actionCard}`}>
             <h3 className={styles.panelTitle}>إجراءات سريعة</h3>
             <div className={styles.actionsGrid}>
-              <div 
+              <button 
+                type="button"
                 className={styles.actionShortcut}
                 onClick={() => router.push('/inbox')}
+                style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', font: 'inherit', color: 'inherit' }}
               >
                 <div className={styles.shortcutIconBg}>
                   <MessageSquare size={20} />
@@ -193,11 +201,13 @@ export default function Dashboard() {
                   <p className={styles.shortcutDesc}>رد على العملاء في الوقت الفعلي</p>
                 </div>
                 <ArrowRight size={16} className={styles.shortcutArrow} />
-              </div>
+              </button>
 
-              <div 
+              <button 
+                type="button"
                 className={styles.actionShortcut}
                 onClick={() => router.push('/crm/pipeline')}
+                style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', font: 'inherit', color: 'inherit' }}
               >
                 <div className={styles.shortcutIconBg}>
                   <UserCheck size={20} />
@@ -207,7 +217,7 @@ export default function Dashboard() {
                   <p className={styles.shortcutDesc}>تابع مراحل البيع والفرص</p>
                 </div>
                 <ArrowRight size={16} className={styles.shortcutArrow} />
-              </div>
+              </button>
             </div>
           </div>
 

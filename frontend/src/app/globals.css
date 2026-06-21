@@ -143,118 +143,118 @@ body.light-theme .neon-btn-secondary:hover {
 
 /* Cross-page contrast hardening for legacy CSS modules */
 :where([class*="Panel"], [class*="panel"], [class*="Card"], [class*="card"], [class*="Column"], [class*="column"]) {
-  background-color: var(--surface) !important;
-  border-color: var(--border-subtle) !important;
+  background-color: var(--surface);
+  border-color: var(--border-subtle);
 }
 
 :where([class*="glass-panel"], [class*="stageColumn"], [class*="dealCard"], [class*="statCard"], [class*="actionCard"], [class*="tablePanel"]) {
-  background: var(--surface) !important;
-  border: 1px solid var(--border-subtle) !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 :where([class*="panelHeader"], [class*="chatHeader"], [class*="columnHeader"], [class*="cardActions"], [class*="cardTitle"]) {
-  border-color: var(--border-subtle) !important;
+  border-color: var(--border-subtle);
 }
 
 :where([class*="pageTitle"], [class*="panelTitle"], [class*="cardTitle"], [class*="columnName"], [class*="customerName"], [class*="dealTitle"], [class*="shortcutTitle"], [class*="statValue"], [class*="detailsVal"], [class*="budgetText"], [class*="scoreVal"]) {
-  color: var(--text-strong) !important;
+  color: var(--text-strong);
 }
 
 :where([class*="pageSubtitle"], [class*="statDesc"], [class*="shortcutDesc"], [class*="aiText"], [class*="locationText"], [class*="dealCustomerInfo"], [class*="customerPhone"], [class*="leadPhone"], [class*="detailsItem"], [class*="statusLabel"], [class*="detailLabel"], [class*="label"]) {
-  color: var(--text-base) !important;
+  color: var(--text-base);
 }
 
 :where([class*="statLabel"], [class*="th"], [class*="convTime"], [class*="convPhone"], [class*="msgTime"], [class*="emptyState"], [class*="emptyTable"], [class*="tagMore"]) {
-  color: var(--text-soft) !important;
+  color: var(--text-soft);
 }
 
 :where([class*="table"]) {
-  color: var(--text-base) !important;
+  color: var(--text-base);
 }
 
 :where([class*="th"]) {
-  border-bottom: 1px solid var(--border-strong) !important;
+  border-bottom: 1px solid var(--border-strong);
 }
 
 :where([class*="tr"]) {
-  border-bottom-color: var(--border-subtle) !important;
+  border-bottom-color: var(--border-subtle);
 }
 
 :where([class*="tr"]:hover, [class*="leadItem"]:hover, [class*="convCard"]:hover) {
-  background-color: var(--surface-muted) !important;
+  background-color: var(--surface-muted);
 }
 
 :where([class*="td"]) {
-  color: var(--text-base) !important;
-  border-bottom-color: var(--border-subtle) !important;
+  color: var(--text-base);
+  border-bottom-color: var(--border-subtle);
 }
 
 :where(input, textarea, select, [class*="input"], [class*="Input"], [class*="select"], [class*="Select"], [class*="textarea"], [class*="Textarea"]) {
-  background-color: var(--surface-muted) !important;
-  border-color: var(--border-subtle) !important;
-  color: var(--text-strong) !important;
+  background-color: var(--surface-muted);
+  border-color: var(--border-subtle);
+  color: var(--text-strong);
 }
 
 :where(input::placeholder, textarea::placeholder) {
-  color: color-mix(in oklch, var(--text-soft) 78%, transparent) !important;
+  color: color-mix(in oklch, var(--text-soft) 78%, transparent);
 }
 
 :where(input:focus, textarea:focus, select:focus, [class*="input"]:focus, [class*="Input"]:focus, [class*="select"]:focus, [class*="Select"]:focus, [class*="textarea"]:focus, [class*="Textarea"]:focus) {
-  border-color: var(--accent) !important;
-  box-shadow: var(--focus-ring) !important;
-  outline: none !important;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+  outline: none;
 }
 
 :where([class*="statusBadge"], [class*="stageBadge"], [class*="tagBadge"], [class*="smartLabelBadge"], [class*="convLabelBadge"], [class*="badge"], [class*="dealCount"], [class*="leadStage"]) {
-  background-color: var(--accent-soft) !important;
-  border: 1px solid var(--border-strong) !important;
-  color: var(--accent) !important;
+  background-color: var(--accent-soft);
+  border: 1px solid var(--border-strong);
+  color: var(--accent);
 }
 
 :where([class*="statusPending"]) {
-  background-color: var(--warning-soft) !important;
-  border-color: color-mix(in oklch, hsl(var(--accent-warning)) 36%, transparent) !important;
-  color: hsl(var(--accent-warning)) !important;
+  background-color: var(--warning-soft);
+  border-color: color-mix(in oklch, hsl(var(--accent-warning)) 36%, transparent);
+  color: hsl(var(--accent-warning));
 }
 
 :where([class*="statusCompleted"], [class*="statusActive"], [class*="btnSuccess"], [class*="winBtn"]) {
-  background-color: var(--success-soft) !important;
-  border-color: color-mix(in oklch, hsl(var(--accent-success)) 38%, transparent) !important;
-  color: hsl(var(--accent-success)) !important;
+  background-color: var(--success-soft);
+  border-color: color-mix(in oklch, hsl(var(--accent-success)) 38%, transparent);
+  color: hsl(var(--accent-success));
 }
 
 :where([class*="statusFailed"], [class*="btnDanger"], [class*="loseBtn"]) {
-  background-color: var(--danger-soft) !important;
-  border-color: color-mix(in oklch, hsl(var(--accent-danger)) 38%, transparent) !important;
-  color: hsl(var(--accent-danger)) !important;
+  background-color: var(--danger-soft);
+  border-color: color-mix(in oklch, hsl(var(--accent-danger)) 38%, transparent);
+  color: hsl(var(--accent-danger));
 }
 
 :where([class*="btnPrimary"], [class*="submitDealBtn"], [class*="refreshButton"], [class*="addDealTrigger"]) {
-  background: var(--accent) !important;
-  border: 1px solid var(--accent) !important;
-  color: var(--accent-ink) !important;
-  box-shadow: none !important;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--accent-ink);
+  box-shadow: none;
 }
 
 :where([class*="btnSecondary"], [class*="btnIcon"], [class*="editButton"], [class*="actionBtn"], [class*="cancelDealBtn"], [class*="actionShortcut"], [class*="attachmentBtn"]) {
-  background: var(--surface-muted) !important;
-  border: 1px solid var(--border-subtle) !important;
-  color: var(--text-base) !important;
-  box-shadow: none !important;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-base);
+  box-shadow: none;
 }
 
 :where([class*="btnSecondary"]:hover, [class*="btnIcon"]:hover, [class*="editButton"]:hover, [class*="actionBtn"]:hover, [class*="actionShortcut"]:hover, [class*="attachmentBtn"]:hover) {
-  background: var(--accent-soft) !important;
-  border-color: var(--border-strong) !important;
-  color: var(--accent) !important;
+  background: var(--accent-soft);
+  border-color: var(--border-strong);
+  color: var(--accent);
 }
 
 :where([class*="modal"]) {
-  background: var(--surface) !important;
-  border: 1px solid var(--border-subtle) !important;
-  color: var(--text-strong) !important;
-  box-shadow: var(--shadow-soft) !important;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-soft);
 }

@@ -84,6 +84,8 @@ export default function MessengerInbox() {
   const messageEndRef = useRef<HTMLDivElement>(null);
   const signalRServiceRef = useRef<SignalRService | null>(null);
   const activeConvRef = useRef<Conversation | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     activeConvRef.current = activeConv;
@@ -93,6 +95,37 @@ export default function MessengerInbox() {
     const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Keyboard Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDownGlobal = (e: KeyboardEvent) => {
+      // 1. "/" focuses search input
+      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+
+      // 2. Escape to blur active fields and close active conversation
+      if (e.key === 'Escape') {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        setActiveConv(null);
+      }
+
+      // 3. "R" focuses compose message input when conversation is active
+      if ((e.key === 'r' || e.key === 'R' || e.key === 'ق') && activeConvRef.current && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        messageInputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      handleKeyDownGlobal(e);
+    }
+  }, [activeConv]);
 
   // Fetch conversations with channel=Messenger
   const fetchConversations = async () => {
@@ -267,6 +300,7 @@ export default function MessengerInbox() {
           <div className={styles.searchBox}>
             <Search size={14} />
             <input
+              ref={searchInputRef}
               type="text"
               placeholder="بحث بالاسم..."
               value={searchQuery}
@@ -297,10 +331,12 @@ export default function MessengerInbox() {
             </div>
           ) : (
             conversations.map(conv => (
-              <div
+              <button
                 key={conv.id}
+                type="button"
                 className={`${styles.conversationItem} ${activeConv?.id === conv.id ? styles.active : ''}`}
                 onClick={() => setActiveConv(conv)}
+                style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', font: 'inherit', color: 'inherit' }}
               >
                 <div className={styles.avatar}>
                   <User size={20} />
@@ -319,7 +355,7 @@ export default function MessengerInbox() {
                     )}
                   </div>
                 </div>
-              </div>
+              </button>
             ))
           )}
         </div>
@@ -379,6 +415,7 @@ export default function MessengerInbox() {
 
             <div className={styles.messageComposer}>
               <textarea
+                ref={messageInputRef}
                 className={styles.messageInput}
                 placeholder={isWithin24hWindow(activeConv.lastMessageAt) ? "اكتب رسالة..." : "⚠️ نافذة الـ 24 ساعة انتهت — لا يمكن إرسال رسائل"}
                 value={inputMessage}

@@ -3,15 +3,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/auth-context';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { 
   Calendar, 
   Plus, 
   Trash2, 
   Edit3, 
   Users, 
-  Link, 
-  Copy, 
-  Check, 
   ArrowRight,
   Clock,
   Download,
@@ -60,6 +58,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   const [pendingDeleteBookingId, setPendingDeleteBookingId] = useState<string | null>(null);
   const [deletingBookingId, setDeletingBookingId] = useState<string | null>(null);
   
+  // Confirmation state for deleting group
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [groupToDelete, setGroupToDelete] = useState<string | null>(null);
+  
   // Form states
   const [mode, setMode] = useState<string>('offline');
   const [dateTime, setDateTime] = useState('');
@@ -67,7 +69,6 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   const [isActive, setIsActive] = useState(true);
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
@@ -88,10 +89,12 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   }, [activeProject]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchGroups();
   }, [fetchGroups]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSearchQuery('');
   }, [selectedGroup?.id]);
 
@@ -157,8 +160,16 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     setIsModalOpen(true);
   };
 
-  const handleDeleteGroup = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذه المجموعة؟ سيتم حذف جميع الحجوزات المرتبطة بها.')) return;
+  const triggerDeleteGroup = (id: string) => {
+    setGroupToDelete(id);
+    setConfirmDeleteOpen(true);
+  };
+
+  const handleConfirmDeleteGroup = async () => {
+    if (!groupToDelete) return;
+    const id = groupToDelete;
+    setConfirmDeleteOpen(false);
+    setGroupToDelete(null);
 
     try {
       setActionLoading(true);
@@ -239,14 +250,6 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       console.error(e);
       setMessage({ type: 'error', text: 'فشل تحديث حالة الحجز.' });
     }
-  };
-
-  const handleCopyLink = (groupId: string) => {
-    if (!activeProject) return;
-    const link = `${window.location.origin}/booking/${activeProject.id}`;
-    void navigator.clipboard.writeText(link);
-    setCopiedId(groupId);
-    setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleToggleGroup = async (group: GroupAppointment) => {
@@ -710,14 +713,15 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                             >
                               <Edit3 size={12} />
                             </button>
-                            <button
-                              onClick={() => handleDeleteGroup(group.id)}
-                              className={`${styles.btn} ${styles.btnDanger}`}
-                              style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                              disabled={actionLoading}
-                            >
-                              <Trash2 size={12} />
-                            </button>
+                             <button
+                               type="button"
+                               onClick={() => triggerDeleteGroup(group.id)}
+                               className={`${styles.btn} ${styles.btnDanger}`}
+                               style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                               disabled={actionLoading}
+                             >
+                               <Trash2 size={12} />
+                             </button>
                           </div>
                         </td>
                       </tr>
@@ -783,7 +787,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                 </p>
               ) : filteredBookings.length === 0 ? (
                 <p style={{ fontSize: '0.85rem', color: 'hsl(var(--accent-danger))', textAlign: 'center', padding: '2rem 0', fontWeight: 600 }}>
-                  لم يتم العثور على نتائج تطابق البحث "{searchQuery}"
+                  لم يتم العثور على نتائج تطابق البحث &quot;{searchQuery}&quot;
                 </p>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
@@ -881,6 +885,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                 {editingGroupId ? 'تعديل مجموعة مواعيد' : 'إنشاء مجموعة جديدة'}
               </h3>
               <button 
+                type="button"
                 onClick={() => setIsModalOpen(false)} 
                 style={{ background: 'none', border: 'none', color: 'hsl(var(--text-muted))', fontSize: '1.5rem', cursor: 'pointer' }}
               >
@@ -984,6 +989,16 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
           </div>
         </div>
       )}
+
+      <ConfirmDialog 
+        isOpen={confirmDeleteOpen}
+        title="تأكيد حذف المجموعة"
+        message="هل أنت متأكد من حذف هذه المجموعة؟ سيتم حذف جميع الحجوزات والبيانات المرتبطة بها نهائياً."
+        confirmLabel="حذف"
+        cancelLabel="إلغاء"
+        onConfirm={handleConfirmDeleteGroup}
+        onCancel={() => { setConfirmDeleteOpen(false); setGroupToDelete(null); }}
+      />
     </div>
   );
 }

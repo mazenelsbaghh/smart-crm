@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
+import { useToast } from '../../context/toast-context';
 import { api } from '../../services/api';
 import { 
   Megaphone, 
@@ -59,6 +60,7 @@ const statusNamesAr: Record<string, string> = {
 
 export default function Campaigns() {
   const { activeProject } = useAuth();
+  const { showToast } = useToast();
   
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -105,7 +107,7 @@ export default function Campaigns() {
     e.preventDefault();
     if (!activeProject) return;
     if (!formName || !formSegmentId || !formTemplateA) {
-      alert('الاسم والمجموعة والقالب (أ) حقول مطلوبة.');
+      showToast('الاسم والمجموعة والقالب (أ) حقول مطلوبة.', 'error');
       return;
     }
 
@@ -359,9 +361,15 @@ export default function Campaigns() {
           <div className={`glass-panel ${styles.modal}`}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>جدولة حملة جديدة</h3>
-              <div onClick={() => setIsModalOpen(false)} className={styles.closeBtn}>
+              <button 
+                type="button"
+                onClick={() => setIsModalOpen(false)} 
+                className={styles.closeBtn}
+                aria-label="إغلاق"
+                style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
+              >
                 &times;
-              </div>
+              </button>
             </div>
 
             <form onSubmit={handleCreateCampaign} className={styles.form}>

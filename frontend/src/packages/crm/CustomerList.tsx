@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
+import { useToast } from '../../context/toast-context';
 import { crmService, Customer } from '../../services/crm';
 import { api } from '../../services/api';
 import CustomerDetail from '../../components/shared/CustomerDetail';
@@ -18,6 +19,7 @@ import styles from './crm.module.css';
 
 export default function CustomerList() {
   const { activeProject } = useAuth();
+  const { showToast } = useToast();
   
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,11 +76,11 @@ export default function CustomerList() {
     try {
       await api.post(`/api/projects/${activeProject.id}/customers/${customerId}/memory/generate`);
       await fetchCustomers();
-      alert('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح!');
+      showToast('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح! ✨', 'success');
     } catch (err: any) {
       console.error('Failed to generate customer profile', err);
       const errMsg = err.response?.data || 'فشل توليد ملف التعريف. تأكد من وجود رسائل سابقة للعميل.';
-      alert(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setGeneratingIds(prev => prev.filter(id => id !== customerId));
     }
@@ -147,22 +149,26 @@ export default function CustomerList() {
 
       {/* AI Smart Labels Statistics & Filter Bar */}
       <div className={styles.labelsStatsBar}>
-        <div 
+        <button 
+          type="button"
           className={`${styles.labelCard} ${selectedLabel === 'All' ? styles.labelCardActive : ''}`}
           onClick={() => setSelectedLabel('All')}
+          style={{ font: 'inherit', color: 'inherit' }}
         >
           <span className={styles.labelCardName}>كل التصنيفات</span>
           <span className={styles.labelCardCount}>{customers.length}</span>
-        </div>
+        </button>
         {labelStats.map(stat => (
-          <div 
+          <button 
             key={stat.name}
+            type="button"
             className={`${styles.labelCard} ${selectedLabel === stat.name ? styles.labelCardActive : ''}`}
             onClick={() => setSelectedLabel(stat.name)}
+            style={{ font: 'inherit', color: 'inherit' }}
           >
             <span className={styles.labelCardName}>{stat.name}</span>
             <span className={styles.labelCardCount}>{stat.count}</span>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -230,7 +236,12 @@ export default function CustomerList() {
                 {paginatedCustomers.map(c => (
                   <tr key={c.id} className={styles.tr}>
                     <td className={styles.td}>
-                      <div className={styles.customerCell} onClick={() => setSelectedCustomerId(c.id)} style={{ cursor: 'pointer' }}>
+                      <button 
+                        type="button"
+                        className={styles.customerCell} 
+                        onClick={() => setSelectedCustomerId(c.id)} 
+                        style={{ border: 'none', background: 'none', display: 'flex', width: '100%', textAlign: 'right', font: 'inherit', color: 'inherit', padding: 0 }}
+                      >
                         <div className={styles.avatar}>
                           {(c.name || 'C').charAt(0).toUpperCase()}
                         </div>
@@ -248,7 +259,7 @@ export default function CustomerList() {
                             )}
                           </div>
                         </div>
-                      </div>
+                      </button>
                     </td>
                     <td className={styles.td}>
                       <span className={styles.locationText}>
