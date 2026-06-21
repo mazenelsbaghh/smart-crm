@@ -86,7 +86,10 @@ namespace Modules.CRM.API
                 c.Interests,
                 c.Label,
                 c.IsBlacklisted,
-                pipelineStage = customerStages.TryGetValue(c.Id, out var stage) ? stage : "New"
+                pipelineStage = customerStages.TryGetValue(c.Id, out var stage) ? stage : "New",
+                c.PurchaseProbability,
+                c.AIInsights,
+                c.AutomationRules
             });
 
             return Ok(result);
@@ -127,7 +130,10 @@ namespace Modules.CRM.API
                 customer.Interests,
                 customer.Label,
                 customer.IsBlacklisted,
-                pipelineStage = stageName
+                pipelineStage = stageName,
+                customer.PurchaseProbability,
+                customer.AIInsights,
+                customer.AutomationRules
             });
         }
 
@@ -153,6 +159,18 @@ namespace Modules.CRM.API
             if (request.IsBlacklisted.HasValue)
             {
                 customer.IsBlacklisted = request.IsBlacklisted.Value;
+            }
+            if (request.PurchaseProbability.HasValue)
+            {
+                customer.PurchaseProbability = request.PurchaseProbability.Value;
+            }
+            if (request.AIInsights != null)
+            {
+                customer.AIInsights = request.AIInsights;
+            }
+            if (request.AutomationRules != null)
+            {
+                customer.AutomationRules = request.AutomationRules;
             }
 
             // Handle pipeline stage update
@@ -283,7 +301,10 @@ namespace Modules.CRM.API
                 customer.Interests,
                 customer.Label,
                 customer.IsBlacklisted,
-                pipelineStage = resolvedStageName
+                pipelineStage = resolvedStageName,
+                customer.PurchaseProbability,
+                customer.AIInsights,
+                customer.AutomationRules
             });
         }
 
@@ -938,6 +959,9 @@ JSON:";
         }
 
         public string? PipelineStage { get; set; }
+        public int? PurchaseProbability { get; set; }
+        public string? AIInsights { get; set; }
+        public string? AutomationRules { get; set; }
     }
 
     public class CreateFollowUpRequest

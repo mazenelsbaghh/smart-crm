@@ -1,0 +1,121 @@
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/CommentsInbox.tsx
+  112:5   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/CommentsInbox.tsx:112:5
+  110 |
+  111 |   useEffect(() => {
+> 112 |     fetchConversations();
+      |     ^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  113 |   }, [activeProject, filterStatus, debouncedSearchQuery]);
+  114 |
+  115 |   const [activeCustomer, setActiveCustomer] = useState<any | null>(null);  react-hooks/set-state-in-effect
+  115:56  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-explicit-any
+  120:7   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/CommentsInbox.tsx:120:7
+  118 |   useEffect(() => {
+  119 |     if (!activeConv) {
+> 120 |       setActiveCustomer(null);
+      |       ^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  121 |       return;
+  122 |     }
+  123 |     const fetchData = async () => {                                                  react-hooks/set-state-in-effect
+  151:21  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-explicit-any
+  151:45  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-explicit-any
+  252:62  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-explicit-any
+  320:49  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-explicit-any
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/Inbox.tsx
+  107:5   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/Inbox.tsx:107:5
+  105 |
+  106 |   useEffect(() => {
+> 107 |     fetchConversations();
+      |     ^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  108 |   }, [activeProject, filterStatus, debouncedSearchQuery]);
+  109 |
+  110 |   const [activeCustomer, setActiveCustomer] = useState<any | null>(null);  react-hooks/set-state-in-effect
+  110:56  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+  115:7   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/Inbox.tsx:115:7
+  113 |   useEffect(() => {
+  114 |     if (!activeConv) {
+> 115 |       setActiveCustomer(null);
+      |       ^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  116 |       return;
+  117 |     }
+  118 |     const fetchData = async () => {                                                  react-hooks/set-state-in-effect
+  146:21  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+  146:45  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+  244:62  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/InboxLayout.tsx
+  44:45  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/MessengerInbox.tsx
+  108:5   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/MessengerInbox.tsx:108:5
+  106 |
+  107 |   useEffect(() => {
+> 108 |     fetchConversations();
+      |     ^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  109 |   }, [activeProject, filterStatus, debouncedSearchQuery]);
+  110 |
+  111 |   const [activeCustomer, setActiveCustomer] = useState<any | null>(null);  react-hooks/set-state-in-effect
+  111:56  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-explicit-any
+  116:7   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/mazenelsbagh/mazen mac/apps/smart whatsapp/frontend/src/packages/inbox/MessengerInbox.tsx:116:7
+  114 |   useEffect(() => {
+  115 |     if (!activeConv) {
+> 116 |       setActiveCustomer(null);
+      |       ^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  117 |       return;
+  118 |     }
+  119 |     const fetchData = async () => {                                                  react-hooks/set-state-in-effect
+  147:21  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-explicit-any
+  147:45  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-explicit-any
+  245:62  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-explicit-any
+
+✖ 20 problems (20 errors, 0 warnings)
+

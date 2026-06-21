@@ -6,17 +6,9 @@ import { useToast } from '../../context/toast-context';
 import PhantomLoader from '../../components/shared/PhantomLoader';
 import { api } from '../../services/api';
 import { SignalRService } from '../../services/signalr';
-import { Conversation, Message, ConversationStatus } from '../../types/chat';
-import { 
-  Search, 
-  Send, 
-  User, 
-  MessageCircle,
-  Clock,
-  AlertTriangle,
-  Sparkles
-} from 'lucide-react';
-import styles from './inbox.module.css';
+import { Conversation, Message } from '../../types/chat';
+import { Customer } from '../../services/crm';
+import InboxLayout from './InboxLayout';
 
 const statusLabels: Record<string, string> = {
   All: 'الكل',
@@ -24,43 +16,6 @@ const statusLabels: Record<string, string> = {
   Pending: 'قيد المتابعة',
   Resolved: 'تم حلها',
   Closed: 'مغلقة',
-};
-
-const formatEgyptDateTime = (dateStr: string) => {
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleString('ar-EG-u-nu-latn', {
-      timeZone: 'Africa/Cairo',
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  } catch {
-    return dateStr;
-  }
-};
-
-const formatEgyptTime = (dateStr: string) => {
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleTimeString('ar-EG-u-nu-latn', {
-      timeZone: 'Africa/Cairo',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  } catch {
-    return dateStr;
-  }
-};
-
-/** Check if the last customer message is within 24h (Messenger messaging window) */
-const isWithin24hWindow = (lastMessageAt: string): boolean => {
-  const diff = Date.now() - new Date(lastMessageAt).getTime();
-  return diff < 24 * 60 * 60 * 1000;
 };
 
 export default function MessengerInbox() {
@@ -75,17 +30,19 @@ export default function MessengerInbox() {
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [hasMoreConvs, setHasMoreConvs] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
+
+  // AI Typing States
   const [aiTypingConversations, setAiTypingConversations] = useState<Record<string, boolean>>({});
   const [aiTypingStages, setAiTypingStages] = useState<Record<string, 'generating' | 'typing'>>({});
   const [aiTypingCountdown, setAiTypingCountdown] = useState(10);
 
-  const messageEndRef = useRef<HTMLDivElement>(null);
   const signalRServiceRef = useRef<SignalRService | null>(null);
   const activeConvRef = useRef<Conversation | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  const messageEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     activeConvRef.current = activeConv;
@@ -140,7 +97,6 @@ export default function MessengerInbox() {
         }
       });
       setConversations(response.data);
-      setHasMoreConvs(response.data.length === 20);
     } catch (e) {
       console.error('Error loading Messenger conversations', e);
     } finally {
@@ -149,23 +105,35 @@ export default function MessengerInbox() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject, filterStatus, debouncedSearchQuery]);
 
-  // Fetch messages for active conversation
+  const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
+
+  // Fetch messages and customer details for active conversation
   useEffect(() => {
-    if (!activeConv) return;
-    const fetchMessages = async () => {
+    if (!activeConv) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveCustomer(null);
+      return;
+    }
+    const fetchData = async () => {
       try {
-        const response = await api.get<Message[]>(`/api/conversations/${activeConv.id}/messages`);
-        setMessages(response.data);
+        const [msgResp, custResp] = await Promise.all([
+          api.get<Message[]>(`/api/conversations/${activeConv.id}/messages`),
+          api.get(`/api/customers/${activeConv.customer.id}`)
+        ]);
+        setMessages(msgResp.data);
+        setActiveCustomer(custResp.data);
         setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       } catch (e) {
-        console.error('Error loading messages', e);
+        console.error('Error loading messages or customer details', e);
       }
     };
-    fetchMessages();
-  }, [activeConv?.id]);
+    fetchData();
+  }, [activeConv]);
 
   // SignalR for real-time updates
   useEffect(() => {
@@ -179,10 +147,10 @@ export default function MessengerInbox() {
 
     const initSignalR = async () => {
       signalR.registerOnMessage((msg: Message) => {
-        // Only handle Messenger messages
-        if ((msg as any).channel && (msg as any).channel !== 'Messenger') return;
+        const signalRMsg = msg as Message & { channel?: string };
+        if (signalRMsg.channel && signalRMsg.channel !== 'Messenger') return;
         
-        // Update conversation list
+        // Update conversation list lastMessageAt
         setConversations(prev => {
           const idx = prev.findIndex(c => c.id === msg.conversationId);
           if (idx >= 0) {
@@ -240,6 +208,7 @@ export default function MessengerInbox() {
       disposed = true;
       signalR.stop();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject]);
 
   const isAiTyping = activeConv ? !!aiTypingConversations[activeConv.id] : false;
@@ -262,23 +231,60 @@ export default function MessengerInbox() {
     if (!inputMessage.trim() || !activeConv || !activeProject || sending) return;
     setSending(true);
     try {
-      await api.post(`/api/conversations/${activeConv.id}/messages`, {
+      const response = await api.post<Message>(`/api/conversations/${activeConv.id}/messages`, {
         content: inputMessage,
         channel: 'Messenger'
       });
+      setMessages(prev => [...prev, response.data]);
       setInputMessage('');
       showToast('تم إرسال الرسالة', 'success');
-    } catch (e) {
+      setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    } catch {
       showToast('فشل إرسال الرسالة', 'error');
     } finally {
       setSending(false);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  // Update CRM Customer details
+  const handleUpdateCustomer = async (fields: Partial<Customer>) => {
+    if (!activeConv) return;
+    setUpdating(true);
+    try {
+      const response = await api.put(`/api/customers/${activeConv.customer.id}`, fields);
+      
+      // Update local state
+      setActiveCustomer(response.data);
+      setActiveConv(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          customer: {
+            ...prev.customer,
+            ...response.data
+          }
+        };
+      });
+
+      setConversations(prev => prev.map(c => {
+        if (c.id === activeConv.id) {
+          return {
+            ...c,
+            customer: {
+              ...c.customer,
+              ...response.data
+            }
+          };
+        }
+        return c;
+      }));
+
+      showToast('تم تحديث بيانات العميل بنجاح ✨', 'success');
+    } catch (e) {
+      console.error('Failed to update CRM info', e);
+      showToast('فشل تحديث بيانات العميل', 'error');
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -289,157 +295,30 @@ export default function MessengerInbox() {
   );
 
   return (
-    <div className={styles.inboxContainer}>
-      {/* Panel 1: Conversation List */}
-      <div className={styles.conversationPanel}>
-        <div className={styles.panelHeader}>
-          <h2 className={styles.panelTitle}>
-            <MessageCircle size={20} style={{ marginLeft: '8px' }} />
-            صندوق الماسنجر
-          </h2>
-          <div className={styles.searchBox}>
-            <Search size={14} />
-            <input
-              ref={searchInputRef}
-              type="text"
-              placeholder="بحث بالاسم..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={styles.searchInput}
-            />
-          </div>
-        </div>
-        
-        <div className={styles.statusFilter}>
-          {Object.entries(statusLabels).map(([key, label]) => (
-            <button
-              key={key}
-              className={`${styles.statusBtn} ${filterStatus === key ? styles.statusBtnActive : ''}`}
-              onClick={() => setFilterStatus(key)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div className={styles.conversationList}>
-          {conversations.length === 0 ? (
-            <div className={styles.emptyState}>
-              <MessageCircle size={48} />
-              <p>لا توجد محادثات ماسنجر</p>
-              <span>ابدأ بربط صفحة فيسبوك من الإعدادات</span>
-            </div>
-          ) : (
-            conversations.map(conv => (
-              <button
-                key={conv.id}
-                type="button"
-                className={`${styles.conversationItem} ${activeConv?.id === conv.id ? styles.active : ''}`}
-                onClick={() => setActiveConv(conv)}
-                style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', font: 'inherit', color: 'inherit' }}
-              >
-                <div className={styles.avatar}>
-                  <User size={20} />
-                </div>
-                <div className={styles.conversationInfo}>
-                  <div className={styles.conversationHeader}>
-                    <span className={styles.customerName}>{conv.customer.facebookName || conv.customer.name}</span>
-                    <span className={styles.timestamp}>{formatEgyptTime(conv.lastMessageAt)}</span>
-                  </div>
-                  <div className={styles.conversationMeta}>
-                    <span className={`${styles.statusBadge} ${styles[`status${conv.status}`]}`}>{statusLabels[conv.status] || conv.status}</span>
-                    {!isWithin24hWindow(conv.lastMessageAt) && (
-                      <span className={styles.windowBadge} title="انتهت نافذة الـ 24 ساعة">
-                        <AlertTriangle size={12} /> 24h
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Panel 2: Chat */}
-      <div className={styles.chatPanel}>
-        {activeConv ? (
-          <>
-            <div className={styles.chatHeader}>
-              <div className={styles.chatHeaderInfo}>
-                <h3>{activeConv.customer.facebookName || activeConv.customer.name}</h3>
-                <div className={styles.chatHeaderMeta}>
-                  <MessageCircle size={14} />
-                  <span>ماسنجر</span>
-                  {!isWithin24hWindow(activeConv.lastMessageAt) && (
-                    <span className={styles.windowWarning}>
-                      <AlertTriangle size={14} /> انتهت نافذة الماسنجر (24 ساعة)
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className={styles.messagesContainer}>
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`${styles.messageBubble} ${msg.senderType === 'Customer' ? styles.incoming : styles.outgoing}`}
-                >
-                  <p className={styles.messageContent}>{msg.content}</p>
-                  <span className={styles.messageTime}>{formatEgyptTime(msg.createdAt)}</span>
-                </div>
-              ))}
-              {isAiTyping && (
-                <div className={styles.msgRowAgent}>
-                  <div className={styles.msgBubbleAI} style={{ opacity: 0.85 }}>
-                    <div className={styles.aiBadgeRow}>
-                      <Sparkles size={12} className={styles.typingSparkle} />
-                      <span>الذكاء الاصطناعي</span>
-                    </div>
-                    <div className={styles.typingDots}>
-                      {aiTypingStage === 'generating' ? (
-                        <span>جاري التفكير وتوليد الرد...</span>
-                      ) : (
-                        <span>جاري الرد تلقائياً خلال {aiTypingCountdown} ثوانٍ</span>
-                      )}
-                      <span className={styles.dot}>.</span>
-                      <span className={styles.dot}>.</span>
-                      <span className={styles.dot}>.</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div ref={messageEndRef} />
-            </div>
-
-            <div className={styles.messageComposer}>
-              <textarea
-                ref={messageInputRef}
-                className={styles.messageInput}
-                placeholder={isWithin24hWindow(activeConv.lastMessageAt) ? "اكتب رسالة..." : "⚠️ نافذة الـ 24 ساعة انتهت — لا يمكن إرسال رسائل"}
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={!isWithin24hWindow(activeConv.lastMessageAt)}
-              />
-              <button
-                className={styles.sendBtn}
-                onClick={handleSend}
-                disabled={sending || !inputMessage.trim() || !isWithin24hWindow(activeConv.lastMessageAt)}
-              >
-                <Send size={18} />
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className={styles.noChatSelected}>
-            <MessageCircle size={64} />
-            <h3>صندوق الماسنجر</h3>
-            <p>اختر محادثة من القائمة لعرض الرسائل</p>
-          </div>
-        )}
-      </div>
-    </div>
+    <InboxLayout
+      channel="Messenger"
+      customer={activeCustomer}
+      conversations={conversations}
+      activeConv={activeConv}
+      setActiveConv={setActiveConv}
+      messages={messages}
+      inputMessage={inputMessage}
+      setInputMessage={setInputMessage}
+      handleSend={handleSend}
+      sending={sending}
+      isAiTyping={isAiTyping}
+      aiTypingStage={aiTypingStage}
+      aiTypingCountdown={aiTypingCountdown}
+      searchQuery={searchQuery}
+      setSearchQuery={setSearchQuery}
+      filterStatus={filterStatus}
+      setFilterStatus={setFilterStatus}
+      statusLabels={statusLabels}
+      searchInputRef={searchInputRef}
+      messageInputRef={messageInputRef}
+      messageEndRef={messageEndRef}
+      onUpdateCustomer={handleUpdateCustomer}
+      updating={updating}
+    />
   );
 }

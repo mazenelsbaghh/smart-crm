@@ -18,5 +18,8 @@ namespace Modules.Conversations.Domain
         public bool IsBlacklisted { get; set; } = false;
         public string? FacebookPSID { get; set; }
         public string? FacebookName { get; set; }
+        public int PurchaseProbability { get; set; } = 0;
+        public string? AIInsights { get; set; }
+        public string? AutomationRules { get; set; }
     }
 }

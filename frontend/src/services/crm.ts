@@ -14,6 +14,9 @@ export interface Customer {
   pipelineStage?: string;
   label?: string;
   isBlacklisted?: boolean;
+  purchaseProbability?: number;
+  aiInsights?: string | null;
+  automationRules?: string | null;
 }
 
 export interface PipelineStage {
