@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Conversation, Message } from '../../../types/chat';
 import { Customer } from '../../../services/crm';
+import { api } from '../../../services/api';
+import { AiReplyIndicator, ActionButton } from '../../../components/shared/InboxSharedElements';
 import { 
   Send, 
   User, 
@@ -16,9 +18,23 @@ import {
   Paperclip,
   Smile,
   ChevronRight,
-  Briefcase
+  Briefcase,
+  Plus,
+  Check,
+  Trash2
 } from 'lucide-react';
 import styles from '../inbox.module.css';
+
+interface FollowUp {
+  id: string;
+  customerId: string;
+  dueDate: string;
+  status: 'Pending' | 'Completed' | 'Missed';
+  notes: string;
+  type?: 'Nurturing' | 'AppointmentReminder';
+  appointmentTime?: string;
+  tone?: string;
+}
 
 interface ChatWorkspaceProps {
   activeConv: Conversation | null;
@@ -68,6 +84,96 @@ export default function ChatWorkspace({
   const [activeTab, setActiveTab] = useState<'Timeline' | 'Conversation' | 'Notes' | 'Analytics' | 'Orders' | 'Files' | 'History'>('Conversation');
   const [notesText, setNotesText] = useState(customer?.notes || '');
   const [now] = useState(() => Date.now());
+
+  // Real Follow-Up states
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [loadingFollowUps, setLoadingFollowUps] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newDueDate, setNewDueDate] = useState('');
+  const [newType, setNewType] = useState<'Nurturing' | 'AppointmentReminder'>('Nurturing');
+  const [newNotes, setNewNotes] = useState('');
+  const [newApptTime, setNewApptTime] = useState('');
+  const [creatingFollowUp, setCreatingFollowUp] = useState(false);
+
+  // Fetch customer follow-ups on load/change
+  useEffect(() => {
+    if (!customer?.id || !activeConv?.projectId) return;
+
+    let active = true;
+    const fetchFollowUps = async () => {
+      setLoadingFollowUps(true);
+      try {
+        const response = await api.get<FollowUp[]>(`/api/projects/${activeConv.projectId}/follow-ups`);
+        if (active) {
+          const filtered = response.data.filter(f => f.customerId === customer.id);
+          setFollowUps(filtered);
+        }
+      } catch (err) {
+        console.error('Error loading customer follow-ups', err);
+      } finally {
+        if (active) setLoadingFollowUps(false);
+      }
+    };
+
+    fetchFollowUps();
+
+    return () => {
+      active = false;
+    };
+  }, [customer?.id, activeConv?.projectId]);
+
+  const handleAddFollowUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customer?.id || !activeConv?.projectId || creatingFollowUp) return;
+    if (newType === 'Nurturing' && !newDueDate) return;
+    if (newType === 'AppointmentReminder' && !newApptTime) return;
+
+    setCreatingFollowUp(true);
+    try {
+      const payload = {
+        notes: newNotes,
+        type: newType,
+        dueDate: newType === 'Nurturing' 
+          ? new Date(newDueDate).toISOString() 
+          : new Date(newApptTime).toISOString(),
+        appointmentTime: newType === 'AppointmentReminder' 
+          ? new Date(newApptTime).toISOString() 
+          : undefined,
+        tone: 'Default'
+      };
+
+      const response = await api.post(`/api/customers/${customer.id}/follow-ups`, payload);
+      setFollowUps(prev => [...prev, response.data]);
+      
+      // Reset form
+      setNewDueDate('');
+      setNewApptTime('');
+      setNewNotes('');
+      setShowAddForm(false);
+    } catch (err) {
+      console.error('Failed to create follow-up', err);
+    } finally {
+      setCreatingFollowUp(false);
+    }
+  };
+
+  const handleCompleteFollowUp = async (id: string) => {
+    try {
+      await api.post(`/api/follow-ups/${id}/complete`);
+      setFollowUps(prev => prev.map(f => f.id === id ? { ...f, status: 'Completed' as const } : f));
+    } catch (err) {
+      console.error('Failed to complete follow-up', err);
+    }
+  };
+
+  const handleDeleteFollowUp = async (id: string) => {
+    try {
+      await api.delete(`/api/follow-ups/${id}`);
+      setFollowUps(prev => prev.filter(f => f.id !== id));
+    } catch (err) {
+      console.error('Failed to delete follow-up', err);
+    }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -257,26 +363,11 @@ export default function ChatWorkspace({
                   );
                 })
               )}
-              {isAiTyping && (
-                <div className={styles.msgRowOutgoing}>
-                  <div className={`${styles.msgBubble} ${styles.msgBubbleAI}`}>
-                    <div className={styles.aiBadgeRow}>
-                      <Sparkles size={12} className={styles.typingSparkle} />
-                      <span>الذكاء الاصطناعي</span>
-                    </div>
-                    <div className={styles.typingDots}>
-                      {aiTypingStage === 'generating' ? (
-                        <span>جاري التفكير وتوليد الرد...</span>
-                      ) : (
-                        <span>جاري الرد تلقائياً خلال {aiTypingCountdown} ثوانٍ</span>
-                      )}
-                      <span className={styles.dot}>.</span>
-                      <span className={styles.dot}>.</span>
-                      <span className={styles.dot}>.</span>
-                    </div>
-                  </div>
-                </div>
-              )}
+              <AiReplyIndicator 
+                isAiTyping={isAiTyping} 
+                aiTypingStage={aiTypingStage} 
+                aiTypingCountdown={aiTypingCountdown} 
+              />
               <div ref={messageEndRef} />
             </div>
 
@@ -378,8 +469,145 @@ export default function ChatWorkspace({
         {activeTab === 'Timeline' && (
           <div className={styles.timelineContainer}>
             <div className={styles.timelineHeaderRow}>
-              <h4>جدول زمن المتابعة والتقدم للعميل</h4>
+              <h4>جدول زمن المتابعة والتقدم للعميل ({customerName})</h4>
+              <ActionButton 
+                variant="accent" 
+                size="sm" 
+                icon={Plus} 
+                onClick={() => setShowAddForm(!showAddForm)}
+              >
+                {showAddForm ? 'إلغاء' : 'جدولة متابعة جديدة'}
+              </ActionButton>
             </div>
+
+            {showAddForm && (
+              <form onSubmit={handleAddFollowUp} className={styles.quickFollowUpForm}>
+                <div className={styles.followUpInputsGrid}>
+                  <div className={styles.commentInputWrapper}>
+                    <label className={styles.commentLabel}>نوع الإجراء</label>
+                    <select
+                      value={newType}
+                      onChange={(e) => setNewType(e.target.value as 'Nurturing' | 'AppointmentReminder')}
+                      className={styles.commentTextarea}
+                      style={{ height: '38px', padding: '6px 12px' }}
+                    >
+                      <option value="Nurturing">متابعة لتنشيط العميل (Nurturing)</option>
+                      <option value="AppointmentReminder">تذكير بموعد / كورس (Reminder)</option>
+                    </select>
+                  </div>
+
+                  {newType === 'Nurturing' ? (
+                    <div className={styles.commentInputWrapper}>
+                      <label className={styles.commentLabel}>تاريخ ووقت المتابعة</label>
+                      <input 
+                        type="datetime-local" 
+                        value={newDueDate}
+                        onChange={(e) => setNewDueDate(e.target.value)}
+                        className={styles.commentTextarea}
+                        style={{ height: '38px' }}
+                        required
+                      />
+                    </div>
+                  ) : (
+                    <div className={styles.commentInputWrapper}>
+                      <label className={styles.commentLabel}>تاريخ ووقت الكورس / الموعد</label>
+                      <input 
+                        type="datetime-local" 
+                        value={newApptTime}
+                        onChange={(e) => setNewApptTime(e.target.value)}
+                        className={styles.commentTextarea}
+                        style={{ height: '38px' }}
+                        required
+                      />
+                    </div>
+                  )}
+
+                  <div className={styles.commentInputWrapper} style={{ gridColumn: 'span 2' }}>
+                    <label className={styles.commentLabel}>رسالة المتابعة / ملاحظات</label>
+                    <input 
+                      type="text" 
+                      placeholder="اكتب تفاصيل أو ملاحظات التذكير..."
+                      value={newNotes}
+                      onChange={(e) => setNewNotes(e.target.value)}
+                      className={styles.commentTextarea}
+                      style={{ height: '38px' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
+                  <ActionButton type="submit" variant="accent" size="sm" disabled={creatingFollowUp}>
+                    {creatingFollowUp ? 'جاري الحفظ...' : 'حفظ المهمة المجدولة'}
+                  </ActionButton>
+                </div>
+              </form>
+            )}
+
+            {/* Follow-Ups list table */}
+            <div className={styles.followUpTableSection}>
+              <h5>المتابعات والمهام النشطة للعميل</h5>
+              {loadingFollowUps ? (
+                <p style={{ fontSize: '0.85rem', color: '#7D7D7D', textAlign: 'center', padding: '16px' }}>جاري تحميل المتابعات...</p>
+              ) : followUps.length === 0 ? (
+                <div style={{ fontSize: '0.85rem', color: '#7D7D7D', textAlign: 'center', padding: '24px', backgroundColor: '#F8F8F6', borderRadius: '8px', border: '1px dashed #E8E8E8' }}>
+                  لا توجد مهام متابعة مجدولة نشطة حالياً.
+                </div>
+              ) : (
+                <div className={styles.sharedTableContainer}>
+                  <table className={styles.sharedTable}>
+                    <thead>
+                      <tr>
+                        <th>التاريخ والوقت</th>
+                        <th>النوع</th>
+                        <th>رسالة المتابعة</th>
+                        <th>الحالة</th>
+                        <th style={{ textAlign: 'center' }}>الإجراءات</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {followUps.map(f => (
+                        <tr key={f.id}>
+                          <td>{new Date(f.dueDate).toLocaleDateString('ar-EG')} {new Date(f.dueDate).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</td>
+                          <td>
+                            <span className={f.type === 'AppointmentReminder' ? styles.badgeReminder : styles.badgeNurture}>
+                              {f.type === 'AppointmentReminder' ? 'تذكير موعد' : 'متابعة عميل'}
+                            </span>
+                          </td>
+                          <td>{f.notes || 'إرسال تلقائي'}</td>
+                          <td>
+                            <span className={`${styles.badgeStatus} ${f.status === 'Completed' ? styles.badgeStatusCompleted : f.status === 'Missed' ? styles.badgeStatusMissed : styles.badgeStatusPending}`}>
+                              {f.status === 'Completed' ? 'مكتملة' : f.status === 'Missed' ? 'فائتة' : 'معلقة'}
+                            </span>
+                          </td>
+                          <td style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                            {f.status === 'Pending' && (
+                              <button 
+                                type="button" 
+                                className={styles.inlineActionBtnCheck} 
+                                title="إكمال المهمة"
+                                onClick={() => handleCompleteFollowUp(f.id)}
+                              >
+                                <Check size={14} />
+                              </button>
+                            )}
+                            <button 
+                              type="button" 
+                              className={styles.inlineActionBtnDelete} 
+                              title="حذف المهمة"
+                              onClick={() => handleDeleteFollowUp(f.id)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className={styles.timelineDivider} />
             
             <div className={styles.timelineList}>
               {timelineEntries.map(entry => (
