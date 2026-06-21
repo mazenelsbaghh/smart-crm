@@ -114,27 +114,70 @@ namespace Modules.Facebook.Workers
             // Simulate typing delay (4 seconds)
             await Task.Delay(4000);
 
-            // Send via Graph API
-            await _graphService.SendMessageAsync(
-                connectedPage.FacebookPageId,
-                connectedPage.PageAccessToken,
-                @event.Sender,
-                @event.Content);
-
-            if (customer != null && conversationId.HasValue)
+            // Split the reply content into multiple messages by double newlines to send as separate messages
+            var rawParts = @event.Content.Split(new[] { "\r\n\r\n", "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var p in rawParts)
             {
-                var msg = new Modules.Conversations.Domain.Message
+                var trimmed = p.Trim();
+                if (!string.IsNullOrEmpty(trimmed))
                 {
-                    ConversationId = conversationId.Value,
-                    ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
-                    Direction = "Outgoing",
-                    Content = @event.Content,
-                    MessageType = "Text",
-                    Timestamp = DateTime.UtcNow
-                };
-                _context.Messages.Add(msg);
-                await _context.SaveChangesAsync();
+                    parts.Add(trimmed);
+                }
+            }
 
+            if (parts.Count == 0 && !string.IsNullOrEmpty(@event.Content))
+            {
+                parts.Add(@event.Content.Trim());
+            }
+
+            for (int i = 0; i < parts.Count; i++)
+            {
+                var part = parts[i];
+
+                // Send via Graph API
+                await _graphService.SendMessageAsync(
+                    connectedPage.FacebookPageId,
+                    connectedPage.PageAccessToken,
+                    @event.Sender,
+                    part);
+
+                if (customer != null && conversationId.HasValue)
+                {
+                    var msg = new Modules.Conversations.Domain.Message
+                    {
+                        ConversationId = conversationId.Value,
+                        ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
+                        Direction = "Outgoing",
+                        Content = part,
+                        MessageType = "Text",
+                        Timestamp = DateTime.UtcNow
+                    };
+                    _context.Messages.Add(msg);
+                    await _context.SaveChangesAsync();
+
+                    // Broadcast via SignalR
+                    await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                    {
+                        id = msg.Id,
+                        conversationId = conversationId.Value,
+                        senderType = "AI",
+                        content = part,
+                        createdAt = msg.Timestamp,
+                        status = "Sent",
+                        channel = "Messenger"
+                    });
+                }
+
+                // If there are more parts, wait a brief delay (e.g. 1.5 seconds) to make it feel natural
+                if (i < parts.Count - 1)
+                {
+                    await Task.Delay(1500);
+                }
+            }
+
+            if (conversationId.HasValue)
+            {
                 // Clear typing state in Redis and broadcast typing finished
                 var redisKey = $"ai_typing:{conversationId.Value}";
                 try
@@ -151,21 +194,9 @@ namespace Modules.Facebook.Workers
                     conversationId = conversationId.Value,
                     isTyping = false
                 });
-
-                // Broadcast via SignalR
-                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
-                {
-                    id = msg.Id,
-                    conversationId = conversationId.Value,
-                    senderType = "AI",
-                    content = @event.Content,
-                    createdAt = msg.Timestamp,
-                    status = "Sent",
-                    channel = "Messenger"
-                });
             }
 
-            _logger.LogInformation("[FacebookReplySender] Messenger reply sent to {Sender}", @event.Sender);
+            _logger.LogInformation("[FacebookReplySender] Messenger reply sent to {Sender} in {Count} messages", @event.Sender, parts.Count);
         }
 
         private async Task HandleCommentReply(Modules.Facebook.Domain.ConnectedPage connectedPage, AIReplyGeneratedEvent @event)
