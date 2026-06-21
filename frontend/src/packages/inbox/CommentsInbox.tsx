@@ -49,7 +49,7 @@ export default function CommentsInbox() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [publicComment, setPublicComment] = useState('');
   const [privateDM, setPrivateDM] = useState('');
-  const [sendReaction, setSendReaction] = useState(true);
+  const [reaction, setReaction] = useState<'LIKE' | 'LOVE' | null>('LOVE');
   const [sending, setSending] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -168,7 +168,7 @@ export default function CommentsInbox() {
       await api.post(`/api/projects/${activeProject.id}/conversations/${activeConv.id}/comment-reply`, {
         publicComment: publicComment.trim() || null,
         privateDM: privateDM.trim() || null,
-        reaction: sendReaction ? 'LIKE' : null
+        reaction: reaction
       });
       setPublicComment('');
       setPrivateDM('');
@@ -312,15 +312,23 @@ export default function CommentsInbox() {
                 </div>
               </div>
               <div className={styles.replyActions}>
-                <label className={styles.reactionToggle}>
-                  <input
-                    type="checkbox"
-                    checked={sendReaction}
-                    onChange={(e) => setSendReaction(e.target.checked)}
-                  />
-                  <ThumbsUp size={14} />
-                  إعجاب
-                </label>
+                <div className={styles.reactionSelector}>
+                  <span className={styles.reactionLabel}>تفاعل:</span>
+                  <button
+                    type="button"
+                    className={`${styles.reactionBtn} ${reaction === 'LIKE' ? styles.active : ''}`}
+                    onClick={() => setReaction(reaction === 'LIKE' ? null : 'LIKE')}
+                  >
+                    👍 إعجاب
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.reactionBtn} ${reaction === 'LOVE' ? styles.active : ''}`}
+                    onClick={() => setReaction(reaction === 'LOVE' ? null : 'LOVE')}
+                  >
+                    ❤️ حب
+                  </button>
+                </div>
                 <button
                   className={styles.sendBtn}
                   onClick={handleSend}

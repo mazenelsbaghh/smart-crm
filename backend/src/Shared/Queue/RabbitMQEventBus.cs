@@ -155,7 +155,7 @@ namespace Shared.Queue
                     return;
                 }
 
-                var queueName = $"{typeof(T).Name}_queue";
+                var queueName = $"{typeof(T).Name}_{typeof(THandler).Name}_queue";
                 await _channel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false);
                 await _channel.QueueBindAsync(queueName, _exchangeName, typeof(T).Name);
 

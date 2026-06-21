@@ -1102,3 +1102,42 @@ body:not(.light-theme) .mediaVoice {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.reactionSelector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reactionLabel {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-base);
+  margin-left: 4px;
+}
+
+.reactionBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-lowest);
+  border: 1px solid var(--border-base);
+  color: var(--text-base);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.reactionBtn:hover {
+  background: var(--bg-surface-mid);
+}
+
+.reactionBtn.active {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+

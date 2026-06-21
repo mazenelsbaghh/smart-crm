@@ -25,19 +25,22 @@ namespace Modules.Facebook.API
         private readonly IHubContext<NotificationHub> _hubContext;
         private readonly IMessageAggregator _messageAggregator;
         private readonly Shared.Queue.IEventBus _eventBus;
+        private readonly StackExchange.Redis.IDatabase _redis;
 
         public FacebookWebhookController(
             AppDbContext context,
             IConfiguration configuration,
             IHubContext<NotificationHub> hubContext,
             IMessageAggregator messageAggregator,
-            Shared.Queue.IEventBus eventBus)
+            Shared.Queue.IEventBus eventBus,
+            StackExchange.Redis.IConnectionMultiplexer redis)
         {
             _context = context;
             _configuration = configuration;
             _hubContext = hubContext;
             _messageAggregator = messageAggregator;
             _eventBus = eventBus;
+            _redis = redis.GetDatabase();
         }
 
         /// <summary>
@@ -235,6 +238,31 @@ namespace Modules.Facebook.API
                 status = "Delivered",
                 channel = "Messenger"
             });
+
+            // Broadcast AI typing if auto-reply is enabled for Messenger
+            var settings = await _context.ProjectSettings
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            if (settings != null && settings.MessengerAiAutoReplyEnabled && (customer == null || !customer.IsBlacklisted))
+            {
+                var redisKey = $"ai_typing:{conversation.Id}";
+                try
+                {
+                    await _redis.StringSetAsync(redisKey, "generating", TimeSpan.FromSeconds(120));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[FacebookWebhook] Redis set failed: {ex.Message}");
+                }
+
+                await _hubContext.Clients.Group($"project_{projectId}").SendAsync("AITyping", new
+                {
+                    conversationId = conversation.Id,
+                    isTyping = true,
+                    estimatedSeconds = 11,
+                    stage = "generating"
+                });
+            }
 
             // Publish to aggregator for AI auto-reply
             await _eventBus.PublishAsync(new Shared.Events.MessageAggregatedEvent

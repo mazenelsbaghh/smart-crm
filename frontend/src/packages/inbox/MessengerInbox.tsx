@@ -13,7 +13,8 @@ import {
   User, 
   MessageCircle,
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  Sparkles
 } from 'lucide-react';
 import styles from './inbox.module.css';
 
@@ -76,6 +77,9 @@ export default function MessengerInbox() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [hasMoreConvs, setHasMoreConvs] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [aiTypingConversations, setAiTypingConversations] = useState<Record<string, boolean>>({});
+  const [aiTypingStages, setAiTypingStages] = useState<Record<string, 'generating' | 'typing'>>({});
+  const [aiTypingCountdown, setAiTypingCountdown] = useState(10);
 
   const messageEndRef = useRef<HTMLDivElement>(null);
   const signalRServiceRef = useRef<SignalRService | null>(null);
@@ -168,6 +172,26 @@ export default function MessengerInbox() {
         setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       });
 
+      signalR.registerOnAITyping((convId: string, isTyping: boolean, estimatedSeconds?: number, stage?: 'generating' | 'typing') => {
+        setAiTypingConversations((prev) => ({
+          ...prev,
+          [convId]: isTyping
+        }));
+        if (stage) {
+          setAiTypingStages((prev) => ({
+            ...prev,
+            [convId]: stage
+          }));
+        }
+        if (isTyping) {
+          setAiTypingCountdown(estimatedSeconds ?? 10);
+        }
+      });
+
+      signalR.registerOnAITypingError((convId: string, message: string) => {
+        showToast(message, 'error');
+      });
+
       if (!disposed) {
         try {
           await signalR.start();
@@ -184,6 +208,21 @@ export default function MessengerInbox() {
       signalR.stop();
     };
   }, [activeProject]);
+
+  const isAiTyping = activeConv ? !!aiTypingConversations[activeConv.id] : false;
+  const aiTypingStage = activeConv ? aiTypingStages[activeConv.id] || 'generating' : 'generating';
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isAiTyping && aiTypingStage === 'typing') {
+      interval = setInterval(() => {
+        setAiTypingCountdown((prev) => (prev > 1 ? prev - 1 : 1));
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isAiTyping, aiTypingStage, activeConv?.id]);
 
   // Send reply
   const handleSend = async () => {
@@ -315,6 +354,26 @@ export default function MessengerInbox() {
                   <span className={styles.messageTime}>{formatEgyptTime(msg.createdAt)}</span>
                 </div>
               ))}
+              {isAiTyping && (
+                <div className={styles.msgRowAgent}>
+                  <div className={styles.msgBubbleAI} style={{ opacity: 0.85 }}>
+                    <div className={styles.aiBadgeRow}>
+                      <Sparkles size={12} className={styles.typingSparkle} />
+                      <span>الذكاء الاصطناعي</span>
+                    </div>
+                    <div className={styles.typingDots}>
+                      {aiTypingStage === 'generating' ? (
+                        <span>جاري التفكير وتوليد الرد...</span>
+                      ) : (
+                        <span>جاري الرد تلقائياً خلال {aiTypingCountdown} ثوانٍ</span>
+                      )}
+                      <span className={styles.dot}>.</span>
+                      <span className={styles.dot}>.</span>
+                      <span className={styles.dot}>.</span>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div ref={messageEndRef} />
             </div>
 

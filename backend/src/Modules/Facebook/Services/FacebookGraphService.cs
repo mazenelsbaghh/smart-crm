@@ -59,20 +59,21 @@ namespace Modules.Facebook.Services
                 throw new Exception($"Facebook ReplyToComment failed: {response.StatusCode} - {responseBody}");
             }
 
-            _logger.LogInformation("[FacebookGraph] Replied to comment {CommentId}", commentId);
+            _logger.LogInformation("[FacebookGraph] Replied to comment {CommentId}. Response: {Response}", commentId, responseBody);
         }
 
         public async Task ReactToCommentAsync(string pageAccessToken, string commentId, string reactionType = "LIKE")
         {
-            // Facebook Pages can like comments via POST /{comment-id}/likes
-            var url = $"{GraphUrl}/{commentId}/likes?access_token={pageAccessToken}";
+            var url = $"{GraphUrl}/{commentId}/reactions?reaction_type={reactionType.ToUpper()}&access_token={pageAccessToken}";
             var response = await _httpClient.PostAsync(url, null);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("[FacebookGraph] ReactToComment failed (non-critical): {StatusCode} {Body}", response.StatusCode, responseBody);
-                // Non-critical: don't throw, just log
+                // Fallback to simple like
+                var fallbackUrl = $"{GraphUrl}/{commentId}/likes?access_token={pageAccessToken}";
+                await _httpClient.PostAsync(fallbackUrl, null);
                 return;
             }
 

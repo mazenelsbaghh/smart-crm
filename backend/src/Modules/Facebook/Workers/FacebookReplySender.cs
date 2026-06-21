@@ -17,17 +17,20 @@ namespace Modules.Facebook.Workers
         private readonly IFacebookGraphService _graphService;
         private readonly ILogger<FacebookReplySender> _logger;
         private readonly Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> _hubContext;
+        private readonly StackExchange.Redis.IDatabase _redis;
 
         public FacebookReplySender(
             AppDbContext context,
             IFacebookGraphService graphService,
             ILogger<FacebookReplySender> logger,
-            Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext)
+            Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext,
+            StackExchange.Redis.IConnectionMultiplexer redis)
         {
             _context = context;
             _graphService = graphService;
             _logger = logger;
             _hubContext = hubContext;
+            _redis = redis.GetDatabase();
         }
 
         public async Task HandleAsync(AIReplyGeneratedEvent @event)
@@ -69,20 +72,12 @@ namespace Modules.Facebook.Workers
 
         private async Task HandleMessengerReply(Modules.Facebook.Domain.ConnectedPage connectedPage, AIReplyGeneratedEvent @event)
         {
-            // Simulate typing delay
-            await Task.Delay(2000);
-
-            // Send via Graph API
-            await _graphService.SendMessageAsync(
-                connectedPage.FacebookPageId,
-                connectedPage.PageAccessToken,
-                @event.Sender,
-                @event.Content);
-
-            // Find the conversation and save outgoing message
+            // Find the conversation first to broadcast typing state
             var customer = await _context.Customers
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.FacebookPSID == @event.Sender);
+
+            Guid? conversationId = null;
 
             if (customer != null)
             {
@@ -93,30 +88,81 @@ namespace Modules.Facebook.Workers
 
                 if (conversation != null)
                 {
-                    var msg = new Modules.Conversations.Domain.Message
-                    {
-                        ConversationId = conversation.Id,
-                        ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
-                        Direction = "Outgoing",
-                        Content = @event.Content,
-                        MessageType = "Text",
-                        Timestamp = DateTime.UtcNow
-                    };
-                    _context.Messages.Add(msg);
-                    await _context.SaveChangesAsync();
+                    conversationId = conversation.Id;
 
-                    // Broadcast via SignalR
-                    await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                    // Transition typing stage from "generating" to "typing" (4 seconds)
+                    var redisKey = $"ai_typing:{conversation.Id}";
+                    try
                     {
-                        id = msg.Id,
+                        await _redis.StringSetAsync(redisKey, "typing", TimeSpan.FromSeconds(30));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("[FacebookReplySender] Redis set typing state failed: {Message}", ex.Message);
+                    }
+
+                    await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                    {
                         conversationId = conversation.Id,
-                        senderType = "AI",
-                        content = @event.Content,
-                        createdAt = msg.Timestamp,
-                        status = "Sent",
-                        channel = "Messenger"
+                        isTyping = true,
+                        estimatedSeconds = 4,
+                        stage = "typing"
                     });
                 }
+            }
+
+            // Simulate typing delay (4 seconds)
+            await Task.Delay(4000);
+
+            // Send via Graph API
+            await _graphService.SendMessageAsync(
+                connectedPage.FacebookPageId,
+                connectedPage.PageAccessToken,
+                @event.Sender,
+                @event.Content);
+
+            if (customer != null && conversationId.HasValue)
+            {
+                var msg = new Modules.Conversations.Domain.Message
+                {
+                    ConversationId = conversationId.Value,
+                    ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
+                    Direction = "Outgoing",
+                    Content = @event.Content,
+                    MessageType = "Text",
+                    Timestamp = DateTime.UtcNow
+                };
+                _context.Messages.Add(msg);
+                await _context.SaveChangesAsync();
+
+                // Clear typing state in Redis and broadcast typing finished
+                var redisKey = $"ai_typing:{conversationId.Value}";
+                try
+                {
+                    await _redis.KeyDeleteAsync(redisKey);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("[FacebookReplySender] Redis delete typing state failed: {Message}", ex.Message);
+                }
+
+                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                {
+                    conversationId = conversationId.Value,
+                    isTyping = false
+                });
+
+                // Broadcast via SignalR
+                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                {
+                    id = msg.Id,
+                    conversationId = conversationId.Value,
+                    senderType = "AI",
+                    content = @event.Content,
+                    createdAt = msg.Timestamp,
+                    status = "Sent",
+                    channel = "Messenger"
+                });
             }
 
             _logger.LogInformation("[FacebookReplySender] Messenger reply sent to {Sender}", @event.Sender);
