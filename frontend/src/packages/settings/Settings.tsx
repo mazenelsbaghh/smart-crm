@@ -89,12 +89,52 @@ export default function Settings() {
   const [commentsReplyDelay, setCommentsReplyDelay] = useState(3);
 
   // Facebook Pages state
-  const [connectedPages, setConnectedPages] = useState<Array<{ pageId: string; pageName: string; connectedAt: string }>>([]);
+  const [connectedPages, setConnectedPages] = useState<Array<{ id: string; pageId: string; pageName: string; connectedAt: string }>>([]);
   const [fbLoading, setFbLoading] = useState(false);
+  const [pagesToConnect, setPagesToConnect] = useState<Array<{ id: string; name: string; access_token: string }>>([]);
+  const [showPagesModal, setShowPagesModal] = useState(false);
+  const [userAccessToken, setUserAccessToken] = useState('');
 
   // Tabs / Navigation state
   const [activeTab, setActiveTab] = useState<'general' | 'addons'>('general');
   const [viewMode, setViewMode] = useState<'list' | 'manage-groups'>('list');
+
+  // Load Facebook SDK
+  useEffect(() => {
+    if (document.getElementById('facebook-jssdk')) {
+      if ((window as any).FB) {
+        try {
+          (window as any).FB.init({
+            appId      : '1008993075392358',
+            cookie     : true,
+            xfbml      : true,
+            version    : 'v20.0'
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      return;
+    }
+
+    (window as any).fbAsyncInit = function() {
+      if ((window as any).FB) {
+        (window as any).FB.init({
+          appId      : '1008993075392358',
+          cookie     : true,
+          xfbml      : true,
+          version    : 'v20.0'
+        });
+        (window as any).FB.AppEvents.logPageView();
+      }
+    };
+
+    const fjs = document.getElementsByTagName('script')[0];
+    const js = document.createElement('script');
+    js.id = 'facebook-jssdk';
+    js.src = "https://connect.facebook.net/en_US/sdk.js";
+    fjs.parentNode?.insertBefore(js, fjs);
+  }, []);
 
   const fetchProjectSettings = useCallback(async () => {
     if (!activeProject) return;
@@ -123,10 +163,16 @@ export default function Settings() {
   const fetchConnectedPages = useCallback(async () => {
     if (!activeProject) return;
     try {
-      const res = await api.get<Array<{ pageId: string; pageName: string; connectedAt: string }>>(
-        `/api/facebook/pages?projectId=${activeProject.id}`
+      const res = await api.get<Array<{ id: string; facebookPageId: string; pageName: string; isActive: boolean; createdAt: string }>>(
+        `/api/projects/${activeProject.id}/facebook/pages`
       );
-      setConnectedPages(res.data || []);
+      const mapped = (res.data || []).map(p => ({
+        id: p.id,
+        pageId: p.facebookPageId,
+        pageName: p.pageName,
+        connectedAt: p.createdAt
+      }));
+      setConnectedPages(mapped);
     } catch {
       // Silently handle - no pages connected yet
       setConnectedPages([]);
@@ -259,43 +305,73 @@ export default function Settings() {
 
   const handleConnectFacebook = () => {
     if (!activeProject) return;
+    if (!(window as any).FB) {
+      setMessage({ type: 'error', text: 'جاري تحميل فيسبوك SDK، يرجى المحاولة بعد قليل.' });
+      return;
+    }
+
     setFbLoading(true);
-    const popup = window.open(
-      `/api/facebook/oauth/login?projectId=${activeProject.id}`,
-      'fbConnect',
-      'width=600,height=700,scrollbars=yes'
-    );
-
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'FACEBOOK_OAUTH_SUCCESS') {
-        setMessage({ type: 'success', text: `تم ربط صفحة فيسبوك بنجاح: ${event.data.pageName || 'صفحة جديدة'}` });
-        void fetchConnectedPages();
-        popup?.close();
-      } else if (event.data?.type === 'FACEBOOK_OAUTH_ERROR') {
-        setMessage({ type: 'error', text: event.data.error || 'تعذر ربط صفحة فيسبوك.' });
-      }
-      setFbLoading(false);
-      window.removeEventListener('message', handleMessage);
-    };
-
-    window.addEventListener('message', handleMessage);
-
-    // Fallback: if popup closed without message
-    const checkPopup = setInterval(() => {
-      if (popup?.closed) {
-        clearInterval(checkPopup);
+    (window as any).FB.login((response: any) => {
+      if (response.authResponse) {
+        const uToken = response.authResponse.accessToken;
+        setUserAccessToken(uToken);
+        
+        // Fetch user pages using Graph API client-side
+        fetch(`https://graph.facebook.com/v20.0/me/accounts?access_token=${uToken}`)
+          .then(res => res.json())
+          .then(data => {
+            setFbLoading(false);
+            if (data.data && Array.isArray(data.data)) {
+              setPagesToConnect(data.data);
+              setShowPagesModal(true);
+            } else if (data.error) {
+              setMessage({ type: 'error', text: data.error.message || 'فشل الحصول على الصفحات.' });
+            } else {
+              setMessage({ type: 'error', text: 'لم نتمكن من العثور على أي صفحات فيسبوك.' });
+            }
+          })
+          .catch(err => {
+            setFbLoading(false);
+            console.error(err);
+            setMessage({ type: 'error', text: 'حدث خطأ أثناء جلب الصفحات.' });
+          });
+      } else {
         setFbLoading(false);
-        window.removeEventListener('message', handleMessage);
-        void fetchConnectedPages();
+        setMessage({ type: 'error', text: 'تم إلغاء عملية تسجيل الدخول إلى فيسبوك.' });
       }
-    }, 1000);
+    }, {
+      scope: 'pages_show_list,pages_read_engagement,pages_manage_engagement,pages_messaging,pages_manage_metadata',
+      auth_type: 'rerequest'
+    });
   };
 
-  const handleDisconnectPage = async (pageId: string) => {
+  const handleConfirmPage = async (page: { id: string; name: string; access_token: string }) => {
+    if (!activeProject) return;
+    setActionLoading(true);
+    try {
+      await api.post(`/api/projects/${activeProject.id}/facebook/pages/confirm`, {
+        facebookPageId: page.id,
+        pageName: page.name,
+        pageAccessToken: page.access_token,
+        userAccessToken: userAccessToken,
+        facebookUserId: ''
+      });
+      setMessage({ type: 'success', text: `تم ربط الصفحة بنجاح: ${page.name}` });
+      setShowPagesModal(false);
+      void fetchConnectedPages();
+    } catch (e: unknown) {
+      console.error(e);
+      setMessage({ type: 'error', text: getApiErrorMessage(e, 'تعذر ربط هذه الصفحة.') });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDisconnectPage = async (pageDbId: string) => {
     if (!activeProject) return;
     try {
-      await api.delete(`/api/facebook/pages/${pageId}?projectId=${activeProject.id}`);
-      setConnectedPages(prev => prev.filter(p => p.pageId !== pageId));
+      await api.delete(`/api/projects/${activeProject.id}/facebook/pages/${pageDbId}`);
+      setConnectedPages(prev => prev.filter(p => p.id !== pageDbId));
       setMessage({ type: 'success', text: 'تم فصل الصفحة بنجاح.' });
     } catch {
       setMessage({ type: 'error', text: 'تعذر فصل الصفحة.' });
@@ -576,7 +652,7 @@ export default function Settings() {
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-soft)' }}>ID: {page.pageId}</div>
                     </div>
                     <button
-                      onClick={() => void handleDisconnectPage(page.pageId)}
+                      onClick={() => void handleDisconnectPage(page.id)}
                       className={`${styles.btn} ${styles.btnDanger}`}
                       style={{ padding: '4px 10px', fontSize: '0.78rem' }}
                     >
