@@ -234,8 +234,8 @@
 }
 
 .statusActive {
-  background-color: rgba(99, 102, 241, 0.12);
-  color: hsl(239, 84%, 75%);
+  background-color: var(--accent-soft);
+  color: var(--accent);
 }
 
 .statusFailed {
@@ -322,7 +322,7 @@
 .input:focus, .textarea:focus, .select:focus {
   outline: none;
   border-color: hsl(var(--accent-primary));
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  box-shadow: var(--focus-ring);
 }
 
 .textarea {

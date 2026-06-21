@@ -273,7 +273,7 @@ export default function Workflows() {
                     )}
 
                     {/* Step 3: Actions */}
-                    <div style={{ background: 'rgba(99, 102, 241, 0.1)', padding: '8px 12px', borderRadius: '4px', border: '1px solid rgba(99,102,241,0.2)' }}>
+                    <div style={{ background: 'rgba(203, 184, 255, 0.12)', padding: '8px 12px', borderRadius: '4px', border: '1px solid rgba(203, 184, 255, 0.25)' }}>
                       <span style={{ color: 'hsl(var(--text-muted))', fontWeight: 600, display: 'block', fontSize: '0.7rem' }}>نفذ الإجراءات التالية</span>
                       {actions.map((act: any, idx: number) => (
                         <div key={idx} style={{ color: 'var(--text-strong)', fontWeight: 600 }}>

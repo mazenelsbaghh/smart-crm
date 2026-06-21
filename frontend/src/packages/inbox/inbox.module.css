@@ -344,6 +344,27 @@
   box-shadow: 0 8px 24px rgba(216, 241, 93, 0.25);
 }
 
+/* Override wildcard styles from globals.css that target anything with 'card' in the class name */
+.conversationItem .cardHeaderRow,
+.conversationItem .cardHeaderMeta,
+.conversationItem .cardActionRow,
+.conversationItem .cardActionLabel,
+.conversationItem .cardSubTitle,
+.conversationItem .cardFooterRow {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.conversationItem .cardFooterRow {
+  border-top: 1px solid rgba(255, 255, 255, 0.04) !important;
+}
+
+.conversationItemActive .cardFooterRow {
+  border-top: 1px solid rgba(26, 26, 26, 0.08) !important;
+}
+
 .activeCardArrow {
   position: absolute;
   top: 14px;
@@ -1868,8 +1889,8 @@
 
 /* Inline badges */
 .badgeReminder {
-  background-color: rgba(168, 85, 247, 0.08);
-  color: #a855f7;
+  background-color: rgba(203, 184, 255, 0.12);
+  color: #CBB8FF;
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.72rem;
@@ -1877,8 +1898,8 @@
 }
 
 .badgeNurture {
-  background-color: rgba(99, 102, 241, 0.08);
-  color: #6366f1;
+  background-color: var(--accent-soft);
+  color: var(--accent);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.72rem;

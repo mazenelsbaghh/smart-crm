@@ -510,9 +510,9 @@ export default function FollowUps() {
                             </span>
                           ) : (
                             <span className={styles.statusBadge} style={{
-                              backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                              color: 'hsl(239, 84%, 75%)',
-                              border: '1px solid rgba(99, 102, 241, 0.2)'
+                              backgroundColor: 'var(--accent-soft)',
+                              color: 'var(--accent)',
+                              border: '1px solid var(--border-strong)'
                             }}>
                               متابعة عميل
                             </span>

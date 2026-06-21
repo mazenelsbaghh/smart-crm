@@ -514,11 +514,11 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             <div className={styles.scoreIndicatorPanel}>
               <h3 className={styles.sectionTitle}>AI Summary & Profile</h3>
               <div className={styles.scoreCards} style={{ marginBottom: '12px' }}>
-                <div className={styles.scoreCard} style={{ border: '1px solid rgba(0, 243, 255, 0.2)', backgroundColor: 'rgba(0, 243, 255, 0.04)' }}>
+                <div className={styles.scoreCard} style={{ border: '1px solid var(--accent)', backgroundColor: 'var(--accent-soft)' }}>
                   <span className={styles.scoreLabel}>Lead Score</span>
                   <span className={styles.scoreVal}>{clampedDisplayScore}/100</span>
                 </div>
-                <div className={styles.scoreCard} style={{ border: '1px solid rgba(255, 0, 127, 0.2)', backgroundColor: 'rgba(255, 0, 127, 0.04)' }}>
+                <div className={styles.scoreCard} style={{ border: '1px solid rgba(243, 92, 110, 0.25)', backgroundColor: 'var(--accent-secondary-soft)' }}>
                   <span className={styles.scoreLabel}>System Stage</span>
                   <span className={styles.scoreVal}>{pipelineStage}</span>
                 </div>
@@ -570,14 +570,14 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 </div>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                   <Tooltip content="حفظ الملخص المكتوب والبيانات الحالية للعميل" position="top" style={{ flex: 1 }}>
-                    <button type="submit" disabled={savingMemory || generatingMemory} className={styles.scheduleBtn} style={{ width: '100%', background: 'rgba(99, 102, 241, 0.12)', borderColor: 'rgba(99, 102, 241, 0.25)', color: 'hsl(239, 84%, 75%)' }}>
+                    <button type="submit" disabled={savingMemory || generatingMemory} className={styles.scheduleBtn} style={{ width: '100%', background: 'var(--accent-soft)', borderColor: 'var(--border-strong)', color: 'var(--accent)' }}>
                       <PhantomLoader loading={savingMemory} label="حفظ التعديلات">
                         <span>حفظ التعديلات</span>
                       </PhantomLoader>
                     </button>
                   </Tooltip>
                   <Tooltip content="تحليل المحادثات عبر الذكاء الاصطناعي وتحديث الملخص والسمات تلقائياً" position="top" style={{ flex: 1 }}>
-                    <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(168, 85, 247, 0.12)', borderColor: 'rgba(168, 85, 247, 0.25)', color: 'hsl(270, 84%, 75%)' }}>
+                    <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(203, 184, 255, 0.12)', borderColor: 'rgba(203, 184, 255, 0.25)', color: '#CBB8FF' }}>
                       <Sparkles size={14} />
                       <PhantomLoader loading={generatingMemory} label="تحديث ملف العميل بالذكاء الاصطناعي">
                         <span>تحديث ذكي بالـ AI</span>
@@ -693,8 +693,8 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                           </span>
                         ) : (
                           <span className={styles.statusBadge} style={{
-                            backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                            color: 'hsl(239, 84%, 75%)',
+                            backgroundColor: 'var(--accent-soft)',
+                            color: 'var(--accent)',
                             padding: '2px 6px',
                             fontSize: '0.7rem'
                           }}>
@@ -703,8 +703,8 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                         )}
                         {f.tone && f.tone !== 'Default' && (
                           <span className={styles.statusBadge} style={{
-                            backgroundColor: 'rgba(168, 85, 247, 0.12)',
-                            color: 'hsl(270, 84%, 75%)',
+                            backgroundColor: 'rgba(203, 184, 255, 0.12)',
+                            color: '#CBB8FF',
                             padding: '2px 6px',
                             fontSize: '0.7rem'
                           }}>

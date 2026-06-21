@@ -124,15 +124,15 @@ export default function PublicBookingPage({ params }: PageProps) {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#0a0e17',
-        color: '#fff',
+        background: 'var(--canvas)',
+        color: 'var(--text-strong)',
         fontFamily: 'Cairo, sans-serif'
       }}>
         <div style={{
           width: '40px',
           height: '40px',
-          border: '3px solid #1f2937',
-          borderTopColor: '#00f3ff',
+          border: '3px solid var(--border-subtle)',
+          borderTopColor: 'var(--accent)',
           borderRadius: '50%',
           animation: 'spin 1s linear infinite'
         }}></div>
@@ -150,21 +150,21 @@ export default function PublicBookingPage({ params }: PageProps) {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)',
+      background: 'var(--canvas)',
       fontFamily: 'Cairo, sans-serif',
-      color: '#f8fafc',
+      color: 'var(--text-strong)',
       padding: '2rem 1rem',
       direction: 'rtl'
     }}>
       <div style={{
         width: '100%',
         maxWidth: '520px',
-        backgroundColor: 'rgba(15, 23, 42, 0.45)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
+        backgroundColor: 'var(--surface)',
+        border: '1px solid var(--border-subtle)',
         backdropFilter: 'blur(16px)',
         borderRadius: '16px',
         padding: '2rem',
-        boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3)'
+        boxShadow: 'none'
       }}>
         {success ? (
           <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem' }}>
@@ -190,8 +190,8 @@ export default function PublicBookingPage({ params }: PageProps) {
             <button
               onClick={() => { setSuccess(false); void fetchActiveGroups(); }}
               style={{
-                background: '#00f3ff',
-                color: '#020617',
+                background: 'var(--accent)',
+                color: 'var(--accent-ink)',
                 border: 'none',
                 padding: '0.75rem 2rem',
                 borderRadius: '8px',
@@ -201,7 +201,7 @@ export default function PublicBookingPage({ params }: PageProps) {
                 transition: 'all 0.2s',
                 marginTop: '1rem'
               }}
-              onMouseOver={(e) => { e.currentTarget.style.boxShadow = '0 0 15px #00f3ff'; }}
+              onMouseOver={(e) => { e.currentTarget.style.boxShadow = 'var(--shadow-neon)'; }}
               onMouseOut={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
             >
               حجز موعد آخر
@@ -209,8 +209,8 @@ export default function PublicBookingPage({ params }: PageProps) {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            <div style={{ textAlign: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '1rem' }}>
-              <div style={{ display: 'inline-flex', padding: '0.5rem', backgroundColor: 'rgba(0, 243, 255, 0.08)', borderRadius: '12px', color: '#00f3ff', marginBottom: '0.75rem' }}>
+            <div style={{ textAlign: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1rem' }}>
+              <div style={{ display: 'inline-flex', padding: '0.5rem', backgroundColor: 'var(--accent-soft)', borderRadius: '12px', color: 'var(--accent)', marginBottom: '0.75rem' }}>
                 <Calendar size={24} />
               </div>
               <h1 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#fff' }}>حجز موعد المجموعات</h1>
@@ -258,10 +258,10 @@ export default function PublicBookingPage({ params }: PageProps) {
                       style={{
                         width: '100%',
                         padding: '0.75rem 2.5rem 0.75rem 1rem',
-                        backgroundColor: '#0f172a',
-                        border: '1px solid #334155',
+                        backgroundColor: 'var(--surface-muted)',
+                        border: '1px solid var(--border-subtle)',
                         borderRadius: '8px',
-                        color: '#fff',
+                        color: 'var(--text-strong)',
                         fontSize: '0.9rem',
                         outline: 'none'
                       }}
@@ -285,10 +285,10 @@ export default function PublicBookingPage({ params }: PageProps) {
                       style={{
                         width: '100%',
                         padding: '0.75rem 2.5rem 0.75rem 1rem',
-                        backgroundColor: '#0f172a',
-                        border: '1px solid #334155',
+                        backgroundColor: 'var(--surface-muted)',
+                        border: '1px solid var(--border-subtle)',
                         borderRadius: '8px',
-                        color: '#fff',
+                        color: 'var(--text-strong)',
                         fontSize: '0.9rem',
                         outline: 'none',
                         textAlign: 'left',
@@ -313,8 +313,8 @@ export default function PublicBookingPage({ params }: PageProps) {
                           key={group.id}
                           onClick={() => { if (!isFull) setSelectedGroupId(group.id); }}
                           style={{
-                            border: isSelected ? '2px solid #00f3ff' : '1px solid #334155',
-                            backgroundColor: isSelected ? 'rgba(0, 243, 255, 0.04)' : '#0f172a',
+                            border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border-subtle)',
+                            backgroundColor: isSelected ? 'var(--accent-soft)' : 'var(--surface-muted)',
                             borderRadius: '8px',
                             padding: '1rem',
                             cursor: isFull ? 'not-allowed' : 'pointer',
@@ -326,7 +326,7 @@ export default function PublicBookingPage({ params }: PageProps) {
                           }}
                         >
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                            <span style={{ fontWeight: 700, fontSize: '0.925rem', color: isSelected ? '#00f3ff' : '#fff' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.925rem', color: isSelected ? 'var(--accent)' : 'var(--text-strong)' }}>
                               {group.name || (group.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)')}
                             </span>
                             <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -358,8 +358,8 @@ export default function PublicBookingPage({ params }: PageProps) {
                   type="submit"
                   disabled={submitting}
                   style={{
-                    background: '#00f3ff',
-                    color: '#020617',
+                    background: 'var(--accent)',
+                    color: 'var(--accent-ink)',
                     border: 'none',
                     padding: '0.85rem',
                     borderRadius: '8px',
@@ -373,14 +373,14 @@ export default function PublicBookingPage({ params }: PageProps) {
                     alignItems: 'center',
                     gap: '8px'
                   }}
-                  onMouseOver={(e) => { if (!submitting) e.currentTarget.style.boxShadow = '0 0 15px #00f3ff'; }}
+                  onMouseOver={(e) => { if (!submitting) e.currentTarget.style.boxShadow = 'var(--shadow-neon)'; }}
                   onMouseOut={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
                 >
                   {submitting && (
                     <div style={{
                       width: '16px',
                       height: '16px',
-                      border: '2px solid #020617',
+                      border: '2px solid var(--accent-ink)',
                       borderTopColor: 'transparent',
                       borderRadius: '50%',
                       animation: 'spin 1s linear infinite'
