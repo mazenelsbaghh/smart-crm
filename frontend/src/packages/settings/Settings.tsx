@@ -99,42 +99,36 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState<'general' | 'addons'>('general');
   const [viewMode, setViewMode] = useState<'list' | 'manage-groups'>('list');
 
-  // Load Facebook SDK
+  // Listen for message events from the popup
   useEffect(() => {
-    if (document.getElementById('facebook-jssdk')) {
-      if ((window as any).FB) {
-        try {
-          (window as any).FB.init({
-            appId      : '1008993075392358',
-            cookie     : true,
-            xfbml      : true,
-            version    : 'v20.0'
-          });
-        } catch (e) {
-          console.error(e);
-        }
-      }
-      return;
-    }
+    const handleOAuthMessage = (event: MessageEvent) => {
+      if (!event.data) return;
 
-    (window as any).fbAsyncInit = function() {
-      if ((window as any).FB) {
-        (window as any).FB.init({
-          appId      : '1008993075392358',
-          cookie     : true,
-          xfbml      : true,
-          version    : 'v20.0'
-        });
-        (window as any).FB.AppEvents.logPageView();
+      if (event.data.type === 'facebook-oauth-success') {
+        const { projectId, userAccessToken: uToken, pages } = event.data;
+        if (activeProject && projectId === activeProject.id) {
+          const mapped = (pages || []).map((p: any) => ({
+            id: p.pageId,
+            name: p.pageName,
+            access_token: p.accessToken
+          }));
+          setPagesToConnect(mapped);
+          setUserAccessToken(uToken);
+          setShowPagesModal(true);
+          setFbLoading(false);
+          setMessage({ type: 'success', text: 'تم تسجيل الدخول بنجاح. الرجاء تحديد الصفحة لربطها.' });
+        }
+      } else if (event.data.type === 'facebook-oauth-error') {
+        setFbLoading(false);
+        setMessage({ type: 'error', text: event.data.error || 'حدث خطأ أثناء الاتصال بفيسبوك.' });
       }
     };
 
-    const fjs = document.getElementsByTagName('script')[0];
-    const js = document.createElement('script');
-    js.id = 'facebook-jssdk';
-    js.src = "https://connect.facebook.net/en_US/sdk.js";
-    fjs.parentNode?.insertBefore(js, fjs);
-  }, []);
+    window.addEventListener('message', handleOAuthMessage);
+    return () => {
+      window.removeEventListener('message', handleOAuthMessage);
+    };
+  }, [activeProject]);
 
   const fetchProjectSettings = useCallback(async () => {
     if (!activeProject) return;
@@ -305,44 +299,32 @@ export default function Settings() {
 
   const handleConnectFacebook = () => {
     if (!activeProject) return;
-    if (!(window as any).FB) {
-      setMessage({ type: 'error', text: 'جاري تحميل فيسبوك SDK، يرجى المحاولة بعد قليل.' });
-      return;
-    }
 
     setFbLoading(true);
-    (window as any).FB.login((response: any) => {
-      if (response.authResponse) {
-        const uToken = response.authResponse.accessToken;
-        setUserAccessToken(uToken);
-        
-        // Fetch user pages using Graph API client-side
-        fetch(`https://graph.facebook.com/v20.0/me/accounts?access_token=${uToken}`)
-          .then(res => res.json())
-          .then(data => {
-            setFbLoading(false);
-            if (data.data && Array.isArray(data.data)) {
-              setPagesToConnect(data.data);
-              setShowPagesModal(true);
-            } else if (data.error) {
-              setMessage({ type: 'error', text: data.error.message || 'فشل الحصول على الصفحات.' });
-            } else {
-              setMessage({ type: 'error', text: 'لم نتمكن من العثور على أي صفحات فيسبوك.' });
-            }
-          })
-          .catch(err => {
-            setFbLoading(false);
-            console.error(err);
-            setMessage({ type: 'error', text: 'حدث خطأ أثناء جلب الصفحات.' });
-          });
-      } else {
-        setFbLoading(false);
-        setMessage({ type: 'error', text: 'تم إلغاء عملية تسجيل الدخول إلى فيسبوك.' });
-      }
-    }, {
-      scope: 'pages_show_list,pages_read_engagement,pages_manage_engagement,pages_messaging,pages_manage_metadata',
-      auth_type: 'rerequest'
-    });
+    setMessage(null);
+
+    let baseUrl = api.defaults.baseURL || '';
+    if (!baseUrl.startsWith('http')) {
+      baseUrl = window.location.origin + baseUrl;
+    }
+    const cleanedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+    const oauthUrl = `${cleanedBaseUrl}/api/facebook/oauth/login?projectId=${activeProject.id}`;
+
+    const width = 600;
+    const height = 700;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+
+    const popup = window.open(
+      oauthUrl,
+      'facebook-oauth-login',
+      `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,status=yes`
+    );
+
+    if (!popup) {
+      setFbLoading(false);
+      setMessage({ type: 'error', text: 'تم حظر النافذة المنبثقة. يرجى تفعيل النوافذ المنبثقة في متصفحك والمحاولة مرة أخرى.' });
+    }
   };
 
   const handleConfirmPage = async (page: { id: string; name: string; access_token: string }) => {
@@ -912,6 +894,66 @@ export default function Settings() {
               onManageGroups={() => setViewMode('manage-groups')} 
             />
           )}
+        </div>
+      )}
+
+      {/* Facebook Pages Selection Modal */}
+      {showPagesModal && (
+        <div className={styles.overlay}>
+          <div className={`glass-panel ${styles.modal}`}>
+            <div className={styles.modalHeader}>
+              <h3 className={styles.modalTitle}>ربط صفحة فيسبوك</h3>
+              <div onClick={() => setShowPagesModal(false)} className={styles.closeBtn} style={{ fontSize: '1.5rem', cursor: 'pointer' }}>
+                &times;
+              </div>
+            </div>
+
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-soft)' }}>
+              تم العثور على الصفحات التالية. يرجى اختيار الصفحة التي تريد ربطها بالمشروع لتفعيل الماسنجر والتعليقات:
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', maxHeight: '300px', overflowY: 'auto', paddingRight: '4px' }}>
+              {pagesToConnect.length === 0 ? (
+                <p style={{ fontSize: '0.85rem', color: 'hsl(var(--accent-warning))', textAlign: 'center' }}>
+                  لم يتم العثور على أي صفحات فيسبوك مسؤولة في هذا الحساب.
+                </p>
+              ) : (
+                pagesToConnect.map(page => (
+                  <div key={page.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '12px', borderRadius: 'var(--radius-md)',
+                    background: 'var(--surface-muted)', border: '1px solid var(--border-subtle)',
+                    gap: 'var(--space-md)'
+                  }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {page.name}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-soft)' }}>ID: {page.id}</div>
+                    </div>
+                    <button
+                      onClick={() => void handleConfirmPage(page)}
+                      disabled={actionLoading}
+                      className={`${styles.btn} ${styles.btnPrimary}`}
+                      style={{ padding: '6px 12px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                    >
+                      {actionLoading ? 'جاري الربط...' : 'ربط الصفحة'}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className={styles.formActions} style={{ marginTop: 'var(--space-md)' }}>
+              <button
+                type="button"
+                onClick={() => setShowPagesModal(false)}
+                className={`${styles.btn} ${styles.btnSecondary}`}
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
