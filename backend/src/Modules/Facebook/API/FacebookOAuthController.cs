@@ -51,10 +51,42 @@ namespace Modules.Facebook.API
         /// Exchanges code for token and returns page list via postMessage to opener.
         /// </summary>
         [HttpGet("callback")]
-        public async Task<IActionResult> Callback([FromQuery] string code, [FromQuery] string state)
+        public async Task<IActionResult> Callback(
+            [FromQuery] string? code, 
+            [FromQuery] string? state,
+            [FromQuery] string? error = null,
+            [FromQuery] string? error_description = null,
+            [FromQuery] string? error_reason = null,
+            [FromQuery] int? error_code = null)
         {
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
-                return BadRequest("Missing code or state parameter");
+            {
+                var errMsg = error_description ?? error ?? $"Facebook returned an error code {error_code}: {error_reason}";
+                if (string.IsNullOrEmpty(code) && string.IsNullOrEmpty(state) && error == null && error_description == null)
+                {
+                    errMsg = "Missing code or state parameter";
+                }
+
+                var errorHtml = $@"
+<!DOCTYPE html>
+<html>
+<head><title>Error</title></head>
+<body>
+<script>
+    if (window.opener) {{
+        window.opener.postMessage({{
+            type: 'facebook-oauth-error',
+            error: '{errMsg.Replace("'", "\\'")}'
+        }}, '{_frontendUrl}');
+        window.close();
+    }} else {{
+        document.body.innerHTML = '<h2>خطأ في الربط: {errMsg}</h2>';
+    }}
+</script>
+</body>
+</html>";
+                return Content(errorHtml, "text/html");
+            }
 
             // Parse state: "projectId:csrfToken"
             var parts = state.Split(':');
