@@ -98,11 +98,7 @@ export default function DashboardLayout({
     { name: 'إعدادات المشروع', path: '/settings', icon: Settings },
   ];
 
-  const isInboxRoute = pathname?.startsWith('/inbox');
 
-  if (isInboxRoute) {
-    return <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>{children}</div>;
-  }
 
   return (
     <div className={styles.container}>

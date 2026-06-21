@@ -66,52 +66,7 @@
   --transition-spring: 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-body.light-theme {
-  color-scheme: light;
 
-  --bg-primary: 210 33% 96%;
-  --bg-secondary: 210 28% 99%;
-  --bg-tertiary: 214 23% 84%;
-
-  --text-primary: 220 32% 12%;
-  --text-secondary: 218 18% 31%;
-  --text-muted: 218 12% 47%;
-
-  --accent-primary: 198 74% 39%;
-  --accent-secondary: 329 68% 48%;
-  --accent-success: 156 62% 38%;
-  --accent-warning: 35 82% 44%;
-  --accent-danger: 358 68% 48%;
-
-  --canvas: oklch(0.956 0.015 235);
-  --canvas-soft: oklch(0.932 0.018 235);
-  --surface: oklch(0.985 0.006 235);
-  --surface-raised: oklch(0.998 0.004 235);
-  --surface-muted: oklch(0.91 0.018 235);
-  --border-subtle: oklch(0.78 0.026 238 / 0.82);
-  --border-strong: oklch(0.66 0.045 230 / 0.72);
-  --text-strong: oklch(0.24 0.033 247);
-  --text-base: oklch(0.38 0.03 247);
-  --text-soft: oklch(0.52 0.026 247);
-  --accent: oklch(0.58 0.128 220);
-  --accent-hover: oklch(0.52 0.145 220);
-  --accent-ink: oklch(0.985 0.006 235);
-  --accent-soft: oklch(0.58 0.128 220 / 0.1);
-  --accent-soft-strong: oklch(0.58 0.128 220 / 0.16);
-  --accent-secondary-soft: oklch(0.6 0.15 335 / 0.1);
-  --danger-soft: oklch(0.58 0.16 24 / 0.11);
-  --success-soft: oklch(0.58 0.12 158 / 0.12);
-  --warning-soft: oklch(0.64 0.13 75 / 0.13);
-  --shadow-soft: none;
-  --shadow-panel: none;
-  --focus-ring: 0 0 0 3px oklch(0.58 0.128 220 / 0.18);
-  --overlay: oklch(0.3 0.028 247 / 0.42);
-
-  --border-glow: oklch(0.58 0.128 220 / 0.1);
-  --border-glow-active: oklch(0.58 0.128 220 / 0.28);
-  --shadow-neon: 0 0 0 1px oklch(0.58 0.128 220 / 0.18), 0 14px 34px oklch(0.58 0.128 220 / 0.1);
-  --shadow-neon-pink: 0 0 0 1px oklch(0.6 0.15 335 / 0.16), 0 14px 34px oklch(0.6 0.15 335 / 0.08);
-}
 
 * {
   box-sizing: border-box;
@@ -133,12 +88,7 @@ body {
   text-rendering: geometricPrecision;
 }
 
-body.light-theme {
-  background:
-    linear-gradient(135deg, oklch(0.9 0.035 210 / 0.7), transparent 36%),
-    linear-gradient(315deg, oklch(0.91 0.024 330 / 0.42), transparent 44%),
-    var(--canvas);
-}
+
 
 .glass-panel,
 .glass-panel-interactive {
@@ -189,52 +139,3 @@ body.light-theme {
   }
 }
 
-/* Light theme overrides for legacy page classes */
-body.light-theme [class*="stageColumn"],
-body.light-theme [class*="dealCard"] {
-  background: var(--surface) !important;
-  border-color: var(--border-subtle) !important;
-  box-shadow: var(--shadow-panel) !important;
-}
-
-body.light-theme [class*="dealCard"]:hover {
-  border-color: var(--border-strong) !important;
-  box-shadow: var(--shadow-neon) !important;
-}
-
-body.light-theme [class*="tr"] {
-  border-bottom: 1px solid var(--border-subtle) !important;
-}
-
-body.light-theme [class*="th"] {
-  border-bottom: 1px solid var(--border-strong) !important;
-}
-
-body.light-theme [class*="tr"]:hover {
-  background-color: var(--accent-soft) !important;
-}
-
-body.light-theme [class*="tagBadge"],
-body.light-theme [class*="editButton"],
-body.light-theme [class*="actionBtn"] {
-  background-color: var(--accent-soft) !important;
-  border-color: var(--border-strong) !important;
-  color: var(--accent) !important;
-}
-
-body.light-theme [class*="editButton"]:hover,
-body.light-theme [class*="actionBtn"]:hover,
-body.light-theme [class*="addDealTrigger"]:hover {
-  background-color: var(--accent-soft-strong) !important;
-  border-color: var(--accent) !important;
-}
-
-body.light-theme [class*="columnHeader"] {
-  border-bottom-color: var(--border-subtle) !important;
-}
-
-body.light-theme [class*="addDealTrigger"] {
-  background-color: color-mix(in oklch, var(--accent-soft) 70%, transparent) !important;
-  border-color: var(--border-strong) !important;
-  color: var(--accent) !important;
-}

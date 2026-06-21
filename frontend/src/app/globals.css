@@ -127,19 +127,7 @@ button phantom-ui {
   box-shadow: var(--focus-ring);
 }
 
-/* Light theme button overrides */
-body.light-theme .neon-btn {
-  color: var(--accent-ink) !important;
-}
 
-body.light-theme .neon-btn:hover {
-  background: var(--accent-hover) !important;
-  opacity: 1 !important;
-}
-
-body.light-theme .neon-btn-secondary:hover {
-  background: var(--accent-soft-strong) !important;
-}
 
 /* Cross-page contrast hardening for legacy CSS modules */
 :where([class*="Panel"], [class*="panel"], [class*="Card"], [class*="card"], [class*="Column"], [class*="column"]) {

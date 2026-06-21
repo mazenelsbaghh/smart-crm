@@ -1228,7 +1228,7 @@
 .detailsPanel {
   width: 320px;
   height: 100vh;
-  background-color: #121212;
+  background-color: #0F1115;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   padding: var(--space-md);
   display: flex;
@@ -1293,8 +1293,9 @@
 }
 
 .profitLabel {
-  font-size: 0.68rem;
-  color: #7D7D7D;
+  font-size: 0.72rem;
+  color: #B0B0B0;
+  font-weight: 600;
 }
 
 .profitInputRow {
@@ -1322,27 +1323,33 @@
 }
 
 .stageSelectorsRow {
-  display: flex;
-  gap: 6px;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 100%;
 }
 
 .stageSelectorBtn {
-  flex-grow: 1;
   background-color: #121212;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
-  padding: 6px 4px;
-  font-size: 0.68rem;
+  padding: 8px 4px;
+  font-size: 0.75rem;
   font-weight: 700;
-  color: #7D7D7D;
+  color: #B0B0B0;
   cursor: pointer;
-  transition: all 0.2s ease;
+  text-align: center;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.stageSelectorBtn:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #FFFFFF;
 }
 
 .stageSelectorBtnActive {
-  background-color: rgba(203, 184, 255, 0.1) !important;
-  border-color: rgba(203, 184, 255, 0.3) !important;
+  background-color: rgba(203, 184, 255, 0.12) !important;
+  border-color: rgba(203, 184, 255, 0.35) !important;
   color: #CBB8FF !important;
 }
 
@@ -1356,8 +1363,9 @@
 .probabilityHeader {
   display: flex;
   justify-content: space-between;
-  font-size: 0.72rem;
-  color: #7D7D7D;
+  font-size: 0.75rem;
+  color: #B0B0B0;
+  font-weight: 600;
 }
 
 .probabilityValue {
@@ -1400,20 +1408,20 @@
 .taskListContainer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .taskItem {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
 }
 
 .taskCheckbox {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   background-color: #121212;
   cursor: pointer;
   display: flex;
@@ -1421,17 +1429,24 @@
   justify-content: center;
   color: #D8F15D;
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: 1px;
+  transition: all 0.2s ease;
+}
+
+.taskCheckbox:hover {
+  border-color: rgba(216, 241, 93, 0.6);
+  box-shadow: 0 0 6px rgba(216, 241, 93, 0.15);
 }
 
 .taskCheckboxChecked {
-  border-color: #D8F15D;
+  border-color: #D8F15D !important;
+  background-color: rgba(216, 241, 93, 0.1);
 }
 
 .taskText {
-  font-size: 0.76rem;
+  font-size: 0.78rem;
   color: #E8E8E8;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .taskTextDone {
@@ -1441,19 +1456,27 @@
 
 .addTaskRow {
   display: flex;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .addTaskInput {
   flex-grow: 1;
   background-color: #121212 !important;
-  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
   border-radius: 10px !important;
-  padding: 6px 10px !important;
-  font-size: 0.72rem !important;
+  padding: 8px 12px !important;
+  font-size: 0.75rem !important;
   color: #E8E8E8 !important;
   outline: none !important;
+  transition: all 0.2s ease;
+}
+
+.addTaskInput:focus {
+  border-color: rgba(216, 241, 93, 0.4) !important;
+  box-shadow: 0 0 6px rgba(216, 241, 93, 0.08) !important;
 }
 
 .addTaskBtn {
@@ -1461,13 +1484,20 @@
   border: none;
   color: #1A1A1A;
   border-radius: 10px;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
+
+.addTaskBtn:hover {
+  opacity: 0.9;
+  transform: scale(1.05);
+}
+
 
 /* AI Insights list */
 .aiSparkleIcon {
@@ -1517,8 +1547,8 @@
 }
 
 .automationToggleRow span {
-  font-size: 0.72rem;
-  color: #7D7D7D;
+  font-size: 0.75rem;
+  color: #B0B0B0;
   line-height: 1.4;
 }
 

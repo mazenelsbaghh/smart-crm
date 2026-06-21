@@ -13,26 +13,10 @@ interface HeaderProps {
 export default function Header({ onMenuClick }: HeaderProps) {
   const { activeProject, projects, switchProject } = useAuth();
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
-  const [isLight, setIsLight] = useState(() => {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-    return localStorage.getItem('theme') === 'light';
-  });
 
   useEffect(() => {
-    if (isLight) {
-      document.body.classList.add('light-theme');
-    } else {
-      document.body.classList.remove('light-theme');
-    }
-  }, [isLight]);
-
-  const toggleTheme = () => {
-    const nextIsLight = !isLight;
-    localStorage.setItem('theme', nextIsLight ? 'light' : 'dark');
-    setIsLight(nextIsLight);
-  };
+    document.body.classList.remove('light-theme');
+  }, []);
 
   return (
     <header className={styles.header}>
@@ -111,16 +95,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
             <Maximize size={18} />
           </button>
         </Tooltip>
-        <Tooltip content={isLight ? "الوضع الداكن" : "الوضع المضيء"} position="bottom">
-          <button 
-            type="button" 
-            className={styles.toolbarIconBtn} 
-            onClick={toggleTheme}
-            style={{ background: 'none', border: 'none', padding: 0 }}
-          >
-            {isLight ? <Moon size={18} /> : <Sun size={18} />}
-          </button>
-        </Tooltip>
+
         <Tooltip content="الإعدادات العامة • تخصيص تفضيلاتك" position="bottom">
           <button type="button" className={styles.toolbarIconBtn} style={{ background: 'none', border: 'none', padding: 0 }}>
             <Settings size={18} />

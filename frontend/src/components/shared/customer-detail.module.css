@@ -495,10 +495,6 @@
   animation: fadeIn 0.25s ease;
 }
 
-body.light-theme .inlineCard {
-  border: 1px solid var(--border-subtle);
-}
-
 .backBtn {
   display: flex;
   align-items: center;
@@ -517,13 +513,4 @@ body.light-theme .inlineCard {
   background: var(--accent-soft);
   color: hsl(var(--text-primary));
   border-color: var(--border-strong);
-}
-
-body.light-theme .backBtn {
-  background: var(--surface-muted);
-  border: 1px solid var(--border-subtle);
-}
-
-body.light-theme .backBtn:hover {
-  background: var(--accent-soft);
 }
