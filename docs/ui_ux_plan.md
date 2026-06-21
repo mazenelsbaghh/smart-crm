@@ -2,13 +2,14 @@
 
 **Last Updated**: 2026-06-22
 
-## 2026-06-22: Complete Dashboard & Side Screens Theme Redesign (Active Plan)
-- **Goal**: Redesign all remaining dashboard pages to match the dark neon premium crm theme of the inbox.
+## 2026-06-22: Complete Dashboard & Side Screens Theme Redesign (Completed)
+- **Goal**: Redesign all remaining dashboard pages to match the dark neon premium crm theme of the inbox and resolve any layout bugs.
 - **Updates**:
   - Transition global backgrounds to deep matte charcoal `#0F1115`.
   - Harmonize card components to translucent dark gray `#171A21` with subtle borders `rgba(255,255,255,0.06)`.
   - Shift accent borders/hover highlights from cyan/pink to neon lime-green `#D8F15D`.
   - Retain the thin 80px sidebar as the unified global navigation.
+  - [x] **Conversation List Card Contrast Override**: Resolved visual regression where inner rows of `.conversationItem` (e.g. `.cardHeaderRow`, `.cardActionRow`, `.cardFooterRow`) were styled with dark `#171A21` background blocks by wildcard selector in `globals.css`. Wrote transparent overrides in `inbox.module.css` to restore smooth active/inactive card states.
 
 ## 2026-06-06: Conversations list dynamic load more (Completed)
 - **Goal**: Implement smooth scrolling pagination for conversation cards.
