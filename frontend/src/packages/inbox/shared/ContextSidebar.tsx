@@ -77,7 +77,7 @@ export default function ContextSidebar({
       <div className={styles.crmIntelligenceCard}>
         <div className={styles.crmCardTitleRow}>
           <TrendingUp size={16} />
-          <h4>معلومات الصفقة (Deal Profit)</h4>
+          <h4>تفاصيل وأرباح الصفقة</h4>
         </div>
 
         {/* Potential profit value */}
@@ -160,7 +160,7 @@ export default function ContextSidebar({
       <div className={styles.tasksCard}>
         <div className={styles.crmCardTitleRow}>
           <ListTodo size={16} />
-          <h4>المهام المطلوبة (Tasks)</h4>
+          <h4>المهام المجدولة والمطلوبة</h4>
         </div>
 
         <div className={styles.taskListContainer}>
@@ -197,7 +197,7 @@ export default function ContextSidebar({
       <div className={styles.aiInsightsCard}>
         <div className={styles.crmCardTitleRow}>
           <Sparkles size={16} className={styles.aiSparkleIcon} />
-          <h4>رؤى الذكاء الاصطناعي (AI Insights)</h4>
+          <h4>رؤى وتوصيات الذكاء الاصطناعي</h4>
         </div>
         <div className={styles.aiInsightList}>
           <div className={styles.insightItem}>

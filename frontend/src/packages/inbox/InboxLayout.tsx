@@ -143,7 +143,7 @@ export default function InboxLayout({
   }, [activeConv]);
 
   return (
-    <div ref={containerRef} className={styles.inboxContainer}>
+    <div ref={containerRef} className={`${styles.inboxContainer} ${activeConv ? styles.hasActiveConv : ''}`}>
       {/* 1. Thin vertical Sidebar navigation */}
       <ThinSidebar />
 
@@ -183,6 +183,7 @@ export default function InboxLayout({
         setPrivateDM={setPrivateDM}
         reaction={reaction}
         setReaction={setReaction}
+        setActiveConv={setActiveConv}
       />
 
       {/* 4. Right CRM details and metrics side-panel */}

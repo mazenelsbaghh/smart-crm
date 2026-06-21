@@ -57,6 +57,7 @@ interface ChatWorkspaceProps {
   setPrivateDM?: (val: string) => void;
   reaction?: 'LIKE' | 'LOVE' | null;
   setReaction?: (val: 'LIKE' | 'LOVE' | null) => void;
+  setActiveConv?: (conv: Conversation | null) => void;
 }
 
 export default function ChatWorkspace({
@@ -78,7 +79,8 @@ export default function ChatWorkspace({
   privateDM,
   setPrivateDM,
   reaction,
-  setReaction
+  setReaction,
+  setActiveConv
 }: ChatWorkspaceProps) {
   
   const [activeTab, setActiveTab] = useState<'Timeline' | 'Conversation' | 'Notes' | 'Analytics' | 'Orders' | 'Files' | 'History'>('Conversation');
@@ -250,13 +252,23 @@ export default function ChatWorkspace({
       <div className={styles.workspaceHeader}>
         <div className={styles.headerTopRow}>
           <div className={styles.headerProfile}>
+            {setActiveConv && (
+              <button
+                type="button"
+                className={styles.mobileBackBtn}
+                onClick={() => setActiveConv(null)}
+                aria-label="رجوع لقائمة المحادثات"
+              >
+                <ChevronRight size={24} />
+              </button>
+            )}
             <div className={styles.headerAvatar}>
               <User size={36} />
             </div>
             <div className={styles.customerInfoBlock}>
               <h2 className={styles.workspaceCustomerName}>{customerName}</h2>
               <p className={styles.customerSubDetails}>
-                <span>Product manager — {customerCity}</span>
+                <span>مدير منتج — {customerCity}</span>
                 <span className={styles.dividerDot}>•</span>
                 <span>{customer?.phoneNumber || activeConv.customer.phone || 'قناة فيسبوك'}</span>
                 <span className={styles.dividerDot}>•</span>
@@ -271,14 +283,14 @@ export default function ChatWorkspace({
                 <User size={18} />
               </div>
               <div className={styles.managerNameBlock}>
-                <span className={styles.managerLabel}>Manager</span>
-                <span className={styles.managerName}>Marty C.</span>
+                <span className={styles.managerLabel}>المشرف</span>
+                <span className={styles.managerName}>مارتي ك.</span>
               </div>
             </div>
 
             <div className={styles.stagePillsRow}>
-              <span className={`${styles.statusPill} ${styles.statusPillHigh}`}>High</span>
-              <span className={`${styles.statusPill} ${styles.statusPillWarm}`}>Warm</span>
+              <span className={`${styles.statusPill} ${styles.statusPillHigh}`}>عالي</span>
+              <span className={`${styles.statusPill} ${styles.statusPillWarm}`}>مهتم</span>
             </div>
           </div>
         </div>
@@ -318,13 +330,13 @@ export default function ChatWorkspace({
                 className={`${styles.tabBtn} ${activeTab === tab ? styles.tabBtnActive : ''}`}
                 onClick={() => setActiveTab(tab)}
               >
-                {tab === 'Timeline' && 'Summary'}
-                {tab === 'Conversation' && 'Conversation'}
-                {tab === 'Notes' && 'Notes'}
-                {tab === 'Analytics' && 'Analytics'}
-                {tab === 'Orders' && 'Details'}
-                {tab === 'Files' && 'Files'}
-                {tab === 'History' && 'History'}
+                {tab === 'Timeline' && 'الملخص'}
+                {tab === 'Conversation' && 'المحادثة'}
+                {tab === 'Notes' && 'الملاحظات'}
+                {tab === 'Analytics' && 'التحليلات'}
+                {tab === 'Orders' && 'التفاصيل'}
+                {tab === 'Files' && 'الملفات'}
+                {tab === 'History' && 'السجل'}
               </button>
             ))}
           </div>
@@ -656,7 +668,12 @@ export default function ChatWorkspace({
         {(activeTab === 'Analytics' || activeTab === 'Orders' || activeTab === 'Files' || activeTab === 'History') && (
           <div className={styles.tabPlaceholder}>
             <FileText size={48} className={styles.placeholderIcon} />
-            <h4>لا يوجد محتوى حالي في تبويب {activeTab}</h4>
+            <h4>لا يوجد محتوى حالي في تبويب {
+              activeTab === 'Analytics' ? 'التحليلات' :
+              activeTab === 'Orders' ? 'التفاصيل' :
+              activeTab === 'Files' ? 'الملفات' :
+              activeTab === 'History' ? 'السجل' : activeTab
+            }</h4>
             <p>سيتم ربط هذا الجزء بالخلفية قريباً.</p>
           </div>
         )}

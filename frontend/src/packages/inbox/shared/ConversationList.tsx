@@ -71,26 +71,26 @@ export default function ConversationList({
     // Generate simulated last action/badge based on conversation properties
     const defaultDetails = {
       action: 'متابعة المحادثة',
-      badge: 'Mid',
+      badge: 'متوسط',
       badgeClass: styles.badgeMid
     };
 
     if (conv.status === 'Open') {
       return {
         action: 'بانتظار الرد',
-        badge: 'High',
+        badge: 'عالي',
         badgeClass: styles.badgeHigh
       };
     } else if (conv.status === 'Pending') {
       return {
         action: 'مكالمة هاتفية',
-        badge: 'High',
+        badge: 'عالي',
         badgeClass: styles.badgeHigh
       };
     } else if (conv.status === 'Resolved') {
       return {
         action: 'تم التوجيه للطلب',
-        badge: 'Low',
+        badge: 'منخفض',
         badgeClass: styles.badgeLow
       };
     }
@@ -105,7 +105,7 @@ export default function ConversationList({
         <div className={styles.kpiCard}>
           <div className={styles.kpiHeader}>
             <span className={`${styles.kpiIndicator} ${styles.indicatorYellow}`}></span>
-            <span className={styles.kpiTitle}>Worklist</span>
+            <span className={styles.kpiTitle}>قائمة العمل</span>
           </div>
           <span className={styles.kpiValue}>{worklistCount}</span>
         </div>
@@ -113,7 +113,7 @@ export default function ConversationList({
         <div className={styles.kpiCard}>
           <div className={styles.kpiHeader}>
             <span className={`${styles.kpiIndicator} ${styles.indicatorRed}`}></span>
-            <span className={styles.kpiTitle}>New leads</span>
+            <span className={styles.kpiTitle}>عملاء محتملون جدد</span>
           </div>
           <span className={styles.kpiValue}>{newLeadsCount + 12 /* Mock addition for design fidelity */}</span>
         </div>
@@ -121,7 +121,7 @@ export default function ConversationList({
         <div className={styles.kpiCard}>
           <div className={styles.kpiHeader}>
             <span className={`${styles.kpiIndicator} ${styles.indicatorBlue}`}></span>
-            <span className={styles.kpiTitle}>Updates</span>
+            <span className={styles.kpiTitle}>التحديثات</span>
           </div>
           <span className={styles.kpiValue}>{updatesCount + 8}</span>
         </div>
@@ -129,7 +129,7 @@ export default function ConversationList({
         <div className={styles.kpiCard}>
           <div className={styles.kpiHeader}>
             <span className={`${styles.kpiIndicator} ${styles.indicatorPurple}`}></span>
-            <span className={styles.kpiTitle}>Assigned</span>
+            <span className={styles.kpiTitle}>المعلقة / المسندة</span>
           </div>
           <span className={styles.kpiValue}>{assignedCount + 2}</span>
         </div>
@@ -138,7 +138,7 @@ export default function ConversationList({
       {/* Section Header */}
       <div className={styles.worklistHeader}>
         <span className={styles.worklistTitleIndicator}></span>
-        <h3 className={styles.worklistTitle}>قائمة العمل (Worklist)</h3>
+        <h3 className={styles.worklistTitle}>قائمة العمل والمتابعة</h3>
       </div>
 
       {/* Filter and Search Bar */}
@@ -225,14 +225,14 @@ export default function ConversationList({
                 {/* Additional channel/metadata info */}
                 <div className={styles.cardFooterRow}>
                   <span className={styles.channelLabel}>
-                    {channel === 'WhatsApp' && '🟢 WhatsApp'}
-                    {channel === 'Messenger' && '🔵 Messenger'}
-                    {channel === 'Comments' && '🟠 Comment'}
+                    {channel === 'WhatsApp' && '🟢 واتساب'}
+                    {channel === 'Messenger' && '🔵 ماسنجر'}
+                    {channel === 'Comments' && '🟠 تعليق'}
                   </span>
                   
                   {channel === 'Messenger' && !isWithin24hWindow(conv.lastMessageAt) && (
                     <span className={styles.windowWarningPill}>
-                      <AlertTriangle size={10} /> window closed
+                      <AlertTriangle size={10} /> النافذة مغلقة
                     </span>
                   )}
                 </div>
