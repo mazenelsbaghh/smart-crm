@@ -18,7 +18,7 @@ import {
   LogOut,
   X,
 } from 'lucide-react';
-import Sidebar from '../../components/layout/Sidebar';
+import ThinSidebar from '../../packages/inbox/shared/ThinSidebar';
 import Header from '../../components/layout/Header';
 import PhantomLoader from '../../components/shared/PhantomLoader';
 import styles from '../../components/layout/layout.module.css';
@@ -103,7 +103,7 @@ export default function DashboardLayout({
   return (
     <div className={styles.container}>
       {/* Sidebar - Desktop */}
-      <Sidebar />
+      <ThinSidebar />
 
       {/* Main Content Area */}
       <div className={styles.mainArea}>
