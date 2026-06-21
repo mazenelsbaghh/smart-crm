@@ -1,8 +1,14 @@
 # Operations & Deployment Master Plan
 
-**Last Updated**: 2026-06-10
+**Last Updated**: 2026-06-22
 
 ## Chronological Log
+
+### 2026-06-22: Resolve Hostinger Docker Compose Container Name Conflicts (Active Plan)
+- **Goal**: Fix container name conflict with `smartcustomercore-elasticsearch` during remote deployment.
+- **Updates**:
+  - Run remote SSH command to explicitly stop and remove conflicting Elasticsearch container.
+  - Restart the production Docker Compose stack cleanly.
 
 ### 2026-06-10: Firebase Cloud Messaging Server Configuration & Container Mounts (Completed)
 - **Goal**: Configure the local/production Docker stack to initialize Firebase Admin by mounting the service account key file.
