@@ -74,10 +74,10 @@ export default function ThinSidebar() {
               type="button"
               className={`${styles.sidebarNavItem} ${isActive ? styles.sidebarNavItemActive : ''}`}
               onClick={() => router.push(item.path)}
-              title={item.name}
               aria-label={item.name}
             >
               <Icon size={20} strokeWidth={1.5} />
+              <span className={styles.sidebarNavLabel}>{item.name}</span>
             </button>
           );
         })}

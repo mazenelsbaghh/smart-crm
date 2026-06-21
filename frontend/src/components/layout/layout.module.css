@@ -297,10 +297,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 70px;
+  height: 60px;
   padding: 0 var(--space-lg);
-  background: color-mix(in oklch, var(--surface) 88%, transparent);
-  color: hsl(var(--text-primary));
+  background: var(--canvas);
+  color: var(--text-strong);
   z-index: 10;
   border-bottom: 1px solid var(--border-subtle);
   box-shadow: none;
@@ -309,7 +309,7 @@
 .mobileHamburger {
   display: none;
   cursor: pointer;
-  color: hsl(var(--text-primary));
+  color: var(--text-strong);
 }
 
 @media (max-width: 768px) {
@@ -334,7 +334,7 @@
 .searchIcon {
   position: absolute;
   right: 12px;
-  color: hsl(var(--text-muted));
+  color: var(--text-soft);
   pointer-events: none;
 }
 
@@ -345,14 +345,24 @@
   color: var(--text-strong);
   padding: 8px 12px;
   padding-right: 36px;
+  padding-left: 45px;
   border-radius: var(--radius-md);
   font-size: 0.85rem;
   outline: none;
   transition: var(--transition-normal);
 }
 
+.kbdBadge {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
 .headerSearchInput::placeholder {
-  color: hsl(var(--text-muted));
+  color: var(--text-soft);
 }
 
 .headerSearchInput:focus {

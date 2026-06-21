@@ -13,10 +13,30 @@ interface HeaderProps {
 export default function Header({ onMenuClick }: HeaderProps) {
   const { activeProject, projects, switchProject } = useAuth();
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [isLight, setIsLight] = useState(false);
 
   useEffect(() => {
-    document.body.classList.remove('light-theme');
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'light') {
+      document.body.classList.add('light-theme');
+      setIsLight(true);
+    } else {
+      document.body.classList.remove('light-theme');
+      setIsLight(false);
+    }
   }, []);
+
+  const toggleTheme = () => {
+    const nextTheme = !isLight;
+    setIsLight(nextTheme);
+    if (nextTheme) {
+      document.body.classList.add('light-theme');
+      localStorage.setItem('theme', 'light');
+    } else {
+      document.body.classList.remove('light-theme');
+      localStorage.setItem('theme', 'dark');
+    }
+  };
 
   return (
     <header className={styles.header}>
@@ -39,7 +59,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           placeholder="بحث..." 
           className={styles.headerSearchInput} 
         />
-        <kbd style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>⌘K</kbd>
+        <kbd className={styles.kbdBadge}>⌘K</kbd>
       </div>
 
       {/* Right Toolbar Actions */}
@@ -93,6 +113,18 @@ export default function Header({ onMenuClick }: HeaderProps) {
         <Tooltip content="ملء الشاشة • تخلص من المشتتات" position="bottom">
           <button type="button" className={styles.toolbarIconBtn} style={{ background: 'none', border: 'none', padding: 0 }}>
             <Maximize size={18} />
+          </button>
+        </Tooltip>
+
+        <Tooltip content={isLight ? "تفعيل الوضع الداكن" : "تفعيل الوضع المضيء"} position="bottom">
+          <button 
+            type="button" 
+            className={styles.toolbarIconBtn} 
+            onClick={toggleTheme}
+            style={{ background: 'none', border: 'none', padding: 0 }}
+            aria-label="تغيير المظهر"
+          >
+            {isLight ? <Moon size={18} /> : <Sun size={18} />}
           </button>
         </Tooltip>
 

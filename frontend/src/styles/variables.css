@@ -66,6 +66,51 @@
   --transition-spring: 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+body.light-theme {
+  color-scheme: light;
+
+  /* HSL bridge for light theme */
+  --bg-primary: 210 40% 98%;      /* #F8FAFC */
+  --bg-secondary: 0 0% 100%;       /* #FFFFFF */
+  --bg-tertiary: 210 40% 96.1%;   /* #F1F5F9 */
+
+  --text-primary: 222.2 47.4% 11.2%; /* #0F172A */
+  --text-secondary: 215.4 16.3% 46.9%; /* #475569 */
+  --text-muted: 215.4 16.3% 56.9%; /* #64748B */
+
+  --accent-primary: 220 90% 56%;  /* Deep royal blue for high contrast primary actions in light mode */
+
+  /* OKLCH light tokens */
+  --canvas: oklch(0.98 0.005 250);            /* #F8FAFC */
+  --canvas-soft: oklch(0.96 0.008 250);       /* #F1F5F9 */
+  --surface: oklch(1.0 0.0 0);                /* #FFFFFF */
+  --surface-raised: oklch(0.95 0.008 250);    /* #E2E8F0 */
+  --surface-muted: oklch(0.97 0.006 250);
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.16);
+  --text-strong: #0F172A;
+  --text-base: #334155;
+  --text-soft: #64748B;
+  --accent: #4F46E5;                         /* High contrast Indigo instead of neon-lime for light mode readability */
+  --accent-hover: #4338CA;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(79, 70, 229, 0.08);
+  --accent-soft-strong: rgba(79, 70, 229, 0.16);
+  --accent-secondary-soft: rgba(220, 38, 38, 0.08);
+  --danger-soft: rgba(220, 38, 38, 0.08);
+  --success-soft: rgba(22, 163, 74, 0.08);
+  --warning-soft: rgba(217, 119, 6, 0.08);
+
+  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-panel: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  --focus-ring: 0 0 0 3px rgba(79, 70, 229, 0.2);
+  --overlay: rgba(15, 17, 21, 0.4);
+
+  --border-glow: rgba(79, 70, 229, 0.1);
+  --border-glow-active: rgba(79, 70, 229, 0.3);
+  --shadow-neon: 0 4px 12px rgba(79, 70, 229, 0.08);
+}
+
 
 
 * {

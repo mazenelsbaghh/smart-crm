@@ -1,9 +1,15 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { crmService, Customer, Deal } from '../../services/crm';
 import { useRouter } from 'next/navigation';
+import { gsap } from 'gsap';
+import { useGSAP } from '@gsap/react';
+
+if (typeof window !== 'undefined') {
+  gsap.registerPlugin(useGSAP);
+}
 import { 
   Users, 
   DollarSign, 
@@ -20,6 +26,23 @@ import styles from './dashboard.module.css';
 export default function Dashboard() {
   const { activeProject } = useAuth();
   const router = useRouter();
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  useGSAP(() => {
+    // Entrance animations for KPI stat cards
+    gsap.fromTo(
+      `.${styles.statCard}`,
+      { opacity: 0, y: 30 },
+      { opacity: 1, y: 0, duration: 0.45, stagger: 0.08, ease: 'power2.out' }
+    );
+
+    // Staggered slide up for dashboard content sections
+    gsap.fromTo(
+      [`.${styles.leadsPanel}`, `.${styles.actionCard}`, `.${styles.aiPanel}`],
+      { opacity: 0, y: 40 },
+      { opacity: 1, y: 0, duration: 0.5, stagger: 0.1, ease: 'power2.out', delay: 0.25 }
+    );
+  }, { scope: containerRef });
   
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -84,7 +107,7 @@ export default function Dashboard() {
     .slice(0, 5);
 
   return (
-    <div className={styles.container}>
+    <div ref={containerRef} className={styles.container}>
       {/* Title Header */}
       <div className={styles.dashboardHeader}>
         <div>
