@@ -14,7 +14,8 @@ import {
   MessageSquareMore,
   ThumbsUp,
   MessageCircle,
-  Reply
+  Reply,
+  Sparkles
 } from 'lucide-react';
 import styles from './inbox.module.css';
 
@@ -51,6 +52,9 @@ export default function CommentsInbox() {
   const [privateDM, setPrivateDM] = useState('');
   const [reaction, setReaction] = useState<'LIKE' | 'LOVE' | null>('LOVE');
   const [sending, setSending] = useState(false);
+  const [aiTypingConversations, setAiTypingConversations] = useState<Record<string, boolean>>({});
+  const [aiTypingStages, setAiTypingStages] = useState<Record<string, 'generating' | 'typing'>>({});
+  const [aiTypingCountdown, setAiTypingCountdown] = useState(10);
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -108,6 +112,19 @@ export default function CommentsInbox() {
     fetchMessages();
   }, [activeConv?.id]);
 
+  const isAiTyping = activeConv ? !!aiTypingConversations[activeConv.id] : false;
+  const aiTypingStage = activeConv ? aiTypingStages[activeConv.id] || 'generating' : 'generating';
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isAiTyping && aiTypingStage === 'typing') {
+      interval = setInterval(() => {
+        setAiTypingCountdown((prev) => (prev > 1 ? prev - 1 : 1));
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isAiTyping, aiTypingStage, activeConv?.id]);
+
   // SignalR for real-time updates
   useEffect(() => {
     if (!activeProject) return;
@@ -141,6 +158,30 @@ export default function CommentsInbox() {
         }
         
         setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      });
+
+      signalR.registerOnAITyping((convId: string, isTyping: boolean, estimatedSeconds?: number, stage?: 'generating' | 'typing') => {
+        setAiTypingConversations((prev) => ({
+          ...prev,
+          [convId]: isTyping
+        }));
+        if (stage) {
+          setAiTypingStages((prev) => ({
+            ...prev,
+            [convId]: stage
+          }));
+        }
+        if (isTyping) {
+          setAiTypingCountdown(estimatedSeconds ?? 10);
+        }
+      });
+
+      signalR.registerOnAITypingError((convId: string, message: string) => {
+        showToast(message, 'error');
+        setAiTypingConversations((prev) => ({
+          ...prev,
+          [convId]: false
+        }));
       });
 
       if (!disposed) {
@@ -280,6 +321,23 @@ export default function CommentsInbox() {
                   <span className={styles.messageTime}>{formatEgyptTime(msg.createdAt)}</span>
                 </div>
               ))}
+              {isAiTyping && (
+                <div className={`${styles.messageBubble} ${styles.outgoing} ${styles.aiTyping}`}>
+                  <div className={styles.aiTypingHeader}>
+                    <Sparkles size={12} className={styles.typingSparkle} style={{ marginLeft: '4px' }} />
+                    {aiTypingStage === 'generating' ? (
+                      <span>جاري التفكير وتوليد الرد...</span>
+                    ) : (
+                      <span>جاري الرد تلقائياً خلال {aiTypingCountdown} ثوانٍ</span>
+                    )}
+                  </div>
+                  <div className={styles.typingDots}>
+                    <div className={styles.typingDot} />
+                    <div className={styles.typingDot} />
+                    <div className={styles.typingDot} />
+                  </div>
+                </div>
+              )}
               <div ref={messageEndRef} />
             </div>
 
@@ -313,20 +371,12 @@ export default function CommentsInbox() {
               </div>
               <div className={styles.replyActions}>
                 <div className={styles.reactionSelector}>
-                  <span className={styles.reactionLabel}>تفاعل:</span>
-                  <button
-                    type="button"
-                    className={`${styles.reactionBtn} ${reaction === 'LIKE' ? styles.active : ''}`}
-                    onClick={() => setReaction(reaction === 'LIKE' ? null : 'LIKE')}
-                  >
-                    👍 إعجاب
-                  </button>
                   <button
                     type="button"
                     className={`${styles.reactionBtn} ${reaction === 'LOVE' ? styles.active : ''}`}
                     onClick={() => setReaction(reaction === 'LOVE' ? null : 'LOVE')}
                   >
-                    ❤️ حب
+                    ❤️ تفاعل لاف
                   </button>
                 </div>
                 <button

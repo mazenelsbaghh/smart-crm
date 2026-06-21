@@ -15,7 +15,8 @@ import {
   ArrowRight,
   Clock,
   Download,
-  Search
+  Search,
+  UserCheck
 } from 'lucide-react';
 import styles from './settings.module.css';
 
@@ -484,6 +485,51 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>المجموعات النشطة</span>
               <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
                 {groups.filter(g => g.isActive).length} <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'hsl(var(--text-muted))' }}>/ {groups.length}</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Card 2.5: Active Students in Active Groups */}
+          <div className="glass-panel" style={{ 
+            padding: 'var(--space-lg)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 'var(--space-md)',
+            background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.08) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            border: '1px solid rgba(249, 115, 22, 0.15)',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: '0 8px 32px 0 rgba(249, 115, 22, 0.03)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              position: 'absolute',
+              top: '-20px',
+              right: '-20px',
+              width: '60px',
+              height: '60px',
+              background: 'rgb(249, 115, 22)',
+              filter: 'blur(30px)',
+              opacity: 0.12,
+              pointerEvents: 'none'
+            }}></div>
+
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              width: '48px', 
+              height: '48px', 
+              borderRadius: 'var(--radius-md)', 
+              background: 'rgba(249, 115, 22, 0.12)',
+              color: 'rgb(249, 115, 22)'
+            }}>
+              <UserCheck size={24} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>الطلاب النشطة في المجموعات النشطة</span>
+              <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
+                {groups.filter(g => g.isActive).reduce((sum, g) => sum + (g.bookedCount || 0), 0)}
               </span>
             </div>
           </div>

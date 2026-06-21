@@ -172,12 +172,29 @@ namespace Modules.Facebook.Workers
         {
             // Parse channel metadata for comment details
             string commentId = null;
+            string postId = null;
             if (!string.IsNullOrEmpty(@event.ChannelMetadata))
             {
                 try
                 {
                     using var doc = JsonDocument.Parse(@event.ChannelMetadata);
-                    commentId = doc.RootElement.TryGetProperty("commentId", out var cid) ? cid.GetString() : null;
+                    if (doc.RootElement.TryGetProperty("commentId", out var cid))
+                    {
+                        commentId = cid.GetString();
+                    }
+                    else if (doc.RootElement.TryGetProperty("CommentId", out var cid2))
+                    {
+                        commentId = cid2.GetString();
+                    }
+
+                    if (doc.RootElement.TryGetProperty("postId", out var pid))
+                    {
+                        postId = pid.GetString();
+                    }
+                    else if (doc.RootElement.TryGetProperty("PostId", out var pid2))
+                    {
+                        postId = pid2.GetString();
+                    }
                 }
                 catch { /* ignore parse errors */ }
             }
@@ -188,11 +205,53 @@ namespace Modules.Facebook.Workers
                 return;
             }
 
+            // Find customer
+            var customer = await _context.Customers
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.FacebookPSID == @event.Sender);
+
+            Guid? commentConvId = null;
+
+            if (customer != null)
+            {
+                var commentConv = await _context.Conversations
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Channel == "FacebookComment"
+                        && (c.Status == "Open" || c.Status == "Pending"));
+
+                if (commentConv != null)
+                {
+                    commentConvId = commentConv.Id;
+
+                    // Transition typing stage from "generating" to "typing" (4 seconds)
+                    var redisKey = $"ai_typing:{commentConv.Id}";
+                    try
+                    {
+                        await _redis.StringSetAsync(redisKey, "typing", TimeSpan.FromSeconds(30));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("[FacebookReplySender] Redis set typing state failed: {Message}", ex.Message);
+                    }
+
+                    await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                    {
+                        conversationId = commentConv.Id,
+                        isTyping = true,
+                        estimatedSeconds = 4,
+                        stage = "typing"
+                    });
+                }
+            }
+
+            // Simulate typing delay (4 seconds)
+            await Task.Delay(4000);
+
             // 1. Reply publicly to the comment
             await _graphService.ReplyToCommentAsync(connectedPage.PageAccessToken, commentId, @event.Content);
 
-            // 2. React to the comment (auto-like)
-            await _graphService.ReactToCommentAsync(connectedPage.PageAccessToken, commentId, "LIKE");
+            // 2. React to the comment (LOVE only as per user request)
+            await _graphService.ReactToCommentAsync(connectedPage.PageAccessToken, commentId, "LOVE");
 
             // 3. Send private DM
             await _graphService.SendPrivateReplyAsync(
@@ -201,7 +260,123 @@ namespace Modules.Facebook.Workers
                 commentId,
                 @event.Content);
 
-            _logger.LogInformation("[FacebookReplySender] Comment reply (public+DM+reaction) sent for comment {CommentId}", commentId);
+            if (customer != null && commentConvId.HasValue)
+            {
+                // Clear typing state in Redis and broadcast typing finished
+                var redisKey = $"ai_typing:{commentConvId.Value}";
+                try
+                {
+                    await _redis.KeyDeleteAsync(redisKey);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("[FacebookReplySender] Redis delete typing state failed: {Message}", ex.Message);
+                }
+
+                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                {
+                    conversationId = commentConvId.Value,
+                    isTyping = false
+                });
+
+                // 1. Save public comment reply to DB
+                var publicMsg = new Modules.Conversations.Domain.Message
+                {
+                    ConversationId = commentConvId.Value,
+                    ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
+                    Direction = "Outgoing",
+                    Content = @event.Content,
+                    MessageType = "Text",
+                    FacebookPostId = postId,
+                    FacebookCommentId = commentId,
+                    Timestamp = DateTime.UtcNow
+                };
+                _context.Messages.Add(publicMsg);
+
+                // 2. Save reaction as Outgoing message to DB (LOVE ❤️)
+                var reactMsg = new Modules.Conversations.Domain.Message
+                {
+                    ConversationId = commentConvId.Value,
+                    ExternalMessageId = $"msg_ai_react_{Guid.NewGuid():N}",
+                    Direction = "Outgoing",
+                    Content = "[تفاعل] ❤️",
+                    MessageType = "Reaction",
+                    Timestamp = DateTime.UtcNow
+                };
+                _context.Messages.Add(reactMsg);
+
+                // 3. Find or create Messenger conversation for private DM
+                var messengerConv = await _context.Conversations
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Channel == "Messenger"
+                        && (c.Status == "Open" || c.Status == "Pending"));
+
+                if (messengerConv == null)
+                {
+                    messengerConv = new Modules.Conversations.Domain.Conversation
+                    {
+                        ProjectId = @event.ProjectId,
+                        CustomerId = customer.Id,
+                        Channel = "Messenger",
+                        Status = "Open",
+                        LastMessageTimestamp = DateTime.UtcNow
+                    };
+                    _context.Conversations.Add(messengerConv);
+                    await _context.SaveChangesAsync();
+                }
+
+                var privateMsg = new Modules.Conversations.Domain.Message
+                {
+                    ConversationId = messengerConv.Id,
+                    ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
+                    Direction = "Outgoing",
+                    Content = @event.Content,
+                    MessageType = "Text",
+                    Timestamp = DateTime.UtcNow
+                };
+                _context.Messages.Add(privateMsg);
+
+                await _context.SaveChangesAsync();
+
+                // Broadcast messages via SignalR
+                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                {
+                    id = publicMsg.Id,
+                    conversationId = commentConvId.Value,
+                    senderType = "AI",
+                    content = publicMsg.Content,
+                    createdAt = publicMsg.Timestamp.ToString("o"),
+                    status = "Sent",
+                    channel = "FacebookComment",
+                    facebookPostId = postId,
+                    facebookCommentId = commentId
+                });
+
+                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                {
+                    id = reactMsg.Id,
+                    conversationId = commentConvId.Value,
+                    senderType = "AI",
+                    content = reactMsg.Content,
+                    createdAt = reactMsg.Timestamp.ToString("o"),
+                    status = "Sent",
+                    messageType = "Reaction",
+                    channel = "FacebookComment"
+                });
+
+                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                {
+                    id = privateMsg.Id,
+                    conversationId = messengerConv.Id,
+                    senderType = "AI",
+                    content = privateMsg.Content,
+                    createdAt = privateMsg.Timestamp.ToString("o"),
+                    status = "Sent",
+                    channel = "Messenger"
+                });
+            }
+
+            _logger.LogInformation("[FacebookReplySender] Comment reply (public+DM+reaction LOVE) sent for comment {CommentId}", commentId);
         }
     }
 }

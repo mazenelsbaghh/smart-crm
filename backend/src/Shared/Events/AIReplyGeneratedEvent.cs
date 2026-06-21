@@ -11,5 +11,6 @@ namespace Shared.Events
         public string[] Buttons { get; set; } = Array.Empty<string>();
         public string Channel { get; set; } = "WhatsApp"; // WhatsApp, Messenger, FacebookComment
         public string? ChannelMetadata { get; set; } // JSON with channel-specific data
+        public string? Reaction { get; set; }
     }
 }

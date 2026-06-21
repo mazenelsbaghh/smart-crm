@@ -62,9 +62,35 @@ namespace Modules.Facebook.Services
             _logger.LogInformation("[FacebookGraph] Replied to comment {CommentId}. Response: {Response}", commentId, responseBody);
         }
 
-        public async Task ReactToCommentAsync(string pageAccessToken, string commentId, string reactionType = "LIKE")
+        public static string MapToFacebookReaction(string? input)
         {
-            var url = $"{GraphUrl}/{commentId}/reactions?reaction_type={reactionType.ToUpper()}&access_token={pageAccessToken}";
+            if (string.IsNullOrEmpty(input)) return "LOVE";
+            
+            var normalized = input.Trim().ToUpperInvariant();
+            if (normalized == "LIKE" || normalized == "LOVE" || normalized == "CARE" || 
+                normalized == "HAHA" || normalized == "WOW" || normalized == "SAD" || normalized == "ANGRY")
+            {
+                return normalized;
+            }
+
+            if (input.Contains("❤️") || input.Contains("💖") || input.Contains("💝") || input.Contains("💕") || input.Contains("😍"))
+                return "LOVE";
+            if (input.Contains("👍") || input.Contains("👌") || input.Contains("👏") || input.Contains("✔️"))
+                return "LIKE";
+            if (input.Contains("😮") || input.Contains("😲") || input.Contains("😂") || input.Contains("😆") || input.Contains("🤣"))
+                return "WOW";
+            if (input.Contains("😢") || input.Contains("😭") || input.Contains("😞"))
+                return "SAD";
+            if (input.Contains("😡") || input.Contains("😠"))
+                return "ANGRY";
+
+            return "LOVE"; // Default to LOVE as per user request
+        }
+
+        public async Task ReactToCommentAsync(string pageAccessToken, string commentId, string reactionType = "LOVE")
+        {
+            var mappedReaction = MapToFacebookReaction(reactionType);
+            var url = $"{GraphUrl}/{commentId}/reactions?reaction_type={mappedReaction}&access_token={pageAccessToken}";
             var response = await _httpClient.PostAsync(url, null);
             var responseBody = await response.Content.ReadAsStringAsync();
 
@@ -77,7 +103,7 @@ namespace Modules.Facebook.Services
                 return;
             }
 
-            _logger.LogInformation("[FacebookGraph] Reacted to comment {CommentId} with {Reaction}", commentId, reactionType);
+            _logger.LogInformation("[FacebookGraph] Reacted to comment {CommentId} with {Reaction}", commentId, mappedReaction);
         }
 
         public async Task SendPrivateReplyAsync(string pageId, string pageAccessToken, string commentId, string message)

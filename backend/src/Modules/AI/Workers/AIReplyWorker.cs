@@ -72,11 +72,11 @@ namespace Modules.AI.Workers
             tenantContext.SetProjectId(@event.ProjectId);
 
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            var channel = @event.Channel ?? "WhatsApp";
 
             try
             {
-                // Determine channel (defaults to WhatsApp for backward compatibility)
-                var channel = @event.Channel ?? "WhatsApp";
 
                 // Find customer — lookup by PhoneNumber for WhatsApp, by FacebookPSID for Facebook channels
                 Customer customer;
@@ -450,6 +450,38 @@ namespace Modules.AI.Workers
                 }
             }
 
+            // 1. WhatsApp session number fetching and direct redirect instructions
+            string whatsappLinkContext = "";
+            try
+            {
+                var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+                using var httpClientObj = new System.Net.Http.HttpClient();
+                var gatewayResponse = await httpClientObj.GetAsync($"{gatewayUrl}/api/whatsapp/session/status?projectId={@event.ProjectId}");
+                if (gatewayResponse.IsSuccessStatusCode)
+                {
+                    var responseBody = await gatewayResponse.Content.ReadAsStringAsync();
+                    using var doc = System.Text.Json.JsonDocument.Parse(responseBody);
+                    if (doc.RootElement.TryGetProperty("phoneNumber", out var phoneProp) && !string.IsNullOrEmpty(phoneProp.GetString()))
+                    {
+                        var phoneNum = phoneProp.GetString();
+                        whatsappLinkContext = $"\n[معلومات رقم التواصل وواتساب المشروع]:\n" +
+                                              $"- رقم الواتساب الخاص بالصفحة/المشروع هو: {phoneNum}\n" +
+                                              $"- رابط الواتساب المباشر للتواصل هو: https://wa.me/{phoneNum}\n" +
+                                              $"توجيه صارم للـ AI: إذا طلب العميل رقم الهاتف للتواصل، أو سألك عن كيفية التواصل عبر الواتساب أو طلب رقم الواتساب، فيُمنع تماماً تخمين أو كتابة أي رقم آخر. يجب عليك قاطعاً إرسال هذا الرقم المذكور أعلاه ({phoneNum}) وإرسال رابط الواتساب المباشر المذكور (https://wa.me/{phoneNum}) لكي ينقر عليه ويتواصل معنا مباشرة.\n";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AIReplyWorker] Failed to fetch WhatsApp status for project: {ex.Message}");
+            }
+
+            // 2. Channel awareness context
+            string channelAwarenessContext = $"\n[قناة التواصل الحالية]: {(channel == "WhatsApp" ? "واتساب (WhatsApp)" : channel == "Messenger" ? "فيسبوك ماسنجر (Facebook Messenger)" : "تعليقات فيسبوك (Facebook Comment)")}\n" +
+                                             $"توجيه هام وصارم للـ AI: أنت تقوم حالياً بالرد على العميل عبر قناة [{channel}]. يرجى صياغة وتنسيق ردك بما يتناسب مع هذه القناة تحديداً (على سبيل المثال: إذا كانت القناة تعليقاً على منشور، يرجى كتابة رد عام وموجز جداً يناسب التعليقات العامة، أما إذا كانت ماسنجر أو واتساب فيمكنك الرد بتفاصيل أوفى والترحيب بالعميل).\n";
+
+            brainContext = (brainContext ?? "") + whatsappLinkContext + channelAwarenessContext;
+
             if (customer != null && customer.IsBlacklisted)
             {
                 Console.WriteLine($"[AIReplyWorker] Customer {@event.Sender} is blacklisted. Skipping AI reply.");
@@ -467,7 +499,7 @@ namespace Modules.AI.Workers
                 try
                 {
                     conversation = await dbContext.Conversations
-                        .FirstOrDefaultAsync(c => c.CustomerId == customerId && c.Status != "Closed");
+                        .FirstOrDefaultAsync(c => c.CustomerId == customerId && c.Channel == channel && c.Status != "Closed");
 
                     if (conversation != null)
                     {
@@ -644,7 +676,8 @@ namespace Modules.AI.Workers
                 Content = analysisResult.ReplyContent,
                 Buttons = analysisResult.SuggestedButtons ?? Array.Empty<string>(),
                 Channel = @event.Channel ?? "WhatsApp",
-                ChannelMetadata = @event.ChannelMetadata
+                ChannelMetadata = @event.ChannelMetadata,
+                Reaction = analysisResult.SuggestedReaction
             };
 
             await _eventBus.PublishAsync(replyGeneratedEvent);
@@ -871,8 +904,8 @@ namespace Modules.AI.Workers
                 }
             }
 
-            // 3. Process AI Auto-Reaction if suggested
-            if (!string.IsNullOrEmpty(analysisResult.SuggestedReaction))
+            // 3. Process AI Auto-Reaction if suggested (WhatsApp only)
+            if (channel == "WhatsApp" && !string.IsNullOrEmpty(analysisResult.SuggestedReaction))
             {
                 try
                 {
@@ -898,7 +931,6 @@ namespace Modules.AI.Workers
                             dbContext.Messages.Add(reactionMessage);
                             await dbContext.SaveChangesAsync();
 
-                            var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
                             var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
 
                             var gatewayPayload = new
@@ -962,7 +994,7 @@ namespace Modules.AI.Workers
                     {
                         var conversation = await dbContext.Conversations
                             .IgnoreQueryFilters()
-                            .FirstOrDefaultAsync(c => c.CustomerId == customer.Id && c.Status != "Closed");
+                            .FirstOrDefaultAsync(c => c.CustomerId == customer.Id && c.Channel == channel && c.Status != "Closed");
 
                         if (conversation != null)
                         {

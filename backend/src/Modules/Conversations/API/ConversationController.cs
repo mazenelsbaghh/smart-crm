@@ -401,6 +401,21 @@ namespace Modules.Conversations.API
                         Timestamp = DateTime.UtcNow
                     };
                     _context.Messages.Add(publicMsg);
+                    await _context.SaveChangesAsync();
+
+                    // Broadcast via SignalR
+                    await _hubContext.Clients.Group($"project_{projectId}").SendAsync("ReceiveMessage", new
+                    {
+                        id = publicMsg.Id,
+                        conversationId = id,
+                        senderType = "Agent",
+                        content = publicMsg.Content,
+                        createdAt = publicMsg.Timestamp.ToString("o"),
+                        status = "Sent",
+                        channel = "FacebookComment",
+                        facebookPostId = lastComment.FacebookPostId,
+                        facebookCommentId = lastComment.FacebookCommentId
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -419,6 +434,50 @@ namespace Modules.Conversations.API
                         lastComment.FacebookCommentId!,
                         request.PrivateDM);
                     dmSent = true;
+
+                    // Find or create Messenger conversation to save private DM
+                    var messengerConv = await _context.Conversations
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(c => c.ProjectId == projectId && c.CustomerId == conversation.CustomerId && c.Channel == "Messenger"
+                            && (c.Status == "Open" || c.Status == "Pending"));
+
+                    if (messengerConv == null)
+                    {
+                        messengerConv = new Conversation
+                        {
+                            ProjectId = projectId,
+                            CustomerId = conversation.CustomerId,
+                            Channel = "Messenger",
+                            Status = "Open",
+                            LastMessageTimestamp = DateTime.UtcNow
+                        };
+                        _context.Conversations.Add(messengerConv);
+                        await _context.SaveChangesAsync();
+                    }
+
+                    var privateMsg = new Message
+                    {
+                        ConversationId = messengerConv.Id,
+                        ExternalMessageId = $"msg_out_{Guid.NewGuid():N}",
+                        Direction = "Outgoing",
+                        Content = request.PrivateDM,
+                        MessageType = "Text",
+                        Timestamp = DateTime.UtcNow
+                    };
+                    _context.Messages.Add(privateMsg);
+                    await _context.SaveChangesAsync();
+
+                    // Broadcast via SignalR to Messenger group
+                    await _hubContext.Clients.Group($"project_{projectId}").SendAsync("ReceiveMessage", new
+                    {
+                        id = privateMsg.Id,
+                        conversationId = messengerConv.Id,
+                        senderType = "Agent",
+                        content = privateMsg.Content,
+                        createdAt = privateMsg.Timestamp.ToString("o"),
+                        status = "Sent",
+                        channel = "Messenger"
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -436,6 +495,33 @@ namespace Modules.Conversations.API
                         lastComment.FacebookCommentId!,
                         request.Reaction);
                     reactionApplied = true;
+
+                    // Save reaction message
+                    var mappedReaction = Facebook.Services.FacebookGraphService.MapToFacebookReaction(request.Reaction);
+                    var reactionMsg = new Message
+                    {
+                        ConversationId = id,
+                        ExternalMessageId = $"msg_out_{Guid.NewGuid():N}",
+                        Direction = "Outgoing",
+                        Content = $"[تفاعل] {(mappedReaction == "LOVE" ? "❤️" : "👍")}",
+                        MessageType = "Reaction",
+                        Timestamp = DateTime.UtcNow
+                    };
+                    _context.Messages.Add(reactionMsg);
+                    await _context.SaveChangesAsync();
+
+                    // Broadcast via SignalR to Comment group
+                    await _hubContext.Clients.Group($"project_{projectId}").SendAsync("ReceiveMessage", new
+                    {
+                        id = reactionMsg.Id,
+                        conversationId = id,
+                        senderType = "Agent",
+                        content = reactionMsg.Content,
+                        createdAt = reactionMsg.Timestamp.ToString("o"),
+                        status = "Sent",
+                        messageType = "Reaction",
+                        channel = "FacebookComment"
+                    });
                 }
                 catch (Exception ex)
                 {

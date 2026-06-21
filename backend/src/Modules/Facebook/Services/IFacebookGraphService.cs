@@ -15,7 +15,7 @@ namespace Modules.Facebook.Services
     {
         Task SendMessageAsync(string pageId, string pageAccessToken, string recipientPSID, string message);
         Task ReplyToCommentAsync(string pageAccessToken, string commentId, string message);
-        Task ReactToCommentAsync(string pageAccessToken, string commentId, string reactionType = "LIKE");
+        Task ReactToCommentAsync(string pageAccessToken, string commentId, string reactionType = "LOVE");
         Task SendPrivateReplyAsync(string pageId, string pageAccessToken, string commentId, string message);
         Task SubscribePageToAppAsync(string pageId, string pageAccessToken);
         Task<List<FacebookPageInfo>> GetUserPagesAsync(string userAccessToken);

@@ -381,6 +381,31 @@ namespace Modules.Facebook.API
                 facebookCommentId = commentId
             });
 
+            // Broadcast AI typing if auto-reply is enabled for Comments
+            var settings = await _context.ProjectSettings
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            if (settings != null && settings.CommentsAiAutoReplyEnabled && (customer == null || !customer.IsBlacklisted))
+            {
+                var redisKey = $"ai_typing:{conversation.Id}";
+                try
+                {
+                    await _redis.StringSetAsync(redisKey, "generating", TimeSpan.FromSeconds(120));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[FacebookWebhook] Redis set failed: {ex.Message}");
+                }
+
+                await _hubContext.Clients.Group($"project_{projectId}").SendAsync("AITyping", new
+                {
+                    conversationId = conversation.Id,
+                    isTyping = true,
+                    estimatedSeconds = 11,
+                    stage = "generating"
+                });
+            }
+
             // Publish for AI auto-reply
             await _eventBus.PublishAsync(new Shared.Events.MessageAggregatedEvent
             {
