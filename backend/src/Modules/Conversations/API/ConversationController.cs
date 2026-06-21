@@ -392,6 +392,7 @@ namespace Modules.Conversations.API
                     var publicMsg = new Message
                     {
                         ConversationId = id,
+                        ExternalMessageId = $"msg_out_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
                         Content = request.PublicComment,
                         MessageType = "Text",
@@ -539,8 +540,8 @@ namespace Modules.Conversations.API
             // Save the outgoing reaction message (represented as an informational message or reaction)
             var reactionMessage = new Message
             {
-                ConversationId = conversation.Id,
-                ExternalMessageId = $"msg_agent_react_{Guid.NewGuid().ToString("N")}",
+                ConversationId = id,
+                ExternalMessageId = $"msg_reaction_{Guid.NewGuid():N}",
                 Direction = "Outgoing",
                 Content = $"[تفاعل] {request.ReactionText}",
                 MessageType = "Reaction",

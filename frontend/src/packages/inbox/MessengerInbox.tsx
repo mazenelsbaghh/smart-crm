@@ -120,7 +120,7 @@ export default function MessengerInbox() {
     if (!activeConv) return;
     const fetchMessages = async () => {
       try {
-        const response = await api.get<Message[]>(`/api/projects/${activeProject?.id}/conversations/${activeConv.id}/messages`);
+        const response = await api.get<Message[]>(`/api/conversations/${activeConv.id}/messages`);
         setMessages(response.data);
         setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       } catch (e) {
@@ -190,7 +190,7 @@ export default function MessengerInbox() {
     if (!inputMessage.trim() || !activeConv || !activeProject || sending) return;
     setSending(true);
     try {
-      await api.post(`/api/projects/${activeProject.id}/conversations/${activeConv.id}/messages`, {
+      await api.post(`/api/conversations/${activeConv.id}/messages`, {
         content: inputMessage,
         channel: 'Messenger'
       });

@@ -96,6 +96,7 @@ namespace Modules.Facebook.Workers
                     var msg = new Modules.Conversations.Domain.Message
                     {
                         ConversationId = conversation.Id,
+                        ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
                         Content = @event.Content,
                         MessageType = "Text",
@@ -105,7 +106,7 @@ namespace Modules.Facebook.Workers
                     await _context.SaveChangesAsync();
 
                     // Broadcast via SignalR
-                    await _hubContext.Clients.Group(@event.ProjectId.ToString()).SendAsync("ReceiveMessage", new
+                    await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
                     {
                         id = msg.Id,
                         conversationId = conversation.Id,

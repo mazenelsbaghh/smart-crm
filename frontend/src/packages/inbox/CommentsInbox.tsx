@@ -98,7 +98,7 @@ export default function CommentsInbox() {
     if (!activeConv) return;
     const fetchMessages = async () => {
       try {
-        const response = await api.get<Message[]>(`/api/projects/${activeProject?.id}/conversations/${activeConv.id}/messages`);
+        const response = await api.get<Message[]>(`/api/conversations/${activeConv.id}/messages`);
         setMessages(response.data);
         setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       } catch (e) {

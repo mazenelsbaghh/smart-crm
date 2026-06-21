@@ -211,9 +211,11 @@ namespace Modules.Facebook.API
             }
 
             // Save Message
+            var mid = message.TryGetProperty("mid", out var midProp) ? midProp.GetString() : null;
             var msg = new Message
             {
                 ConversationId = conversation.Id,
+                ExternalMessageId = mid ?? $"msg_fb_{Guid.NewGuid():N}",
                 Direction = "Incoming",
                 Content = messageText,
                 MessageType = "Text",
@@ -223,7 +225,7 @@ namespace Modules.Facebook.API
             await _context.SaveChangesAsync();
 
             // Broadcast via SignalR
-            await _hubContext.Clients.Group(projectId.ToString()).SendAsync("ReceiveMessage", new
+            await _hubContext.Clients.Group($"project_{projectId}").SendAsync("ReceiveMessage", new
             {
                 id = msg.Id,
                 conversationId = conversation.Id,
@@ -326,6 +328,7 @@ namespace Modules.Facebook.API
             var msg = new Message
             {
                 ConversationId = conversation.Id,
+                ExternalMessageId = commentId ?? $"msg_comment_{Guid.NewGuid():N}",
                 Direction = "Incoming",
                 Content = commentText ?? "",
                 MessageType = "Text",
@@ -337,7 +340,7 @@ namespace Modules.Facebook.API
             await _context.SaveChangesAsync();
 
             // Broadcast via SignalR
-            await _hubContext.Clients.Group(projectId.ToString()).SendAsync("ReceiveMessage", new
+            await _hubContext.Clients.Group($"project_{projectId}").SendAsync("ReceiveMessage", new
             {
                 id = msg.Id,
                 conversationId = conversation.Id,
