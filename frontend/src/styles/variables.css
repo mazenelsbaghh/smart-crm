@@ -3,48 +3,48 @@
   color-scheme: dark;
 
   /* HSL bridge for existing component styles */
-  --bg-primary: 222 41% 7%;
-  --bg-secondary: 220 32% 10%;
-  --bg-tertiary: 218 21% 20%;
+  --bg-primary: 220 17% 7%;      /* #0F1115 */
+  --bg-secondary: 223 19% 11%;   /* #171A21 */
+  --bg-tertiary: 221 20% 16%;    /* #202530 */
 
-  --text-primary: 210 28% 96%;
-  --text-secondary: 214 18% 78%;
-  --text-muted: 215 13% 61%;
+  --text-primary: 220 10% 91%;   /* #E8E8E8 */
+  --text-secondary: 220 8% 69%;  /* #B0B0B0 */
+  --text-muted: 220 6% 49%;      /* #7D7D7D */
 
-  --accent-primary: 184 84% 52%;
+  --accent-primary: 70 81% 65%;  /* #D8F15D */
   --accent-secondary: 326 82% 63%;
   --accent-success: 158 62% 46%;
   --accent-warning: 38 92% 55%;
   --accent-danger: 358 74% 59%;
 
-  /* OKLCH production tokens */
-  --canvas: oklch(0.175 0.024 247);
-  --canvas-soft: oklch(0.205 0.026 247);
-  --surface: oklch(0.242 0.028 247);
-  --surface-raised: oklch(0.286 0.032 247);
-  --surface-muted: oklch(0.218 0.026 247);
-  --border-subtle: oklch(0.36 0.035 247 / 0.72);
-  --border-strong: oklch(0.48 0.05 238 / 0.84);
-  --text-strong: oklch(0.955 0.01 240);
-  --text-base: oklch(0.81 0.018 242);
-  --text-soft: oklch(0.64 0.02 243);
-  --accent: oklch(0.79 0.145 205);
-  --accent-hover: oklch(0.86 0.126 200);
-  --accent-ink: oklch(0.19 0.026 247);
-  --accent-soft: oklch(0.79 0.145 205 / 0.12);
-  --accent-soft-strong: oklch(0.79 0.145 205 / 0.18);
-  --accent-secondary-soft: oklch(0.73 0.17 335 / 0.13);
+  /* OKLCH production tokens - Redesigned to map to flat dark charcoal/lime theme */
+  --canvas: oklch(0.16 0.012 250);            /* #0F1115 */
+  --canvas-soft: oklch(0.18 0.015 250);       /* slightly lighter than canvas */
+  --surface: oklch(0.20 0.016 250);           /* #171A21 */
+  --surface-raised: oklch(0.25 0.02 250);     /* #202530 */
+  --surface-muted: oklch(0.17 0.015 250);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text-strong: #E8E8E8;
+  --text-base: #B0B0B0;
+  --text-soft: #7D7D7D;
+  --accent: #D8F15D;
+  --accent-hover: oklch(0.91 0.12 110);
+  --accent-ink: #0F1115;
+  --accent-soft: rgba(216, 241, 93, 0.08);
+  --accent-soft-strong: rgba(216, 241, 93, 0.15);
+  --accent-secondary-soft: rgba(243, 92, 110, 0.08);
   --danger-soft: oklch(0.67 0.17 24 / 0.13);
   --success-soft: oklch(0.72 0.13 158 / 0.14);
   --warning-soft: oklch(0.78 0.14 75 / 0.15);
   --shadow-soft: none;
   --shadow-panel: none;
-  --focus-ring: 0 0 0 3px oklch(0.79 0.145 205 / 0.2);
-  --overlay: oklch(0.11 0.024 247 / 0.72);
+  --focus-ring: 0 0 0 3px rgba(216, 241, 93, 0.2);
+  --overlay: rgba(15, 17, 21, 0.72);
 
-  --border-glow: oklch(0.79 0.145 205 / 0.1);
-  --border-glow-active: oklch(0.79 0.145 205 / 0.3);
-  --shadow-neon: 0 0 0 1px oklch(0.79 0.145 205 / 0.22), 0 14px 34px oklch(0.79 0.145 205 / 0.1);
+  --border-glow: rgba(216, 241, 93, 0.1);
+  --border-glow-active: rgba(216, 241, 93, 0.3);
+  --shadow-neon: 0 0 0 1px rgba(216, 241, 93, 0.15), 0 14px 34px rgba(216, 241, 93, 0.08);
   --shadow-neon-pink: 0 0 0 1px oklch(0.73 0.17 335 / 0.2), 0 14px 34px oklch(0.73 0.17 335 / 0.09);
 
   --font-family: 'Cairo', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -75,11 +75,7 @@
 }
 
 body {
-  background:
-    linear-gradient(135deg, oklch(0.22 0.035 248 / 0.92), transparent 38%),
-    linear-gradient(315deg, oklch(0.21 0.03 285 / 0.55), transparent 42%),
-    var(--canvas);
-  background-attachment: fixed;
+  background-color: #0F1115;
   color: var(--text-strong);
   font-family: var(--font-family);
   direction: rtl;

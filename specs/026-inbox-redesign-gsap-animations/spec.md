@@ -80,6 +80,20 @@ Load the page and verify that panels animate in, metric numbers/cards fade up, a
 
 ---
 
+### User Story 5 - Dashboard & CRM Global Style Redesign (Priority: P1)
+As an Agent, I want all other pages in the CRM (Dashboard, CRM list, Deals pipeline, Follow-ups, Campaigns, Workflows, Knowledge base, Approvals, Reports, Settings) to automatically load using the new premium dark neon theme colors, fonts, card backgrounds, and neon lime-green active states, completely purging the legacy space-navy gradient backgrounds and cyan/pink accents.
+
+**Why this priority**: Required by the user to ensure consistency and prevent disjointed design experiences across different sidebar sections.
+
+**Independent Test**:
+Load any sidebar page (e.g. `/crm` or `/settings`) and verify that the body background is flat `#0F1115`, card backgrounds are `#171A21` with subtle borders, and all active/hover highlighting uses neon lime-green `#D8F15D`.
+
+**Acceptance Scenarios**:
+1. **Given** the agent is on the CRM customer list page, **When** the page renders, **Then** the background is dark charcoal and the pagination active buttons and label cards are highlighted in neon lime-green.
+2. **Given** the agent is on the settings page, **When** save button is hovered, **Then** the button glows with a neon lime-green outline and shadow.
+
+---
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -102,6 +116,8 @@ Load the page and verify that panels animate in, metric numbers/cards fade up, a
   - `DealValue` (decimal/budget)
   - `AIInsights` (text/JSON)
   - `AutomationRules` (text/JSON)
+- **FR-010**: All pages in the dashboard layout MUST use the redefined global custom properties (`var(--canvas)`, `var(--surface)`, `var(--accent)`, `var(--border-subtle)`) with the values `#0F1115`, `#171A21`, `#D8F15D`, and `rgba(255,255,255,0.06)` respectively.
+- **FR-011**: Hardcoded old styles/colors in CSS files (e.g. `crm.module.css`, `settings.module.css`) MUST be refactored to use design system variables, eliminating any remaining cyan (`rgba(0, 243, 255)`) or pink (`rgba(255, 0, 127)`) background/border highlights.
 
 ### Key Entities
 

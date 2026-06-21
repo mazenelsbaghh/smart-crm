@@ -1,9 +1,7 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { api } from '../../services/api';
-import { useAuth } from '../../context/auth-context';
-import { Calendar, Settings, ShieldAlert, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { Calendar, Settings, Sparkles } from 'lucide-react';
 import styles from './settings.module.css';
 
 interface AddonsProps {
@@ -72,11 +70,11 @@ export default function Addons({
                 width: '40px', 
                 height: '40px', 
                 borderRadius: '8px', 
-                backgroundColor: 'rgba(0, 243, 255, 0.1)', 
+                backgroundColor: 'var(--accent-soft)', 
                 display: 'flex', 
                 alignItems: 'center', 
                 justifyContent: 'center',
-                color: 'hsl(var(--accent-primary))'
+                color: 'var(--accent)'
               }}>
                 <Calendar size={22} />
               </div>

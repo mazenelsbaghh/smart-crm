@@ -1,6 +1,14 @@
 # UI/UX Plan
 
-**Last Updated**: 2026-06-06
+**Last Updated**: 2026-06-22
+
+## 2026-06-22: Complete Dashboard & Side Screens Theme Redesign (Active Plan)
+- **Goal**: Redesign all remaining dashboard pages to match the dark neon premium crm theme of the inbox.
+- **Updates**:
+  - Transition global backgrounds to deep matte charcoal `#0F1115`.
+  - Harmonize card components to translucent dark gray `#171A21` with subtle borders `rgba(255,255,255,0.06)`.
+  - Shift accent borders/hover highlights from cyan/pink to neon lime-green `#D8F15D`.
+  - Retain the thin 80px sidebar as the unified global navigation.
 
 ## 2026-06-06: Conversations list dynamic load more (Completed)
 - **Goal**: Implement smooth scrolling pagination for conversation cards.

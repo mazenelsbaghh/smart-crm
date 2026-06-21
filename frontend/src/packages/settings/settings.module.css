@@ -196,8 +196,8 @@
 }
 
 .btnSecondary:hover {
-  background: rgba(0, 243, 255, 0.05);
-  border-color: hsl(var(--accent-primary));
+  background: var(--accent-soft);
+  border-color: var(--accent);
   transform: translateY(-1px);
 }
 

@@ -271,9 +271,9 @@ export default function FollowUps() {
           style={{ 
             padding: '10px 20px', 
             fontSize: '0.85rem', 
-            backgroundColor: 'rgba(0, 243, 255, 0.1)', 
-            color: 'hsl(var(--accent-primary))',
-            borderColor: 'hsla(var(--accent-primary-hsl), 0.3)',
+            backgroundColor: 'var(--accent-soft)', 
+            color: 'var(--accent)',
+            borderColor: 'var(--accent-soft-strong)',
             borderRadius: 'var(--radius-sm)',
             fontWeight: 700,
             cursor: 'pointer',

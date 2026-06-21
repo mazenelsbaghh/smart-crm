@@ -67,9 +67,9 @@
 }
 
 .refreshButton:hover:not(:disabled) {
-  background-color: rgba(0, 243, 255, 0.04);
-  border-color: hsl(var(--accent-primary));
-  color: hsl(var(--accent-primary));
+  background-color: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .refreshButton:disabled {
@@ -157,12 +157,12 @@
 
 .badge {
   font-size: 0.7rem;
-  background-color: rgba(0, 243, 255, 0.08);
-  color: hsl(var(--accent-primary));
+  background-color: var(--accent-soft);
+  color: var(--accent);
   padding: 3px 8px;
   border-radius: var(--radius-full);
   font-weight: 600;
-  border: 1px solid rgba(0, 243, 255, 0.15);
+  border: 1px solid var(--accent-soft-strong);
 }
 
 .leadsList {
@@ -194,8 +194,8 @@
 }
 
 .leadItem:hover {
-  background-color: rgba(0, 243, 255, 0.02);
-  border-color: hsl(var(--accent-primary));
+  background-color: var(--accent-soft);
+  border-color: var(--accent);
   transform: translateX(-2px); /* RTL direction shift */
 }
 
@@ -271,23 +271,23 @@
 }
 
 .actionShortcut:hover {
-  background-color: rgba(0, 243, 255, 0.02);
-  border-color: hsl(var(--accent-primary));
+  background-color: var(--accent-soft);
+  border-color: var(--accent);
   box-shadow: var(--shadow-neon);
 }
 
 .actionShortcut:hover .shortcutArrow {
   transform: translateX(-4px); /* RTL direction shift */
-  color: hsl(var(--accent-primary));
+  color: var(--accent);
 }
 
 .shortcutIconBg {
   width: 40px;
   height: 40px;
   border-radius: var(--radius-md);
-  background-color: rgba(0, 243, 255, 0.08);
-  color: hsl(var(--accent-primary));
-  border: 1px solid rgba(0, 243, 255, 0.15);
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-soft-strong);
   display: flex;
   align-items: center;
   justify-content: center;

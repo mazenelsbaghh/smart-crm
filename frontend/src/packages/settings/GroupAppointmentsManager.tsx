@@ -408,10 +408,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
             display: 'flex', 
             alignItems: 'center', 
             gap: 'var(--space-md)',
-            background: 'linear-gradient(135deg, hsla(var(--accent-primary-hsl), 0.1) 0%, rgba(5, 7, 12, 0.4) 100%)',
-            border: '1px solid hsla(var(--accent-primary-hsl), 0.2)',
+            background: 'linear-gradient(135deg, var(--accent-soft) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            border: '1px solid var(--accent-soft-strong)',
             borderRadius: 'var(--radius-lg)',
-            boxShadow: '0 8px 32px 0 rgba(0, 243, 255, 0.05)',
+            boxShadow: 'var(--shadow-neon)',
             position: 'relative',
             overflow: 'hidden'
           }}>
@@ -701,7 +701,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                             <button
                               onClick={() => setSelectedGroup(group)}
                               className={`${styles.btn} ${styles.btnSecondary}`}
-                              style={{ padding: '4px 8px', fontSize: '0.75rem', backgroundColor: 'rgba(0, 243, 255, 0.08)', color: 'hsl(var(--accent-primary))' }}
+                              style={{ padding: '4px 8px', fontSize: '0.75rem', backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
                             >
                               <Users size={12} />
                               المشتركين ({group.bookedCount})
@@ -831,7 +831,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                               <a 
                                 href={`/inbox?customerId=${booking.customerId}`}
                                 className={`${styles.btn} ${styles.btnSecondary}`}
-                                style={{ padding: '4px 10px', fontSize: '0.75rem', backgroundColor: 'rgba(0, 243, 255, 0.05)' }}
+                                style={{ padding: '4px 10px', fontSize: '0.75rem', backgroundColor: 'var(--accent-soft)' }}
                               >
                                 فتح المحادثة
                               </a>

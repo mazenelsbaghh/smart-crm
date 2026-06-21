@@ -6,7 +6,7 @@
 
 ## Summary
 
-Redesign the inbox routes (WhatsApp, Messenger, Comments) to render a unified, modern dark/light layout exactly like the screenshot. To optimize reusability, create a unified `InboxLayout` structure. To support the right context panel, extend the EF Core C# `Customer` model with `PurchaseProbability`, `AIInsights`, and `AutomationRules` columns, generating a database migration. Introduce `gsap` and `@gsap/react` for fade-ins, active card animations, and panel transitions.
+Redesign the inbox routes (WhatsApp, Messenger, Comments) to render a unified, modern dark/light layout exactly like the screenshot. To optimize reusability, create a unified `InboxLayout` structure. To support the right context panel, extend the EF Core C# `Customer` model with `PurchaseProbability`, `AIInsights`, and `AutomationRules` columns, generating a database migration. Introduce `gsap` and `@gsap/react` for fade-ins, active card animations, and panel transitions. Additionally, unify the global CSS variables and refactor CRM/Settings modules to automatically propagate this dark neon premium theme across all remaining dashboard sidebar pages.
 
 ## Technical Context
 
@@ -73,15 +73,21 @@ backend/
 frontend/
 ├── package.json                    # MODIFIED: +gsap, +@gsap/react
 ├── src/
+│   ├── styles/
+│   │   └── variables.css           # MODIFIED: Redesign global HSL and OKLCH color variables to match dark neon theme
 │   ├── services/
 │   │   └── crm.ts                  # MODIFIED: updated Customer type definitions
 │   ├── packages/
-│   │   └── inbox/
-│   │       ├── InboxLayout.tsx     # NEW: Unified 4-panel viewport component
-│   │       ├── Inbox.tsx           # MODIFIED: Re-engineered under InboxLayout wrapper
-│   │       ├── MessengerInbox.tsx  # MODIFIED: Re-engineered under InboxLayout wrapper
-│   │       ├── CommentsInbox.tsx   # MODIFIED: Re-engineered under InboxLayout wrapper
-│   │       └── inbox.module.css    # MODIFIED: Stylesheet containing colors, layouts, animations
+│   │   ├── inbox/
+│   │   │   ├── InboxLayout.tsx     # NEW: Unified 4-panel viewport component
+│   │   │   ├── Inbox.tsx           # MODIFIED: Re-engineered under InboxLayout wrapper
+│   │   │   ├── MessengerInbox.tsx  # MODIFIED: Re-engineered under InboxLayout wrapper
+│   │   │   ├── CommentsInbox.tsx   # MODIFIED: Re-engineered under InboxLayout wrapper
+│   │   │   └── inbox.module.css    # MODIFIED: Stylesheet containing colors, layouts, animations
+│   │   ├── crm/
+│   │   │   └── crm.module.css      # MODIFIED: Clean up hardcoded cyan/pink colors
+│   │   └── settings/
+│   │       └── settings.module.css # MODIFIED: Clean up hardcoded cyan colors
 ```
 
 **Structure Decision**: Web application with backend C# modular monolith updates and Next.js frontend updates containing a unified CSS and components structure.

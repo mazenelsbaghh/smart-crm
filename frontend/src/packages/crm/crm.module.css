@@ -148,7 +148,7 @@
 }
 
 .tr:hover {
-  background-color: rgba(0, 243, 255, 0.03);
+  background-color: var(--accent-soft);
 }
 
 .td {
@@ -167,9 +167,9 @@
   width: 36px;
   height: 36px;
   border-radius: var(--radius-full);
-  background-color: rgba(0, 243, 255, 0.08);
-  color: hsl(var(--accent-primary));
-  border: 1px solid rgba(0, 243, 255, 0.2);
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -235,9 +235,9 @@
 
 .smartLabelBadge {
   font-size: 0.7rem;
-  background-color: rgba(255, 0, 127, 0.08);
+  background-color: var(--accent-secondary-soft);
   color: hsl(var(--accent-secondary));
-  border: 1px solid rgba(255, 0, 127, 0.2);
+  border: 1px solid rgba(243, 92, 110, 0.2);
   border-radius: var(--radius-sm);
   padding: 1px 6px;
   display: inline-flex;
@@ -269,14 +269,14 @@
 }
 
 .labelCard:hover {
-  border-color: rgba(0, 243, 255, 0.2);
-  background: rgba(0, 243, 255, 0.02);
+  border-color: var(--accent-soft-strong);
+  background: var(--accent-soft);
 }
 
 .labelCardActive {
-  border-color: hsl(var(--accent-secondary)) !important;
-  background: rgba(255, 0, 127, 0.1) !important;
-  box-shadow: 0 0 12px rgba(255, 0, 127, 0.15);
+  border-color: var(--accent) !important;
+  background: var(--accent-soft-strong) !important;
+  box-shadow: var(--shadow-neon) !important;
 }
 
 .labelCardName {
@@ -314,9 +314,9 @@
 }
 
 .editButton:hover {
-  border-color: hsl(var(--accent-primary));
-  background-color: rgba(0, 243, 255, 0.05);
-  color: hsl(var(--accent-primary));
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* Kanban Deal Pipeline Board */
@@ -383,10 +383,10 @@
 
 .addDealTrigger {
   width: 100%;
-  background-color: rgba(0, 243, 255, 0.02);
-  border: 1px dashed rgba(0, 243, 255, 0.2);
+  background-color: var(--accent-soft);
+  border: 1px dashed var(--accent-soft-strong);
   border-radius: var(--radius-md);
-  color: hsl(var(--accent-primary));
+  color: var(--accent);
   padding: 8px;
   font-size: 0.8rem;
   font-weight: 600;
@@ -399,9 +399,9 @@
 }
 
 .addDealTrigger:hover {
-  background-color: rgba(0, 243, 255, 0.05);
-  border-color: hsl(var(--accent-primary));
-  color: hsl(var(--text-primary));
+  background-color: var(--accent-soft-strong);
+  border-color: var(--accent);
+  color: var(--text-primary);
 }
 
 .addDealForm {
@@ -427,8 +427,8 @@
 }
 
 .addInput:focus {
-  border-color: hsl(var(--accent-primary));
-  box-shadow: 0 0 10px rgba(0, 243, 255, 0.15);
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .addSelect {
@@ -444,8 +444,8 @@
 }
 
 .addSelect:focus {
-  border-color: hsl(var(--accent-primary));
-  box-shadow: 0 0 10px rgba(0, 243, 255, 0.15);
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .formActionButtons {
@@ -511,7 +511,7 @@
 .dealCard:hover {
   background: rgba(16, 13, 26, 0.6);
   transform: translateY(-2px);
-  border-color: rgba(0, 243, 255, 0.25);
+  border-color: var(--accent-soft-strong);
   box-shadow: var(--shadow-neon);
 }
 
@@ -571,9 +571,9 @@
 }
 
 .actionBtn:hover:not(:disabled) {
-  background-color: rgba(0, 243, 255, 0.05);
-  border-color: hsl(var(--accent-primary));
-  color: hsl(var(--accent-primary));
+  background-color: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .statusActions {
