@@ -57,13 +57,15 @@ namespace Modules.AI.Services
             string aiTonePreference = null,
             string aiTargetAudience = null,
             string geminiModel = null,
-            string cachedContentId = null);
+            string cachedContentId = null,
+            string? systemPromptOverride = null);
 
         string BuildStaticPrompt(
             string agentName,
             string tonePref,
             string targetAud,
-            string approvedKnowledgeBaseText);
+            string approvedKnowledgeBaseText,
+            string? systemPromptOverride = null);
 
         string GetCurrentAgentName();
         Task<string> RewriteFollowUpNotesAsync(
@@ -283,7 +285,8 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             string aiTonePreference = null,
             string aiTargetAudience = null,
             string geminiModel = null,
-            string cachedContentId = null)
+            string cachedContentId = null,
+            string? systemPromptOverride = null)
         {
             var agentName = GetCurrentAgentName();
             Console.WriteLine($"[AIMarketingBrain] Active shift agent resolved: {agentName} (UTC hour: {DateTime.UtcNow.Hour})");
@@ -330,7 +333,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             }
             else
             {
-                var systemPrompt = SystemPromptTemplate;
+                var systemPrompt = !string.IsNullOrEmpty(systemPromptOverride) ? systemPromptOverride : SystemPromptTemplate;
 
             var tonePref = !string.IsNullOrEmpty(aiTonePreference) ? aiTonePreference : "العامية المصرية الروشة والصايعة";
             var targetAud = !string.IsNullOrEmpty(aiTargetAudience) ? aiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل";
@@ -535,9 +538,10 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             string agentName,
             string tonePref,
             string targetAud,
-            string approvedKnowledgeBaseText)
+            string approvedKnowledgeBaseText,
+            string? systemPromptOverride = null)
         {
-            var systemPrompt = SystemPromptTemplate;
+            var systemPrompt = !string.IsNullOrEmpty(systemPromptOverride) ? systemPromptOverride : SystemPromptTemplate;
 
             var resolvedTonePref = !string.IsNullOrEmpty(tonePref) ? tonePref : "العامية المصرية الروشة والصايعة";
             var resolvedTargetAud = !string.IsNullOrEmpty(targetAud) ? targetAud : "طلاب كورس كول سنتر يبحثون عن عمل";

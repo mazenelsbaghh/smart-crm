@@ -159,7 +159,7 @@ namespace Modules.AI.Workers
                 var tonePref = !string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية الروشة والصايعة";
                 var targetAud = !string.IsNullOrEmpty(settings.AiTargetAudience) ? settings.AiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل";
                 var agentName = _aiMarketingBrain.GetCurrentAgentName();
-                var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText);
+                var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText, settings.SystemPrompt);
 
                 var geminiClient = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IGeminiClient>();
                 int staticTokensCount = await geminiClient.CountTokensAsync(staticPrompt, apiKeyOverride, settings.GeminiModel);
@@ -630,7 +630,8 @@ namespace Modules.AI.Workers
                 settings.AiTonePreference,
                 settings.AiTargetAudience,
                 settings.GeminiModel,
-                cachedContentId);
+                cachedContentId,
+                settings.SystemPrompt);
 
             await ApplyKnowledgePricingGuardAsync(dbContext, @event.ProjectId, @event.Content, analysisResult);
 

@@ -52,6 +52,7 @@ interface ProjectSettingsResponse {
     messengerReplyDelay?: number;
     commentsAiAutoReplyEnabled?: boolean;
     commentsReplyDelay?: number;
+    systemPrompt?: string;
   } | null;
 }
 
@@ -87,6 +88,7 @@ export default function Settings() {
   const [messengerReplyDelay, setMessengerReplyDelay] = useState(3);
   const [commentsAutoReplyEnabled, setCommentsAutoReplyEnabled] = useState(false);
   const [commentsReplyDelay, setCommentsReplyDelay] = useState(3);
+  const [systemPrompt, setSystemPrompt] = useState('');
 
   // Facebook Pages state
   const [connectedPages, setConnectedPages] = useState<Array<{ id: string; pageId: string; pageName: string; connectedAt: string }>>([]);
@@ -149,6 +151,7 @@ export default function Settings() {
       setMessengerReplyDelay(settings?.messengerReplyDelay ?? 3);
       setCommentsAutoReplyEnabled(settings?.commentsAiAutoReplyEnabled ?? false);
       setCommentsReplyDelay(settings?.commentsReplyDelay ?? 3);
+      setSystemPrompt(settings?.systemPrompt || '');
     } catch {
       setMessage({ type: 'error', text: 'تعذر تحميل إعدادات الرد الآلي.' });
     }
@@ -379,6 +382,7 @@ export default function Settings() {
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
         commentsReplyDelay,
+        systemPrompt: systemPrompt.trim(),
       });
       setMessage({ type: 'success', text: 'تم حفظ إعدادات الرد الآلي بنجاح.' });
       void refreshProjects();
@@ -404,7 +408,8 @@ export default function Settings() {
         messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
-        commentsReplyDelay
+        commentsReplyDelay,
+        systemPrompt: systemPrompt.trim(),
       });
       setIsGroupAppointmentsEnabled(enabled);
     } catch (e) {
@@ -778,6 +783,21 @@ export default function Settings() {
                 />
                 <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
                   تساعد البوت على تخصيص الحجج البيعية ونبرة الاهتمام المناسبة للعميل.
+                </span>
+              </div>
+              
+              <div className={styles.formGroup}>
+                <label className={styles.label}>التعليمات الثابتة للذكاء الاصطناعي (System Prompt)</label>
+                <textarea
+                  placeholder="التعليمات الثابتة لنموذج الذكاء الاصطناعي..."
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  className={styles.input}
+                  rows={8}
+                  style={{ minHeight: '120px', direction: 'ltr', textAlign: 'left', fontFamily: 'monospace', fontSize: '0.85rem' }}
+                />
+                <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
+                  تتيح لك هذه الإعدادات التحكم الكامل في توجيهات النظام والبرومت الثابت المرسل مع الذكاء الاصطناعي.
                 </span>
               </div>
 

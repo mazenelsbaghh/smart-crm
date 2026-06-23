@@ -21,6 +21,7 @@ namespace Modules.Projects.Domain
         public int MessengerReplyDelay { get; set; } = 5;
         public bool CommentsAiAutoReplyEnabled { get; set; } = false;
         public int CommentsReplyDelay { get; set; } = 10;
+        public string? SystemPrompt { get; set; }
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }
