@@ -19,5 +19,6 @@ namespace Modules.Facebook.Services
         Task SendPrivateReplyAsync(string pageId, string pageAccessToken, string commentId, string message);
         Task SubscribePageToAppAsync(string pageId, string pageAccessToken);
         Task<List<FacebookPageInfo>> GetUserPagesAsync(string userAccessToken);
+        Task<string?> GetMessengerProfileNameAsync(string psid, string pageAccessToken);
     }
 }

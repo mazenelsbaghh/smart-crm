@@ -192,5 +192,38 @@ namespace Modules.Facebook.Services
             _logger.LogInformation("[FacebookGraph] Found {Count} pages for user", pages.Count);
             return pages;
         }
+
+        public async Task<string?> GetMessengerProfileNameAsync(string psid, string pageAccessToken)
+        {
+            try
+            {
+                var url = $"{GraphUrl}/{psid}?fields=first_name,last_name&access_token={pageAccessToken}";
+                var response = await _httpClient.GetAsync(url);
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("[FacebookGraph] GetMessengerProfileName failed: {StatusCode} {Body}", response.StatusCode, responseBody);
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(responseBody);
+                var root = doc.RootElement;
+                
+                var firstName = root.TryGetProperty("first_name", out var fnProp) ? fnProp.GetString() : null;
+                var lastName = root.TryGetProperty("last_name", out var lnProp) ? lnProp.GetString() : null;
+
+                if (!string.IsNullOrEmpty(firstName) || !string.IsNullOrEmpty(lastName))
+                {
+                    return $"{firstName} {lastName}".Trim();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[FacebookGraph] Error fetching Messenger profile name for PSID: {PSID}", psid);
+            }
+
+            return null;
+        }
     }
 }

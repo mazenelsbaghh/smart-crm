@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Modules.Conversations.Domain;
 using Modules.Conversations.Hubs;
 using Modules.Conversations.Services;
+using Modules.Facebook.Services;
 using Shared.Infrastructure;
 using System;
 using System.IO;
@@ -26,6 +27,7 @@ namespace Modules.Facebook.API
         private readonly IMessageAggregator _messageAggregator;
         private readonly Shared.Queue.IEventBus _eventBus;
         private readonly StackExchange.Redis.IDatabase _redis;
+        private readonly IFacebookGraphService _graphService;
 
         public FacebookWebhookController(
             AppDbContext context,
@@ -33,7 +35,8 @@ namespace Modules.Facebook.API
             IHubContext<NotificationHub> hubContext,
             IMessageAggregator messageAggregator,
             Shared.Queue.IEventBus eventBus,
-            StackExchange.Redis.IConnectionMultiplexer redis)
+            StackExchange.Redis.IConnectionMultiplexer redis,
+            IFacebookGraphService graphService)
         {
             _context = context;
             _configuration = configuration;
@@ -41,6 +44,7 @@ namespace Modules.Facebook.API
             _messageAggregator = messageAggregator;
             _eventBus = eventBus;
             _redis = redis.GetDatabase();
+            _graphService = graphService;
         }
 
         /// <summary>
@@ -174,17 +178,28 @@ namespace Modules.Facebook.API
 
             if (customer == null)
             {
+                var realName = await _graphService.GetMessengerProfileNameAsync(senderPSID, connectedPage.PageAccessToken);
                 customer = new Customer
                 {
                     ProjectId = projectId,
                     PhoneNumber = "",
-                    Name = $"Messenger User {senderPSID.Substring(0, Math.Min(6, senderPSID.Length))}",
+                    Name = realName ?? $"Messenger User {senderPSID.Substring(0, Math.Min(6, senderPSID.Length))}",
                     City = "",
                     FacebookPSID = senderPSID,
-                    FacebookName = null
+                    FacebookName = realName
                 };
                 _context.Customers.Add(customer);
                 await _context.SaveChangesAsync();
+            }
+            else if (customer.Name.StartsWith("Messenger User") && string.IsNullOrEmpty(customer.FacebookName))
+            {
+                var realName = await _graphService.GetMessengerProfileNameAsync(senderPSID, connectedPage.PageAccessToken);
+                if (!string.IsNullOrEmpty(realName))
+                {
+                    customer.Name = realName;
+                    customer.FacebookName = realName;
+                    await _context.SaveChangesAsync();
+                }
             }
 
             // Resolve or create Conversation
