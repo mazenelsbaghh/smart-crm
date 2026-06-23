@@ -21,5 +21,6 @@ namespace Shared.Events
         public string? FollowUpAppointmentTime { get; set; }
         public string? FollowUpDueDate { get; set; }
         public string? FollowUpNotes { get; set; }
+        public string[]? AIInsights { get; set; }
     }
 }

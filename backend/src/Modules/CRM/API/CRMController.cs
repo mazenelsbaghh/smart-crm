@@ -633,11 +633,25 @@ namespace Modules.CRM.API
                 _context.Entry(fu).State = EntityState.Modified;
             }
 
-            // Schedule a new default follow-up 24 hours in the future only if AI auto-reply is enabled and customer is not blacklisted
+            // Schedule a new default follow-up 24 hours in the future only if AI auto-reply is enabled and customer is not blacklisted and whatsapp reminder automation is enabled
             var settings = await _context.ProjectSettings
                 .FirstOrDefaultAsync(s => s.ProjectId == followUp.ProjectId);
             
-            bool shouldScheduleFollowUp = settings != null && settings.AiAutoReplyEnabled && !customer.IsBlacklisted;
+            bool whatsappReminderEnabled = true;
+            if (!string.IsNullOrEmpty(customer.AutomationRules))
+            {
+                try
+                {
+                    using var rulesDoc = JsonDocument.Parse(customer.AutomationRules);
+                    if (rulesDoc.RootElement.TryGetProperty("whatsappReminder24h", out var prop))
+                    {
+                        whatsappReminderEnabled = prop.GetBoolean();
+                    }
+                }
+                catch {}
+            }
+
+            bool shouldScheduleFollowUp = settings != null && settings.AiAutoReplyEnabled && !customer.IsBlacklisted && whatsappReminderEnabled;
 
             if (shouldScheduleFollowUp)
             {
@@ -925,6 +939,88 @@ JSON:";
                 return BadRequest(ex.Message);
             }
         }
+
+        [HttpGet("customers/{customerId}/tasks")]
+        public async Task<IActionResult> GetCustomerTasks(Guid customerId)
+        {
+            var tasks = await _context.CustomerTasks
+                .Where(t => t.CustomerId == customerId)
+                .OrderBy(t => t.IsCompleted)
+                .ThenBy(t => t.CreatedAt)
+                .ToListAsync();
+            return Ok(tasks);
+        }
+
+        [HttpPost("customers/{customerId}/tasks")]
+        public async Task<IActionResult> CreateCustomerTask(Guid customerId, [FromBody] CreateCustomerTaskRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Title)) return BadRequest("Title is required");
+            var customer = await _context.Customers.FindAsync(customerId);
+            if (customer == null) return NotFound("Customer not found");
+
+            var task = new Modules.CRM.Domain.CustomerTask
+            {
+                Id = Guid.NewGuid(),
+                CustomerId = customerId,
+                ProjectId = customer.ProjectId,
+                Title = request.Title,
+                IsCompleted = false,
+                DueDate = request.DueDate.HasValue ? DateTime.SpecifyKind(request.DueDate.Value, DateTimeKind.Utc) : null
+            };
+
+            _context.CustomerTasks.Add(task);
+            await _context.SaveChangesAsync();
+            return Ok(task);
+        }
+
+        [HttpPut("customers/tasks/{taskId}")]
+        public async Task<IActionResult> UpdateCustomerTask(Guid taskId, [FromBody] UpdateCustomerTaskRequest request)
+        {
+            var task = await _context.CustomerTasks.FindAsync(taskId);
+            if (task == null) return NotFound("Task not found");
+
+            if (request.Title != null)
+            {
+                task.Title = request.Title;
+            }
+            if (request.IsCompleted.HasValue)
+            {
+                task.IsCompleted = request.IsCompleted.Value;
+            }
+            if (request.IsDueDateSet)
+            {
+                task.DueDate = request.DueDate.HasValue ? DateTime.SpecifyKind(request.DueDate.Value, DateTimeKind.Utc) : null;
+            }
+
+            _context.Entry(task).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+            return Ok(task);
+        }
+
+        [HttpDelete("customers/tasks/{taskId}")]
+        public async Task<IActionResult> DeleteCustomerTask(Guid taskId)
+        {
+            var task = await _context.CustomerTasks.FindAsync(taskId);
+            if (task == null) return NotFound("Task not found");
+
+            _context.CustomerTasks.Remove(task);
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+    }
+
+    public class CreateCustomerTaskRequest
+    {
+        public string Title { get; set; }
+        public DateTime? DueDate { get; set; }
+    }
+
+    public class UpdateCustomerTaskRequest
+    {
+        public string? Title { get; set; }
+        public bool? IsCompleted { get; set; }
+        public DateTime? DueDate { get; set; }
+        public bool IsDueDateSet { get; set; } = false;
     }
 
     public class UpdateCustomerMemoryRequest

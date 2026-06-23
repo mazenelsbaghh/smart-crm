@@ -36,11 +36,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   // Form fields
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
-  const [budget, setBudget] = useState('');
   const [leadScore, setLeadScore] = useState(0);
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState<string[]>([]);
-  const [pipelineStage, setPipelineStage] = useState('New');
   const [label, setLabel] = useState('');
   const [isBlacklisted, setIsBlacklisted] = useState(false);
 
@@ -71,11 +69,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       setCustomer(data);
       setName(data.name || '');
       setCity(data.city || '');
-      setBudget(data.budget ? data.budget.toString() : '');
       setLeadScore(data.leadScore || 0);
       setNotes(data.notes || '');
       setTags(data.tags || []);
-      setPipelineStage(data.pipelineStage || 'New');
       setLabel(data.label || '');
       setIsBlacklisted(data.isBlacklisted || false);
 
@@ -147,11 +143,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             setCustomer(custResp);
             setName(custResp.name || '');
             setCity(custResp.city || '');
-            setBudget(custResp.budget ? custResp.budget.toString() : '');
             setLeadScore(custResp.leadScore || 0);
             setNotes(custResp.notes || '');
             setTags(custResp.tags || []);
-            setPipelineStage(custResp.pipelineStage || 'New');
             setLabel(custResp.label || '');
             setIsBlacklisted(custResp.isBlacklisted || false);
           }
@@ -185,8 +179,6 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
         leadScore: Math.min(100, Math.max(0, leadScore)),
         notes,
         tags,
-        budget: budget ? parseFloat(budget) : null,
-        pipelineStage,
         label,
         isBlacklisted,
       });
@@ -400,19 +392,6 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>الميزانية ($)</label>
-                <input 
-                  type="number" 
-                  step="0.01"
-                  value={budget} 
-                  onChange={(e) => setBudget(e.target.value)} 
-                  className={styles.input} 
-                />
-              </div>
-            </div>
-
-            <div className={styles.formRow}>
-              <div className={styles.formGroup}>
                 <label className={styles.label}>تقييم الاهتمام (Lead Score)</label>
                 <input
                   type="number"
@@ -422,22 +401,6 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   onChange={(e) => setLeadScore(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
                   className={styles.input}
                 />
-              </div>
-
-              <div className={styles.formGroup}>
-                <label className={styles.label}>مرحلة مسار المبيعات (Pipeline Stage)</label>
-                <select
-                  value={pipelineStage}
-                  onChange={(e) => setPipelineStage(e.target.value)}
-                  className={styles.select}
-                >
-                  <option value="New">جديد (New)</option>
-                  <option value="Contacted">تم التواصل (Contacted)</option>
-                  <option value="Proposal">عرض سعر (Proposal)</option>
-                  <option value="Negotiation">تفاوض (Negotiation)</option>
-                  <option value="Won">تم البيع (Won)</option>
-                  <option value="Lost">خسارة (Lost)</option>
-                </select>
               </div>
             </div>
 
@@ -514,13 +477,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             <div className={styles.scoreIndicatorPanel}>
               <h3 className={styles.sectionTitle}>AI Summary & Profile</h3>
               <div className={styles.scoreCards} style={{ marginBottom: '12px' }}>
-                <div className={styles.scoreCard} style={{ border: '1px solid var(--accent)', backgroundColor: 'var(--accent-soft)' }}>
+                <div className={styles.scoreCard} style={{ border: '1px solid var(--accent)', backgroundColor: 'var(--accent-soft)', width: '100%' }}>
                   <span className={styles.scoreLabel}>Lead Score</span>
                   <span className={styles.scoreVal}>{clampedDisplayScore}/100</span>
-                </div>
-                <div className={styles.scoreCard} style={{ border: '1px solid rgba(243, 92, 110, 0.25)', backgroundColor: 'var(--accent-secondary-soft)' }}>
-                  <span className={styles.scoreLabel}>System Stage</span>
-                  <span className={styles.scoreVal}>{pipelineStage}</span>
                 </div>
               </div>
 

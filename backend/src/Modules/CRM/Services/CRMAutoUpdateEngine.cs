@@ -42,6 +42,12 @@ namespace Modules.CRM.Services
             // Always update customer label on every message
             customer.Label = !string.IsNullOrEmpty(@event.Label) ? @event.Label : "استفسار عام";
 
+            // Update AI Insights if present
+            if (@event.AIInsights != null && @event.AIInsights.Length > 0)
+            {
+                customer.AIInsights = string.Join("\n", @event.AIInsights);
+            }
+
             bool highConfidence = @event.Confidence >= 0.8;
             string status = highConfidence ? "Applied" : "PendingApproval";
 
@@ -65,7 +71,8 @@ namespace Modules.CRM.Services
                 }
             }
 
-            // Process Budget
+            // Process Budget (Disabled - Deals/Profits removed)
+            /*
             if (@event.Budget.HasValue)
             {
                 var proposal = new CRMUpdateProposal
@@ -92,6 +99,7 @@ namespace Modules.CRM.Services
                     }
                 }
             }
+            */
 
             // Process Interests
             if (@event.Interests != null && @event.Interests.Length > 0)
@@ -216,7 +224,8 @@ namespace Modules.CRM.Services
                 });
             }
 
-            // 3. Process Suggested Pipeline Stage
+            // 3. Process Suggested Pipeline Stage (Disabled - Deals/Profits removed)
+            /*
             if (!string.IsNullOrEmpty(@event.PipelineStage))
             {
                 var stage = await _context.PipelineStages
@@ -303,6 +312,8 @@ namespace Modules.CRM.Services
                     resolvedStageName = currentStage.Name;
                 }
             }
+            */
+            string resolvedStageName = "New";
 
             // Enforce that complaints or angry/negative customers never get automated follow-ups
             bool isComplaintOrNegative = 

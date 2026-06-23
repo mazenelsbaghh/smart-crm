@@ -99,6 +99,33 @@ namespace Modules.CRM.Services
                         continue;
                     }
 
+                    // Check if WhatsApp auto-reminder rule is disabled in automation rules
+                    bool whatsappReminderEnabled = true;
+                    if (!string.IsNullOrEmpty(customer.AutomationRules))
+                    {
+                        try
+                        {
+                            using var rulesDoc = JsonDocument.Parse(customer.AutomationRules);
+                            if (rulesDoc.RootElement.TryGetProperty("whatsappReminder24h", out var prop))
+                            {
+                                whatsappReminderEnabled = prop.GetBoolean();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[Hangfire Job] Error parsing automation rules for customer {customer.Id}: {ex.Message}");
+                        }
+                    }
+
+                    if (!whatsappReminderEnabled)
+                    {
+                        Console.WriteLine($"[Hangfire Job] WhatsApp reminder is disabled in automation rules for customer {customer.PhoneNumber}. Bypassing follow-up {followUp.Id}.");
+                        followUp.Status = "Bypassed";
+                        dbContext.Entry(followUp).State = EntityState.Modified;
+                        await dbContext.SaveChangesAsync();
+                        continue;
+                    }
+
                     string messageContent = string.Empty;
                     if (!string.IsNullOrEmpty(followUp.Notes))
                     {

@@ -8,6 +8,13 @@ This document tracks all frontend requirements, design structures, pages, and im
 
 ## Chronological Log
 
+### 2026-06-23: Remove Deals & Profits from UI (Completed)
+- **Goal**: Clean up the user interface from deals, sales pipelines, and profits statistics.
+- **Updates**:
+  - Removed "مسار الصفقات" (Pipeline Board) link from the main side navigation in root [layout.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/app/%28dashboard%29/layout.tsx).
+  - Cleaned up the [Dashboard.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/dashboard/Dashboard.tsx) by removing the Open Deals and Closed Revenue metric cards, removing the deals quick action button, and removing unused imports/states.
+  - Updated the customer profile modal in [CustomerDetail.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/components/shared/CustomerDetail.tsx) to remove budget input, pipeline stage dropdown, and the "System Stage" display card, grouping city and lead score fields together.
+
 ### 2026-06-23: Add Public Privacy Policy Page (Completed)
 - **Goal**: Create a clean, responsive public page at `/privacy` containing the privacy terms, data collection policies, and data deletion instructions required for Meta App Review.
 - **Updates**:

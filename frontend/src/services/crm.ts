@@ -19,6 +19,15 @@ export interface Customer {
   automationRules?: string | null;
 }
 
+export interface CustomerTask {
+  id: string;
+  projectId: string;
+  customerId: string;
+  title: string;
+  isCompleted: boolean;
+  dueDate?: string;
+}
+
 export interface PipelineStage {
   id: string;
   projectId: string;
@@ -94,5 +103,24 @@ export const crmService = {
   recalculateAnalytics: async (projectId: string): Promise<{ message: string }> => {
     const response = await api.post<{ message: string }>(`/api/projects/${projectId}/analytics/recalculate`);
     return response.data;
+  },
+
+  getCustomerTasks: async (customerId: string): Promise<CustomerTask[]> => {
+    const response = await api.get<CustomerTask[]>(`/api/customers/${customerId}/tasks`);
+    return response.data;
+  },
+
+  createCustomerTask: async (customerId: string, title: string, dueDate?: string): Promise<CustomerTask> => {
+    const response = await api.post<CustomerTask>(`/api/customers/${customerId}/tasks`, { title, dueDate });
+    return response.data;
+  },
+
+  updateCustomerTask: async (taskId: string, data: Partial<CustomerTask>): Promise<CustomerTask> => {
+    const response = await api.put<CustomerTask>(`/api/customers/tasks/${taskId}`, data);
+    return response.data;
+  },
+
+  deleteCustomerTask: async (taskId: string): Promise<void> => {
+    await api.delete(`/api/customers/tasks/${taskId}`);
   },
 };

@@ -30,6 +30,7 @@ namespace Modules.AI.Services
         public string? SuggestedReaction { get; set; }
         public string? SuggestedGroupBookingId { get; set; }
         public bool CancelGroupBooking { get; set; } = false;
+        public string[] AIInsights { get; set; } = Array.Empty<string>();
     }
 
     public class SuggestedFollowUpResult
@@ -124,7 +125,8 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
   },
   ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null"",
   ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null"",
-  ""cancelGroupBooking"": true | false
+  ""cancelGroupBooking"": true | false,
+  ""aiInsights"": [""2-3 brief insights/recommendations about the customer behavior/needs in Arabic based on the conversation history, e.g. 'العميل مهتم ببرنامج متقدم', 'يرغب في تغيير موعد حجز المجموعة' (max 10-15 words per insight)""]
 }
 
 Guidelines for publicCommentReply:
@@ -455,6 +457,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     result.Entities ??= new CRMEntities();
                     result.Entities.Interests ??= Array.Empty<string>();
                     result.SuggestedButtons ??= Array.Empty<string>();
+                    result.AIInsights ??= Array.Empty<string>();
                     if (string.IsNullOrEmpty(result.Label))
                     {
                         result.Label = "استفسار عام";
@@ -510,7 +513,8 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 Confidence = 0.5,
                 Label = "استفسار عام",
                 PipelineStage = "New",
-                SuggestedButtons = Array.Empty<string>()
+                SuggestedButtons = Array.Empty<string>(),
+                AIInsights = Array.Empty<string>()
             };
             if (PricingGuard.IsPricingQuestion(messageContent))
             {

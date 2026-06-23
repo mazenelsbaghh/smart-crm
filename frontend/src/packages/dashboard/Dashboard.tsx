@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../../context/auth-context';
-import { crmService, Customer, Deal } from '../../services/crm';
+import { crmService, Customer } from '../../services/crm';
 import { useRouter } from 'next/navigation';
 import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
@@ -12,14 +12,11 @@ if (typeof window !== 'undefined') {
 }
 import { 
   Users, 
-  DollarSign, 
-  Target, 
   TrendingUp, 
   Sparkles, 
   MessageSquare, 
   RefreshCw, 
-  ArrowRight,
-  UserCheck
+  ArrowRight
 } from 'lucide-react';
 import styles from './dashboard.module.css';
 
@@ -45,7 +42,6 @@ export default function Dashboard() {
   }, { scope: containerRef });
   
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [recalculating, setRecalculating] = useState(false);
 
@@ -54,9 +50,7 @@ export default function Dashboard() {
     try {
       setLoading(true);
       const custData = await crmService.getCustomers(activeProject.id);
-      const dealData = await crmService.getDeals(activeProject.id);
       setCustomers(custData);
-      setDeals(dealData);
     } catch (err) {
       console.error('Failed to load dashboard data', err);
     } finally {
@@ -92,9 +86,6 @@ export default function Dashboard() {
 
   // Calculate metrics
   const totalCustomers = customers.length;
-  const activeDeals = deals.filter(d => d.status === 0).length;
-  const closedWonDeals = deals.filter(d => d.status === 1);
-  const revenue = closedWonDeals.reduce((sum, d) => sum + d.amount, 0);
   
   // Average Lead Score
   const avgLeadScore = totalCustomers > 0 
@@ -133,26 +124,6 @@ export default function Dashboard() {
           <div>
             <span className={styles.statLabel}>إجمالي العملاء</span>
             <h2 className={styles.statValue}>{totalCustomers}</h2>
-          </div>
-        </div>
-
-        <div className={`glass-panel ${styles.statCard}`}>
-          <div className={styles.statIconContainer}>
-            <Target size={24} style={{ color: 'hsl(var(--accent-secondary))' }} />
-          </div>
-          <div>
-            <span className={styles.statLabel}>الصفقات المفتوحة</span>
-            <h2 className={styles.statValue}>{activeDeals}</h2>
-          </div>
-        </div>
-
-        <div className={`glass-panel ${styles.statCard}`}>
-          <div className={styles.statIconContainer}>
-            <DollarSign size={24} style={{ color: 'hsl(var(--accent-success))' }} />
-          </div>
-          <div>
-            <span className={styles.statLabel}>الإيراد المغلق</span>
-            <h2 className={styles.statValue}>${revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
           </div>
         </div>
 
@@ -222,22 +193,6 @@ export default function Dashboard() {
                 <div>
                   <h4 className={styles.shortcutTitle}>إدارة المحادثات</h4>
                   <p className={styles.shortcutDesc}>رد على العملاء في الوقت الفعلي</p>
-                </div>
-                <ArrowRight size={16} className={styles.shortcutArrow} />
-              </button>
-
-              <button 
-                type="button"
-                className={styles.actionShortcut}
-                onClick={() => router.push('/crm/pipeline')}
-                style={{ background: 'none', border: 'none', width: '100%', textAlign: 'right', display: 'flex', font: 'inherit', color: 'inherit' }}
-              >
-                <div className={styles.shortcutIconBg}>
-                  <UserCheck size={20} />
-                </div>
-                <div>
-                  <h4 className={styles.shortcutTitle}>مسار الصفقات</h4>
-                  <p className={styles.shortcutDesc}>تابع مراحل البيع والفرص</p>
                 </div>
                 <ArrowRight size={16} className={styles.shortcutArrow} />
               </button>

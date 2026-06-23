@@ -2084,3 +2084,158 @@
     font-size: 0.75rem !important;
   }
 }
+
+/* CRM Customer Profile edit inputs */
+.profileCard {
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 24px;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.profileInputGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.profileLabel {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.profileInput {
+  width: 100%;
+  background-color: var(--canvas-soft) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 12px !important;
+  padding: 8px 12px !important;
+  font-size: 0.8rem !important;
+  color: var(--text-strong) !important;
+  outline: none !important;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.profileInput:focus {
+  border-color: rgba(216, 241, 93, 0.4) !important;
+  box-shadow: 0 0 6px rgba(216, 241, 93, 0.08) !important;
+}
+
+.profileTextarea {
+  width: 100%;
+  background-color: var(--canvas-soft) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 12px !important;
+  padding: 8px 12px !important;
+  font-size: 0.8rem !important;
+  color: var(--text-strong) !important;
+  outline: none !important;
+  min-height: 80px;
+  resize: vertical;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.profileTextarea:focus {
+  border-color: rgba(216, 241, 93, 0.4) !important;
+  box-shadow: 0 0 6px rgba(216, 241, 93, 0.08) !important;
+}
+
+.tagsContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.tagItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: rgba(216, 241, 93, 0.1);
+  border: 1px solid rgba(216, 241, 93, 0.2);
+  color: var(--accent);
+  padding: 3px 8px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.deleteTagBtn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+
+.deleteTagBtn:hover {
+  opacity: 1;
+}
+
+.addTagRow {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.addTagInput {
+  flex-grow: 1;
+  background-color: var(--canvas-soft) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 10px !important;
+  padding: 6px 10px !important;
+  font-size: 0.72rem !important;
+  color: var(--text-strong) !important;
+  outline: none !important;
+}
+
+.addTagBtn {
+  background-color: var(--border-strong);
+  border: none;
+  color: var(--text-strong);
+  border-radius: 10px;
+  padding: 0 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.addTagBtn:hover {
+  background-color: var(--accent);
+  color: #1A1A1A;
+}
+
+.deleteTaskBtn {
+  background: none;
+  border: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  opacity: 0.4;
+  margin-right: auto; /* align to left in RTL */
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.deleteTaskBtn:hover {
+  opacity: 1;
+  color: #ff6b6b;
+  background-color: rgba(255, 107, 107, 0.08);
+}

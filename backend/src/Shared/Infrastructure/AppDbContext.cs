@@ -22,6 +22,7 @@ namespace Shared.Infrastructure
         public DbSet<Modules.Conversations.Domain.Conversation> Conversations { get; set; }
         public DbSet<Modules.Conversations.Domain.Message> Messages { get; set; }
         public DbSet<Modules.CRM.Domain.FollowUp> FollowUps { get; set; }
+        public DbSet<Modules.CRM.Domain.CustomerTask> CustomerTasks { get; set; }
         public DbSet<Modules.CRM.Domain.CRMUpdateProposal> CRMUpdateProposals { get; set; }
         public DbSet<Modules.Conversations.Domain.NotificationAlert> NotificationAlerts { get; set; }
         public DbSet<Modules.Brain.Domain.KnowledgeDocument> KnowledgeDocuments { get; set; }

@@ -663,7 +663,8 @@ namespace Modules.AI.Workers
                 FollowUpType = analysisResult.SuggestedFollowUp?.Type,
                 FollowUpAppointmentTime = analysisResult.SuggestedFollowUp?.AppointmentTime,
                 FollowUpDueDate = analysisResult.SuggestedFollowUp?.DueDate,
-                FollowUpNotes = analysisResult.SuggestedFollowUp?.Notes
+                FollowUpNotes = analysisResult.SuggestedFollowUp?.Notes,
+                AIInsights = analysisResult.AIInsights
             };
             await _eventBus.PublishAsync(crmSuggestion);
             Console.WriteLine($"[AIReplyWorker] Published CRMUpdateSuggestedEvent for {@event.Sender}");

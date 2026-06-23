@@ -88,7 +88,6 @@ export default function DashboardLayout({
     { name: 'لوحة التحكم', path: '/dashboard', icon: LayoutDashboard },
     { name: 'صندوق المحادثات', path: '/inbox', icon: Inbox },
     { name: 'العملاء CRM', path: '/crm', icon: Users },
-    { name: 'مسار الصفقات', path: '/crm/pipeline', icon: GitBranch },
     { name: 'جدول المتابعات', path: '/management/follow-ups', icon: Calendar },
     { name: 'الحملات التسويقية', path: '/management/campaigns', icon: Megaphone },
     { name: 'أتمتة العمليات', path: '/management/workflows', icon: GitFork },

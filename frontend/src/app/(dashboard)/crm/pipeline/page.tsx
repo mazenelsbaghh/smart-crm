@@ -1,8 +1,7 @@
 'use client';
 
-import React from 'react';
-import PipelineBoard from '../../../../packages/crm/PipelineBoard';
+import { redirect } from 'next/navigation';
 
 export default function PipelinePage() {
-  return <PipelineBoard />;
+  redirect('/crm');
 }

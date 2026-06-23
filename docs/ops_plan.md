@@ -1,8 +1,15 @@
 # Operations & Deployment Master Plan
 
-**Last Updated**: 2026-06-22
+**Last Updated**: 2026-06-23
 
 ## Chronological Log
+
+### 2026-06-23: Deploy UI Changes (Remove Deals & Profits) to Hostinger Production Server (Completed)
+- **Goal**: Deploy the UI cleanup updates (which remove Deals, Profits, and Sales Pipeline) to the remote production environment.
+- **Updates**:
+  - Synced workspace source files to the remote server `147.93.86.206` using `rsync` via the deployment script.
+  - Successfully rebuilt and restarted all production Docker Compose containers (backend, frontend, gateway, nginx, databases, queues).
+  - Verified remote startup health with Next.js Turbopack build and backend compilation success logs.
 
 ### 2026-06-22: Resolve Hostinger Docker Compose Container Name Conflicts (Active Plan)
 - **Goal**: Fix container name conflict with `smartcustomercore-elasticsearch` during remote deployment.
