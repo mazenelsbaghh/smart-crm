@@ -145,31 +145,40 @@ namespace Modules.Facebook.Services
 
         public async Task<List<FacebookPageInfo>> GetUserPagesAsync(string userAccessToken)
         {
-            var url = $"{GraphUrl}/me/accounts?access_token={userAccessToken}&fields=id,name,access_token";
-            var response = await _httpClient.GetAsync(url);
-            var responseBody = await response.Content.ReadAsStringAsync();
-
-            _logger.LogInformation("[FacebookGraph] me/accounts response: {Body}", responseBody);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogError("[FacebookGraph] GetUserPages failed: {StatusCode} {Body}", response.StatusCode, responseBody);
-                throw new Exception($"Facebook GetUserPages failed: {response.StatusCode} - {responseBody}");
-            }
-
-            using var doc = JsonDocument.Parse(responseBody);
+            var url = $"{GraphUrl}/me/accounts?access_token={userAccessToken}&fields=id,name,access_token&limit=100";
             var pages = new List<FacebookPageInfo>();
+            string? nextUrl = url;
 
-            if (doc.RootElement.TryGetProperty("data", out var dataArray))
+            while (!string.IsNullOrEmpty(nextUrl))
             {
-                foreach (var page in dataArray.EnumerateArray())
+                var response = await _httpClient.GetAsync(nextUrl);
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
                 {
-                    pages.Add(new FacebookPageInfo
+                    _logger.LogError("[FacebookGraph] GetUserPages failed: {StatusCode} {Body}", response.StatusCode, responseBody);
+                    throw new Exception($"Facebook GetUserPages failed: {response.StatusCode} - {responseBody}");
+                }
+
+                using var doc = JsonDocument.Parse(responseBody);
+                if (doc.RootElement.TryGetProperty("data", out var dataArray))
+                {
+                    foreach (var page in dataArray.EnumerateArray())
                     {
-                        PageId = page.GetProperty("id").GetString() ?? "",
-                        PageName = page.GetProperty("name").GetString() ?? "",
-                        AccessToken = page.GetProperty("access_token").GetString() ?? ""
-                    });
+                        pages.Add(new FacebookPageInfo
+                        {
+                            PageId = page.GetProperty("id").GetString() ?? "",
+                            PageName = page.GetProperty("name").GetString() ?? "",
+                            AccessToken = page.GetProperty("access_token").GetString() ?? ""
+                        });
+                    }
+                }
+
+                nextUrl = null;
+                if (doc.RootElement.TryGetProperty("paging", out var pagingElement) &&
+                    pagingElement.TryGetProperty("next", out var nextElement))
+                {
+                    nextUrl = nextElement.GetString();
                 }
             }
 
