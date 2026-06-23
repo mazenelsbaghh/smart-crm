@@ -189,13 +189,6 @@ export default function ConversationList({
                 className={`${styles.conversationItem} ${isActive ? styles.conversationItemActive : ''}`}
                 onClick={() => setActiveConv(conv)}
               >
-                {/* Active arrow indicator on top right */}
-                {isActive && (
-                  <div className={styles.activeCardArrow}>
-                    <ArrowUpRight size={14} />
-                  </div>
-                )}
-
                 <div className={styles.cardHeaderRow}>
                   <div className={styles.avatar}>
                     <User size={16} />

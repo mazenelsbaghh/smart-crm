@@ -121,7 +121,7 @@ export default function DashboardLayout({
         <div className={styles.mobileOverlay} onClick={() => setMobileMenuOpen(false)}>
           <aside className={`glass-panel ${styles.mobileDrawer}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.drawerHeader}>
-              <h2 className={styles.logoText}>سمارت كاستمر</h2>
+              <h2 className={styles.logoText}>سمارت سيلز</h2>
               <button 
                 type="button"
                 onClick={() => setMobileMenuOpen(false)} 

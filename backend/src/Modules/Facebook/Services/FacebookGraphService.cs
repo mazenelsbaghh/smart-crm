@@ -149,6 +149,8 @@ namespace Modules.Facebook.Services
             var response = await _httpClient.GetAsync(url);
             var responseBody = await response.Content.ReadAsStringAsync();
 
+            _logger.LogInformation("[FacebookGraph] me/accounts response: {Body}", responseBody);
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("[FacebookGraph] GetUserPages failed: {StatusCode} {Body}", response.StatusCode, responseBody);

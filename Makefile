@@ -239,6 +239,7 @@ system-health: ## Fetch system health status
 deploy: env ## Run the production stack with docker-compose.production.yml
 	@echo "🚀 Deploying Smart Customer Core in production mode..."
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.production.yml up -d --build
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.production.yml restart nginx
 	@echo "✅ Production stack deployed."
 
 backup: ## Run the automated backup utility script

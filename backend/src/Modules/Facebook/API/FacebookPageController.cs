@@ -37,7 +37,43 @@ namespace Modules.Facebook.API
                 .FirstOrDefaultAsync(cp => cp.FacebookPageId == request.FacebookPageId);
 
             if (existing != null)
+            {
+                if (!existing.IsActive)
+                {
+                    // Reactivate page and update token details
+                    existing.ProjectId = projectId;
+                    existing.PageName = request.PageName ?? existing.PageName;
+                    existing.PageAccessToken = request.PageAccessToken;
+                    existing.UserAccessToken = request.UserAccessToken;
+                    existing.FacebookUserId = request.FacebookUserId;
+                    existing.IsActive = true;
+                    existing.TokenExpiresAt = DateTime.UtcNow.AddDays(60);
+                    existing.UpdatedAt = DateTime.UtcNow;
+
+                    await _context.SaveChangesAsync();
+
+                    try
+                    {
+                        await _graphService.SubscribePageToAppAsync(request.FacebookPageId, request.PageAccessToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Failed to subscribe page to webhooks: {ex.Message}");
+                    }
+
+                    return Ok(new
+                    {
+                        existing.Id,
+                        existing.FacebookPageId,
+                        existing.PageName,
+                        existing.IsActive,
+                        existing.TokenExpiresAt,
+                        existing.CreatedAt
+                    });
+                }
+
                 return Conflict(new { error = "This Facebook Page is already connected to a project" });
+            }
 
             var connectedPage = new ConnectedPage
             {
@@ -83,7 +119,7 @@ namespace Modules.Facebook.API
         public async Task<IActionResult> GetPages(Guid projectId)
         {
             var pages = await _context.ConnectedPages
-                .Where(cp => cp.ProjectId == projectId)
+                .Where(cp => cp.ProjectId == projectId && cp.IsActive)
                 .OrderByDescending(cp => cp.CreatedAt)
                 .Select(cp => new
                 {

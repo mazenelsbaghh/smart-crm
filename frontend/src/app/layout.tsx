@@ -5,8 +5,8 @@ import '@aejkatappaja/phantom-ui/ssr.css';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'سمارت كاستمر - لوحة التحكم',
-  description: 'منصة إدارة العملاء والردود الذكية عبر واتساب',
+  title: 'سمارت سيلز - لوحة التحكم',
+  description: 'منصة إدارة المبيعات والعملاء والردود الذكية',
 };
 
 export default function RootLayout({

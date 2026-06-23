@@ -39,8 +39,8 @@ export default function Login() {
     <div className={styles.container}>
       <div className={`glass-panel ${styles.card}`}>
         <div className={styles.header}>
-          <h1 className={styles.title}>سمارت كاستمر</h1>
-          <p className={styles.subtitle}>تسجيل الدخول إلى منصة إدارة واتساب والعملاء</p>
+          <h1 className={styles.title}>سمارت سيلز</h1>
+          <p className={styles.subtitle}>تسجيل الدخول إلى منصة إدارة المبيعات والعملاء والردود الذكية</p>
         </div>
 
         {error && <div className={styles.errorAlert}>{error}</div>}

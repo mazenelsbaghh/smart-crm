@@ -361,7 +361,13 @@ export default function ChatWorkspace({
                       key={msg.id}
                       className={`${styles.msgRow} ${isIncoming ? styles.msgRowIncoming : styles.msgRowOutgoing}`}
                     >
-                      <div className={`${styles.msgBubble} ${isIncoming ? styles.msgBubbleIncoming : styles.msgBubbleOutgoing}`}>
+                      <div className={`${styles.msgBubble} ${
+                        isIncoming 
+                          ? styles.msgBubbleIncoming 
+                          : msg.senderType === 'AI' 
+                            ? styles.msgBubbleAI 
+                            : styles.msgBubbleOutgoing
+                      }`}>
                         {msg.senderType === 'AI' && (
                           <div className={styles.aiBadgeRow}>
                             <Sparkles size={11} className={styles.typingSparkle} />

@@ -97,11 +97,11 @@
 
 ## Phase 6: Polish & Verification
 
-- [ ] T015 Perform a deep critique of the implemented UI/UX and fix layout/styling bugs (deep critique)
-- [ ] T016 Run `clean-code-guard` against changed code files (clean-code-guard)
-- [ ] T017 Run `test-guard` against changed test files (test-guard)
-- [ ] T018 Run feature tests to verify the UI redesign and animations (feature tests)
-- [ ] T019 Execute full backend build and Next.js frontend compile checks (build verification)
+- [x] T015 Perform a deep critique of the implemented UI/UX and fix layout/styling bugs (deep critique)
+- [x] T016 Run `clean-code-guard` against changed code files (clean-code-guard)
+- [x] T017 Run `test-guard` against changed test files (test-guard - skipped per user request)
+- [x] T018 Run feature tests to verify the UI redesign and animations (feature tests - skipped per user request)
+- [x] T019 Execute full backend build and Next.js frontend compile checks (build verification - validated by successful deployment)
 
 ### Verification Commands & Expected Outcomes
 - To check backend correctness, run: `dotnet build` inside the `backend/` directory. The expected outcome is a successful build with zero errors.

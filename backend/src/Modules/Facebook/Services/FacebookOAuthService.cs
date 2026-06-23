@@ -40,7 +40,8 @@ namespace Modules.Facebook.Services
                    $"&redirect_uri={encodedRedirectUri}" +
                    $"&scope={RequiredScopes}" +
                    $"&response_type=code" +
-                   $"&state={encodedState}";
+                   $"&state={encodedState}" +
+                   $"&auth_type=rerequest";
         }
 
         public async Task<string> ExchangeCodeForTokenAsync(string code)

@@ -1,6 +1,13 @@
 # UI/UX Plan
 
-**Last Updated**: 2026-06-22
+**Last Updated**: 2026-06-23
+
+## 2026-06-23: Fix Light/Dark Mode Contrast in Chat & CRM Panels (Completed)
+- **Goal**: Address low-contrast readability issues in Light Mode and hidden dark texts in Dark Mode across the Inbox Workspace.
+- **Updates**:
+  - Replaced over 50 instances of hardcoded background and text colors in [inbox.module.css](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/inbox/inbox.module.css) with dynamic tokens.
+  - Resolved Light Mode invisibility of customer names, subtitles, timestamps, and low-contrast details card contents.
+  - Fixed Dark Mode invisibility of placeholder headers, active tab buttons, assignee names, deal cards, notes textareas, and timeline labels.
 
 ## 2026-06-22: Complete Dashboard & Side Screens Theme Redesign (Completed)
 - **Goal**: Redesign all remaining dashboard pages to match the dark neon premium crm theme of the inbox and resolve any layout bugs.

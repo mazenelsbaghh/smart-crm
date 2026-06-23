@@ -1,12 +1,27 @@
 # Frontend Master Plan
 
-**Last Updated**: 2026-06-22
+**Last Updated**: 2026-06-23
 
 This document tracks all frontend requirements, design structures, pages, and implementation details.
 
 ---
 
 ## Chronological Log
+
+### 2026-06-23: Add Public Privacy Policy Page (Completed)
+- **Goal**: Create a clean, responsive public page at `/privacy` containing the privacy terms, data collection policies, and data deletion instructions required for Meta App Review.
+- **Updates**:
+  - Added new route [page.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/app/privacy/page.tsx) rendering the privacy terms in both Arabic and English.
+  - Linked policy terms to active contact email and instructions on deleting stored tokens.
+
+### 2026-06-23: Global App Branding Rename to Smart Sales (Completed)
+- **Goal**: Change the platform name globally from "Smart Customer" / "Smart AI" to **Smart Sales (سمارت سيلز)**.
+- **Updates**:
+  - Renamed branding in [Login.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/packages/auth/Login.tsx) header logo text and login subtitle.
+  - Updated HTML page metadata document title and meta description in root [layout.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/app/layout.tsx).
+  - Updated mobile sidebar drawer brand header in dashboard [layout.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/app/(dashboard)/layout.tsx).
+  - Renamed all references to Smart AI and smart customer in public [page.tsx](file:///Users/mazenelsbagh/mazen%20mac/apps/smart%20whatsapp/frontend/src/app/privacy/page.tsx).
+
 
 ### 2026-06-22: Complete Dashboard & Side Screens Theme Redesign (Completed)
 - **Goal**: Redesign all remaining dashboard pages (CRM, Settings, Follow-ups, Campaigns, Workflows, Knowledge Base, Approvals, Reports, Dashboard) to match the dark neon premium crm theme of the inbox.

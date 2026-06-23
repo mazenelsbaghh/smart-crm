@@ -407,7 +407,7 @@
 .customerName {
   font-size: 0.88rem;
   font-weight: 800;
-  color: #E8E8E8;
+  color: var(--text-strong);
   margin: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -420,7 +420,7 @@
 
 .cardSubTitle {
   font-size: 0.72rem;
-  color: #7D7D7D;
+  color: var(--text-base);
   margin-top: 1px;
 }
 
@@ -430,7 +430,7 @@
 
 .timestamp {
   font-size: 0.68rem;
-  color: #7D7D7D;
+  color: var(--text-soft);
   white-space: nowrap;
 }
 
@@ -448,7 +448,7 @@
   display: flex;
   align-items: center;
   font-size: 0.76rem;
-  color: #E8E8E8;
+  color: var(--text-strong);
   font-weight: 700;
 }
 
@@ -484,8 +484,8 @@
 }
 
 .badgeLow {
-  background-color: rgba(255, 255, 255, 0.06);
-  color: #7D7D7D;
+  background-color: var(--surface-raised);
+  color: var(--text-soft);
 }
 
 .conversationItemActive .badgeLow {
@@ -509,7 +509,7 @@
 .channelLabel {
   font-size: 0.72rem;
   font-weight: 800;
-  color: #7D7D7D;
+  color: var(--text-soft);
 }
 
 .conversationItemActive .channelLabel {
@@ -533,8 +533,8 @@
 .chatPanel {
   flex-grow: 1;
   height: 100vh;
-  background-color: #F8F8F6;
-  color: #1A1A1A;
+  background-color: var(--canvas-soft);
+  color: var(--text-strong);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -546,7 +546,7 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  background-color: #F8F8F6;
+  background-color: var(--canvas-soft);
   text-align: center;
   padding: var(--space-xxl);
 }
@@ -566,21 +566,21 @@
 .noActiveChat h3 {
   font-size: 1.25rem;
   font-weight: 800;
-  color: #1A1A1A;
+  color: var(--text-strong);
   margin-bottom: 6px;
 }
 
 .noActiveChat p {
   font-size: 0.85rem;
-  color: #7D7D7D;
+  color: var(--text-soft);
   max-width: 320px;
   line-height: 1.6;
 }
 
 /* Workspace Header */
 .workspaceHeader {
-  background-color: #F8F8F6;
-  border-bottom: 1px solid #E8E8E8;
+  background-color: var(--canvas-soft);
+  border-bottom: 1px solid var(--border-subtle);
   padding: var(--space-lg) var(--space-lg) 0;
   display: flex;
   flex-direction: column;
@@ -619,7 +619,7 @@
 .workspaceCustomerName {
   font-size: 1.45rem;
   font-weight: 800;
-  color: #1A1A1A;
+  color: var(--text-strong);
   margin: 0;
 }
 
@@ -646,8 +646,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  background-color: #FFFFFF;
-  border: 1px solid #E8E8E8;
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
   padding: 6px 12px;
   border-radius: 16px;
 }
@@ -676,7 +676,7 @@
 .managerName {
   font-size: 0.76rem;
   font-weight: 800;
-  color: #1A1A1A;
+  color: var(--text-strong);
 }
 
 .stagePillsRow {
@@ -719,9 +719,9 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background-color: #FFFFFF;
-  border: 1px solid #E8E8E8;
-  color: #1A1A1A;
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-strong);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -737,13 +737,13 @@
 }
 
 .dealPill {
-  background-color: #FFFFFF;
-  border: 1px solid #E8E8E8;
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 16px;
   padding: 6px 14px;
   font-size: 0.76rem;
   font-weight: 700;
-  color: #7D7D7D;
+  color: var(--text-base);
   display: flex;
   align-items: center;
 }
@@ -757,7 +757,7 @@
 .tabBtn {
   background: transparent;
   border: none;
-  color: #7D7D7D;
+  color: var(--text-soft);
   font-size: 0.8rem;
   font-weight: 700;
   padding: 8px 14px;
@@ -771,8 +771,8 @@
 }
 
 .tabBtnActive {
-  color: #1A1A1A !important;
-  border-bottom-color: #1A1A1A !important;
+  color: var(--text-strong) !important;
+  border-bottom-color: var(--text-strong) !important;
   font-weight: 800 !important;
 }
 
@@ -792,7 +792,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  background-color: #F8F8F6;
+  background-color: var(--canvas-soft);
 }
 
 .messagesContainer::-webkit-scrollbar {
@@ -800,7 +800,7 @@
 }
 
 .messagesContainer::-webkit-scrollbar-thumb {
-  background: #E8E8E8;
+  background: var(--border-strong);
   border-radius: 3px;
 }
 
@@ -809,7 +809,7 @@
   justify-content: center;
   align-items: center;
   height: 100%;
-  color: #7D7D7D;
+  color: var(--text-soft);
   font-size: 0.85rem;
 }
 
@@ -839,22 +839,24 @@
 }
 
 .msgBubbleIncoming {
-  background-color: #1D2430;
-  color: #FFFFFF;
+  background-color: var(--surface-raised);
+  color: var(--text-strong);
+  border: 1px solid var(--border-subtle);
   border-bottom-right-radius: 4px; /* Distinct bubble style */
 }
 
 .msgBubbleOutgoing {
   background-color: var(--accent);
-  color: #1A1A1A;
+  color: var(--accent-ink);
   border-bottom-left-radius: 4px;
 }
 
 .msgBubbleAI {
-  background-color: #171A21;
-  color: #E8E8E8;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background-color: var(--surface);
+  color: var(--text-strong);
+  border: 1px solid rgba(139, 92, 246, 0.25); /* Beautiful lavender border for AI */
   border-bottom-left-radius: 4px;
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.06);
 }
 
 .aiBadgeRow {
@@ -902,8 +904,8 @@
 /* Composer Area */
 .messageComposer {
   padding: var(--space-md) var(--space-lg);
-  background-color: #FFFFFF;
-  border-top: 1px solid #E8E8E8;
+  background-color: var(--surface);
+  border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   gap: var(--space-md);
@@ -926,12 +928,12 @@
 
 .messageInput {
   flex-grow: 1;
-  background-color: #F8F8F6;
-  border: 1px solid #E8E8E8;
+  background-color: var(--canvas-soft);
+  border: 1px solid var(--border-subtle);
   border-radius: 20px;
   padding: 10px 16px;
   font-size: 0.9rem;
-  color: #1A1A1A;
+  color: var(--text-strong);
   resize: none;
   height: 40px;
   line-height: 20px;
@@ -973,8 +975,8 @@
 /* Comments Composite Composer */
 .commentsComposer {
   padding: var(--space-md) var(--space-lg);
-  background-color: #FFFFFF;
-  border-top: 1px solid #E8E8E8;
+  background-color: var(--surface);
+  border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
@@ -1000,12 +1002,12 @@
 }
 
 .commentTextarea {
-  background-color: #F8F8F6;
-  border: 1px solid #E8E8E8;
+  background-color: var(--canvas-soft);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 0.85rem;
-  color: #1A1A1A;
+  color: var(--text-strong);
   resize: none;
   height: 60px;
   outline: none;
@@ -1035,8 +1037,8 @@
 }
 
 .reactionBtn {
-  background-color: #F8F8F6;
-  border: 1px solid #E8E8E8;
+  background-color: var(--canvas-soft);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 0.8rem;
@@ -1045,11 +1047,12 @@
   align-items: center;
   gap: 4px;
   transition: all 0.2s ease;
+  color: var(--text-base);
 }
 
 .reactionBtn:hover {
-  background-color: #F0F0EE;
-  border-color: #D0D0CE;
+  background-color: var(--surface-raised);
+  border-color: var(--border-strong);
 }
 
 .reactionBtnActive {
@@ -1087,13 +1090,13 @@
   padding: var(--space-lg);
   overflow-y: auto;
   flex-grow: 1;
-  background-color: #F8F8F6;
+  background-color: var(--canvas-soft);
 }
 
 .timelineHeaderRow h4 {
   font-size: 1.05rem;
   font-weight: 800;
-  color: #1A1A1A;
+  color: var(--text-strong);
   margin: 0 0 var(--space-lg);
 }
 
@@ -1103,7 +1106,7 @@
   gap: var(--space-lg);
   position: relative;
   padding-right: 20px;
-  border-right: 1px solid #E8E8E8;
+  border-right: 1px solid var(--border-subtle);
 }
 
 .timelineItem {
@@ -1125,20 +1128,20 @@
   height: 9px;
   border-radius: 50%;
   background-color: var(--accent);
-  border: 2px solid #F8F8F6;
+  border: 2px solid var(--canvas);
   box-shadow: 0 0 0 1px var(--accent);
 }
 
 .timelineDateLabel {
   font-size: 0.72rem;
-  color: #7D7D7D;
+  color: var(--text-soft);
   margin-right: 16px;
   white-space: nowrap;
 }
 
 .timelineCard {
-  background-color: #FFFFFF;
-  border: 1px solid #E8E8E8;
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 20px;
   padding: 16px var(--space-lg);
   display: flex;
@@ -1173,19 +1176,19 @@
 
 .timelineManagerText {
   font-size: 0.72rem;
-  color: #7D7D7D;
+  color: var(--text-soft);
 }
 
 .timelineCardTitle {
   font-size: 0.92rem;
   font-weight: 800;
-  color: #1A1A1A;
+  color: var(--text-strong);
   margin: 0;
 }
 
 .timelineCardDesc {
   font-size: 0.8rem;
-  color: #7D7D7D;
+  color: var(--text-base);
   margin: 0;
   line-height: 1.5;
 }
@@ -1197,7 +1200,7 @@
   flex-direction: column;
   gap: var(--space-md);
   flex-grow: 1;
-  background-color: #F8F8F6;
+  background-color: var(--canvas-soft);
 }
 
 .notesContainer h4 {
@@ -1208,7 +1211,7 @@
 
 .notesContainer p {
   font-size: 0.8rem;
-  color: #7D7D7D;
+  color: var(--text-soft);
   margin: 0;
 }
 
@@ -1216,12 +1219,12 @@
   width: 100%;
   flex-grow: 1;
   min-height: 200px;
-  background-color: #FFFFFF;
-  border: 1px solid #E8E8E8;
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 16px;
   padding: var(--space-md);
   font-size: 0.88rem;
-  color: #1A1A1A;
+  color: var(--text-strong);
   font-family: inherit;
   outline: none;
   resize: none;
@@ -1263,12 +1266,13 @@
 
 .tabPlaceholder h4 {
   font-size: 1.05rem;
-  color: #1A1A1A;
+  color: var(--text-strong);
   margin-bottom: 4px;
 }
 
 .tabPlaceholder p {
   font-size: 0.8rem;
+  color: var(--text-soft);
 }
 
 /* ==========================================
@@ -1330,7 +1334,7 @@
 .crmCardTitleRow h4 {
   font-size: 0.82rem;
   font-weight: 800;
-  color: #E8E8E8;
+  color: var(--text-strong);
   margin: 0;
 }
 
@@ -1343,7 +1347,7 @@
 
 .profitLabel {
   font-size: 0.72rem;
-  color: #B0B0B0;
+  color: var(--text-base);
   font-weight: 600;
 }
 
@@ -1361,8 +1365,8 @@
 
 .profitInput {
   width: 100%;
-  background-color: #121212 !important;
-  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background-color: var(--canvas-soft) !important;
+  border: 1px solid var(--border-subtle) !important;
   border-radius: 12px !important;
   padding: 8px 30px 8px 12px !important;
   font-size: 1.15rem !important;
@@ -1379,21 +1383,21 @@
 }
 
 .stageSelectorBtn {
-  background-color: #121212;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background-color: var(--canvas-soft);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
   padding: 8px 4px;
   font-size: 0.75rem;
   font-weight: 700;
-  color: #B0B0B0;
+  color: var(--text-base);
   cursor: pointer;
   text-align: center;
   transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .stageSelectorBtn:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-  color: #FFFFFF;
+  border-color: var(--border-strong);
+  color: var(--text-strong);
 }
 
 .stageSelectorBtnActive {
@@ -1413,13 +1417,13 @@
   display: flex;
   justify-content: space-between;
   font-size: 0.75rem;
-  color: #B0B0B0;
+  color: var(--text-base);
   font-weight: 600;
 }
 
 .probabilityValue {
   font-weight: 800;
-  color: #E8E8E8;
+  color: var(--text-strong);
 }
 
 .probabilitySlider,
@@ -1429,7 +1433,7 @@
   appearance: none;
   height: 6px;
   border-radius: 3px;
-  background: #121212;
+  background: var(--canvas-soft);
   outline: none;
 }
 
@@ -1470,8 +1474,8 @@
   width: 18px;
   height: 18px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background-color: #121212;
+  border: 1px solid var(--border-strong);
+  background-color: var(--canvas-soft);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1494,12 +1498,12 @@
 
 .taskText {
   font-size: 0.78rem;
-  color: #E8E8E8;
+  color: var(--text-strong);
   line-height: 1.45;
 }
 
 .taskTextDone {
-  color: #7D7D7D;
+  color: var(--text-soft);
   text-decoration: line-through;
 }
 
@@ -1508,17 +1512,17 @@
   gap: 8px;
   margin-top: 16px;
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .addTaskInput {
   flex-grow: 1;
-  background-color: #121212 !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background-color: var(--canvas-soft) !important;
+  border: 1px solid var(--border-subtle) !important;
   border-radius: 10px !important;
   padding: 8px 12px !important;
   font-size: 0.75rem !important;
-  color: #E8E8E8 !important;
+  color: var(--text-strong) !important;
   outline: none !important;
   transition: all 0.2s ease;
 }
@@ -1576,7 +1580,7 @@
 
 .insightItem p {
   font-size: 0.74rem;
-  color: #E8E8E8;
+  color: var(--text-strong);
   margin: 0;
   line-height: 1.45;
 }
@@ -1597,7 +1601,7 @@
 
 .automationToggleRow span {
   font-size: 0.75rem;
-  color: #B0B0B0;
+  color: var(--text-base);
   line-height: 1.4;
 }
 
@@ -1606,8 +1610,8 @@
   width: 32px;
   height: 18px;
   border-radius: 9px;
-  background-color: #121212;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: var(--canvas-soft);
+  border: 1px solid var(--border-subtle);
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
@@ -1622,7 +1626,7 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background-color: #E8E8E8;
+  background-color: var(--text-strong);
   position: absolute;
   top: 2px;
   right: 2px;
@@ -1656,9 +1660,9 @@
 
 /* Shared UI Buttons */
 .sharedBtn {
-  background-color: #F8F8F6;
-  border: 1px solid #E8E8E8;
-  color: #1A1A1A;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-strong);
   font-family: inherit;
   font-weight: 600;
   border-radius: 8px;
@@ -1673,8 +1677,8 @@
 }
 
 .sharedBtn:hover:not(:disabled) {
-  background-color: #F0F0EE;
-  border-color: #D0D0CE;
+  background-color: var(--surface);
+  border-color: var(--border-strong);
   transform: translateY(-1px);
 }
 
@@ -1747,8 +1751,8 @@
 
 .sharedBtnOutline {
   background: transparent;
-  border: 1px solid #E8E8E8;
-  color: #555555;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-soft);
   font-family: inherit;
   font-weight: 600;
   border-radius: 8px;
@@ -1763,8 +1767,8 @@
 }
 
 .sharedBtnOutline:hover:not(:disabled) {
-  background-color: rgba(0, 0, 0, 0.02);
-  color: #1A1A1A;
+  background-color: var(--surface-raised);
+  color: var(--text-strong);
 }
 
 .sharedBtnGlass {
@@ -1821,8 +1825,8 @@
 
 /* Quick Follow-up Form */
 .quickFollowUpForm {
-  background-color: #F8F8F6;
-  border: 1px solid #E8E8E8;
+  background-color: var(--canvas-soft);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: var(--space-md);
   margin-bottom: var(--space-lg);
@@ -1847,7 +1851,7 @@
 .followUpTableSection h5 {
   font-size: 0.9rem;
   font-weight: 700;
-  color: #1A1A1A;
+  color: var(--text-strong);
   margin-bottom: var(--space-sm);
   text-align: right;
 }
@@ -1855,9 +1859,9 @@
 /* Shared RTL Table */
 .sharedTableContainer {
   overflow-x: auto;
-  border: 1px solid #E8E8E8;
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background-color: #FFFFFF;
+  background-color: var(--surface);
 }
 
 .sharedTable {
@@ -1869,17 +1873,17 @@
 }
 
 .sharedTable th {
-  background-color: #F8F8F6;
-  color: #555555;
+  background-color: var(--surface-raised);
+  color: var(--text-soft);
   font-weight: 600;
   padding: 10px 12px;
-  border-bottom: 1px solid #E8E8E8;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .sharedTable td {
   padding: 10px 12px;
-  border-bottom: 1px solid #F0F0EE;
-  color: #1A1A1A;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-strong);
   vertical-align: middle;
 }
 
