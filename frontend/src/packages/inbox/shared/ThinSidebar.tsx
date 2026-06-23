@@ -12,7 +12,8 @@ import {
   BarChart3,
   Settings,
   User,
-  Users
+  Users,
+  BookOpen
 } from 'lucide-react';
 import styles from '../inbox.module.css';
 
@@ -47,6 +48,7 @@ export default function ThinSidebar() {
     { name: 'المهام', path: '/management/follow-ups', icon: ListTodo },
     { name: 'الحملات', path: '/management/campaigns', icon: Megaphone },
     { name: 'التحليلات', path: '/management/reports', icon: BarChart3 },
+    { name: 'قاعدة المعرفة', path: '/management/knowledge', icon: BookOpen },
     { name: 'الإعدادات', path: '/settings', icon: Settings },
   ];
 

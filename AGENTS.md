@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/026-inbox-redesign-gsap-animations/plan.md
+at specs/027-knowledge-base-ai-wizard/plan.md
 <!-- SPECKIT END -->

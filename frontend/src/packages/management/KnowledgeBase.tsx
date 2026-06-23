@@ -57,6 +57,18 @@ export default function KnowledgeBase() {
   const [formContent, setFormContent] = useState('');
   const [formSourceUrl, setFormSourceUrl] = useState('');
 
+  // AI Wizard State
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1); // 1: Text, 2: Questions, 3: Q&A, 4: Title/Save
+  const [wizardText, setWizardText] = useState('');
+  const [wizardTitle, setWizardTitle] = useState('');
+  const [wizardQuestions, setWizardQuestions] = useState<{ question: string; options: string[] }[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [wizardAnswers, setWizardAnswers] = useState<Record<number, string>>({}); // { questionIndex: answer }
+  const [customAnswer, setCustomAnswer] = useState('');
+  const [generatedQas, setGeneratedQas] = useState<{ question: string; answer: string }[]>([]);
+  const [wizardLoading, setWizardLoading] = useState(false);
+
   const fetchDocuments = async () => {
     if (!activeProject) return;
     try {
@@ -94,6 +106,134 @@ export default function KnowledgeBase() {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const handleStartWizard = () => {
+    setIsWizardOpen(true);
+    setWizardStep(1);
+    setWizardText('');
+    setWizardTitle('');
+    setWizardQuestions([]);
+    setCurrentQuestionIndex(0);
+    setWizardAnswers({});
+    setCustomAnswer('');
+    setGeneratedQas([]);
+  };
+
+  const handleWizardAnalyze = async () => {
+    if (!activeProject || !wizardText.trim()) return;
+    try {
+      setWizardLoading(true);
+      const response = await api.post<{ question: string; options: string[] }[]>(
+        `/api/projects/${activeProject.id}/knowledge/wizard/analyze`,
+        { rawText: wizardText }
+      );
+      if (response.data && response.data.length > 0) {
+        setWizardQuestions(response.data);
+        setCurrentQuestionIndex(0);
+        setWizardStep(2);
+        setCustomAnswer('');
+      } else {
+        setGeneratedQas([{ question: 'النص الأصلي المدخل', answer: wizardText }]);
+        setWizardStep(3);
+      }
+    } catch (e) {
+      console.error('Failed to analyze raw text', e);
+      setMessage({ type: 'error', text: 'فشل تحليل النص بالذكاء الاصطناعي.' });
+    } finally {
+      setWizardLoading(false);
+    }
+  };
+
+  const handleNextQuestion = () => {
+    const answer = customAnswer.trim() || wizardAnswers[currentQuestionIndex] || '';
+    if (!answer) {
+      alert('يرجى اختيار إجابة أو كتابة إجابة مخصصة');
+      return;
+    }
+
+    const updatedAnswers = { ...wizardAnswers, [currentQuestionIndex]: answer };
+    setWizardAnswers(updatedAnswers);
+
+    if (currentQuestionIndex < wizardQuestions.length - 1) {
+      const nextIndex = currentQuestionIndex + 1;
+      setCurrentQuestionIndex(nextIndex);
+      const nextAns = updatedAnswers[nextIndex] || '';
+      const nextOpts = wizardQuestions[nextIndex]?.options || [];
+      if (nextAns && !nextOpts.includes(nextAns)) {
+        setCustomAnswer(nextAns);
+      } else {
+        setCustomAnswer('');
+      }
+    } else {
+      handleWizardGenerate(updatedAnswers);
+    }
+  };
+
+  const handleWizardGenerate = async (answers: Record<number, string>) => {
+    if (!activeProject) return;
+    try {
+      setWizardLoading(true);
+      const answersPayload = wizardQuestions.map((q, idx) => ({
+        question: q.question,
+        answer: answers[idx] || ''
+      }));
+
+      const response = await api.post<{ question: string; answer: string }[]>(
+        `/api/projects/${activeProject.id}/knowledge/wizard/generate`,
+        {
+          rawText: wizardText,
+          answers: answersPayload
+        }
+      );
+      setGeneratedQas(response.data);
+      setWizardTitle('معلومات قاعدة المعرفة المعالجة');
+      setWizardStep(3);
+    } catch (e) {
+      console.error('Failed to generate Q&A pairs', e);
+      setMessage({ type: 'error', text: 'فشل توليد الأسئلة والأجوبة بالذكاء الاصطناعي.' });
+    } finally {
+      setWizardLoading(false);
+    }
+  };
+
+  const handleSaveWizardDocument = async () => {
+    if (!activeProject || !wizardTitle || generatedQas.length === 0) return;
+    try {
+      setWizardLoading(true);
+      const formattedContent = generatedQas
+        .map(qa => `س: ${qa.question.trim()}\nج: ${qa.answer.trim()}`)
+        .join('\n\n');
+
+      await api.post(`/api/projects/${activeProject.id}/knowledge`, {
+        title: wizardTitle,
+        content: formattedContent
+      });
+      
+      setMessage({ type: 'success', text: `تم حفظ مستند الأسئلة والأجوبة "${wizardTitle}" بنجاح.` });
+      setIsWizardOpen(false);
+      fetchDocuments();
+    } catch (e) {
+      console.error('Failed to save wizard document', e);
+      setMessage({ type: 'error', text: 'فشل حفظ مستند قاعدة المعرفة.' });
+    } finally {
+      setWizardLoading(false);
+    }
+  };
+
+  const handleEditQa = (index: number, field: 'question' | 'answer', value: string) => {
+    const updated = [...generatedQas];
+    updated[index] = { ...updated[index], [field]: value };
+    setGeneratedQas(updated);
+  };
+
+  const handleDeleteQa = (index: number) => {
+    const updated = generatedQas.filter((_, idx) => idx !== index);
+    setGeneratedQas(updated);
+  };
+
+  const handleAddQa = () => {
+    setGeneratedQas([...generatedQas, { question: '', answer: '' }]);
   };
 
   const handleSaveDocument = async (e: React.FormEvent) => {
@@ -266,20 +406,30 @@ export default function KnowledgeBase() {
       <div className={`glass-panel ${styles.panel}`}>
         <div className={styles.panelHeader}>
           <h3 className={styles.panelTitle}>المصادر والمستندات المدخلة</h3>
-          <button 
-            onClick={() => {
-              setEditingDocumentId(null);
-              setFormTitle('');
-              setFormContent('');
-              setFormSourceUrl('');
-              setIsModalOpen(true);
-            }}
-            className={`${styles.btn} ${styles.btnSecondary}`}
-            style={{ padding: '4px 10px', fontSize: '0.8rem' }}
-          >
-            <Plus size={12} />
-            إضافة نص يدوياً
-          </button>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+            <button 
+              onClick={() => {
+                setEditingDocumentId(null);
+                setFormTitle('');
+                setFormContent('');
+                setFormSourceUrl('');
+                setIsModalOpen(true);
+              }}
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+            >
+              <Plus size={12} />
+              إضافة نص يدوياً
+            </button>
+            <button 
+              onClick={handleStartWizard}
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              style={{ padding: '4px 10px', fontSize: '0.8rem', backgroundColor: 'rgba(59, 130, 246, 0.15)', color: 'hsl(210, 100%, 75%)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+            >
+              <Plus size={12} />
+              معالج الذكاء الاصطناعي
+            </button>
+          </div>
         </div>
 
         {/* Tab selection */}
@@ -566,6 +716,306 @@ export default function KnowledgeBase() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* AI Wizard Modal */}
+      {isWizardOpen && (
+        <div className={styles.overlay}>
+          <div className={`glass-panel ${styles.modal}`} style={{ maxWidth: '640px', width: '90%' }}>
+            <div className={styles.modalHeader}>
+              <h3 className={styles.modalTitle} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <BookOpen size={18} style={{ color: 'hsl(var(--accent-primary))' }} />
+                معالج قاعدة المعرفة بالذكاء الاصطناعي
+              </h3>
+              <button 
+                type="button"
+                onClick={() => setIsWizardOpen(false)} 
+                className={styles.closeBtn}
+                aria-label="إغلاق"
+                style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Stepper Progress Bar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-md)' }}>
+              {[1, 2, 3, 4].map((step) => (
+                <div key={step} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 700,
+                    fontSize: '0.8rem',
+                    background: wizardStep === step ? 'var(--accent)' : wizardStep > step ? 'rgba(16, 185, 129, 0.2)' : 'var(--surface-muted)',
+                    color: wizardStep === step ? 'var(--accent-ink)' : wizardStep > step ? 'hsl(140, 100%, 65%)' : 'var(--text-soft)',
+                    border: wizardStep === step ? 'none' : '1px solid var(--border-subtle)'
+                  }}>
+                    {step}
+                  </div>
+                  <span style={{
+                    fontSize: '0.8rem',
+                    fontWeight: wizardStep === step ? 700 : 500,
+                    color: wizardStep === step ? 'var(--text-strong)' : 'var(--text-soft)'
+                  }}>
+                    {step === 1 ? 'إدخال النص' : step === 2 ? 'أسئلة توضيحية' : step === 3 ? 'مراجعة الأسئلة' : 'حفظ ونشر'}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Step 1: Raw Text Input */}
+            {wizardStep === 1 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>أدخل النص الخام لقاعدة المعرفة</label>
+                  <textarea 
+                    value={wizardText} 
+                    onChange={(e) => setWizardText(e.target.value)} 
+                    placeholder="الصق هنا معلومات عن شركتك أو خدماتك أو سياساتك العامة..." 
+                    className={styles.textarea} 
+                    style={{ minHeight: '180px' }}
+                    required 
+                  />
+                  <p style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>
+                    يقوم الذكاء الاصطناعي بتحليل النص وصياغة أسئلة لسد أي فجوات معلوماتية.
+                  </p>
+                </div>
+
+                <div className={styles.formActions}>
+                  <button 
+                    type="button" 
+                    onClick={() => setIsWizardOpen(false)} 
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                  >
+                    إلغاء
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={handleWizardAnalyze} 
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={wizardLoading || !wizardText.trim()}
+                  >
+                    {wizardLoading ? 'جاري التحليل...' : 'التالي (تحليل النص)'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: Clarifying Questions */}
+            {wizardStep === 2 && wizardQuestions.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-soft)' }}>
+                    السؤال {currentQuestionIndex + 1} من {wizardQuestions.length}
+                  </span>
+                </div>
+
+                <div style={{ padding: 'var(--space-md)', background: 'var(--surface-muted)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                  <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-strong)', marginBottom: 'var(--space-md)' }}>
+                    {wizardQuestions[currentQuestionIndex].question}
+                  </h4>
+
+                  {/* Predefined Options */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: 'var(--space-md)' }}>
+                    {wizardQuestions[currentQuestionIndex].options.map((option, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setWizardAnswers({ ...wizardAnswers, [currentQuestionIndex]: option });
+                          setCustomAnswer('');
+                        }}
+                        style={{
+                          textAlign: 'right',
+                          padding: '10px 14px',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid ' + (wizardAnswers[currentQuestionIndex] === option && !customAnswer ? 'var(--accent)' : 'var(--border-subtle)'),
+                          background: wizardAnswers[currentQuestionIndex] === option && !customAnswer ? 'var(--accent-soft)' : 'var(--surface)',
+                          color: wizardAnswers[currentQuestionIndex] === option && !customAnswer ? 'var(--accent)' : 'var(--text-strong)',
+                          fontSize: '0.85rem',
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom Answer Input */}
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>أو اكتب إجابة مخصصة:</label>
+                    <textarea
+                      value={customAnswer}
+                      onChange={(e) => {
+                        setCustomAnswer(e.target.value);
+                      }}
+                      placeholder="اكتب تفاصيل إضافية مخصصة هنا..."
+                      className={styles.textarea}
+                      style={{ minHeight: '60px' }}
+                    />
+                  </div>
+                </div>
+
+                <div className={styles.formActions}>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      if (currentQuestionIndex > 0) {
+                        const prevIndex = currentQuestionIndex - 1;
+                        setCurrentQuestionIndex(prevIndex);
+                        const prevAns = wizardAnswers[prevIndex] || '';
+                        const prevOpts = wizardQuestions[prevIndex]?.options || [];
+                        if (prevAns && !prevOpts.includes(prevAns)) {
+                          setCustomAnswer(prevAns);
+                        } else {
+                          setCustomAnswer('');
+                        }
+                      } else {
+                        setWizardStep(1);
+                      }
+                    }} 
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                  >
+                    السابق
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={handleNextQuestion} 
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={wizardLoading || (!customAnswer.trim() && !wizardAnswers[currentQuestionIndex])}
+                  >
+                    {wizardLoading 
+                      ? 'جاري التوليد...' 
+                      : currentQuestionIndex === wizardQuestions.length - 1 
+                        ? 'توليد الأسئلة والأجوبة' 
+                        : 'السؤال التالي'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Review Q&A List */}
+            {wizardStep === 3 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ fontSize: '0.95rem', fontWeight: 600 }}>مراجعة وتعديل الأسئلة والأجوبة الناتجة</h4>
+                  <button
+                    type="button"
+                    onClick={handleAddQa}
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                    style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                  >
+                    <Plus size={12} />
+                    سؤال وجواب جديد
+                  </button>
+                </div>
+
+                <div style={{ maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px' }}>
+                  {generatedQas.map((qa, index) => (
+                    <div key={index} style={{ padding: '12px', background: 'var(--surface-muted)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteQa(index)}
+                        style={{ position: 'absolute', top: '8px', left: '8px', background: 'none', border: 'none', color: 'hsl(var(--accent-danger))', cursor: 'pointer', fontSize: '1.25rem' }}
+                        title="حذف"
+                      >
+                        &times;
+                      </button>
+
+                      <div className={styles.formGroup} style={{ marginBottom: '8px', marginTop: '12px' }}>
+                        <label className={styles.label}>السؤال</label>
+                        <input
+                          type="text"
+                          value={qa.question}
+                          onChange={(e) => handleEditQa(index, 'question', e.target.value)}
+                          className={styles.input}
+                          style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                        />
+                      </div>
+
+                      <div className={styles.formGroup}>
+                        <label className={styles.label}>الإجابة</label>
+                        <textarea
+                          value={qa.answer}
+                          onChange={(e) => handleEditQa(index, 'answer', e.target.value)}
+                          className={styles.textarea}
+                          style={{ minHeight: '60px', padding: '6px 10px', fontSize: '0.85rem' }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className={styles.formActions}>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      if (wizardQuestions.length > 0) {
+                        setCurrentQuestionIndex(wizardQuestions.length - 1);
+                        setWizardStep(2);
+                      } else {
+                        setWizardStep(1);
+                      }
+                    }} 
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                  >
+                    السابق
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setWizardStep(4)} 
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={generatedQas.length === 0}
+                  >
+                    التالي (حفظ)
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: Title & Save */}
+            {wizardStep === 4 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>عنوان مستند قاعدة المعرفة</label>
+                  <input 
+                    type="text" 
+                    value={wizardTitle} 
+                    onChange={(e) => setWizardTitle(e.target.value)} 
+                    placeholder="مثال: معلومات قاعدة المعرفة المعالجة" 
+                    className={styles.input} 
+                    required 
+                  />
+                </div>
+
+                <div className={styles.formActions}>
+                  <button 
+                    type="button" 
+                    onClick={() => setWizardStep(3)} 
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                  >
+                    السابق
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={handleSaveWizardDocument} 
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={wizardLoading || !wizardTitle.trim()}
+                  >
+                    {wizardLoading ? 'جاري الحفظ والتقسيم...' : 'حفظ ونشر'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -132,25 +132,77 @@ namespace Modules.Brain.Services
             _dbContext.KnowledgeChunks.RemoveRange(oldChunks);
             await _dbContext.SaveChangesAsync();
 
-            var paragraphs = doc.Content.Split(new[] { "\r\n\r\n", "\n\n", "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
-            var currentChunk = new System.Text.StringBuilder();
             var chunks = new System.Collections.Generic.List<string>();
+            bool isQaFormat = doc.Content.Contains("س:") && doc.Content.Contains("ج:");
 
-            foreach (var p in paragraphs)
+            if (isQaFormat)
             {
-                var clean = p.Trim();
-                if (string.IsNullOrEmpty(clean)) continue;
+                var lines = doc.Content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                var currentBlock = new System.Text.StringBuilder();
+                var blocks = new System.Collections.Generic.List<string>();
 
-                if (currentChunk.Length + clean.Length > 800 && currentChunk.Length > 0)
+                foreach (var line in lines)
+                {
+                    var trimmedLine = line.Trim();
+                    if (trimmedLine.StartsWith("س:") || trimmedLine.StartsWith("س "))
+                    {
+                        if (currentBlock.Length > 0)
+                        {
+                            blocks.Add(currentBlock.ToString().Trim());
+                            currentBlock.Clear();
+                        }
+                    }
+                    if (!string.IsNullOrEmpty(trimmedLine))
+                    {
+                        currentBlock.AppendLine(trimmedLine);
+                    }
+                }
+                if (currentBlock.Length > 0)
+                {
+                    blocks.Add(currentBlock.ToString().Trim());
+                }
+
+                var currentChunk = new System.Text.StringBuilder();
+                foreach (var block in blocks)
+                {
+                    if (currentChunk.Length + block.Length > 800 && currentChunk.Length > 0)
+                    {
+                        chunks.Add(currentChunk.ToString().Trim());
+                        currentChunk.Clear();
+                    }
+                    if (currentChunk.Length > 0)
+                    {
+                        currentChunk.AppendLine();
+                        currentChunk.AppendLine();
+                    }
+                    currentChunk.Append(block);
+                }
+                if (currentChunk.Length > 0)
                 {
                     chunks.Add(currentChunk.ToString().Trim());
-                    currentChunk.Clear();
                 }
-                currentChunk.AppendLine(clean);
             }
-            if (currentChunk.Length > 0)
+            else
             {
-                chunks.Add(currentChunk.ToString().Trim());
+                var paragraphs = doc.Content.Split(new[] { "\r\n\r\n", "\n\n", "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+                var currentChunk = new System.Text.StringBuilder();
+
+                foreach (var p in paragraphs)
+                {
+                    var clean = p.Trim();
+                    if (string.IsNullOrEmpty(clean)) continue;
+
+                    if (currentChunk.Length + clean.Length > 800 && currentChunk.Length > 0)
+                    {
+                        chunks.Add(currentChunk.ToString().Trim());
+                        currentChunk.Clear();
+                    }
+                    currentChunk.AppendLine(clean);
+                }
+                if (currentChunk.Length > 0)
+                {
+                    chunks.Add(currentChunk.ToString().Trim());
+                }
             }
 
             foreach (var chunkText in chunks)
