@@ -109,10 +109,24 @@ export default function KnowledgeBase() {
   };
 
   const handleStartWizard = () => {
+    setEditingDocumentId(null);
     setIsWizardOpen(true);
     setWizardStep(1);
     setWizardText('');
     setWizardTitle('');
+    setWizardQuestions([]);
+    setCurrentQuestionIndex(0);
+    setWizardAnswers({});
+    setCustomAnswer('');
+    setGeneratedQas([]);
+  };
+
+  const handleStartWizardFromEdit = () => {
+    setIsModalOpen(false);
+    setIsWizardOpen(true);
+    setWizardStep(1);
+    setWizardText(formContent);
+    setWizardTitle(formTitle);
     setWizardQuestions([]);
     setCurrentQuestionIndex(0);
     setWizardAnswers({});
@@ -205,13 +219,22 @@ export default function KnowledgeBase() {
         .map(qa => `س: ${qa.question.trim()}\nج: ${qa.answer.trim()}`)
         .join('\n\n');
 
-      await api.post(`/api/projects/${activeProject.id}/knowledge`, {
-        title: wizardTitle,
-        content: formattedContent
-      });
+      if (editingDocumentId) {
+        await api.put(`/api/knowledge/${editingDocumentId}`, {
+          title: wizardTitle,
+          content: formattedContent
+        });
+        setMessage({ type: 'success', text: `تم تحديث مستند الأسئلة والأجوبة "${wizardTitle}" بنجاح.` });
+      } else {
+        await api.post(`/api/projects/${activeProject.id}/knowledge`, {
+          title: wizardTitle,
+          content: formattedContent
+        });
+        setMessage({ type: 'success', text: `تم حفظ مستند الأسئلة والأجوبة "${wizardTitle}" بنجاح.` });
+      }
       
-      setMessage({ type: 'success', text: `تم حفظ مستند الأسئلة والأجوبة "${wizardTitle}" بنجاح.` });
       setIsWizardOpen(false);
+      setEditingDocumentId(null);
       fetchDocuments();
     } catch (e) {
       console.error('Failed to save wizard document', e);
@@ -707,6 +730,17 @@ export default function KnowledgeBase() {
                 >
                   إلغاء
                 </button>
+                {editingDocumentId && (
+                  <button 
+                    type="button"
+                    onClick={handleStartWizardFromEdit}
+                    className={`${styles.btn}`}
+                    style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: 'hsl(210, 100%, 75%)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+                    disabled={actionLoading || !formContent.trim()}
+                  >
+                    تعديل عبر معالج الذكاء الاصطناعي
+                  </button>
+                )}
                 <button 
                   type="submit" 
                   className={`${styles.btn} ${styles.btnPrimary}`}
@@ -731,7 +765,7 @@ export default function KnowledgeBase() {
               </h3>
               <button 
                 type="button"
-                onClick={() => setIsWizardOpen(false)} 
+                onClick={() => { setIsWizardOpen(false); setEditingDocumentId(null); }} 
                 className={styles.closeBtn}
                 aria-label="إغلاق"
                 style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
@@ -791,7 +825,7 @@ export default function KnowledgeBase() {
                 <div className={styles.formActions}>
                   <button 
                     type="button" 
-                    onClick={() => setIsWizardOpen(false)} 
+                    onClick={() => { setIsWizardOpen(false); setEditingDocumentId(null); }} 
                     className={`${styles.btn} ${styles.btnSecondary}`}
                   >
                     إلغاء
