@@ -17,7 +17,7 @@ namespace Modules.Facebook.Services
         private readonly HttpClient _httpClient;
         private readonly ILogger<FacebookOAuthService> _logger;
 
-        private const string RequiredScopes = "pages_show_list,pages_read_engagement,pages_manage_engagement,pages_messaging,pages_manage_metadata";
+        private const string RequiredScopes = "pages_show_list,pages_read_engagement,pages_manage_engagement,pages_messaging,pages_manage_metadata,business_management";
 
         public FacebookOAuthService(IConfiguration configuration, ILogger<FacebookOAuthService> logger)
         {

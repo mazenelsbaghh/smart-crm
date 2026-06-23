@@ -165,11 +165,18 @@ namespace Modules.Facebook.Services
                 {
                     foreach (var page in dataArray.EnumerateArray())
                     {
+                        var pageId = page.GetProperty("id").GetString() ?? "";
+                        var pageName = page.GetProperty("name").GetString() ?? "";
+                        var hasToken = page.TryGetProperty("access_token", out var tokenProp);
+                        var accessTokenVal = hasToken ? (tokenProp.GetString() ?? "") : "";
+
+                        _logger.LogInformation("[FacebookGraph] Page Found - Name: {Name}, ID: {Id}, HasToken: {HasToken}", pageName, pageId, !string.IsNullOrEmpty(accessTokenVal));
+
                         pages.Add(new FacebookPageInfo
                         {
-                            PageId = page.GetProperty("id").GetString() ?? "",
-                            PageName = page.GetProperty("name").GetString() ?? "",
-                            AccessToken = page.GetProperty("access_token").GetString() ?? ""
+                            PageId = pageId,
+                            PageName = pageName,
+                            AccessToken = accessTokenVal
                         });
                     }
                 }
