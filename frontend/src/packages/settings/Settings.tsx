@@ -12,7 +12,8 @@ import {
   Settings as SettingsIcon,
   RefreshCw,
   LogOut,
-  Zap
+  Zap,
+  PlusCircle
 } from 'lucide-react';
 
 const FacebookIcon = ({ size = 20 }: { size?: number }) => (
@@ -62,7 +63,7 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
 };
 
 export default function Settings() {
-  const { activeProject, refreshProjects } = useAuth();
+  const { activeProject, refreshProjects, switchProject } = useAuth();
   
   const [status, setStatus] = useState<'Disconnected' | 'Initializing' | 'Connected'>('Disconnected');
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
@@ -89,6 +90,7 @@ export default function Settings() {
   const [commentsAutoReplyEnabled, setCommentsAutoReplyEnabled] = useState(false);
   const [commentsReplyDelay, setCommentsReplyDelay] = useState(3);
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [newProjectName, setNewProjectName] = useState('');
 
   // Facebook Pages state
   const [connectedPages, setConnectedPages] = useState<Array<{ id: string; pageId: string; pageName: string; connectedAt: string }>>([]);
@@ -409,12 +411,34 @@ export default function Settings() {
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
         commentsReplyDelay,
-        systemPrompt: systemPrompt.trim(),
       });
       setIsGroupAppointmentsEnabled(enabled);
     } catch (e) {
       console.error(e);
       throw e;
+    }
+  };
+
+  const handleCreateNewProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProjectName.trim()) return;
+    setActionLoading(true);
+    setMessage(null);
+    try {
+      const response = await api.post<{ id: string; name: string }>('/api/projects', {
+        name: newProjectName.trim()
+      });
+      setMessage({ type: 'success', text: `تم إنشاء المشروع "${newProjectName.trim()}" بنجاح وجاري الانتقال إليه.` });
+      setNewProjectName('');
+      await refreshProjects();
+      if (response.data && response.data.id) {
+        switchProject(response.data.id);
+      }
+    } catch (err: unknown) {
+      console.error('Failed to create new project', err);
+      setMessage({ type: 'error', text: getApiErrorMessage(err, 'تعذر إنشاء المشروع الجديد.') });
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -675,6 +699,37 @@ export default function Settings() {
                 </button>
               </div>
             )}
+          </div>
+
+          {/* Create New Project Card */}
+          <div className={`glass-panel ${styles.card}`}>
+            <h2 className={styles.cardTitle}>
+              <PlusCircle size={20} style={{ color: 'hsl(var(--accent-success))' }} />
+              إنشاء مشروع جديد
+            </h2>
+            <p style={{ fontSize: '0.9rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5', marginBottom: 'var(--space-md)' }}>
+              أنشئ مشروعاً مستقلاً تماماً لإدارة رقم واتساب آخر، قاعدة معرفية جديدة، وإعدادات ذكاء اصطناعي منفصلة.
+            </p>
+            <form onSubmit={handleCreateNewProject} className={styles.form}>
+              <div className={styles.formGroup}>
+                <input
+                  type="text"
+                  placeholder="اسم المشروع الجديد..."
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  className={styles.input}
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={actionLoading || !newProjectName.trim()}
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                style={{ alignSelf: 'flex-start' }}
+              >
+                إنشاء مشروع جديد
+              </button>
+            </form>
           </div>
 
           {/* Right Side: General Preferences */}
