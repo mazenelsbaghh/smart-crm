@@ -172,7 +172,11 @@ namespace Modules.Brain.API
 
             try
             {
-                var aiResponse = await _geminiClient.GenerateReplyAsync(prompt);
+                var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+                var apiKey = !string.IsNullOrEmpty(settings?.GeminiApiKey) ? settings.GeminiApiKey : null;
+                var model = !string.IsNullOrEmpty(settings?.GeminiModel) ? settings.GeminiModel : null;
+
+                var aiResponse = await _geminiClient.GenerateReplyAsync(prompt, apiKey, model);
                 var cleanedJson = CleanJson(aiResponse);
                 var questions = System.Text.Json.JsonSerializer.Deserialize<List<WizardQuestionDto>>(cleanedJson, new System.Text.Json.JsonSerializerOptions
                 {
@@ -224,7 +228,11 @@ namespace Modules.Brain.API
 
             try
             {
-                var aiResponse = await _geminiClient.GenerateReplyAsync(prompt);
+                var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+                var apiKey = !string.IsNullOrEmpty(settings?.GeminiApiKey) ? settings.GeminiApiKey : null;
+                var model = !string.IsNullOrEmpty(settings?.GeminiModel) ? settings.GeminiModel : null;
+
+                var aiResponse = await _geminiClient.GenerateReplyAsync(prompt, apiKey, model);
                 var cleanedJson = CleanJson(aiResponse);
                 var qaPairs = System.Text.Json.JsonSerializer.Deserialize<List<WizardQaPairDto>>(cleanedJson, new System.Text.Json.JsonSerializerOptions
                 {
