@@ -528,12 +528,12 @@ namespace Modules.AI.Workers
             string channelAwarenessContext = $"\n[قناة التواصل الحالية]: {(channel == "WhatsApp" ? "واتساب (WhatsApp)" : channel == "Messenger" ? "فيسبوك ماسنجر (Facebook Messenger)" : "تعليقات فيسبوك (Facebook Comment)")}\n" +
                                              $"توجيه هام وصارم للـ AI: أنت تقوم حالياً بالرد على العميل عبر قناة [{channel}]. يرجى صياغة وتنسيق ردك بما يتناسب مع هذه القناة تحديداً (على سبيل المثال: إذا كانت القناة تعليقاً على منشور، يرجى كتابة رد عام وموجز جداً يناسب التعليقات العامة، أما إذا كانت ماسنجر أو واتساب فيمكنك الرد بتفاصيل أوفى والترحيب بالعميل).\n";
 
-            if (channel == "Messenger")
+            if (channel == "Messenger" || channel == "WhatsApp")
             {
-                channelAwarenessContext += "\nتوجيه إضافي صارم للمسنجر (Messenger):\n" +
+                channelAwarenessContext += $"\nتوجيه إضافي صارم لقناة ({channel}):\n" +
                                            "- يجب عليك دائمًا تذكير العميل في ردك بأن أول جلسة (سيشن) حجز معنا هي مجانية تمامًا! (مثال بالعامية: 'حابب أفكرك إن أول سيشن معانا مجانية تماماً وتقدر تجرب بنفسك').\n";
 
-                if (customer == null || string.IsNullOrEmpty(customer.PhoneNumber))
+                if (channel == "Messenger" && (customer == null || string.IsNullOrEmpty(customer.PhoneNumber)))
                 {
                     channelAwarenessContext += "- يجب عليك دائمًا وبأسلوب لطيف ومقنع (سيلزجي بالعامية المصرية) محاولة طلب رقم الواتساب الخاص بالعميل لنقل المحادثة إلى الواتساب (مثال بالعامية: 'يا ريت تبعتلي رقم الواتساب بتاعك عشان نبعتلك التفاصيل عليه ونكمل كلامنا هناك').\n";
                 }
