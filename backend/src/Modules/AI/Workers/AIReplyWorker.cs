@@ -532,6 +532,11 @@ namespace Modules.AI.Workers
             {
                 channelAwarenessContext += "\nتوجيه إضافي صارم للمسنجر (Messenger):\n" +
                                            "- يجب عليك دائمًا تذكير العميل في ردك بأن أول جلسة (سيشن) حجز معنا هي مجانية تمامًا! (مثال بالعامية: 'حابب أفكرك إن أول سيشن معانا مجانية تماماً وتقدر تجرب بنفسك').\n";
+
+                if (customer == null || string.IsNullOrEmpty(customer.PhoneNumber))
+                {
+                    channelAwarenessContext += "- يجب عليك دائمًا وبأسلوب لطيف ومقنع (سيلزجي بالعامية المصرية) محاولة طلب رقم الواتساب الخاص بالعميل لنقل المحادثة إلى الواتساب (مثال بالعامية: 'يا ريت تبعتلي رقم الواتساب بتاعك عشان نبعتلك التفاصيل عليه ونكمل كلامنا هناك').\n";
+                }
             }
 
             brainContext = (brainContext ?? "") + whatsappLinkContext + channelAwarenessContext;
@@ -1146,9 +1151,9 @@ namespace Modules.AI.Workers
             Guid projectId,
             string toPhone,
             string customerName,
-            string projectName)
+            string agentName)
         {
-            var waMessage = $"أهلاً يا {customerName}، منورنا يا فندم! 😊 معاك {projectName}.. زي ما اتفقنا على ماسنجر، هنكمل كلامنا هنا على واتساب عشان نتابع مع بعض أسرع ونبعتلك كل التفاصيل بسهولة. وحابب أفكرك إن أول جلسة ليك معانا مجانية تماماً! لو تحب تحجزها دلوقتي، قولي الميعاد المناسب ليك وهسجلك فيه فوراً.";
+            var waMessage = $"أهلاً يا {customerName}، منورنا يا فندم! 😊 معاك {agentName}.. زي ما اتفقنا على ماسنجر، هنكمل كلامنا هنا على واتساب عشان نتابع مع بعض أسرع ونبعتلك كل التفاصيل بسهولة. وحابب أفكرك إن أول جلسة ليك معانا مجانية تماماً! لو تحب تحجزها دلوقتي، قولي الميعاد المناسب ليك وهسجلك فيه فوراً.";
             
             var payload = new
             {
@@ -1196,7 +1201,8 @@ namespace Modules.AI.Workers
             bool waSent = false;
             try
             {
-                waSent = await SendWhatsAppTransitionMessageAsync(gatewayUrl, settings.ProjectId, extractedPhone, customer.Name, projectName);
+                var agentName = _aiMarketingBrain.GetCurrentAgentName();
+                waSent = await SendWhatsAppTransitionMessageAsync(gatewayUrl, settings.ProjectId, extractedPhone, customer.Name, agentName);
             }
             catch (Exception ex)
             {
