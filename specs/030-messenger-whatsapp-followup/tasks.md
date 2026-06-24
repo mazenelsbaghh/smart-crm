@@ -38,7 +38,7 @@
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] Update `backend/src/Modules/AI/Workers/AIReplyWorker.cs` to append a "first session free" reminder guideline to the `channelAwarenessContext` if the incoming channel is Messenger. Expected result is that Gemini receives this directive in its context.
+- [x] T004 [US1] Update `backend/src/Modules/AI/Workers/AIReplyWorker.cs` to append a "first session free" reminder guideline to the `channelAwarenessContext` if the incoming channel is Messenger. Expected result is that Gemini receives this directive in its context.
 
 ---
 
@@ -50,9 +50,9 @@
 
 ### Implementation for User Story 2
 
-- [ ] T005 [P] [US2] Implement helper methods `NormalizeDigits` and `ExtractEgyptianPhoneNumber` in `backend/src/Modules/AI/Workers/AIReplyWorker.cs` using Regular Expressions to identify valid Egyptian numbers from chat inputs. Verify it passes basic inputs.
-- [ ] T006 [US2] Update `backend/src/Modules/AI/Workers/AIReplyWorker.cs` to intercept Messenger messages, extract phone numbers, call the WhatsApp Gateway `/api/whatsapp/send`, send a Messenger confirmation on success, and send a Messenger fallback warning message on HTTP/sending failure.
-- [ ] T007 [US2] Implement database logic in `backend/src/Modules/AI/Workers/AIReplyWorker.cs` to cancel (mark "Cancelled") all pending follow-ups for the customer when the transition succeeds.
+- [x] T005 [P] [US2] Implement helper methods `NormalizeDigits` and `ExtractEgyptianPhoneNumber` in `backend/src/Modules/AI/Workers/AIReplyWorker.cs` using Regular Expressions to identify valid Egyptian numbers from chat inputs. Verify it passes basic inputs.
+- [x] T006 [US2] Update `backend/src/Modules/AI/Workers/AIReplyWorker.cs` to intercept Messenger messages, extract phone numbers, call the WhatsApp Gateway `/api/whatsapp/send`, send a Messenger confirmation on success, and send a Messenger fallback warning message on HTTP/sending failure.
+- [x] T007 [US2] Implement database logic in `backend/src/Modules/AI/Workers/AIReplyWorker.cs` to cancel (mark "Cancelled") all pending follow-ups for the customer when the transition succeeds.
 
 ---
 
@@ -64,7 +64,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T008 [US3] Update `backend/src/Modules/CRM/Services/FollowUpScheduler.cs` to check if `customer.PhoneNumber` is empty and `customer.FacebookPSID` is not empty, resolve `IFacebookGraphService` via DI, and route the message via Messenger instead of WhatsApp. Expected result is successful message delivery on Messenger.
+- [x] T008 [US3] Update `backend/src/Modules/CRM/Services/FollowUpScheduler.cs` to check if `customer.PhoneNumber` is empty and `customer.FacebookPSID` is not empty, resolve `IFacebookGraphService` via DI, and route the message via Messenger instead of WhatsApp. Expected result is successful message delivery on Messenger.
 
 ---
 
@@ -72,8 +72,8 @@
 
 **Purpose**: Verify implementation quality, compile code, and run tests.
 
-- [ ] T009 Perform deep architectural audit on Monolith code layers and project isolation boundaries in the changed backend files.
-- [ ] T010 Run `clean-code-guard` against changed backend production code files to ensure SOLID principles.
-- [ ] T011 Run `test-guard` against changed test files (if any).
-- [ ] T012 Run final feature tests via `pytest` to verify Messenger to WhatsApp transition logic. Expected outcome is 100% test pass.
-- [ ] T013 Final build compilation check with `dotnet build` at backend directory.
+- [x] T009 Perform deep architectural audit on Monolith code layers and project isolation boundaries in the changed backend files.
+- [x] T010 Run `clean-code-guard` against changed backend production code files to ensure SOLID principles.
+- [x] T011 Run `test-guard` against changed test files (if any).
+- [x] T012 Run final feature tests via `pytest` to verify Messenger to WhatsApp transition logic. Expected outcome is 100% test pass.
+- [x] T013 Final build compilation check with `dotnet build` at backend directory.

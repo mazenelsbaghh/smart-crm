@@ -26,6 +26,12 @@ namespace Modules.Facebook.Services
 
         public async Task SendMessageAsync(string pageId, string pageAccessToken, string recipientPSID, string message)
         {
+            if (pageAccessToken != null && pageAccessToken.StartsWith("mock_"))
+            {
+                _logger.LogInformation("[FacebookGraph] [MOCK] Message sent to PSID {PSID} via Page {PageId}: {Message}", recipientPSID, pageId, message);
+                return;
+            }
+
             var url = $"{GraphUrl}/{pageId}/messages?access_token={pageAccessToken}";
             var payload = new
             {
@@ -47,6 +53,12 @@ namespace Modules.Facebook.Services
 
         public async Task ReplyToCommentAsync(string pageAccessToken, string commentId, string message)
         {
+            if (pageAccessToken != null && pageAccessToken.StartsWith("mock_"))
+            {
+                _logger.LogInformation("[FacebookGraph] [MOCK] Replied to comment {CommentId}: {Message}", commentId, message);
+                return;
+            }
+
             var url = $"{GraphUrl}/{commentId}/comments?access_token={pageAccessToken}";
             var payload = new { message };
             var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
@@ -89,6 +101,12 @@ namespace Modules.Facebook.Services
 
         public async Task ReactToCommentAsync(string pageAccessToken, string commentId, string reactionType = "LOVE")
         {
+            if (pageAccessToken != null && pageAccessToken.StartsWith("mock_"))
+            {
+                _logger.LogInformation("[FacebookGraph] [MOCK] Reacted to comment {CommentId} with {Reaction}", commentId, reactionType);
+                return;
+            }
+
             var mappedReaction = MapToFacebookReaction(reactionType);
             var url = $"{GraphUrl}/{commentId}/reactions?reaction_type={mappedReaction}&access_token={pageAccessToken}";
             var response = await _httpClient.PostAsync(url, null);
@@ -108,6 +126,12 @@ namespace Modules.Facebook.Services
 
         public async Task SendPrivateReplyAsync(string pageId, string pageAccessToken, string commentId, string message)
         {
+            if (pageAccessToken != null && pageAccessToken.StartsWith("mock_"))
+            {
+                _logger.LogInformation("[FacebookGraph] [MOCK] Private reply sent for comment {CommentId}: {Message}", commentId, message);
+                return;
+            }
+
             var url = $"{GraphUrl}/{pageId}/messages?access_token={pageAccessToken}";
             var payload = new
             {
@@ -130,6 +154,12 @@ namespace Modules.Facebook.Services
 
         public async Task SubscribePageToAppAsync(string pageId, string pageAccessToken)
         {
+            if (pageAccessToken != null && pageAccessToken.StartsWith("mock_"))
+            {
+                _logger.LogInformation("[FacebookGraph] [MOCK] Page {PageId} subscribed to app webhooks", pageId);
+                return;
+            }
+
             var url = $"{GraphUrl}/{pageId}/subscribed_apps?subscribed_fields=messages,feed&access_token={pageAccessToken}";
             var response = await _httpClient.PostAsync(url, null);
             var responseBody = await response.Content.ReadAsStringAsync();
@@ -145,6 +175,14 @@ namespace Modules.Facebook.Services
 
         public async Task<List<FacebookPageInfo>> GetUserPagesAsync(string userAccessToken)
         {
+            if (userAccessToken != null && userAccessToken.StartsWith("mock_"))
+            {
+                return new List<FacebookPageInfo>
+                {
+                    new FacebookPageInfo { PageId = "page_123", PageName = "Mock Page", AccessToken = "mock_token" }
+                };
+            }
+
             var url = $"{GraphUrl}/me/accounts?access_token={userAccessToken}&fields=id,name,access_token&limit=100";
             var pages = new List<FacebookPageInfo>();
             string? nextUrl = url;
@@ -195,6 +233,11 @@ namespace Modules.Facebook.Services
 
         public async Task<string?> GetMessengerProfileNameAsync(string psid, string pageAccessToken)
         {
+            if (pageAccessToken != null && pageAccessToken.StartsWith("mock_"))
+            {
+                return "Mock Messenger User";
+            }
+
             try
             {
                 var url = $"{GraphUrl}/{psid}?fields=first_name,last_name&access_token={pageAccessToken}";

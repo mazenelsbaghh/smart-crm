@@ -8,11 +8,16 @@ using Shared.Infrastructure;
 using Shared.Queue;
 using Shared.Security;
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Modules.Conversations.Domain;
 using Modules.GroupAppointments.Domain;
+using Modules.CRM.Domain;
 
 namespace Modules.AI.Workers
 {
@@ -134,6 +139,49 @@ namespace Modules.AI.Workers
                 {
                     Console.WriteLine($"[AIReplyWorker] Customer {customer.Id} ({customer.PhoneNumber}) has a paid booking. Skipping AI reply.");
                     await CompletePendingFollowUpsAsync(dbContext, customer.Id);
+                    return;
+                }
+            }
+
+            // Intercept Messenger message for phone number transition
+            if (channel == "Messenger" && customer != null)
+            {
+                var extractedPhone = ExtractEgyptianPhoneNumber(@event.Content);
+                if (!string.IsNullOrEmpty(extractedPhone))
+                {
+                    string pageId = null;
+                    string senderPSID = null;
+                    if (!string.IsNullOrEmpty(@event.ChannelMetadata))
+                    {
+                        try
+                        {
+                            using var metaDoc = JsonDocument.Parse(@event.ChannelMetadata);
+                            var metaRoot = metaDoc.RootElement;
+                            pageId = metaRoot.TryGetProperty("pageId", out var pProp) ? pProp.GetString() : null;
+                            senderPSID = metaRoot.TryGetProperty("senderPSID", out var sProp) ? sProp.GetString() : null;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[AIReplyWorker] Failed to parse ChannelMetadata: {ex.Message}");
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(pageId)) pageId = @event.Sender;
+                    if (string.IsNullOrEmpty(senderPSID)) senderPSID = @event.Sender;
+
+                    var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+
+                    await HandleMessengerToWhatsAppTransitionAsync(
+                        dbContext,
+                        configuration,
+                        hubContext,
+                        scope.ServiceProvider,
+                        customer,
+                        extractedPhone,
+                        settings,
+                        pageId,
+                        senderPSID);
+
                     return;
                 }
             }
@@ -479,6 +527,12 @@ namespace Modules.AI.Workers
             // 2. Channel awareness context
             string channelAwarenessContext = $"\n[قناة التواصل الحالية]: {(channel == "WhatsApp" ? "واتساب (WhatsApp)" : channel == "Messenger" ? "فيسبوك ماسنجر (Facebook Messenger)" : "تعليقات فيسبوك (Facebook Comment)")}\n" +
                                              $"توجيه هام وصارم للـ AI: أنت تقوم حالياً بالرد على العميل عبر قناة [{channel}]. يرجى صياغة وتنسيق ردك بما يتناسب مع هذه القناة تحديداً (على سبيل المثال: إذا كانت القناة تعليقاً على منشور، يرجى كتابة رد عام وموجز جداً يناسب التعليقات العامة، أما إذا كانت ماسنجر أو واتساب فيمكنك الرد بتفاصيل أوفى والترحيب بالعميل).\n";
+
+            if (channel == "Messenger")
+            {
+                channelAwarenessContext += "\nتوجيه إضافي صارم للمسنجر (Messenger):\n" +
+                                           "- يجب عليك دائمًا تذكير العميل في ردك بأن أول جلسة (سيشن) حجز معنا هي مجانية تمامًا! (مثال بالعامية: 'حابب أفكرك إن أول سيشن معانا مجانية تماماً وتقدر تجرب بنفسك').\n";
+            }
 
             brainContext = (brainContext ?? "") + whatsappLinkContext + channelAwarenessContext;
 
@@ -1053,6 +1107,227 @@ namespace Modules.AI.Workers
             catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
             {
                 _logger.LogWarning(ex, "Error completing/deleting follow-ups");
+            }
+        }
+
+        private static string NormalizeDigits(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return input;
+            return input
+                .Replace("٠", "0")
+                .Replace("١", "1")
+                .Replace("٢", "2")
+                .Replace("٣", "3")
+                .Replace("٤", "4")
+                .Replace("٥", "5")
+                .Replace("٦", "6")
+                .Replace("٧", "7")
+                .Replace("٨", "8")
+                .Replace("٩", "9");
+        }
+
+        private static string ExtractEgyptianPhoneNumber(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            
+            var normalized = NormalizeDigits(text);
+            var cleaned = Regex.Replace(normalized, @"[\s\-\(\)\+]", "");
+            
+            var match = Regex.Match(cleaned, @"(?:20)?(1[0125]\d{8})\b");
+            if (match.Success)
+            {
+                return "20" + match.Groups[1].Value;
+            }
+            return null;
+        }
+
+        private async Task<bool> SendWhatsAppTransitionMessageAsync(
+            string gatewayUrl,
+            Guid projectId,
+            string toPhone,
+            string customerName,
+            string projectName)
+        {
+            var waMessage = $"أهلاً يا {customerName}، منورنا يا فندم! 😊 معاك {projectName}.. زي ما اتفقنا على ماسنجر، هنكمل كلامنا هنا على واتساب عشان نتابع مع بعض أسرع ونبعتلك كل التفاصيل بسهولة. وحابب أفكرك إن أول جلسة ليك معانا مجانية تماماً! لو تحب تحجزها دلوقتي، قولي الميعاد المناسب ليك وهسجلك فيه فوراً.";
+            
+            var payload = new
+            {
+                projectId = projectId,
+                to = toPhone,
+                message = waMessage
+            };
+
+            using var httpClient = new HttpClient();
+            var jsonPayload = JsonSerializer.Serialize(payload);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            
+            var response = await httpClient.PostAsync($"{gatewayUrl}/api/whatsapp/send", content);
+            return response.IsSuccessStatusCode;
+        }
+
+        private async Task HandleMessengerToWhatsAppTransitionAsync(
+            AppDbContext dbContext,
+            Microsoft.Extensions.Configuration.IConfiguration configuration,
+            Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext,
+            IServiceProvider serviceProvider,
+            Customer customer,
+            string extractedPhone,
+            Modules.Projects.Domain.ProjectSettings settings,
+            string pageId,
+            string senderPSID)
+        {
+            var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+            
+            var project = await dbContext.Projects.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == settings.ProjectId);
+            var projectName = project?.Name ?? "المشروع";
+
+            var connectedPage = await dbContext.ConnectedPages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(cp => cp.FacebookPageId == pageId && cp.IsActive);
+
+            var facebookGraphService = serviceProvider.GetRequiredService<Modules.Facebook.Services.IFacebookGraphService>();
+
+            if (connectedPage == null)
+            {
+                Console.WriteLine($"[AIReplyWorker] ConnectedPage not found for pageId: {pageId}");
+                return;
+            }
+
+            bool waSent = false;
+            try
+            {
+                waSent = await SendWhatsAppTransitionMessageAsync(gatewayUrl, settings.ProjectId, extractedPhone, customer.Name, projectName);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AIReplyWorker] Failed sending WhatsApp message to {extractedPhone}: {ex.Message}");
+            }
+
+            if (waSent)
+            {
+                Console.WriteLine($"[AIReplyWorker] WhatsApp message successfully sent to {extractedPhone}. Proceeding with transition.");
+
+                customer.PhoneNumber = extractedPhone;
+                dbContext.Entry(customer).State = EntityState.Modified;
+                await dbContext.SaveChangesAsync();
+
+                var successMsg = "أنا بعتلك رسالة على الواتساب، خلينا نتواصل هناك. ✨";
+                await facebookGraphService.SendMessageAsync(connectedPage.FacebookPageId, connectedPage.PageAccessToken, senderPSID, successMsg);
+
+                var messengerConvo = await dbContext.Conversations
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(c => c.ProjectId == settings.ProjectId && c.CustomerId == customer.Id && c.Channel == "Messenger" && c.Status != "Closed");
+
+                if (messengerConvo != null)
+                {
+                    var msg = new Message
+                    {
+                        ConversationId = messengerConvo.Id,
+                        ExternalMessageId = $"msg_fb_fu_{Guid.NewGuid():N}",
+                        Direction = "Outgoing",
+                        Content = successMsg,
+                        MessageType = "Text",
+                        Timestamp = DateTime.UtcNow
+                    };
+                    dbContext.Messages.Add(msg);
+                    await dbContext.SaveChangesAsync();
+
+                    await hubContext.Clients.Group($"project_{settings.ProjectId}").SendAsync("ReceiveMessage", new
+                    {
+                        id = msg.Id,
+                        conversationId = messengerConvo.Id,
+                        senderType = "AI",
+                        content = successMsg,
+                        createdAt = msg.Timestamp,
+                        status = "Sent",
+                        channel = "Messenger"
+                    });
+                }
+
+                var pendingMessengerFollowUps = await dbContext.FollowUps
+                    .IgnoreQueryFilters()
+                    .Where(f => f.CustomerId == customer.Id && f.Status == "Pending")
+                    .ToListAsync();
+
+                foreach (var fu in pendingMessengerFollowUps)
+                {
+                    fu.Status = "Cancelled";
+                    dbContext.Entry(fu).State = EntityState.Modified;
+                }
+                await dbContext.SaveChangesAsync();
+                Console.WriteLine($"[AIReplyWorker] Cancelled {pendingMessengerFollowUps.Count} pending follow-ups for customer {customer.Id} due to WhatsApp transition.");
+
+                var newFollowUp = new FollowUp
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = settings.ProjectId,
+                    CustomerId = customer.Id,
+                    Type = "Nurturing",
+                    DueDate = DateTime.UtcNow.AddHours(24),
+                    Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                    Status = "Pending"
+                };
+                dbContext.FollowUps.Add(newFollowUp);
+                await dbContext.SaveChangesAsync();
+                Console.WriteLine($"[AIReplyWorker] Scheduled new WhatsApp follow-up {newFollowUp.Id} for transitioned customer {customer.Id}.");
+            }
+            else
+            {
+                Console.WriteLine($"[AIReplyWorker] WhatsApp message delivery failed for {extractedPhone}. Falling back to Messenger.");
+
+                var failureMsg = "حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.";
+                await facebookGraphService.SendMessageAsync(connectedPage.FacebookPageId, connectedPage.PageAccessToken, senderPSID, failureMsg);
+
+                var messengerConvo = await dbContext.Conversations
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(c => c.ProjectId == settings.ProjectId && c.CustomerId == customer.Id && c.Channel == "Messenger" && c.Status != "Closed");
+
+                if (messengerConvo != null)
+                {
+                    var msg = new Message
+                    {
+                        ConversationId = messengerConvo.Id,
+                        ExternalMessageId = $"msg_fb_fu_err_{Guid.NewGuid():N}",
+                        Direction = "Outgoing",
+                        Content = failureMsg,
+                        MessageType = "Text",
+                        Timestamp = DateTime.UtcNow
+                    };
+                    dbContext.Messages.Add(msg);
+                    await dbContext.SaveChangesAsync();
+
+                    await hubContext.Clients.Group($"project_{settings.ProjectId}").SendAsync("ReceiveMessage", new
+                    {
+                        id = msg.Id,
+                        conversationId = messengerConvo.Id,
+                        senderType = "AI",
+                        content = failureMsg,
+                        createdAt = msg.Timestamp,
+                        status = "Sent",
+                        channel = "Messenger"
+                    });
+                }
+            }
+            
+            var activeConvo = await dbContext.Conversations
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.ProjectId == settings.ProjectId && c.CustomerId == customer.Id && c.Channel == "Messenger" && c.Status != "Closed");
+            if (activeConvo != null)
+            {
+                try
+                {
+                    var redis = serviceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                    await redis.KeyDeleteAsync($"ai_typing:{activeConvo.Id}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Typing cleanup Redis failed: {ex.Message}");
+                }
+                await hubContext.Clients.Group($"project_{settings.ProjectId}").SendAsync("AITyping", new
+                {
+                    conversationId = activeConvo.Id,
+                    isTyping = false
+                });
             }
         }
     }

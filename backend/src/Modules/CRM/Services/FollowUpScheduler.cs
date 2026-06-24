@@ -14,6 +14,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.SignalR;
 using Modules.Conversations.Hubs;
 using Modules.Conversations.Domain;
+using Modules.Facebook.Domain;
+using Modules.CRM.Domain;
 
 namespace Modules.CRM.Services
 {
@@ -86,13 +88,24 @@ namespace Modules.CRM.Services
                         continue;
                     }
 
+                    if (string.IsNullOrEmpty(customer.PhoneNumber) && string.IsNullOrEmpty(customer.FacebookPSID))
+                    {
+                        Console.WriteLine($"[Hangfire Job] Customer {customer.Id} has no phone number and no Facebook PSID. Marking follow-up {followUp.Id} as Missed.");
+                        followUp.Status = "Missed";
+                        dbContext.Entry(followUp).State = EntityState.Modified;
+                        await dbContext.SaveChangesAsync();
+                        continue;
+                    }
+
+                    bool isMessenger = string.IsNullOrEmpty(customer.PhoneNumber) && !string.IsNullOrEmpty(customer.FacebookPSID);
+
                     // Check if customer has any paid group booking
                     var hasPaid = await dbContext.GroupAppointmentBookings
                         .AnyAsync(b => b.CustomerId == customer.Id && b.IsPaid && b.ProjectId == followUp.ProjectId);
 
                     if (hasPaid)
                     {
-                        Console.WriteLine($"[Hangfire Job] Customer {customer.PhoneNumber} has already paid. Cancelling follow-up {followUp.Id}.");
+                        Console.WriteLine($"[Hangfire Job] Customer {customer.PhoneNumber ?? customer.FacebookPSID} has already paid. Cancelling follow-up {followUp.Id}.");
                         followUp.Status = "Cancelled";
                         dbContext.Entry(followUp).State = EntityState.Modified;
                         await dbContext.SaveChangesAsync();
@@ -117,7 +130,7 @@ namespace Modules.CRM.Services
                         }
                     }
 
-                    if (!whatsappReminderEnabled)
+                    if (!isMessenger && !whatsappReminderEnabled)
                     {
                         Console.WriteLine($"[Hangfire Job] WhatsApp reminder is disabled in automation rules for customer {customer.PhoneNumber}. Bypassing follow-up {followUp.Id}.");
                         followUp.Status = "Bypassed";
@@ -188,75 +201,170 @@ namespace Modules.CRM.Services
                             : "مرحباً، أردنا فقط المتابعة معك لمعرفة ما إذا كان لديك أي استفسار آخر.";
                     }
 
-                    var payload = new
+                    if (isMessenger)
                     {
-                        projectId = followUp.ProjectId,
-                        to = customer.PhoneNumber,
-                        message = messageContent
-                    };
-
-                    var jsonPayload = JsonSerializer.Serialize(payload);
-                    var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
-                    var responseBody = await response.Content.ReadAsStringAsync();
-
-                    if (response.IsSuccessStatusCode)
-                    {
-                        Console.WriteLine($"[Hangfire Job] Successfully sent follow-up message to {customer.PhoneNumber}");
-
-                        var conversation = await dbContext.Conversations
+                        var connectedPage = await dbContext.ConnectedPages
                             .IgnoreQueryFilters()
-                            .FirstOrDefaultAsync(c => c.ProjectId == followUp.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+                            .FirstOrDefaultAsync(cp => cp.ProjectId == followUp.ProjectId && cp.IsActive);
 
-                        if (conversation == null)
+                        if (connectedPage == null)
                         {
-                            conversation = new Conversation
+                            Console.WriteLine($"[Hangfire Job] Active ConnectedPage not found for project {followUp.ProjectId} and customer {customer.Id}. Marking follow-up {followUp.Id} as Missed.");
+                            followUp.Status = "Missed";
+                            continue;
+                        }
+
+                        var facebookGraphService = scope.ServiceProvider.GetRequiredService<Modules.Facebook.Services.IFacebookGraphService>();
+                        bool fbSent = false;
+                        try
+                        {
+                            await facebookGraphService.SendMessageAsync(
+                                connectedPage.FacebookPageId,
+                                connectedPage.PageAccessToken,
+                                customer.FacebookPSID,
+                                messageContent
+                            );
+                            fbSent = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[Hangfire Job] Failed to send Messenger follow-up to PSID {customer.FacebookPSID}: {ex.Message}");
+                        }
+
+                        if (fbSent)
+                        {
+                            Console.WriteLine($"[Hangfire Job] Successfully sent follow-up message to Messenger PSID {customer.FacebookPSID}");
+
+                            var conversation = await dbContext.Conversations
+                                .IgnoreQueryFilters()
+                                .FirstOrDefaultAsync(c => c.ProjectId == followUp.ProjectId && c.CustomerId == customer.Id && c.Channel == "Messenger" && c.Status != "Closed");
+
+                            if (conversation == null)
                             {
-                                ProjectId = followUp.ProjectId,
-                                CustomerId = customer.Id,
-                                Status = "Open",
-                                LastMessageTimestamp = DateTime.UtcNow
+                                conversation = new Conversation
+                                {
+                                    ProjectId = followUp.ProjectId,
+                                    CustomerId = customer.Id,
+                                    Status = "Open",
+                                    Channel = "Messenger",
+                                    LastMessageTimestamp = DateTime.UtcNow
+                                };
+                                dbContext.Conversations.Add(conversation);
+                                await dbContext.SaveChangesAsync();
+                            }
+                            else
+                            {
+                                conversation.LastMessageTimestamp = DateTime.UtcNow;
+                                dbContext.Entry(conversation).State = EntityState.Modified;
+                            }
+
+                            var message = new Message
+                            {
+                                ConversationId = conversation.Id,
+                                ExternalMessageId = $"msg_fb_fu_{Guid.NewGuid():N}",
+                                Direction = "Outgoing",
+                                Content = messageContent,
+                                MessageType = "Text",
+                                Timestamp = DateTime.UtcNow
                             };
-                            dbContext.Conversations.Add(conversation);
+                            dbContext.Messages.Add(message);
+
+                            followUp.Status = "Completed";
                             await dbContext.SaveChangesAsync();
+
+                            var signalrPayload = new
+                            {
+                                id = message.Id,
+                                conversationId = message.ConversationId,
+                                senderType = "Agent",
+                                content = message.Content,
+                                createdAt = message.Timestamp.ToString("o"),
+                                status = "Sent",
+                                mediaUrl = (string)null,
+                                mediaType = (string)null,
+                                channel = "Messenger"
+                            };
+
+                            await hubContext.Clients.Group($"project_{followUp.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
                         }
                         else
                         {
-                            conversation.LastMessageTimestamp = DateTime.UtcNow;
-                            dbContext.Entry(conversation).State = EntityState.Modified;
+                            Console.WriteLine($"[Hangfire Job] Facebook API error/failure for Messenger follow-up {followUp.Id}. Marking as Missed.");
+                            followUp.Status = "Missed";
                         }
-
-                        var message = new Message
-                        {
-                            ConversationId = conversation.Id,
-                            ExternalMessageId = $"msg_fu_{Guid.NewGuid().ToString("N")}",
-                            Direction = "Outgoing",
-                            Content = messageContent,
-                            MessageType = "Text",
-                            Timestamp = DateTime.UtcNow
-                        };
-                        dbContext.Messages.Add(message);
-
-                        followUp.Status = "Completed";
-                        await dbContext.SaveChangesAsync();
-
-                        var signalrPayload = new
-                        {
-                            id = message.Id,
-                            conversationId = message.ConversationId,
-                            senderType = "Agent",
-                            content = message.Content,
-                            createdAt = message.Timestamp.ToString("o"),
-                            status = "Sent",
-                            mediaUrl = (string)null,
-                            mediaType = (string)null
-                        };
-
-                        await hubContext.Clients.Group($"project_{followUp.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
                     }
                     else
                     {
-                        Console.WriteLine($"[Hangfire Job] Gateway error {response.StatusCode} for follow-up {followUp.Id}: {responseBody}. Marking as Missed.");
-                        followUp.Status = "Missed";
+                        var payload = new
+                        {
+                            projectId = followUp.ProjectId,
+                            to = customer.PhoneNumber,
+                            message = messageContent
+                        };
+
+                        var jsonPayload = JsonSerializer.Serialize(payload);
+                        var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
+                        var responseBody = await response.Content.ReadAsStringAsync();
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            Console.WriteLine($"[Hangfire Job] Successfully sent follow-up message to {customer.PhoneNumber}");
+
+                            var conversation = await dbContext.Conversations
+                                .IgnoreQueryFilters()
+                                .FirstOrDefaultAsync(c => c.ProjectId == followUp.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+
+                            if (conversation == null)
+                            {
+                                conversation = new Conversation
+                                {
+                                    ProjectId = followUp.ProjectId,
+                                    CustomerId = customer.Id,
+                                    Status = "Open",
+                                    LastMessageTimestamp = DateTime.UtcNow
+                                };
+                                dbContext.Conversations.Add(conversation);
+                                await dbContext.SaveChangesAsync();
+                            }
+                            else
+                            {
+                                conversation.LastMessageTimestamp = DateTime.UtcNow;
+                                dbContext.Entry(conversation).State = EntityState.Modified;
+                            }
+
+                            var message = new Message
+                            {
+                                ConversationId = conversation.Id,
+                                ExternalMessageId = $"msg_fu_{Guid.NewGuid().ToString("N")}",
+                                Direction = "Outgoing",
+                                Content = messageContent,
+                                MessageType = "Text",
+                                Timestamp = DateTime.UtcNow
+                            };
+                            dbContext.Messages.Add(message);
+
+                            followUp.Status = "Completed";
+                            await dbContext.SaveChangesAsync();
+
+                            var signalrPayload = new
+                            {
+                                id = message.Id,
+                                conversationId = message.ConversationId,
+                                senderType = "Agent",
+                                content = message.Content,
+                                createdAt = message.Timestamp.ToString("o"),
+                                status = "Sent",
+                                mediaUrl = (string)null,
+                                mediaType = (string)null
+                            };
+
+                            await hubContext.Clients.Group($"project_{followUp.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[Hangfire Job] Gateway error {response.StatusCode} for follow-up {followUp.Id}: {responseBody}. Marking as Missed.");
+                            followUp.Status = "Missed";
+                        }
                     }
                 }
                 catch (Exception ex)
