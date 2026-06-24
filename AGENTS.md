@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/028-remove-deals-and-profits/plan.md
+at specs/030-messenger-whatsapp-followup/plan.md
 <!-- SPECKIT END -->

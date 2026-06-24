@@ -1,6 +1,12 @@
 # UI/UX Plan
 
-**Last Updated**: 2026-06-23
+**Last Updated**: 2026-06-24
+
+## 2026-06-24: Messenger-to-WhatsApp Transition Visual Polish (In Progress)
+- **Goal**: Render a clear indication in the conversation lists and detail panels when a lead has transitioned from Messenger to WhatsApp, and ensure consistent Arabic messaging across the chats.
+- **Proposed Updates**:
+  - Add channel indicator icons (Facebook Messenger icon vs WhatsApp icon) or tags to conversation items.
+  - Animate transition states in the inbox panel to visually confirm the transition to the agent.
 
 ## 2026-06-23: Fix Light/Dark Mode Contrast in Chat & CRM Panels (Completed)
 - **Goal**: Address low-contrast readability issues in Light Mode and hidden dark texts in Dark Mode across the Inbox Workspace.

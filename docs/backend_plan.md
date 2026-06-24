@@ -1,8 +1,17 @@
 # Backend Master Plan
 
-**Last Updated**: 2026-06-10
+**Last Updated**: 2026-06-24
 
 ## Chronological Log
+
+### 2026-06-24: Messenger & WhatsApp Follow-Up Integration (In Progress)
+- **Goal**: Implement Facebook Messenger follow-up tracking, automatically capture phone numbers from Messenger chats, instantly transition leads to WhatsApp follow-ups with a welcome WhatsApp message, and enforce a "first session free" reminder in the Messenger AI responder.
+- **Proposed Updates**:
+  - Add logic in Messenger webhook handler/message ingestion to detect phone numbers from text/Quick Replies.
+  - Automatically update the lead's preferred channel to WhatsApp and format/save the phone number once acquired.
+  - Trigger a WhatsApp welcome message template ("نتواصل هنا...") using the WhatsApp Gateway upon successful transition.
+  - Cancel any active Messenger follow-up schedule and initialize a WhatsApp follow-up sequence.
+  - Update Messenger AI system prompt templates to append the first session free disclaimer.
 
 ### 2026-06-10: Firebase Cloud Messaging Push Notifications (Completed)
 - **Goal**: Implement server-side support for native FCM push notifications on successful slot bookings and add a testing endpoint.
