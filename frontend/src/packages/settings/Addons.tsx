@@ -1,22 +1,35 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Calendar, Settings, Sparkles } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Calendar, Settings, Sparkles, Zap } from 'lucide-react';
 import styles from './settings.module.css';
 
 interface AddonsProps {
   onManageGroups: () => void;
   isGroupAppointmentsEnabled: boolean;
   onToggleGroupAppointments: (enabled: boolean) => Promise<void>;
+  isWhatsAppGroupAutomationEnabled: boolean;
+  onToggleWhatsAppGroupAutomation: (enabled: boolean) => Promise<void>;
+  groupAutomationManagerPhone: string;
+  onUpdateGroupAutomationManagerPhone: (phone: string) => Promise<void>;
 }
 
 export default function Addons({ 
   onManageGroups, 
   isGroupAppointmentsEnabled, 
-  onToggleGroupAppointments 
+  onToggleGroupAppointments,
+  isWhatsAppGroupAutomationEnabled,
+  onToggleWhatsAppGroupAutomation,
+  groupAutomationManagerPhone,
+  onUpdateGroupAutomationManagerPhone
 }: AddonsProps) {
   const [loading, setLoading] = useState(false);
+  const [managerPhone, setManagerPhone] = useState(groupAutomationManagerPhone);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    setManagerPhone(groupAutomationManagerPhone);
+  }, [groupAutomationManagerPhone]);
 
   const handleToggle = async (checked: boolean) => {
     try {
@@ -29,6 +42,38 @@ export default function Addons({
       });
     } catch {
       setMessage({ type: 'error', text: 'فشل تعديل حالة الإضافة.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleGroupAutomation = async (checked: boolean) => {
+    try {
+      setLoading(true);
+      setMessage(null);
+      await onToggleWhatsAppGroupAutomation(checked);
+      setMessage({
+        type: 'success',
+        text: checked ? 'تم تفعيل أتمتة مجموعات الواتساب بنجاح.' : 'تم إلغاء تفعيل أتمتة مجموعات الواتساب.'
+      });
+    } catch {
+      setMessage({ type: 'error', text: 'فشل تعديل حالة الإضافة.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateManagerPhone = async (phone: string) => {
+    try {
+      setLoading(true);
+      setMessage(null);
+      await onUpdateGroupAutomationManagerPhone(phone);
+      setMessage({
+        type: 'success',
+        text: 'تم تحديث رقم هاتف المدير بنجاح.'
+      });
+    } catch {
+      setMessage({ type: 'error', text: 'فشل تحديث رقم هاتف المدير.' });
     } finally {
       setLoading(false);
     }
@@ -111,7 +156,77 @@ export default function Addons({
           </div>
         </div>
 
-        {/* Placeholder Addon 2 */}
+        {/* WhatsApp Group Automation Card */}
+        <div className="glass-panel" style={{ 
+          padding: 'var(--space-xl)', 
+          borderRadius: 'var(--radius-md)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          minHeight: '220px',
+          gap: 'var(--space-md)'
+        }}>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-md)' }}>
+              <div style={{ 
+                width: '40px', 
+                height: '40px', 
+                borderRadius: '8px', 
+                backgroundColor: 'rgba(16, 185, 129, 0.1)', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                color: 'rgba(16, 185, 129, 1)'
+              }}>
+                <Zap size={22} />
+              </div>
+
+              <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={isWhatsAppGroupAutomationEnabled}
+                  disabled={loading}
+                  onChange={(e) => handleToggleGroupAutomation(e.target.checked)}
+                  className={styles.checkbox}
+                />
+              </label>
+            </div>
+
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-strong)' }}>
+              أتمتة مجموعات الواتساب (Group Automation)
+            </h3>
+            <p style={{ fontSize: '0.825rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
+              إنشاء مجموعات واتساب مؤمنة آلياً قبل الجلسات وإرسال روابط الدعوة للطلاب ومتابعتهم بعد الحضور.
+            </p>
+
+            {isWhatsAppGroupAutomationEnabled && (
+              <div style={{ marginTop: 'var(--space-md)' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-soft)', marginBottom: '4px' }}>
+                  رقم هاتف المدير للتنبيهات والمجموعات
+                </label>
+                <input
+                  type="text"
+                  value={managerPhone}
+                  onChange={(e) => setManagerPhone(e.target.value)}
+                  onBlur={() => handleUpdateManagerPhone(managerPhone)}
+                  placeholder="+201068690092"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    fontSize: '0.8rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border)',
+                    backgroundColor: 'var(--bg-card)',
+                    color: 'var(--text-strong)',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Placeholder Addon 3 */}
         <div className="glass-panel" style={{ 
           padding: 'var(--space-xl)', 
           borderRadius: 'var(--radius-md)',

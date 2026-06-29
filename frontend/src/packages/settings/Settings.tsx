@@ -49,6 +49,8 @@ interface ProjectSettingsResponse {
     replyDelay?: number;
     maxDailyMessages?: number;
     isGroupAppointmentsEnabled?: boolean;
+    isWhatsAppGroupAutomationEnabled?: boolean;
+    groupAutomationManagerPhone?: string;
     messengerAiAutoReplyEnabled?: boolean;
     messengerReplyDelay?: number;
     commentsAiAutoReplyEnabled?: boolean;
@@ -160,7 +162,6 @@ export default function Settings() {
 
   // General settings state
   const [projectName, setProjectName] = useState('');
-  const [autoReplyEnabled, setAutoReplyEnabled] = useState(true);
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [geminiModel, setGeminiModel] = useState('gemini-3.5-flash');
   const [timezone, setTimezone] = useState('Africa/Cairo');
@@ -169,6 +170,9 @@ export default function Settings() {
   const [replyDelay, setReplyDelay] = useState(3);
   const [maxDailyMessages, setMaxDailyMessages] = useState(500);
   const [isGroupAppointmentsEnabled, setIsGroupAppointmentsEnabled] = useState(false);
+  const [isWhatsAppGroupAutomationEnabled, setIsWhatsAppGroupAutomationEnabled] = useState(false);
+  const [groupAutomationManagerPhone, setGroupAutomationManagerPhone] = useState('+201068690092');
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [messengerAutoReplyEnabled, setMessengerAutoReplyEnabled] = useState(false);
   const [messengerReplyDelay, setMessengerReplyDelay] = useState(3);
   const [commentsAutoReplyEnabled, setCommentsAutoReplyEnabled] = useState(false);
@@ -242,7 +246,6 @@ export default function Settings() {
       const response = await api.get<ProjectSettingsResponse>(`/api/projects/${activeProject.id}`);
       setProjectName(response.data.name || '');
       const settings = response.data.settings;
-      setAutoReplyEnabled(settings?.aiAutoReplyEnabled ?? true);
       setTimezone(settings?.timezone || 'Africa/Cairo');
       setGeminiApiKey(settings?.geminiApiKey || '');
       setGeminiModel(settings?.geminiModel || 'gemini-3.5-flash');
@@ -251,6 +254,9 @@ export default function Settings() {
       setReplyDelay(settings?.replyDelay ?? 3);
       setMaxDailyMessages(settings?.maxDailyMessages ?? 500);
       setIsGroupAppointmentsEnabled(settings?.isGroupAppointmentsEnabled ?? false);
+      setIsWhatsAppGroupAutomationEnabled(settings?.isWhatsAppGroupAutomationEnabled ?? false);
+      setGroupAutomationManagerPhone(settings?.groupAutomationManagerPhone ?? '+201068690092');
+      setAutoReplyEnabled(settings?.aiAutoReplyEnabled ?? false);
       setMessengerAutoReplyEnabled(settings?.messengerAiAutoReplyEnabled ?? false);
       setMessengerReplyDelay(settings?.messengerReplyDelay ?? 3);
       setCommentsAutoReplyEnabled(settings?.commentsAiAutoReplyEnabled ?? false);
@@ -483,6 +489,8 @@ export default function Settings() {
         replyDelay,
         maxDailyMessages,
         isGroupAppointmentsEnabled,
+        isWhatsAppGroupAutomationEnabled,
+        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
         messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
@@ -519,6 +527,66 @@ export default function Settings() {
         aiBehavior,
       });
       setIsGroupAppointmentsEnabled(enabled);
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  };
+
+  const handleToggleWhatsAppGroupAutomation = async (enabled: boolean) => {
+    if (!activeProject) return;
+    try {
+      await api.put(`/api/projects/${activeProject.id}/settings`, {
+        projectName: projectName.trim(),
+        aiAutoReplyEnabled: autoReplyEnabled,
+        timezone,
+        geminiApiKey: geminiApiKey.trim(),
+        geminiModel,
+        aiTonePreference: aiTonePreference.trim(),
+        aiTargetAudience: aiTargetAudience.trim(),
+        replyDelay,
+        maxDailyMessages,
+        isGroupAppointmentsEnabled,
+        isWhatsAppGroupAutomationEnabled: enabled,
+        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
+        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
+        messengerReplyDelay,
+        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
+        commentsReplyDelay,
+        systemPrompt: systemPrompt.trim(),
+        aiBehavior,
+      });
+      setIsWhatsAppGroupAutomationEnabled(enabled);
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  };
+
+  const handleUpdateGroupAutomationManagerPhone = async (phone: string) => {
+    if (!activeProject) return;
+    try {
+      await api.put(`/api/projects/${activeProject.id}/settings`, {
+        projectName: projectName.trim(),
+        aiAutoReplyEnabled: autoReplyEnabled,
+        timezone,
+        geminiApiKey: geminiApiKey.trim(),
+        geminiModel,
+        aiTonePreference: aiTonePreference.trim(),
+        aiTargetAudience: aiTargetAudience.trim(),
+        replyDelay,
+        maxDailyMessages,
+        isGroupAppointmentsEnabled,
+        isWhatsAppGroupAutomationEnabled,
+        groupAutomationManagerPhone: phone.trim(),
+        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
+        messengerReplyDelay,
+        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
+        commentsReplyDelay,
+        systemPrompt: systemPrompt.trim(),
+        aiBehavior,
+      });
+      setGroupAutomationManagerPhone(phone);
     } catch (e) {
       console.error(e);
       throw e;
@@ -1281,6 +1349,10 @@ export default function Settings() {
             <Addons 
               isGroupAppointmentsEnabled={isGroupAppointmentsEnabled} 
               onToggleGroupAppointments={handleToggleGroupAppointments} 
+              isWhatsAppGroupAutomationEnabled={isWhatsAppGroupAutomationEnabled}
+              onToggleWhatsAppGroupAutomation={handleToggleWhatsAppGroupAutomation}
+              groupAutomationManagerPhone={groupAutomationManagerPhone}
+              onUpdateGroupAutomationManagerPhone={handleUpdateGroupAutomationManagerPhone}
               onManageGroups={() => setViewMode('manage-groups')} 
             />
           )}

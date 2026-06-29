@@ -531,3 +531,59 @@ export async function disconnectSession(projectId) {
     }
     return { status: 'Disconnected', message: 'Session disconnected and cleaned up.' };
 }
+
+export async function createGroup(projectId, subject, participants) {
+    const sock = sessions.get(projectId);
+    if (!sock) {
+        throw new Error(`Active session not found for project ${projectId}`);
+    }
+    if (sock.isMock) {
+        console.log(`[MOCK GROUP] Creating mock group "${subject}" with participants: ${participants.join(', ')}`);
+        const groupJid = `mock_group_${Math.random().toString(36).substring(7)}@g.us`;
+        const inviteLink = `https://chat.whatsapp.com/mock_${Math.random().toString(36).substring(7)}`;
+        return { jid: groupJid, inviteLink };
+    }
+
+    try {
+        // Create the group
+        // participants must be an array of phone numbers formatted as '201068690092@s.whatsapp.net'
+        const formattedParticipants = participants.map(p => {
+            let clean = p.replace(/\+/g, '').trim();
+            if (!clean.endsWith('@s.whatsapp.net')) {
+                clean += '@s.whatsapp.net';
+            }
+            return clean;
+        });
+
+        console.log(`[baileys-manager] Creating group: ${subject} with participants: ${formattedParticipants.join(', ')}`);
+        const group = await sock.groupCreate(subject, formattedParticipants);
+        const groupJid = group.id;
+
+        // Try to get invite code/link
+        let inviteCode;
+        try {
+            inviteCode = await sock.groupInviteCode(groupJid);
+        } catch (e) {
+            console.error(`[baileys-manager] Failed to get invite code: ${e.message}. Retrying...`);
+            // Wait 1 second and retry
+            await new Promise(r => setTimeout(r, 1000));
+            inviteCode = await sock.groupInviteCode(groupJid);
+        }
+        const inviteLink = `https://chat.whatsapp.com/${inviteCode}`;
+
+        // Lock group settings to admin only (announcement and locked)
+        try {
+            // lock message sending to admins only
+            await sock.groupSettingUpdate(groupJid, 'announcement', 'locked');
+            // lock settings editing to admins only
+            await sock.groupSettingUpdate(groupJid, 'locked', 'locked');
+        } catch (e) {
+            console.error(`[baileys-manager] Warning: failed to lock group settings: ${e.message}`);
+        }
+
+        return { jid: groupJid, inviteLink };
+    } catch (err) {
+        console.error(`[baileys-manager] Failed to create group: ${err.message}`, err);
+        throw new Error(`Failed to create WhatsApp group: ${err.message}`);
+    }
+}

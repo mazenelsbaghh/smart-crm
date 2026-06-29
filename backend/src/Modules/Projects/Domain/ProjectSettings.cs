@@ -23,6 +23,8 @@ namespace Modules.Projects.Domain
         public int CommentsReplyDelay { get; set; } = 10;
         public string? SystemPrompt { get; set; }
         public string? AiBehaviorSettingsJson { get; set; }
+        public bool IsWhatsAppGroupAutomationEnabled { get; set; } = false;
+        public string GroupAutomationManagerPhone { get; set; } = "+201068690092";
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }

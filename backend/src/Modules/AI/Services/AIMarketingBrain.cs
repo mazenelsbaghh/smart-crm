@@ -30,6 +30,8 @@ namespace Modules.AI.Services
         public string? SuggestedReaction { get; set; }
         public string? SuggestedGroupBookingId { get; set; }
         public bool CancelGroupBooking { get; set; } = false;
+        public bool RequestHuman { get; set; } = false;
+        public bool BlacklistCustomer { get; set; } = false;
         public string[] AIInsights { get; set; } = Array.Empty<string>();
     }
 
@@ -133,8 +135,16 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
   ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null"",
   ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null"",
   ""cancelGroupBooking"": true | false,
+  ""requestHuman"": true | false,
+  ""blacklistCustomer"": true | false,
   ""aiInsights"": [""2-3 brief insights/recommendations about the customer behavior/needs in Arabic based on the conversation history, e.g. 'العميل مهتم ببرنامج متقدم', 'يرغب في تغيير موعد حجز المجموعة' (max 10-15 words per insight)""]
 }
+
+Guidelines for requestHuman:
+- Set requestHuman to true ONLY if the customer explicitly requests to talk to a human, call a manager, transfer to support, or says they want a human agent (e.g. ""عايز أكلم بني آدم"", ""تواصل مع الدعم"", ""مكالمة مع خدمة العملاء"", ""كلمني"", ""عايز رقم صاحب الشغل"", ""ممكن تليفون الإدارة""). Otherwise, set to false.
+
+Guidelines for blacklistCustomer:
+- Set blacklistCustomer to true ONLY if the customer confirms they have subscribed/registered in the paid course/session (e.g. ""اشتركت خلاص"", ""دفعت واشتركت"", ""سجلت في الكورس المدفوع"", ""نعم حضرت واشتركت""). Otherwise, set to false.
 
 Guidelines for publicCommentReply:
 - Set this field ONLY when the communication channel is a Facebook comment (i.e. 'Facebook Comment').

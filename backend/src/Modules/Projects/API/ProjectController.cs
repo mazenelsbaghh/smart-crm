@@ -98,6 +98,8 @@ namespace Modules.Projects.API
                     settings.ReplyDelay,
                     settings.MaxDailyMessages,
                     settings.IsGroupAppointmentsEnabled,
+                    settings.IsWhatsAppGroupAutomationEnabled,
+                    settings.GroupAutomationManagerPhone,
                     settings.MessengerAiAutoReplyEnabled,
                     settings.MessengerReplyDelay,
                     settings.CommentsAiAutoReplyEnabled,
@@ -145,6 +147,8 @@ namespace Modules.Projects.API
                     ReplyDelay = request.ReplyDelay ?? 3,
                     MaxDailyMessages = request.MaxDailyMessages ?? 500,
                     IsGroupAppointmentsEnabled = request.IsGroupAppointmentsEnabled,
+                    IsWhatsAppGroupAutomationEnabled = request.IsWhatsAppGroupAutomationEnabled,
+                    GroupAutomationManagerPhone = request.GroupAutomationManagerPhone ?? "+201068690092",
                     SystemPrompt = request.SystemPrompt,
                     AiBehaviorSettingsJson = request.AiBehavior != null ? _aiBehaviorSettingsService.Serialize(request.AiBehavior) : null,
                     UpdatedAt = DateTime.UtcNow
@@ -162,6 +166,8 @@ namespace Modules.Projects.API
                 if (request.ReplyDelay.HasValue) settings.ReplyDelay = request.ReplyDelay.Value;
                 if (request.MaxDailyMessages.HasValue) settings.MaxDailyMessages = request.MaxDailyMessages.Value;
                 settings.IsGroupAppointmentsEnabled = request.IsGroupAppointmentsEnabled;
+                settings.IsWhatsAppGroupAutomationEnabled = request.IsWhatsAppGroupAutomationEnabled;
+                settings.GroupAutomationManagerPhone = request.GroupAutomationManagerPhone ?? "+201068690092";
                 settings.MessengerAiAutoReplyEnabled = request.MessengerAiAutoReplyEnabled;
                 if (request.MessengerReplyDelay.HasValue) settings.MessengerReplyDelay = request.MessengerReplyDelay.Value;
                 settings.CommentsAiAutoReplyEnabled = request.CommentsAiAutoReplyEnabled;
@@ -207,6 +213,8 @@ namespace Modules.Projects.API
         public int? ReplyDelay { get; set; }
         public int? MaxDailyMessages { get; set; }
         public bool IsGroupAppointmentsEnabled { get; set; }
+        public bool IsWhatsAppGroupAutomationEnabled { get; set; }
+        public string? GroupAutomationManagerPhone { get; set; }
         public bool MessengerAiAutoReplyEnabled { get; set; }
         public int? MessengerReplyDelay { get; set; }
         public bool CommentsAiAutoReplyEnabled { get; set; }

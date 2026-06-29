@@ -41,6 +41,13 @@ namespace Modules.CRM.Services
                 s => s.RecalculateLeadScoresJobAsync(),
                 Cron.Minutely);
 
+            var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
+            RecurringJob.AddOrUpdate<FollowUpScheduler>(
+                "whatsapp-group-automation-lifecycle",
+                s => s.RunWhatsAppGroupAutomationLifecycleJobAsync(),
+                "0 23 * * *", // 11:00 PM every day Cairo time
+                new RecurringJobOptions { TimeZone = cairoZone });
+
             return Task.CompletedTask;
         }
 
@@ -414,6 +421,195 @@ namespace Modules.CRM.Services
 
             await dbContext.SaveChangesAsync();
             Console.WriteLine($"[Hangfire Job] Recalculated lead scores for {customers.Count} customers.");
+        }
+
+        public async Task RunWhatsAppGroupAutomationLifecycleJobAsync()
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+
+            var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
+            var cairoNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
+            var tomorrowDate = cairoNow.Date.AddDays(1);
+
+            // Start and end of tomorrow in Cairo timezone
+            var startOfTomorrowCairo = tomorrowDate;
+            var endOfTomorrowCairo = tomorrowDate.AddDays(1);
+
+            var startOfTomorrowUtc = TimeZoneInfo.ConvertTimeToUtc(startOfTomorrowCairo, cairoZone);
+            var endOfTomorrowUtc = TimeZoneInfo.ConvertTimeToUtc(endOfTomorrowCairo, cairoZone);
+
+            Console.WriteLine($"[Hangfire Group Lifecycle] Checking for active waves/appointments tomorrow: {tomorrowDate:yyyy-MM-dd} (UTC range: {startOfTomorrowUtc:O} to {endOfTomorrowUtc:O})");
+
+            var appointments = await dbContext.GroupAppointments
+                .IgnoreQueryFilters()
+                .Where(a => a.IsActive && a.DateTime >= startOfTomorrowUtc && a.DateTime < endOfTomorrowUtc)
+                .ToListAsync();
+
+            if (!appointments.Any())
+            {
+                Console.WriteLine("[Hangfire Group Lifecycle] No active waves scheduled for tomorrow.");
+                return;
+            }
+
+            var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+            using var httpClient = new HttpClient();
+
+            foreach (var appointment in appointments)
+            {
+                try
+                {
+                    // Query project settings to check if Group Automation is enabled
+                    var settings = await dbContext.ProjectSettings
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(s => s.ProjectId == appointment.ProjectId);
+
+                    if (settings == null || !settings.IsWhatsAppGroupAutomationEnabled)
+                    {
+                        Console.WriteLine($"[Hangfire Group Lifecycle] WhatsApp Group Automation is disabled for project {appointment.ProjectId} or settings missing. Skipping appointment {appointment.Id}.");
+                        continue;
+                    }
+
+                    if (!string.IsNullOrEmpty(appointment.WhatsAppGroupJid))
+                    {
+                        Console.WriteLine($"[Hangfire Group Lifecycle] Group already created for appointment {appointment.Id} (JID: {appointment.WhatsAppGroupJid}). Skipping creation.");
+                        continue;
+                    }
+
+                    Console.WriteLine($"[Hangfire Group Lifecycle] Creating group for appointment {appointment.Id}: 'wave {appointment.Name}'");
+
+                    var managerPhone = settings.GroupAutomationManagerPhone;
+                    if (string.IsNullOrEmpty(managerPhone))
+                    {
+                        managerPhone = "+201068690092";
+                    }
+
+                    // Create the group via WhatsApp Gateway
+                    var payload = new
+                    {
+                        projectId = appointment.ProjectId,
+                        subject = $"wave {appointment.Name}",
+                        participants = new[] { managerPhone }
+                    };
+
+                    var jsonPayload = JsonSerializer.Serialize(payload);
+                    var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+                    var gatewayResponse = await httpClient.PostAsync($"{gatewayUrl}/api/whatsapp/group/create", content);
+
+                    if (!gatewayResponse.IsSuccessStatusCode)
+                    {
+                        var errorBody = await gatewayResponse.Content.ReadAsStringAsync();
+                        Console.WriteLine($"[Hangfire Group Lifecycle] Failed to create group for appointment {appointment.Id}. Gateway response: {errorBody}");
+                        continue;
+                    }
+
+                    var responseBody = await gatewayResponse.Content.ReadAsStringAsync();
+                    using var responseDoc = JsonDocument.Parse(responseBody);
+                    var responseRoot = responseDoc.RootElement;
+
+                    string groupJid = responseRoot.GetProperty("jid").GetString() ?? "";
+                    string inviteLink = responseRoot.GetProperty("inviteLink").GetString() ?? "";
+
+                    if (string.IsNullOrEmpty(groupJid) || string.IsNullOrEmpty(inviteLink))
+                    {
+                        Console.WriteLine($"[Hangfire Group Lifecycle] Invalid response from gateway for appointment {appointment.Id}: {responseBody}");
+                        continue;
+                    }
+
+                    appointment.WhatsAppGroupJid = groupJid;
+                    appointment.WhatsAppGroupInviteLink = inviteLink;
+                    dbContext.Entry(appointment).State = EntityState.Modified;
+                    await dbContext.SaveChangesAsync();
+
+                    Console.WriteLine($"[Hangfire Group Lifecycle] Successfully created group: {groupJid}, link: {inviteLink}");
+
+                    // Find booked students
+                    var bookings = await dbContext.GroupAppointmentBookings
+                        .IgnoreQueryFilters()
+                        .Where(b => b.GroupAppointmentId == appointment.Id && b.ProjectId == appointment.ProjectId)
+                        .ToListAsync();
+
+                    Console.WriteLine($"[Hangfire Group Lifecycle] Found {bookings.Count} bookings for appointment {appointment.Id}. Scheduling follow-ups...");
+
+                    var aiBehaviorSettingsService = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IAIBehaviorSettingsService>();
+                    var aiBehavior = aiBehaviorSettingsService.Resolve(settings, "WhatsApp");
+
+                    // Fallback reminder templates
+                    string reminderTemplateOnline = "أهلاً يا {customerName}، هذا هو رابط الجروب الذي سيرسل عليه رابط الحصة: {groupInviteLink}";
+                    string reminderTemplateOffline = "أهلاً يا {customerName}، هذا هو رابط الجروب: {groupInviteLink}. نحن بانتظاركم!";
+
+                    // Fetch template override from fallbacks in AI behavior settings if present
+                    if (aiBehavior?.Fallbacks != null)
+                    {
+                        if (!string.IsNullOrEmpty(aiBehavior.Fallbacks.GroupReminderOnline))
+                        {
+                            reminderTemplateOnline = aiBehavior.Fallbacks.GroupReminderOnline;
+                        }
+                        if (!string.IsNullOrEmpty(aiBehavior.Fallbacks.GroupReminderOffline))
+                        {
+                            reminderTemplateOffline = aiBehavior.Fallbacks.GroupReminderOffline;
+                        }
+                    }
+
+                    var selectedTemplate = appointment.Mode == "online" ? reminderTemplateOnline : reminderTemplateOffline;
+
+                    foreach (var booking in bookings)
+                    {
+                        // Check if customer is blacklisted
+                        var customer = await dbContext.Customers
+                            .IgnoreQueryFilters()
+                            .FirstOrDefaultAsync(c => c.Id == booking.CustomerId && c.ProjectId == appointment.ProjectId);
+
+                        if (customer == null || customer.IsBlacklisted)
+                        {
+                            Console.WriteLine($"[Hangfire Group Lifecycle] Customer {booking.CustomerId} is blacklisted or not found. Skipping follow-ups.");
+                            continue;
+                        }
+
+                        // Schedule Session Reminder FollowUp (immediate)
+                        var reminderNotes = selectedTemplate
+                            .Replace("{customerName}", booking.CustomerName)
+                            .Replace("{groupInviteLink}", inviteLink)
+                            .Replace("{waveName}", appointment.Name)
+                            .Replace("{groupName}", appointment.Name);
+
+                        var reminderFollowUp = new CRM.Domain.FollowUp
+                        {
+                            ProjectId = appointment.ProjectId,
+                            CustomerId = booking.CustomerId,
+                            DueDate = DateTime.UtcNow,
+                            Status = "Pending",
+                            Type = "AppointmentReminder",
+                            AppointmentTime = appointment.DateTime,
+                            Notes = reminderNotes,
+                            Tone = "Default"
+                        };
+                        dbContext.FollowUps.Add(reminderFollowUp);
+
+                        // Schedule Post-Session 2-day FollowUp
+                        var postSessionFollowUp = new CRM.Domain.FollowUp
+                        {
+                            ProjectId = appointment.ProjectId,
+                            CustomerId = booking.CustomerId,
+                            DueDate = appointment.DateTime.AddDays(2),
+                            Status = "Pending",
+                            Type = "Nurturing",
+                            AppointmentTime = appointment.DateTime,
+                            Notes = "طمننا يا فندم، هل حضرت السيشن واشتركت معانا؟",
+                            Tone = "Default"
+                        };
+                        dbContext.FollowUps.Add(postSessionFollowUp);
+                    }
+
+                    await dbContext.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Hangfire Group Lifecycle] Error processing appointment {appointment.Id}: {ex.Message}");
+                    Console.WriteLine(ex.StackTrace);
+                }
+            }
         }
     }
 }

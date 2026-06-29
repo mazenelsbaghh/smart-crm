@@ -2,7 +2,7 @@ import express from 'express';
 import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
-import { startSession, getQR, getStatus, sendMessage, sendReaction, disconnectSession, statuses, sessions, sessionErrors, hasCredentials } from './baileys-manager.js';
+import { startSession, getQR, getStatus, sendMessage, sendReaction, disconnectSession, statuses, sessions, sessionErrors, hasCredentials, createGroup } from './baileys-manager.js';
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -88,6 +88,21 @@ app.post('/api/whatsapp/react', async (req, res) => {
         res.json({ status: 'Reacted', messageId: result });
     } catch (err) {
         console.error(`[GATEWAY REACT] Error sending reaction: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/whatsapp/group/create', async (req, res) => {
+    const { projectId, subject, participants } = req.body;
+    console.log(`[GATEWAY GROUP CREATE] Request received. projectId: ${projectId}, subject: ${subject}, participants: ${JSON.stringify(participants || [])}`);
+    if (!projectId || !subject || !participants || !Array.isArray(participants)) {
+        return res.status(400).json({ error: 'projectId, subject, and participants (array) are required' });
+    }
+    try {
+        const result = await createGroup(projectId, subject, participants);
+        res.json(result);
+    } catch (err) {
+        console.error(`[GATEWAY GROUP CREATE] Error creating group: ${err.message}`);
         res.status(500).json({ error: err.message });
     }
 });

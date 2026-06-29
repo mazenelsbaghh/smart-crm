@@ -58,5 +58,7 @@ namespace Modules.AI.Services
         public string WhatsAppTransitionFailure { get; set; } = "حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.";
         public string WhatsAppTransitionMessage { get; set; } = "أهلاً يا {customerName}، منورنا يا فندم! 😊 معاك {agentName}.. زي ما اتفقنا على ماسنجر، هنكمل كلامنا هنا على واتساب عشان نتابع مع بعض أسرع ونبعتلك كل التفاصيل بسهولة. وحابب أفكرك إن أول جلسة ليك معانا مجانية تماماً! لو تحب تحجزها دلوقتي، قولي الميعاد المناسب ليك وهسجلك فيه فوراً.";
         public string FollowUpDefault { get; set; } = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟";
+        public string GroupReminderOnline { get; set; } = "أهلاً يا {customerName}، هذا هو رابط الجروب الذي سيرسل عليه رابط الحصة: {groupInviteLink}";
+        public string GroupReminderOffline { get; set; } = "أهلاً يا {customerName}، هذا هو رابط الجروب: {groupInviteLink}. نحن بانتظاركم!";
     }
 }

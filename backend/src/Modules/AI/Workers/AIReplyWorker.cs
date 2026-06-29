@@ -78,6 +78,7 @@ namespace Modules.AI.Workers
 
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
             var channel = @event.Channel ?? "WhatsApp";
             var aiBehaviorSettingsService = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IAIBehaviorSettingsService>();
 
@@ -513,7 +514,7 @@ namespace Modules.AI.Workers
             string whatsappLinkContext = "";
             try
             {
-                var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+                gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
                 using var httpClientObj = new System.Net.Http.HttpClient();
                 var gatewayResponse = await httpClientObj.GetAsync($"{gatewayUrl}/api/whatsapp/session/status?projectId={@event.ProjectId}");
                 if (gatewayResponse.IsSuccessStatusCode)
@@ -760,6 +761,52 @@ namespace Modules.AI.Workers
 
             await _eventBus.PublishAsync(replyGeneratedEvent);
             Console.WriteLine($"[AIReplyWorker] Published AIReplyGeneratedEvent for {@event.Sender}");
+
+            // Intercept Human Request
+            if (analysisResult.RequestHuman)
+            {
+                try
+                {
+                    var managerPhone = settings.GroupAutomationManagerPhone;
+                    if (string.IsNullOrEmpty(managerPhone))
+                    {
+                        managerPhone = "+201068690092";
+                    }
+                    var customerName = customer?.Name ?? "عميل غير معروف";
+                    var customerPhone = customer?.PhoneNumber ?? @event.Sender;
+
+                    var managerMsg = $"العميل {customerName} ({customerPhone}) طلب التحدث مع شخص طبيعي.";
+                    await SendWhatsAppTransitionMessageAsync(
+                        gatewayUrl,
+                        @event.ProjectId,
+                        managerPhone,
+                        "المدير",
+                        "النظام",
+                        managerMsg
+                    );
+                    Console.WriteLine($"[AIReplyWorker] Sent human request notification to manager: {managerPhone}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Failed to send human request notification: {ex.Message}");
+                }
+            }
+
+            // Intercept Blacklist Customer (attended & subscribed)
+            if (analysisResult.BlacklistCustomer && customer != null)
+            {
+                try
+                {
+                    customer.IsBlacklisted = true;
+                    dbContext.Entry(customer).State = EntityState.Modified;
+                    await dbContext.SaveChangesAsync();
+                    Console.WriteLine($"[AIReplyWorker] Automatically blacklisted customer {customer.Id} ({customer.PhoneNumber}) as they subscribed.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Failed to auto-blacklist customer: {ex.Message}");
+                }
+            }
 
             // 2.5. Process AI Auto-Booking if suggestedGroupBookingId is set
             if (!string.IsNullOrEmpty(analysisResult.SuggestedGroupBookingId))
@@ -1009,7 +1056,7 @@ namespace Modules.AI.Workers
                             dbContext.Messages.Add(reactionMessage);
                             await dbContext.SaveChangesAsync();
 
-                            var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+                            gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
 
                             var gatewayPayload = new
                             {
