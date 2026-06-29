@@ -55,7 +55,10 @@ namespace Modules.AI.Services
             "agentName",
             "projectName",
             "phoneNumber",
-            "channel"
+            "channel",
+            "groupInviteLink",
+            "waveName",
+            "groupName"
         };
 
         public AIBehaviorSettings Resolve(ProjectSettings? settings, string channel = "WhatsApp")
@@ -320,6 +323,8 @@ namespace Modules.AI.Services
             if (!string.IsNullOrWhiteSpace(source.WhatsAppTransitionFailure)) target.WhatsAppTransitionFailure = source.WhatsAppTransitionFailure;
             if (!string.IsNullOrWhiteSpace(source.WhatsAppTransitionMessage)) target.WhatsAppTransitionMessage = source.WhatsAppTransitionMessage;
             if (!string.IsNullOrWhiteSpace(source.FollowUpDefault)) target.FollowUpDefault = source.FollowUpDefault;
+            if (!string.IsNullOrWhiteSpace(source.GroupReminderOnline)) target.GroupReminderOnline = source.GroupReminderOnline;
+            if (!string.IsNullOrWhiteSpace(source.GroupReminderOffline)) target.GroupReminderOffline = source.GroupReminderOffline;
             return target;
         }
 
@@ -343,6 +348,8 @@ namespace Modules.AI.Services
             ValidateTemplate(settings.Fallbacks.WhatsAppTransitionFailure, $"{path}.fallbacks.whatsAppTransitionFailure", errors);
             ValidateTemplate(settings.Fallbacks.WhatsAppTransitionMessage, $"{path}.fallbacks.whatsAppTransitionMessage", errors);
             ValidateTemplate(settings.Fallbacks.FollowUpDefault, $"{path}.fallbacks.followUpDefault", errors);
+            ValidateTemplate(settings.Fallbacks.GroupReminderOnline, $"{path}.fallbacks.groupReminderOnline", errors);
+            ValidateTemplate(settings.Fallbacks.GroupReminderOffline, $"{path}.fallbacks.groupReminderOffline", errors);
         }
 
         private static void ValidateTemplate(string? template, string path, List<string> errors)
