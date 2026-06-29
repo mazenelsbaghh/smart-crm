@@ -4,14 +4,14 @@
 
 ## Chronological Log
 
-### 2026-06-24: Messenger & WhatsApp Follow-Up Integration (In Progress)
+### 2026-06-24: Messenger & WhatsApp Follow-Up Integration (Completed)
 - **Goal**: Implement Facebook Messenger follow-up tracking, automatically capture phone numbers from Messenger chats, instantly transition leads to WhatsApp follow-ups with a welcome WhatsApp message, and enforce a "first session free" reminder in the Messenger AI responder.
-- **Proposed Updates**:
-  - Add logic in Messenger webhook handler/message ingestion to detect phone numbers from text/Quick Replies.
-  - Automatically update the lead's preferred channel to WhatsApp and format/save the phone number once acquired.
-  - Trigger a WhatsApp welcome message template ("نتواصل هنا...") using the WhatsApp Gateway upon successful transition.
-  - Cancel any active Messenger follow-up schedule and initialize a WhatsApp follow-up sequence.
-  - Update Messenger AI system prompt templates to append the first session free disclaimer.
+- **Updates**:
+  - Enhanced `AIReplyWorker.cs` to intercept Messenger messages, extract phone numbers using regular expressions, transition their channel to WhatsApp, save the phone number, trigger a welcome WhatsApp template message, cancel all pending Messenger follow-ups, and schedule a new WhatsApp follow-up.
+  - Implemented automatic fallback to Messenger when the WhatsApp welcome message fails to send.
+  - Extended `FollowUpScheduler.cs` to route scheduled follow-ups to Messenger if the customer only has a Facebook PSID but no Phone Number.
+  - Updated Messenger AI responder context to append a "first session free" Egyptian Arabic rule.
+  - Verified logic with a comprehensive test suite in `tests/phase_1/test_messenger_whatsapp_followup.py`.
 
 ### 2026-06-10: Firebase Cloud Messaging Push Notifications (Completed)
 - **Goal**: Implement server-side support for native FCM push notifications on successful slot bookings and add a testing endpoint.

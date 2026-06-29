@@ -22,6 +22,7 @@ namespace Modules.Projects.Domain
         public bool CommentsAiAutoReplyEnabled { get; set; } = false;
         public int CommentsReplyDelay { get; set; } = 10;
         public string? SystemPrompt { get; set; }
+        public string? AiBehaviorSettingsJson { get; set; }
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }

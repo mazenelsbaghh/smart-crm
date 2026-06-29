@@ -1097,6 +1097,9 @@ namespace backend.Migrations
                     b.Property<bool>("AiAutoReplyEnabled")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("AiBehaviorSettingsJson")
+                        .HasColumnType("text");
+
                     b.Property<string>("AiTargetAudience")
                         .IsRequired()
                         .HasColumnType("text");

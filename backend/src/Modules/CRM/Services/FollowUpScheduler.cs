@@ -382,19 +382,33 @@ namespace Modules.CRM.Services
             using var scope = _serviceProvider.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+            var missedFollowUpsByCustomer = await dbContext.FollowUps
+                .IgnoreQueryFilters()
+                .Where(f => f.Status == "Missed")
+                .GroupBy(f => f.CustomerId)
+                .Select(g => new { CustomerId = g.Key, MissedCount = g.Count() })
+                .ToListAsync();
+
+            if (!missedFollowUpsByCustomer.Any())
+            {
+                Console.WriteLine("[Hangfire Job] No missed follow-ups found for lead score recalculation.");
+                return;
+            }
+
+            var missedCounts = missedFollowUpsByCustomer.ToDictionary(f => f.CustomerId, f => f.MissedCount);
+            var customerIds = missedCounts.Keys.ToList();
             var customers = await dbContext.Customers
                 .IgnoreQueryFilters()
+                .Where(c => customerIds.Contains(c.Id))
                 .ToListAsync();
 
             foreach (var customer in customers)
             {
-                var missedCount = await dbContext.FollowUps
-                    .IgnoreQueryFilters()
-                    .CountAsync(f => f.CustomerId == customer.Id && f.Status == "Missed");
-                
-                if (missedCount > 0)
+                var missedCount = missedCounts[customer.Id];
+                var recalculatedScore = Math.Max(0, customer.LeadScore - (missedCount * 2));
+                if (customer.LeadScore != recalculatedScore)
                 {
-                    customer.LeadScore = Math.Max(0, customer.LeadScore - (missedCount * 2));
+                    customer.LeadScore = recalculatedScore;
                 }
             }
 

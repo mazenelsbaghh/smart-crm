@@ -20,6 +20,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", Serilog.Events.LogEventLevel.Warning)
     .WriteTo.Console()
     .WriteTo.File(new Serilog.Formatting.Json.JsonFormatter(), "logs/audit.json", rollingInterval: RollingInterval.Day)
     .CreateLogger();
@@ -163,6 +167,7 @@ builder.Services.AddSingleton<Modules.AI.Services.IGeminiClient, Modules.AI.Serv
 
 // Register AI Marketing Brain
 builder.Services.AddScoped<Modules.AI.Services.IAIMarketingBrain, Modules.AI.Services.AIMarketingBrain>();
+builder.Services.AddScoped<Modules.AI.Services.IAIBehaviorSettingsService, Modules.AI.Services.AIBehaviorSettingsService>();
 
 // Register AI Company Brain
 builder.Services.AddScoped<Modules.Brain.Services.IAICompanyBrain, Modules.Brain.Services.AICompanyBrain>();

@@ -2,7 +2,7 @@ import express from 'express';
 import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
-import { startSession, getQR, getStatus, sendMessage, sendReaction, disconnectSession, statuses, sessions, sessionErrors } from './baileys-manager.js';
+import { startSession, getQR, getStatus, sendMessage, sendReaction, disconnectSession, statuses, sessions, sessionErrors, hasCredentials } from './baileys-manager.js';
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -174,7 +174,7 @@ app.listen(PORT, async () => {
                 if (fs.statSync(fullPath).isDirectory()) {
                     // Check if there are credentials in it (e.g. creds.json)
                     const credsFile = path.join(fullPath, 'creds.json');
-                    if (fs.existsSync(credsFile)) {
+                    if (fs.existsSync(credsFile) && hasCredentials(file)) {
                         console.log(`[GATEWAY STARTUP] Found existing session directory for project: ${file}. Will restore connection after delay...`);
                         // Delay session restore to let WhatsApp servers release the old connection
                         setTimeout(() => {

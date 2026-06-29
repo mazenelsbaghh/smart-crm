@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Modules.AI.Services;
 using Modules.Facebook.Services;
 using Shared.Events;
 using Shared.Infrastructure;
@@ -18,19 +19,22 @@ namespace Modules.Facebook.Workers
         private readonly ILogger<FacebookReplySender> _logger;
         private readonly Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> _hubContext;
         private readonly StackExchange.Redis.IDatabase _redis;
+        private readonly IAIBehaviorSettingsService _aiBehaviorSettingsService;
 
         public FacebookReplySender(
             AppDbContext context,
             IFacebookGraphService graphService,
             ILogger<FacebookReplySender> logger,
             Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext,
-            StackExchange.Redis.IConnectionMultiplexer redis)
+            StackExchange.Redis.IConnectionMultiplexer redis,
+            IAIBehaviorSettingsService aiBehaviorSettingsService)
         {
             _context = context;
             _graphService = graphService;
             _logger = logger;
             _hubContext = hubContext;
             _redis = redis.GetDatabase();
+            _aiBehaviorSettingsService = aiBehaviorSettingsService;
         }
 
         public async Task HandleAsync(AIReplyGeneratedEvent @event)
@@ -279,14 +283,22 @@ namespace Modules.Facebook.Workers
             await Task.Delay(4000);
 
             // 1. Reply publicly to the comment
+            var projectSettings = await _context.ProjectSettings
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(s => s.ProjectId == @event.ProjectId);
+            var aiBehavior = _aiBehaviorSettingsService.Resolve(projectSettings, "FacebookComment");
             var publicReply = !string.IsNullOrEmpty(@event.PublicCommentReply) 
                 ? @event.PublicCommentReply 
-                : "تم الرد في الخاص يا فندم! ❤️"; // Fallback to a default message
+                : aiBehavior.Fallbacks.FacebookPublicComment;
 
             await _graphService.ReplyToCommentAsync(connectedPage.PageAccessToken, commentId, publicReply);
 
-            // 2. React to the comment (LOVE only as per user request)
-            await _graphService.ReactToCommentAsync(connectedPage.PageAccessToken, commentId, "LOVE");
+            var reactionToSend = !string.IsNullOrWhiteSpace(@event.Reaction) ? @event.Reaction : "LOVE";
+            var shouldSendReaction = _aiBehaviorSettingsService.IsReactionAllowed(aiBehavior, reactionToSend);
+            if (shouldSendReaction)
+            {
+                await _graphService.ReactToCommentAsync(connectedPage.PageAccessToken, commentId, reactionToSend);
+            }
 
             // 3. Send private DM (only if not empty/null)
             bool sentPrivate = !string.IsNullOrEmpty(@event.Content);
@@ -332,17 +344,28 @@ namespace Modules.Facebook.Workers
                 };
                 _context.Messages.Add(publicMsg);
 
-                // 2. Save reaction as Outgoing message to DB (LOVE ❤️)
-                var reactMsg = new Modules.Conversations.Domain.Message
+                Modules.Conversations.Domain.Message reactMsg = null;
+                if (shouldSendReaction)
                 {
-                    ConversationId = commentConvId.Value,
-                    ExternalMessageId = $"msg_ai_react_{Guid.NewGuid():N}",
-                    Direction = "Outgoing",
-                    Content = "[تفاعل] ❤️",
-                    MessageType = "Reaction",
-                    Timestamp = DateTime.UtcNow
-                };
-                _context.Messages.Add(reactMsg);
+                    var mappedReaction = FacebookGraphService.MapToFacebookReaction(reactionToSend);
+                    var reactionEmoji = mappedReaction == "LOVE" ? "❤️" :
+                        mappedReaction == "LIKE" ? "👍" :
+                        mappedReaction == "SAD" ? "😢" :
+                        mappedReaction == "HAHA" ? "😂" :
+                        mappedReaction == "WOW" ? "😮" :
+                        reactionToSend;
+
+                    reactMsg = new Modules.Conversations.Domain.Message
+                    {
+                        ConversationId = commentConvId.Value,
+                        ExternalMessageId = $"msg_ai_react_{Guid.NewGuid():N}",
+                        Direction = "Outgoing",
+                        Content = $"[تفاعل] {reactionEmoji}",
+                        MessageType = "Reaction",
+                        Timestamp = DateTime.UtcNow
+                    };
+                    _context.Messages.Add(reactMsg);
+                }
 
                 await _context.SaveChangesAsync();
 
@@ -360,18 +383,20 @@ namespace Modules.Facebook.Workers
                     facebookCommentId = commentId
                 });
 
-                // Broadcast reaction via SignalR
-                await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                if (reactMsg != null)
                 {
-                    id = reactMsg.Id,
-                    conversationId = commentConvId.Value,
-                    senderType = "AI",
-                    content = reactMsg.Content,
-                    createdAt = reactMsg.Timestamp.ToString("o"),
-                    status = "Sent",
-                    messageType = "Reaction",
-                    channel = "FacebookComment"
-                });
+                    await _hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", new
+                    {
+                        id = reactMsg.Id,
+                        conversationId = commentConvId.Value,
+                        senderType = "AI",
+                        content = reactMsg.Content,
+                        createdAt = reactMsg.Timestamp.ToString("o"),
+                        status = "Sent",
+                        messageType = "Reaction",
+                        channel = "FacebookComment"
+                    });
+                }
 
                 // 3. Find/Create Messenger Conversation & Save private DM if sent
                 if (sentPrivate)
@@ -421,7 +446,7 @@ namespace Modules.Facebook.Workers
                 }
             }
 
-            _logger.LogInformation("[FacebookReplySender] Comment reply (public+reaction LOVE, private DM sent: {SentPrivate}) sent for comment {CommentId}", sentPrivate, commentId);
+            _logger.LogInformation("[FacebookReplySender] Comment reply (public+reaction {ReactionSent}, private DM sent: {SentPrivate}) sent for comment {CommentId}", shouldSendReaction, sentPrivate, commentId);
         }
     }
 }

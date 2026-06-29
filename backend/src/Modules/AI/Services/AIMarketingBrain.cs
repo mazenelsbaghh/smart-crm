@@ -58,16 +58,20 @@ namespace Modules.AI.Services
             string aiTargetAudience = null,
             string geminiModel = null,
             string cachedContentId = null,
-            string? systemPromptOverride = null);
+            string? systemPromptOverride = null,
+            AIBehaviorSettings? aiBehaviorSettings = null,
+            string channel = "WhatsApp");
 
         string BuildStaticPrompt(
             string agentName,
             string tonePref,
             string targetAud,
             string approvedKnowledgeBaseText,
-            string? systemPromptOverride = null);
+            string? systemPromptOverride = null,
+            AIBehaviorSettings? aiBehaviorSettings = null,
+            string channel = "WhatsApp");
 
-        string GetCurrentAgentName();
+        string GetCurrentAgentName(string? agentInstructions = null);
         Task<string> RewriteFollowUpNotesAsync(
             string customerName,
             string notes,
@@ -80,6 +84,7 @@ namespace Modules.AI.Services
     public class AIMarketingBrain : IAIMarketingBrain
     {
         private readonly IGeminiClient _geminiClient;
+        private readonly IAIBehaviorSettingsService _aiBehaviorSettingsService;
 
         private const string SystemPromptTemplate = @"You are a high-performing AI Marketing Brain and CRM assistant communicating with customers through WhatsApp messaging.
 CRITICAL CONTEXT: You are chatting with customers on WhatsApp. This means:
@@ -92,7 +97,7 @@ CRITICAL CONTEXT: You are chatting with customers on WhatsApp. This means:
 - Use line breaks between ideas for readability in chat bubbles.
 - CRITICAL LANGUAGE RULE: Always write replyContent in Arabic, preferably polite Egyptian Arabic, even if the customer writes in English, Arabizi, or mixed Arabic/English. Do not switch the reply language to English unless the customer explicitly asks you to reply in English.
 
-Your name is [AGENT_NAME]. You MUST sign off your response with a signature as the very last line of your reply.
+Your default agent name is [AGENT_NAME]. If the project-specific instructions define a different agent name, staff names, or signature style, follow those project-specific instructions instead. You MUST sign off your response with a signature as the very last line of your reply.
 - Normally, sign off with '- [AGENT_NAME] ✨'.
 - CRITICAL: If the customer's sentiment is 'angry' or 'negative', or if you classify the replyStyle as 'Complaint':
   1. Set replyStyle to 'Complaint'.
@@ -199,9 +204,18 @@ Guidelines for replyContent formatting and unity:
 Ensure the replyContent is always written in Arabic unless the customer explicitly asks for English. Don't use placeholders.
 Be concise, natural, and friendly. Do not repeat greetings or duplicate questions. Keep your replyContent focused on answering the customer's direct query without unnecessary fluff.";
 
-        public AIMarketingBrain(IGeminiClient geminiClient)
+        public AIMarketingBrain(IGeminiClient geminiClient, IAIBehaviorSettingsService aiBehaviorSettingsService)
         {
             _geminiClient = geminiClient;
+            _aiBehaviorSettingsService = aiBehaviorSettingsService;
+        }
+
+        private string ResolveSystemPrompt(string? customInstructions, AIBehaviorSettings settings, string channel, string agentName)
+        {
+            return SystemPromptTemplate +
+                   "\n\nAdditional project-specific behavior instructions from settings:\n" +
+                   _aiBehaviorSettingsService.BuildBehaviorInstructions(settings, channel, customInstructions) +
+                   "\n\nThese project-specific instructions must shape the answer style, staff identity, reactions, and business behavior, but they must not override the required JSON response format, safety rules, channel rules, or CRM/follow-up schema above.";
         }
 
         private static void NormalizeReaction(MarketingAnalysisResult result)
@@ -211,34 +225,54 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 return;
             }
 
-            var isComplaint = string.Equals(result.ReplyStyle, "Complaint", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(result.Intent, "complaint", StringComparison.OrdinalIgnoreCase);
-            var isNegative = string.Equals(result.Sentiment, "negative", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(result.Sentiment, "angry", StringComparison.OrdinalIgnoreCase);
-
-            if (isComplaint || isNegative)
-            {
-                result.SuggestedReaction = "😢";
-                return;
-            }
-
-            var isPositive = string.Equals(result.Sentiment, "positive", StringComparison.OrdinalIgnoreCase);
-            var isPurchase = string.Equals(result.Intent, "purchase", StringComparison.OrdinalIgnoreCase);
-            var isGreeting = string.Equals(result.Intent, "greeting", StringComparison.OrdinalIgnoreCase);
-
-            if (isPositive || isPurchase)
-            {
-                result.SuggestedReaction = "❤️";
-                return;
-            }
-
-            if (isGreeting)
-            {
-                result.SuggestedReaction = "💖";
-            }
+            result.SuggestedReaction = null;
         }
 
-        public string GetCurrentAgentName()
+        public string GetCurrentAgentName(string? agentInstructions = null)
+        {
+            var configuredAgentName = ExtractConfiguredAgentName(agentInstructions);
+            if (!string.IsNullOrWhiteSpace(configuredAgentName))
+            {
+                return configuredAgentName;
+            }
+
+            return _aiBehaviorSettingsService.GetAgentName(_aiBehaviorSettingsService.Resolve(null));
+        }
+
+        private static string? ExtractConfiguredAgentName(string? agentInstructions)
+        {
+            if (string.IsNullOrWhiteSpace(agentInstructions))
+            {
+                return null;
+            }
+
+            var match = Regex.Match(
+                agentInstructions,
+                @"(?:AgentNames?|agent_names?|اسم(?:اء)?\s+الموظفين|اسم\s+الموظف)\s*[:=：]\s*(?<names>[^\r\n]+)",
+                RegexOptions.IgnoreCase);
+
+            if (!match.Success)
+            {
+                return null;
+            }
+
+            var names = match.Groups["names"].Value
+                .Split(new[] { ',', '،', '|', '/', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(name => name.Trim())
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToArray();
+
+            if (names.Length == 0)
+            {
+                return null;
+            }
+
+            var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
+            var cairoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
+            return names[cairoTime.Hour % names.Length];
+        }
+
+        private static string GetDefaultShiftAgentName()
         {
             var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
             var cairoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
@@ -286,15 +320,21 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             string aiTargetAudience = null,
             string geminiModel = null,
             string cachedContentId = null,
-            string? systemPromptOverride = null)
+            string? systemPromptOverride = null,
+            AIBehaviorSettings? aiBehaviorSettings = null,
+            string channel = "WhatsApp")
         {
-            var agentName = GetCurrentAgentName();
+            var resolvedBehaviorSettings = aiBehaviorSettings ?? _aiBehaviorSettingsService.Resolve(null, channel);
+            var agentName = _aiBehaviorSettingsService.GetAgentName(resolvedBehaviorSettings);
             Console.WriteLine($"[AIMarketingBrain] Active shift agent resolved: {agentName} (UTC hour: {DateTime.UtcNow.Hour})");
+
+            var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
+            var cairoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
 
             string fullPrompt;
             if (!string.IsNullOrEmpty(cachedContentId))
             {
-                var dynamicPrompt = $@"CRITICAL: The current UTC time is {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}. Use this as the reference time to calculate all relative dates/times for follow-ups (e.g. 'tomorrow at 7 PM' or 'in 2 days').";
+                var dynamicPrompt = $@"CRITICAL: The current UTC time is {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}. The current local date and time in Egypt (Cairo) is {cairoTime:yyyy-MM-dd dddd HH:mm:ss}. Use this as the reference time to calculate all relative dates/times (e.g. 'tomorrow at 7 PM' or 'in 2 days').";
 
                 if (!string.IsNullOrEmpty(customerProfile))
                 {
@@ -333,7 +373,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             }
             else
             {
-                var systemPrompt = !string.IsNullOrEmpty(systemPromptOverride) ? systemPromptOverride : SystemPromptTemplate;
+                var systemPrompt = ResolveSystemPrompt(systemPromptOverride, resolvedBehaviorSettings, channel, agentName);
 
             var tonePref = !string.IsNullOrEmpty(aiTonePreference) ? aiTonePreference : "العامية المصرية الروشة والصايعة";
             var targetAud = !string.IsNullOrEmpty(aiTargetAudience) ? aiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل";
@@ -373,7 +413,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                                  "- Use warm expressions like: \"أهلاً بك عزيزي...\", \"يسعدنا جداً تواصلك معنا...\", \"يسرني أن أوضح لك...\", \"بكل تأكيد...\".";
             }
 
-            systemPrompt += $"\n\nCRITICAL: The current UTC time is {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}. Use this as the reference time to calculate all relative dates/times for follow-ups (e.g. 'tomorrow at 7 PM' or 'in 2 days').";
+            systemPrompt += $"\n\nCRITICAL: The current UTC time is {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}. The current local date and time in Egypt (Cairo) is {cairoTime:yyyy-MM-dd dddd HH:mm:ss}. Use this as the reference time to calculate all relative dates/times (e.g. 'tomorrow at 7 PM' or 'in 2 days').";
 
             if (!string.IsNullOrEmpty(customerProfile))
             {
@@ -428,7 +468,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     Intent = "inquiry",
                     Sentiment = "neutral",
                     ReplyStyle = "Casual",
-                    ReplyContent = "أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.",
+                    ReplyContent = resolvedBehaviorSettings.Fallbacks.AiError,
                     Confidence = 0.5,
                     Label = "استفسار عام",
                     PipelineStage = "New"
@@ -491,20 +531,14 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             }
 
             // Fallback if not valid JSON
-            string fallbackReply = rawResponse;
-            if (string.IsNullOrEmpty(rawResponse) || 
-                rawResponse.StartsWith("[AI_ERROR]") || 
-                rawResponse.StartsWith("[AI Error Recovery]") ||
-                !rawResponse.Trim().StartsWith("{"))
+            string fallbackReply = rawResponse?.Trim();
+            if (string.IsNullOrEmpty(fallbackReply) ||
+                fallbackReply.StartsWith("[AI_ERROR]") ||
+                fallbackReply.StartsWith("[AI Error Recovery]"))
             {
-                if (rawResponse != null && rawResponse.StartsWith("[Mock Gemini Reply]"))
-                {
-                    fallbackReply = rawResponse;
-                }
-                else
-                {
-                    fallbackReply = "أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.";
-                }
+                fallbackReply = fallbackReply != null && fallbackReply.StartsWith("[AI_ERROR]")
+                    ? resolvedBehaviorSettings.Fallbacks.AiError
+                    : resolvedBehaviorSettings.Fallbacks.InvalidAiOutput;
             }
 
             var fallbackResult = new MarketingAnalysisResult
@@ -539,9 +573,12 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             string tonePref,
             string targetAud,
             string approvedKnowledgeBaseText,
-            string? systemPromptOverride = null)
+            string? systemPromptOverride = null,
+            AIBehaviorSettings? aiBehaviorSettings = null,
+            string channel = "WhatsApp")
         {
-            var systemPrompt = !string.IsNullOrEmpty(systemPromptOverride) ? systemPromptOverride : SystemPromptTemplate;
+            var resolvedBehaviorSettings = aiBehaviorSettings ?? _aiBehaviorSettingsService.Resolve(null, channel);
+            var systemPrompt = ResolveSystemPrompt(systemPromptOverride, resolvedBehaviorSettings, channel, agentName);
 
             var resolvedTonePref = !string.IsNullOrEmpty(tonePref) ? tonePref : "العامية المصرية الروشة والصايعة";
             var resolvedTargetAud = !string.IsNullOrEmpty(targetAud) ? targetAud : "طلاب كورس كول سنتر يبحثون عن عمل";

@@ -79,6 +79,7 @@ namespace Modules.AI.Workers
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
             var channel = @event.Channel ?? "WhatsApp";
+            var aiBehaviorSettingsService = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IAIBehaviorSettingsService>();
 
             try
             {
@@ -105,6 +106,16 @@ namespace Modules.AI.Workers
                 Console.WriteLine($"[AIReplyWorker] ProjectSettings not found for project {@event.ProjectId}. Skipping AI reply.");
                 return;
             }
+
+            var project = await dbContext.Projects.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == @event.ProjectId);
+            if (project != null && string.Equals(project.Name, "ff", StringComparison.OrdinalIgnoreCase))
+            {
+                settings.SystemPrompt = (settings.SystemPrompt ?? "") + "\n\nCRITICAL PAYMENT RULE:\n" +
+                    "- If the customer asks about prices, fees, cost, or similar, state the exact pricing numbers from the reference knowledge base.\n" +
+                    "- If the customer wants to pay, asks how to pay, asks for payment methods, bank transfer details, Vodafone Cash number, or says they are ready to make a payment (e.g. 'عايز أدفع', 'أدفع إزاي', 'طرق الدفع', 'رقم فودافون كاش'), you MUST immediately direct them to contact the manager/owner at this phone number: 01068690092 to arrange the payment, and provide this number clearly in your reply.";
+            }
+
+            var aiBehaviorSettings = aiBehaviorSettingsService.Resolve(settings, channel);
 
             // Check per-channel AI auto-reply toggle
             bool isAiEnabled;
@@ -204,10 +215,10 @@ namespace Modules.AI.Workers
                     .ToListAsync();
 
                 var approvedChunksText = string.Join("\n\n", approvedChunksList.Select(text => $"- {text}"));
-                var tonePref = !string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية الروشة والصايعة";
-                var targetAud = !string.IsNullOrEmpty(settings.AiTargetAudience) ? settings.AiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل";
-                var agentName = _aiMarketingBrain.GetCurrentAgentName();
-                var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText, settings.SystemPrompt);
+                var tonePref = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.CustomTone) ? aiBehaviorSettings.Tone.CustomTone : (!string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية الروشة والصايعة");
+                var targetAud = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.TargetAudience) ? aiBehaviorSettings.Tone.TargetAudience : (!string.IsNullOrEmpty(settings.AiTargetAudience) ? settings.AiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل");
+                var agentName = aiBehaviorSettingsService.GetAgentName(aiBehaviorSettings);
+                var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText, settings.SystemPrompt, aiBehaviorSettings, channel);
 
                 var geminiClient = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IGeminiClient>();
                 int staticTokensCount = await geminiClient.CountTokensAsync(staticPrompt, apiKeyOverride, settings.GeminiModel);
@@ -690,9 +701,15 @@ namespace Modules.AI.Workers
                 settings.AiTargetAudience,
                 settings.GeminiModel,
                 cachedContentId,
-                settings.SystemPrompt);
+                settings.SystemPrompt,
+                aiBehaviorSettings,
+                channel);
 
             await ApplyKnowledgePricingGuardAsync(dbContext, @event.ProjectId, @event.Content, analysisResult);
+            if (!aiBehaviorSettingsService.IsReactionAllowed(aiBehaviorSettings, analysisResult.SuggestedReaction))
+            {
+                analysisResult.SuggestedReaction = null;
+            }
 
             if (latestMediaMsg != null && !string.IsNullOrEmpty(analysisResult.Transcription))
             {
@@ -966,7 +983,7 @@ namespace Modules.AI.Workers
             }
 
             // 3. Process AI Auto-Reaction if suggested (WhatsApp only)
-            if (channel == "WhatsApp" && !string.IsNullOrEmpty(analysisResult.SuggestedReaction))
+            if (channel == "WhatsApp" && aiBehaviorSettingsService.IsReactionAllowed(aiBehaviorSettings, analysisResult.SuggestedReaction))
             {
                 try
                 {
@@ -1151,10 +1168,9 @@ namespace Modules.AI.Workers
             Guid projectId,
             string toPhone,
             string customerName,
-            string agentName)
+            string agentName,
+            string waMessage)
         {
-            var waMessage = $"أهلاً يا {customerName}، منورنا يا فندم! 😊 معاك {agentName}.. زي ما اتفقنا على ماسنجر، هنكمل كلامنا هنا على واتساب عشان نتابع مع بعض أسرع ونبعتلك كل التفاصيل بسهولة. وحابب أفكرك إن أول جلسة ليك معانا مجانية تماماً! لو تحب تحجزها دلوقتي، قولي الميعاد المناسب ليك وهسجلك فيه فوراً.";
-            
             var payload = new
             {
                 projectId = projectId,
@@ -1191,6 +1207,9 @@ namespace Modules.AI.Workers
                 .FirstOrDefaultAsync(cp => cp.FacebookPageId == pageId && cp.IsActive);
 
             var facebookGraphService = serviceProvider.GetRequiredService<Modules.Facebook.Services.IFacebookGraphService>();
+            var behaviorService = serviceProvider.GetRequiredService<Modules.AI.Services.IAIBehaviorSettingsService>();
+            var messengerBehavior = behaviorService.Resolve(settings, "Messenger");
+            var whatsAppBehavior = behaviorService.Resolve(settings, "WhatsApp");
 
             if (connectedPage == null)
             {
@@ -1201,8 +1220,22 @@ namespace Modules.AI.Workers
             bool waSent = false;
             try
             {
-                var agentName = _aiMarketingBrain.GetCurrentAgentName();
-                waSent = await SendWhatsAppTransitionMessageAsync(gatewayUrl, settings.ProjectId, extractedPhone, customer.Name, agentName);
+                var agentName = behaviorService.GetAgentName(whatsAppBehavior);
+                var transitionMessage = behaviorService.RenderTemplate(whatsAppBehavior.Fallbacks.WhatsAppTransitionMessage, new Modules.AI.Services.AIBehaviorTemplateContext
+                {
+                    CustomerName = string.IsNullOrWhiteSpace(customer.Name) ? "يا فندم" : customer.Name,
+                    AgentName = agentName,
+                    ProjectName = projectName,
+                    PhoneNumber = extractedPhone,
+                    Channel = "WhatsApp"
+                });
+                waSent = await SendWhatsAppTransitionMessageAsync(
+                    gatewayUrl,
+                    settings.ProjectId,
+                    extractedPhone,
+                    customer.Name,
+                    agentName,
+                    transitionMessage);
             }
             catch (Exception ex)
             {
@@ -1217,7 +1250,14 @@ namespace Modules.AI.Workers
                 dbContext.Entry(customer).State = EntityState.Modified;
                 await dbContext.SaveChangesAsync();
 
-                var successMsg = "أنا بعتلك رسالة على الواتساب، خلينا نتواصل هناك. ✨";
+                var successMsg = behaviorService.RenderTemplate(messengerBehavior.Fallbacks.WhatsAppTransitionSuccess, new Modules.AI.Services.AIBehaviorTemplateContext
+                {
+                    CustomerName = customer.Name ?? "يا فندم",
+                    AgentName = behaviorService.GetAgentName(messengerBehavior),
+                    ProjectName = projectName,
+                    PhoneNumber = extractedPhone,
+                    Channel = "Messenger"
+                });
                 await facebookGraphService.SendMessageAsync(connectedPage.FacebookPageId, connectedPage.PageAccessToken, senderPSID, successMsg);
 
                 var messengerConvo = await dbContext.Conversations
@@ -1270,7 +1310,14 @@ namespace Modules.AI.Workers
                     CustomerId = customer.Id,
                     Type = "Nurturing",
                     DueDate = DateTime.UtcNow.AddHours(24),
-                    Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                    Notes = behaviorService.RenderTemplate(whatsAppBehavior.Fallbacks.FollowUpDefault, new Modules.AI.Services.AIBehaviorTemplateContext
+                    {
+                        CustomerName = customer.Name ?? "يا فندم",
+                        AgentName = behaviorService.GetAgentName(whatsAppBehavior),
+                        ProjectName = projectName,
+                        PhoneNumber = extractedPhone,
+                        Channel = "WhatsApp"
+                    }),
                     Status = "Pending"
                 };
                 dbContext.FollowUps.Add(newFollowUp);
@@ -1281,7 +1328,14 @@ namespace Modules.AI.Workers
             {
                 Console.WriteLine($"[AIReplyWorker] WhatsApp message delivery failed for {extractedPhone}. Falling back to Messenger.");
 
-                var failureMsg = "حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.";
+                var failureMsg = behaviorService.RenderTemplate(messengerBehavior.Fallbacks.WhatsAppTransitionFailure, new Modules.AI.Services.AIBehaviorTemplateContext
+                {
+                    CustomerName = customer.Name ?? "يا فندم",
+                    AgentName = behaviorService.GetAgentName(messengerBehavior),
+                    ProjectName = projectName,
+                    PhoneNumber = extractedPhone,
+                    Channel = "Messenger"
+                });
                 await facebookGraphService.SendMessageAsync(connectedPage.FacebookPageId, connectedPage.PageAccessToken, senderPSID, failureMsg);
 
                 var messengerConvo = await dbContext.Conversations

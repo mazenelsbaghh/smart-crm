@@ -15,6 +15,7 @@ using Modules.Conversations.Hubs;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Generic;
 
 using Modules.Customers.Services;
 
@@ -1007,6 +1008,97 @@ JSON:";
             await _context.SaveChangesAsync();
             return NoContent();
         }
+
+        [HttpPost("projects/{projectId}/import-blacklist")]
+        public async Task<IActionResult> ImportBlacklist(Guid projectId, [FromBody] List<string> phones)
+        {
+            if (phones == null || phones.Count == 0)
+            {
+                return BadRequest("No data provided.");
+            }
+
+            var normalizedPhones = phones
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Select(p => NormalizePhoneNumber(p))
+                .Where(p => !string.IsNullOrEmpty(p))
+                .Distinct()
+                .ToList();
+
+            if (normalizedPhones.Count == 0)
+            {
+                return BadRequest("No valid phone numbers found.");
+            }
+
+            // 1. Fetch existing customers for this project with these phone numbers
+            var existingCustomers = await _context.Customers
+                .Where(c => c.ProjectId == projectId && normalizedPhones.Contains(c.PhoneNumber))
+                .ToListAsync();
+
+            var existingPhones = existingCustomers.Select(c => c.PhoneNumber).ToHashSet();
+
+            // 2. Update existing customers to IsBlacklisted = true
+            foreach (var customer in existingCustomers)
+            {
+                customer.IsBlacklisted = true;
+                _context.Entry(customer).State = EntityState.Modified;
+            }
+
+            // 3. Pre-create new customers that don't exist in DB
+            var newPhones = normalizedPhones.Where(p => !existingPhones.Contains(p)).ToList();
+            var newCustomersToCreate = newPhones
+                .Select(phone => new Customer
+                {
+                    ProjectId = projectId,
+                    PhoneNumber = phone,
+                    Name = $"طالب مدفوع ({phone})",
+                    IsBlacklisted = true,
+                    City = string.Empty,
+                    Notes = "تمت إضافته كطالب مدفوع ومحظور تلقائياً عبر رفع ملف إكسل."
+                })
+                .ToList();
+
+            foreach (var newCustomer in newCustomersToCreate)
+            {
+                _context.Customers.Add(newCustomer);
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { 
+                matchedCount = existingCustomers.Count, 
+                newCount = newCustomersToCreate.Count,
+                matchedPhones = existingCustomers.Select(c => c.PhoneNumber).ToList(),
+                newPhones = newPhones
+            });
+        }
+
+        private static string NormalizePhoneNumber(string phone)
+        {
+            if (string.IsNullOrWhiteSpace(phone)) return string.Empty;
+
+            // Remove all non-digits
+            var digitsOnly = new string(phone.Where(char.IsDigit).ToArray());
+
+            // If it starts with 00, remove it
+            if (digitsOnly.StartsWith("00"))
+            {
+                digitsOnly = digitsOnly.Substring(2);
+            }
+
+            // If it starts with 01 (Egyptian phone number), add 2 (Egypt country code)
+            if (digitsOnly.StartsWith("01") && digitsOnly.Length == 11)
+            {
+                digitsOnly = "2" + digitsOnly;
+            }
+
+            // If it is just 11 digits starting with 1, add 20
+            if (digitsOnly.StartsWith("1") && digitsOnly.Length == 11)
+            {
+                digitsOnly = "20" + digitsOnly;
+            }
+
+            return digitsOnly;
+        }
     }
 
     public class CreateCustomerTaskRequest
@@ -1078,4 +1170,5 @@ JSON:";
         public string? Status { get; set; }
         public string? Tone { get; set; }
     }
+
 }

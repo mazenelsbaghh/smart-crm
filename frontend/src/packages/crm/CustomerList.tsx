@@ -6,6 +6,7 @@ import { useToast } from '../../context/toast-context';
 import { crmService, Customer } from '../../services/crm';
 import { api } from '../../services/api';
 import CustomerDetail from '../../components/shared/CustomerDetail';
+import * as XLSX from 'xlsx';
 import { 
   Search, 
   MapPin, 
@@ -13,7 +14,10 @@ import {
   Sparkles,
   Edit2,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Upload,
+  FileDown,
+  ShieldAlert
 } from 'lucide-react';
 import styles from './crm.module.css';
 
@@ -33,6 +37,15 @@ export default function CustomerList() {
   const [stageFilter, setStageFilter] = useState('All');
   const [cityFilter, setCityFilter] = useState('All');
   const [selectedLabel, setSelectedLabel] = useState('All');
+
+  const [importing, setImporting] = useState(false);
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    matchedCount: number;
+    newCount: number;
+    matchedPhones: string[];
+    newPhones: string[];
+  } | null>(null);
 
   // Reset to first page when search, filters, label or project change
   useEffect(() => {
@@ -83,6 +96,86 @@ export default function CustomerList() {
       showToast(errMsg, 'error');
     } finally {
       setGeneratingIds(prev => prev.filter(id => id !== customerId));
+    }
+  };
+
+  const handleDownloadTemplate = () => {
+    const headers = [['رقم الهاتف']];
+    const examples = [
+      ['01068690092'],
+      ['20122334455']
+    ];
+    const wsData = [...headers, ...examples];
+
+    const worksheet = XLSX.utils.aoa_to_sheet(wsData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'قالب أرقام الطلاب');
+
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'paid_students_template.xlsx');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        try {
+          const bstr = evt.target?.result;
+          const workbook = XLSX.read(bstr, { type: 'binary' });
+          const worksheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[worksheetName];
+          const rawData = XLSX.utils.sheet_to_json<any>(worksheet);
+
+          // Extract only the phone numbers from any column that might represent phone
+          const phones = rawData.map(row => {
+            const phone = row['رقم الهاتف'] || row['Phone'] || row['phone'] || row['الرقم'] || Object.values(row)[0] || '';
+            return String(phone).trim();
+          }).filter(p => p !== '');
+
+          if (phones.length === 0) {
+            showToast('لم يتم العثور على أي أرقام هواتف صالحة في الملف المرفوع.', 'error');
+            setImporting(false);
+            return;
+          }
+
+          // Send to backend
+          const response = await api.post(`/api/projects/${activeProject!.id}/import-blacklist`, phones);
+          const data = response.data;
+          
+          setImportResult({
+            matchedCount: data.matchedCount,
+            newCount: data.newCount,
+            matchedPhones: data.matchedPhones || [],
+            newPhones: data.newPhones || []
+          });
+
+          showToast(`تمت معالجة الملف بنجاح!`, 'success');
+          void fetchCustomers();
+        } catch (err) {
+          console.error(err);
+          showToast('فشل قراءة ملف Excel. يرجى التحقق من الصيغة.', 'error');
+        } finally {
+          setImporting(false);
+        }
+      };
+      reader.readAsBinaryString(file);
+    } catch (err) {
+      console.error(err);
+      showToast('حدث خطأ أثناء تحميل الملف.', 'error');
+      setImporting(false);
     }
   };
 
@@ -140,12 +233,134 @@ export default function CustomerList() {
   return (
     <div className={styles.container}>
       {/* Title */}
-      <div className={styles.header}>
+      <div className={styles.header} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
         <div>
           <h1 className={styles.pageTitle}>إدارة العملاء CRM</h1>
           <p className={styles.pageSubtitle}>راجع بيانات العملاء والتقييمات والوسوم ومراحل البيع</p>
         </div>
+        <button
+          onClick={() => setShowImportPanel(!showImportPanel)}
+          className={styles.editButton}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '0.85rem',
+            padding: '8px 16px',
+            background: 'rgba(16, 185, 129, 0.12)',
+            borderColor: 'rgba(16, 185, 129, 0.25)',
+            color: 'rgb(16, 185, 129)',
+            borderRadius: 'var(--radius-md)',
+            cursor: 'pointer',
+            fontWeight: 600,
+            transition: 'all 0.2s'
+          }}
+        >
+          <Upload size={16} />
+          استيراد الطلاب المدفوعة (Excel)
+        </button>
       </div>
+
+      {/* Import Blacklist Panel */}
+      {showImportPanel && (
+        <div className="glass-panel" style={{ padding: 'var(--space-md)', marginBottom: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'hsl(var(--text-primary))' }}>
+              <ShieldAlert size={18} style={{ color: 'hsl(var(--accent-warning))' }} />
+              استيراد الطلاب الذين قاموا بالدفع لحظرهم تلقائياً من الرد
+            </h3>
+            <button
+              onClick={handleDownloadTemplate}
+              className={styles.editButton}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.8rem',
+                padding: '4px 10px',
+                background: 'rgba(59, 130, 246, 0.12)',
+                borderColor: 'rgba(59, 130, 246, 0.25)',
+                color: 'rgb(59, 130, 246)',
+                cursor: 'pointer'
+              }}
+            >
+              <FileDown size={14} />
+              تحميل نموذج الملف (Template)
+            </button>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
+            ارفع ملف Excel (.xlsx) يحتوي على قائمة الطلاب الذين دفعوا بالفعل. سيقوم النظام بالبحث عنهم وحظرهم تلقائياً بحيث لا يقوم بوت الرد الآلي بإرسال أي رسائل لهم بعد الآن.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginTop: 'var(--space-xs)' }}>
+            <label 
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '0.85rem',
+                padding: '10px 16px',
+                background: 'var(--surface-muted)',
+                border: '1px dashed var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                color: 'var(--text-soft)',
+                cursor: importing ? 'not-allowed' : 'pointer',
+                fontWeight: 600,
+                opacity: importing ? 0.6 : 1
+              }}
+            >
+              <Upload size={16} />
+              {importing ? 'جاري الاستيراد وقراءة الملف...' : 'اختر ملف Excel لرفعه وحظر الطلاب'}
+              <input
+                type="file"
+                accept=".xlsx, .xls"
+                onChange={handleImportExcel}
+                disabled={importing}
+                style={{ display: 'none' }}
+              />
+            </label>
+          </div>
+
+          {/* Results display */}
+          {importResult && (
+            <div style={{ marginTop: 'var(--space-md)', borderTop: '1px solid var(--border-subtle)', paddingTop: 'var(--space-md)' }}>
+              <div style={{ display: 'flex', gap: 'var(--space-lg)', marginBottom: 'var(--space-md)' }}>
+                <div style={{ padding: '10px 14px', background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.15)', borderRadius: 'var(--radius-md)', flex: 1 }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: '2px' }}>تمت مطابقتهم وحظرهم (مسجلين بالفعل):</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'rgb(16, 185, 129)' }}>{importResult.matchedCount} طالب</div>
+                </div>
+                <div style={{ padding: '10px 14px', background: 'rgba(249, 115, 22, 0.06)', border: '1px solid rgba(249, 115, 22, 0.15)', borderRadius: 'var(--radius-md)', flex: 1 }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: '2px' }}>أرقام جديدة غير مسجلة (حظر وقائي):</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'rgb(249, 115, 22)' }}>{importResult.newCount} طالب</div>
+                </div>
+              </div>
+
+              {/* Detailed Lists */}
+              <div style={{ display: 'flex', gap: 'var(--space-md)', flexDirection: 'row', flexWrap: 'wrap' }}>
+                {importResult.matchedPhones.length > 0 && (
+                  <div style={{ flex: 1, minWidth: '240px', background: 'var(--surface-muted)', padding: 'var(--space-sm)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px', color: 'rgb(16, 185, 129)' }}>أرقام الطلاب المطابِقة (تم حظرهم):</div>
+                    <div style={{ maxHeight: '120px', overflowY: 'auto', fontSize: '0.78rem', fontFamily: 'monospace', color: 'var(--text-strong)', lineHeight: '1.4' }}>
+                      {importResult.matchedPhones.map(phone => (
+                        <div key={phone} style={{ padding: '2px 0' }}>+{phone}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {importResult.newPhones.length > 0 && (
+                  <div style={{ flex: 1, minWidth: '240px', background: 'var(--surface-muted)', padding: 'var(--space-sm)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px', color: 'rgb(249, 115, 22)' }}>أرقام الطلاب الجدد (حظر وقائي):</div>
+                    <div style={{ maxHeight: '120px', overflowY: 'auto', fontSize: '0.78rem', fontFamily: 'monospace', color: 'var(--text-strong)', lineHeight: '1.4' }}>
+                      {importResult.newPhones.map(phone => (
+                        <div key={phone} style={{ padding: '2px 0' }}>+{phone}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* AI Smart Labels Statistics & Filter Bar */}
       <div className={styles.labelsStatsBar}>

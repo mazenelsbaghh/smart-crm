@@ -14,14 +14,30 @@ const reconnectTimers = new Map();
 const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:5000';
 const MAX_RECONNECT_ATTEMPTS = Number(process.env.MAX_RECONNECT_ATTEMPTS || 3);
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
+const ALLOW_MOCK_FALLBACK = process.env.ALLOW_MOCK_FALLBACK === 'true';
 
-function hasCredentials(projectId) {
+function getSessionsDir() {
     let sessionsDir = '/app/sessions';
     if (!fs.existsSync(sessionsDir)) {
         sessionsDir = path.resolve('./sessions');
     }
-    const credsFile = path.join(sessionsDir, projectId, 'creds.json');
-    return fs.existsSync(credsFile);
+    return sessionsDir;
+}
+
+export function hasCredentials(projectId) {
+    const credsFile = path.join(getSessionsDir(), projectId, 'creds.json');
+    if (!fs.existsSync(credsFile)) {
+        return false;
+    }
+
+    const stats = fs.statSync(credsFile);
+    if (stats.size === 0) {
+        console.warn(`[baileys-manager] Empty creds.json found for project ${projectId}. Removing corrupted credentials.`);
+        fs.rmSync(credsFile, { force: true });
+        return false;
+    }
+
+    return true;
 }
 
 async function downloadAndUploadMedia(projectId, messageKey, mInfo, type) {
@@ -116,6 +132,7 @@ export async function startSession(projectId) {
         }
     }
     
+    hasCredentials(projectId);
     const authDir = path.join(sessionsDir, projectId);
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
@@ -359,11 +376,15 @@ export async function sendMessage(projectId, to, text, buttons) {
     
     if (!sock || statuses.get(projectId) !== 'Connected') {
         const currentStatus = statuses.get(projectId) || 'Disconnected';
-        console.warn(`[baileys-manager] Session not connected (status: ${currentStatus}). Falling back to mock send for testing.`);
+        console.warn(`[baileys-manager] Session not connected (status: ${currentStatus}).`);
         
         if (sock && sock.isMock) {
             let messageContent = { text };
             return await sock.sendMessage(to + '@s.whatsapp.net', messageContent);
+        }
+
+        if (!ALLOW_MOCK_FALLBACK) {
+            throw new Error(`WhatsApp session ${projectId} is not connected. Current status: ${currentStatus}. Reconnect by scanning the QR code.`);
         }
         
         const messageId = `msg_mock_${Math.random().toString(36).substring(7)}`;
@@ -407,7 +428,7 @@ export async function sendReaction(projectId, to, reactionText, targetMessageId,
     
     if (!sock || statuses.get(projectId) !== 'Connected') {
         const currentStatus = statuses.get(projectId) || 'Disconnected';
-        console.warn(`[baileys-manager] Session not connected (status: ${currentStatus}). Falling back to mock react for testing.`);
+        console.warn(`[baileys-manager] Session not connected (status: ${currentStatus}).`);
         
         if (sock && sock.isMock) {
             const reactionPayload = {
@@ -422,6 +443,10 @@ export async function sendReaction(projectId, to, reactionText, targetMessageId,
             };
             const sent = await sock.sendMessage(to + '@s.whatsapp.net', reactionPayload);
             return sent?.key?.id || null;
+        }
+
+        if (!ALLOW_MOCK_FALLBACK) {
+            throw new Error(`WhatsApp session ${projectId} is not connected. Current status: ${currentStatus}. Reconnect by scanning the QR code.`);
         }
         
         const messageId = `msg_react_mock_${Math.random().toString(36).substring(7)}`;

@@ -1,8 +1,16 @@
 # Operations & Deployment Master Plan
 
-**Last Updated**: 2026-06-23
+**Last Updated**: 2026-06-24
 
 ## Chronological Log
+
+### 2026-06-24: Add Deployment Support for Sales Server (76.13.42.100) (Completed)
+- **Goal**: Configure a separate deployment pipeline, Nginx configuration, and Docker Compose configurations for the domain `prosmartsales.com` on the new server `76.13.42.100`.
+- **Updates**:
+  - Created `.env.deploy.sales` to store credentials for the new sales server.
+  - Created `ops/deploy_sales.sh` supporting automated dependency installation (Docker, Docker Compose, Certbot, Make, Rsync), Let's Encrypt SSL certificate generation for `prosmartsales.com` & `www.prosmartsales.com`, and launching the stack.
+  - Created `nginx/production_sales.conf` with rate-limiting, proxy rules, SSL certificates, and specific CORS rules configured for `prosmartsales.com`.
+  - Created `docker-compose.production_sales.yml` override mapping the container Nginx mounts to the new configuration.
 
 ### 2026-06-23: Deploy UI Changes (Remove Deals & Profits) to Hostinger Production Server (Completed)
 - **Goal**: Deploy the UI cleanup updates (which remove Deals, Profits, and Sales Pipeline) to the remote production environment.

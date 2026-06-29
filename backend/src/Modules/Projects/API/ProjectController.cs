@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Modules.AI.Services;
 using Modules.Projects.Domain;
 using Shared.Infrastructure;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Modules.Projects.API
@@ -12,10 +14,12 @@ namespace Modules.Projects.API
     public class ProjectController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly IAIBehaviorSettingsService _aiBehaviorSettingsService;
 
-        public ProjectController(AppDbContext context)
+        public ProjectController(AppDbContext context, IAIBehaviorSettingsService aiBehaviorSettingsService)
         {
             _context = context;
+            _aiBehaviorSettingsService = aiBehaviorSettingsService;
         }
 
         [HttpPost]
@@ -98,7 +102,8 @@ namespace Modules.Projects.API
                     settings.MessengerReplyDelay,
                     settings.CommentsAiAutoReplyEnabled,
                     settings.CommentsReplyDelay,
-                    settings.SystemPrompt
+                    settings.SystemPrompt,
+                    AiBehavior = _aiBehaviorSettingsService.Resolve(settings)
                 } : null
             });
         }
@@ -111,6 +116,12 @@ namespace Modules.Projects.API
             {
                 project.Name = request.ProjectName;
                 project.UpdatedAt = DateTime.UtcNow;
+            }
+
+            var validationErrors = _aiBehaviorSettingsService.Validate(request.AiBehavior);
+            if (validationErrors.Count > 0)
+            {
+                return BadRequest(new { error = string.Join(" ", validationErrors) });
             }
 
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == id);
@@ -135,6 +146,7 @@ namespace Modules.Projects.API
                     MaxDailyMessages = request.MaxDailyMessages ?? 500,
                     IsGroupAppointmentsEnabled = request.IsGroupAppointmentsEnabled,
                     SystemPrompt = request.SystemPrompt,
+                    AiBehaviorSettingsJson = request.AiBehavior != null ? _aiBehaviorSettingsService.Serialize(request.AiBehavior) : null,
                     UpdatedAt = DateTime.UtcNow
                 };
                 _context.ProjectSettings.Add(settings);
@@ -155,6 +167,10 @@ namespace Modules.Projects.API
                 settings.CommentsAiAutoReplyEnabled = request.CommentsAiAutoReplyEnabled;
                 if (request.CommentsReplyDelay.HasValue) settings.CommentsReplyDelay = request.CommentsReplyDelay.Value;
                 settings.SystemPrompt = request.SystemPrompt;
+                if (request.AiBehavior != null)
+                {
+                    settings.AiBehaviorSettingsJson = _aiBehaviorSettingsService.Serialize(request.AiBehavior);
+                }
                 settings.UpdatedAt = DateTime.UtcNow;
             }
 
@@ -196,5 +212,6 @@ namespace Modules.Projects.API
         public bool CommentsAiAutoReplyEnabled { get; set; }
         public int? CommentsReplyDelay { get; set; }
         public string? SystemPrompt { get; set; }
+        public AIBehaviorSettings? AiBehavior { get; set; }
     }
 }

@@ -54,13 +54,97 @@ interface ProjectSettingsResponse {
     commentsAiAutoReplyEnabled?: boolean;
     commentsReplyDelay?: number;
     systemPrompt?: string;
+    aiBehavior?: AIBehaviorSettings;
   } | null;
+}
+
+type ChannelName = 'WhatsApp' | 'Messenger' | 'FacebookComment';
+
+interface AIBehaviorSettings {
+  identity: {
+    agentNames: string[];
+    nameSelectionMode: string;
+    signatureEnabled: boolean;
+    signatureTemplate: string;
+    complaintSignatureTemplate: string;
+  };
+  tone: {
+    tonePreset: string;
+    customTone?: string | null;
+    targetAudience: string;
+    allowedPhrases: string[];
+    prohibitedPhrases: string[];
+    businessInstructions?: string | null;
+  };
+  reactions: {
+    enabled: boolean;
+    allowedReactions: string[];
+    useAiSuggestedReaction: boolean;
+    rules?: string | null;
+  };
+  fallbacks: {
+    aiError: string;
+    invalidAiOutput: string;
+    genericCustomerService: string;
+    facebookPublicComment: string;
+    whatsAppTransitionSuccess: string;
+    whatsAppTransitionFailure: string;
+    whatsAppTransitionMessage: string;
+    followUpDefault: string;
+  };
+  channels: Partial<Record<ChannelName, {
+    additionalInstructions?: string | null;
+  }>>;
+  advancedInstructions?: string | null;
 }
 
 const getApiErrorMessage = (error: unknown, fallback: string) => {
   const axiosError = error as AxiosError<ApiErrorResponse>;
   return axiosError.response?.data?.error || fallback;
 };
+
+const defaultAiBehavior = (): AIBehaviorSettings => ({
+  identity: {
+    agentNames: ['ساجي', 'لارا', 'مادلين', 'شاهي', 'ساندي'],
+    nameSelectionMode: 'HourlyRotation',
+    signatureEnabled: true,
+    signatureTemplate: '- {agentName} ✨',
+    complaintSignatureTemplate: '- {agentName}',
+  },
+  tone: {
+    tonePreset: 'egyptian-slang-sales',
+    customTone: 'العامية المصرية الروشة والصايعة',
+    targetAudience: 'طلاب كورس كول سنتر يبحثون عن عمل',
+    allowedPhrases: [],
+    prohibitedPhrases: [],
+    businessInstructions: '',
+  },
+  reactions: {
+    enabled: true,
+    allowedReactions: ['👍', '❤️', '💖', '😢', '😂', '😮'],
+    useAiSuggestedReaction: true,
+    rules: '',
+  },
+  fallbacks: {
+    aiError: 'أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.',
+    invalidAiOutput: 'أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.',
+    genericCustomerService: 'أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.',
+    facebookPublicComment: 'تم الرد في الخاص يا فندم! ❤️',
+    whatsAppTransitionSuccess: 'أنا بعتلك رسالة على الواتساب، خلينا نتواصل هناك. ✨',
+    whatsAppTransitionFailure: 'حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.',
+    whatsAppTransitionMessage: 'أهلاً يا {customerName}، منورنا يا فندم! 😊 معاك {agentName}.. زي ما اتفقنا على ماسنجر، هنكمل كلامنا هنا على واتساب.',
+    followUpDefault: 'مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟',
+  },
+  channels: {
+    WhatsApp: { additionalInstructions: '' },
+    Messenger: { additionalInstructions: '' },
+    FacebookComment: { additionalInstructions: '' },
+  },
+  advancedInstructions: '',
+});
+
+const linesToArray = (value: string) => value.split('\n').map(item => item.trim()).filter(Boolean);
+const arrayToLines = (value?: string[]) => (value || []).join('\n');
 
 export default function Settings() {
   const { activeProject, refreshProjects, switchProject } = useAuth();
@@ -90,6 +174,7 @@ export default function Settings() {
   const [commentsAutoReplyEnabled, setCommentsAutoReplyEnabled] = useState(false);
   const [commentsReplyDelay, setCommentsReplyDelay] = useState(3);
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [aiBehavior, setAiBehavior] = useState<AIBehaviorSettings>(() => defaultAiBehavior());
   const [newProjectName, setNewProjectName] = useState('');
 
   // Facebook Pages state
@@ -102,6 +187,23 @@ export default function Settings() {
   // Tabs / Navigation state
   const [activeTab, setActiveTab] = useState<'general' | 'addons'>('general');
   const [viewMode, setViewMode] = useState<'list' | 'manage-groups'>('list');
+
+  const updateAiBehavior = <K extends keyof AIBehaviorSettings>(section: K, value: AIBehaviorSettings[K]) => {
+    setAiBehavior(prev => ({ ...prev, [section]: value }));
+  };
+
+  const updateChannelInstructions = (channel: ChannelName, value: string) => {
+    setAiBehavior(prev => ({
+      ...prev,
+      channels: {
+        ...prev.channels,
+        [channel]: {
+          ...(prev.channels[channel] || {}),
+          additionalInstructions: value,
+        },
+      },
+    }));
+  };
 
   // Listen for message events from the popup
   useEffect(() => {
@@ -154,6 +256,7 @@ export default function Settings() {
       setCommentsAutoReplyEnabled(settings?.commentsAiAutoReplyEnabled ?? false);
       setCommentsReplyDelay(settings?.commentsReplyDelay ?? 3);
       setSystemPrompt(settings?.systemPrompt || '');
+      setAiBehavior(settings?.aiBehavior || defaultAiBehavior());
     } catch {
       setMessage({ type: 'error', text: 'تعذر تحميل إعدادات الرد الآلي.' });
     }
@@ -385,6 +488,7 @@ export default function Settings() {
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
         commentsReplyDelay,
         systemPrompt: systemPrompt.trim(),
+        aiBehavior,
       });
       setMessage({ type: 'success', text: 'تم حفظ إعدادات الرد الآلي بنجاح.' });
       void refreshProjects();
@@ -411,6 +515,8 @@ export default function Settings() {
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
         commentsReplyDelay,
+        systemPrompt: systemPrompt.trim(),
+        aiBehavior,
       });
       setIsGroupAppointmentsEnabled(enabled);
     } catch (e) {
@@ -790,70 +896,279 @@ export default function Settings() {
                 />
               </div>
 
-              <div className={styles.formGroup}>
-                <label className={styles.label}>لهجة وأسلوب الرد</label>
-                <select 
-                  className={styles.select}
-                  value={
-                    ['العامية المصرية الروشة والصايعة', 'العامية المصرية المهذبة والمحترمة', 'العربية الفصحى المبسطة والودودة', 'اللهجة الخليجية المهذبة'].includes(aiTonePreference)
-                      ? aiTonePreference
-                      : 'custom'
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val !== 'custom') {
-                      setAiTonePreference(val);
-                    } else {
-                      setAiTonePreference('');
-                    }
-                  }}
-                >
-                  <option value="العامية المصرية الروشة والصايعة">عامية مصرية روشة وصايعة (سيلز شاطر وصاحب العميل)</option>
-                  <option value="العامية المصرية المهذبة والمحترمة">عامية مصرية مهذبة ومحترمة (دعم فني وخدمة عملاء)</option>
-                  <option value="العربية الفصحى المبسطة والودودة">عربية فصحى مبسطة وودودة (أسلوب رسمي عام)</option>
-                  <option value="اللهجة الخليجية المهذبة">لهجة خليجية مهذبة ومحترمة (لبق وراقي)</option>
-                  <option value="custom">لهجة مخصصة...</option>
-                </select>
-                
-                {!['العامية المصرية الروشة والصايعة', 'العامية المصرية المهذبة والمحترمة', 'العربية الفصحى المبسطة والودودة', 'اللهجة الخليجية المهذبة'].includes(aiTonePreference) && (
-                  <input
-                    type="text"
-                    placeholder="اكتب اللهجة والأسلوب المطلوب بالتفصيل..."
-                    value={aiTonePreference}
-                    onChange={(e) => setAiTonePreference(e.target.value)}
+              <div className={styles.settingsSection}>
+                <h3 className={styles.sectionTitle}>الهوية والتوقيع</h3>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>أسماء الموظفين</label>
+                  <textarea
+                    value={arrayToLines(aiBehavior.identity.agentNames)}
+                    onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, agentNames: linesToArray(e.target.value) })}
                     className={styles.input}
-                    style={{ marginTop: 'var(--space-xs)' }}
+                    rows={4}
+                    placeholder="اسم كل موظف في سطر"
                   />
-                )}
+                </div>
+                <div className={styles.inlineGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>طريقة اختيار الاسم</label>
+                    <select
+                      className={styles.select}
+                      value={aiBehavior.identity.nameSelectionMode}
+                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, nameSelectionMode: e.target.value })}
+                    >
+                      <option value="HourlyRotation">تدوير حسب الساعة</option>
+                      <option value="First">أول اسم دائماً</option>
+                    </select>
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.checkboxGroup}>
+                      <input
+                        type="checkbox"
+                        checked={aiBehavior.identity.signatureEnabled}
+                        onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, signatureEnabled: e.target.checked })}
+                        className={styles.checkbox}
+                      />
+                      <span className={styles.label} style={{ userSelect: 'none' }}>إضافة توقيع في الرد</span>
+                    </label>
+                  </div>
+                </div>
+                <div className={styles.inlineGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>قالب التوقيع</label>
+                    <input
+                      value={aiBehavior.identity.signatureTemplate}
+                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, signatureTemplate: e.target.value })}
+                      className={styles.input}
+                      placeholder="- {agentName}"
+                    />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>توقيع الشكاوى</label>
+                    <input
+                      value={aiBehavior.identity.complaintSignatureTemplate}
+                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, complaintSignatureTemplate: e.target.value })}
+                      className={styles.input}
+                      placeholder="- {agentName}"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div className={styles.formGroup}>
-                <label className={styles.label}>من يكلم الذكاء الاصطناعي؟ (الفئة المستهدفة)</label>
-                <input
-                  type="text"
-                  placeholder="مثال: طلاب كورس كول سنتر يبحثون عن عمل"
-                  value={aiTargetAudience}
-                  onChange={(e) => setAiTargetAudience(e.target.value)}
-                  className={styles.input}
-                />
+              <div className={styles.settingsSection}>
+                <h3 className={styles.sectionTitle}>النبرة والجمهور</h3>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>لهجة وأسلوب الرد</label>
+                  <select
+                    className={styles.select}
+                    value={aiBehavior.tone.tonePreset}
+                    onChange={(e) => {
+                      const preset = e.target.value;
+                      const presetTone = preset === 'custom' ? '' :
+                        preset === 'egyptian-polite' ? 'العامية المصرية المهذبة والمحترمة' :
+                        preset === 'msa-friendly' ? 'العربية الفصحى المبسطة والودودة' :
+                        preset === 'gulf-polite' ? 'اللهجة الخليجية المهذبة' :
+                        'العامية المصرية الروشة والصايعة';
+                      setAiTonePreference(presetTone);
+                      updateAiBehavior('tone', { ...aiBehavior.tone, tonePreset: preset, customTone: presetTone });
+                    }}
+                  >
+                    <option value="egyptian-slang-sales">عامية مصرية روشة وصايعة</option>
+                    <option value="egyptian-polite">عامية مصرية مهذبة</option>
+                    <option value="msa-friendly">عربية فصحى مبسطة</option>
+                    <option value="gulf-polite">لهجة خليجية مهذبة</option>
+                    <option value="custom">نبرة مخصصة</option>
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="اكتب النبرة المخصصة أو عدل وصف النبرة المختارة"
+                    value={aiBehavior.tone.customTone || ''}
+                    onChange={(e) => {
+                      setAiTonePreference(e.target.value);
+                      updateAiBehavior('tone', { ...aiBehavior.tone, customTone: e.target.value });
+                    }}
+                    className={styles.input}
+                  />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>الجمهور المستهدف</label>
+                  <input
+                    type="text"
+                    placeholder="مثال: طلاب كورس كول سنتر يبحثون عن عمل"
+                    value={aiBehavior.tone.targetAudience}
+                    onChange={(e) => {
+                      setAiTargetAudience(e.target.value);
+                      updateAiBehavior('tone', { ...aiBehavior.tone, targetAudience: e.target.value });
+                    }}
+                    className={styles.input}
+                  />
+                </div>
+
+                <div className={styles.inlineGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>عبارات مسموحة أو مفضلة</label>
+                    <textarea
+                      value={arrayToLines(aiBehavior.tone.allowedPhrases)}
+                      onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, allowedPhrases: linesToArray(e.target.value) })}
+                      className={styles.input}
+                      rows={4}
+                      placeholder="عبارة في كل سطر"
+                    />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>عبارات ممنوعة</label>
+                    <textarea
+                      value={arrayToLines(aiBehavior.tone.prohibitedPhrases)}
+                      onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, prohibitedPhrases: linesToArray(e.target.value) })}
+                      className={styles.input}
+                      rows={4}
+                      placeholder="عبارة في كل سطر"
+                    />
+                  </div>
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>تعليمات بيزنس إضافية</label>
+                  <textarea
+                    value={aiBehavior.tone.businessInstructions || ''}
+                    onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, businessInstructions: e.target.value })}
+                    className={styles.input}
+                    rows={4}
+                    placeholder="أي قواعد بيع أو خدمة عملاء عامة"
+                  />
+                </div>
+              </div>
+
+              <div className={styles.settingsSection}>
+                <h3 className={styles.sectionTitle}>القنوات</h3>
+                {(['WhatsApp', 'Messenger', 'FacebookComment'] as ChannelName[]).map(channel => (
+                  <div className={styles.formGroup} key={channel}>
+                    <label className={styles.label}>{channel === 'FacebookComment' ? 'تعليقات فيسبوك' : channel} - تعليمات زيادة فوق الإعدادات العامة</label>
+                    <textarea
+                      value={aiBehavior.channels[channel]?.additionalInstructions || ''}
+                      onChange={(e) => updateChannelInstructions(channel, e.target.value)}
+                      className={styles.input}
+                      rows={3}
+                      placeholder="سيتم تطبيقها على هذه القناة فقط"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className={styles.settingsSection}>
+                <h3 className={styles.sectionTitle}>الريأكشن</h3>
+                <div className={styles.inlineGrid}>
+                  <label className={styles.checkboxGroup}>
+                    <input
+                      type="checkbox"
+                      checked={aiBehavior.reactions.enabled}
+                      onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, enabled: e.target.checked })}
+                      className={styles.checkbox}
+                    />
+                    <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل إرسال الريأكشن</span>
+                  </label>
+                  <label className={styles.checkboxGroup}>
+                    <input
+                      type="checkbox"
+                      checked={aiBehavior.reactions.useAiSuggestedReaction}
+                      onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, useAiSuggestedReaction: e.target.checked })}
+                      className={styles.checkbox}
+                    />
+                    <span className={styles.label} style={{ userSelect: 'none' }}>استخدام اقتراح الذكاء الاصطناعي</span>
+                  </label>
+                </div>
+                <div className={styles.reactionGrid}>
+                  {['👍', '❤️', '💖', '😢', '😂', '😮'].map(reaction => (
+                    <label className={styles.reactionOption} key={reaction}>
+                      <input
+                        type="checkbox"
+                        checked={aiBehavior.reactions.allowedReactions.includes(reaction)}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...aiBehavior.reactions.allowedReactions, reaction]
+                            : aiBehavior.reactions.allowedReactions.filter(item => item !== reaction);
+                          updateAiBehavior('reactions', { ...aiBehavior.reactions, allowedReactions: Array.from(new Set(next)) });
+                        }}
+                      />
+                      <span>{reaction}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>قواعد اختيار الريأكشن</label>
+                  <textarea
+                    value={aiBehavior.reactions.rules || ''}
+                    onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, rules: e.target.value })}
+                    className={styles.input}
+                    rows={3}
+                    placeholder="مثال: استخدم ❤️ عند الشكر أو الموافقة، و😮 عند الاستفسار المهم"
+                  />
+                </div>
+              </div>
+
+              <div className={styles.settingsSection}>
+                <h3 className={styles.sectionTitle}>رسائل fallback</h3>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>خطأ الذكاء الاصطناعي</label>
+                  <textarea value={aiBehavior.fallbacks.aiError} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, aiError: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>خروج الذكاء الاصطناعي بصيغة غير صحيحة</label>
+                  <textarea value={aiBehavior.fallbacks.invalidAiOutput} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, invalidAiOutput: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>رسالة خدمة العملاء العامة</label>
+                  <textarea value={aiBehavior.fallbacks.genericCustomerService} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, genericCustomerService: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>رد التعليق العام على فيسبوك</label>
+                  <textarea value={aiBehavior.fallbacks.facebookPublicComment} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, facebookPublicComment: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>رسالة الانتقال إلى واتساب</label>
+                  <textarea value={aiBehavior.fallbacks.whatsAppTransitionMessage} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionMessage: e.target.value })} className={styles.input} rows={4} />
+                </div>
+                <div className={styles.inlineGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>نجاح الانتقال إلى واتساب</label>
+                    <textarea value={aiBehavior.fallbacks.whatsAppTransitionSuccess} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionSuccess: e.target.value })} className={styles.input} rows={3} />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>فشل الانتقال إلى واتساب</label>
+                    <textarea value={aiBehavior.fallbacks.whatsAppTransitionFailure} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionFailure: e.target.value })} className={styles.input} rows={3} />
+                  </div>
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>رسالة المتابعة الافتراضية</label>
+                  <textarea value={aiBehavior.fallbacks.followUpDefault} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, followUpDefault: e.target.value })} className={styles.input} rows={3} />
+                </div>
                 <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
-                  تساعد البوت على تخصيص الحجج البيعية ونبرة الاهتمام المناسبة للعميل.
+                  المتغيرات المدعومة: {'{customerName}'}, {'{agentName}'}, {'{projectName}'}, {'{phoneNumber}'}, {'{channel}'}.
                 </span>
               </div>
-              
-              <div className={styles.formGroup}>
-                <label className={styles.label}>التعليمات الثابتة للذكاء الاصطناعي (System Prompt)</label>
-                <textarea
-                  placeholder="التعليمات الثابتة لنموذج الذكاء الاصطناعي..."
-                  value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                  className={styles.input}
-                  rows={8}
-                  style={{ minHeight: '120px', direction: 'ltr', textAlign: 'left', fontFamily: 'monospace', fontSize: '0.85rem' }}
-                />
-                <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
-                  تتيح لك هذه الإعدادات التحكم الكامل في توجيهات النظام والبرومت الثابت المرسل مع الذكاء الاصطناعي.
-                </span>
+
+              <div className={styles.settingsSection}>
+                <h3 className={styles.sectionTitle}>Advanced</h3>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>تعليمات إضافية متقدمة</label>
+                  <textarea
+                    placeholder="تعليمات إضافية فقط. القواعد المحمية والإعدادات المنظمة أعلى أولوية."
+                    value={aiBehavior.advancedInstructions || ''}
+                    onChange={(e) => updateAiBehavior('advancedInstructions', e.target.value)}
+                    className={styles.input}
+                    rows={6}
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>Legacy System Prompt</label>
+                  <textarea
+                    placeholder="تعليمات قديمة محفوظة للتوافق فقط"
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    className={styles.input}
+                    rows={4}
+                    style={{ direction: 'ltr', textAlign: 'left', fontFamily: 'monospace', fontSize: '0.85rem' }}
+                  />
+                </div>
               </div>
 
               <div className={styles.formGroup}>

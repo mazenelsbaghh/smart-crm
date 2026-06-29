@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/auth-context';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import * as XLSX from 'xlsx';
 import { 
   Calendar, 
   Plus, 
@@ -265,40 +266,33 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     }
   };
 
-  const handleExportCSV = (group: GroupAppointment) => {
+  const handleExportExcel = (group: GroupAppointment) => {
     if (!group || group.bookings.length === 0) return;
     
-    // Header
-    const headers = ['اسم الطالب', 'رقم الهاتف', 'تاريخ الحجز', 'حالة الحضور', 'حالة الدفع'];
-    
-    // Rows
     const sortedBookings = [...group.bookings].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const rows = sortedBookings.map(b => [
-      b.customerName,
-      `+${b.customerPhone}`,
-      new Date(b.createdAt).toLocaleString('ar-EG'),
-      b.isAttended ? 'حضر' : 'لم يحضر',
-      b.isPaid ? 'دفع' : 'لم يدفع'
-    ]);
+    const data = sortedBookings.map(b => ({
+      'اسم الطالب': b.customerName,
+      'رقم الهاتف': `+${b.customerPhone}`,
+      'تاريخ الحجز': new Date(b.createdAt).toLocaleString('ar-EG'),
+      'حالة الحضور': b.isAttended ? 'حضر' : 'لم يحضر',
+      'حالة الدفع': b.isPaid ? 'دفع' : 'لم يدفع'
+    }));
     
-    // Build CSV content
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(val => `"${val.replace(/"/g, '""')}"`).join(','))
-    ].join('\n');
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'المشتركين');
     
-    // Add UTF-8 BOM
-    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
     
     const formattedDate = new Date(group.dateTime);
     const timeStr = `${formattedDate.getHours()}_${formattedDate.getMinutes()}`;
-    const fileName = `bookings_${group.mode}_${timeStr}.csv`;
+    const fileName = `bookings_${group.mode}_${timeStr}.xlsx`;
     
     link.setAttribute('download', fileName);
-    link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -741,12 +735,12 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                 </h3>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
-                    onClick={() => handleExportCSV(selectedGroup)}
+                    onClick={() => handleExportExcel(selectedGroup)}
                     className={`${styles.btn} ${styles.btnSecondary}`}
                     style={{ padding: '4px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(34, 197, 94, 0.08)', color: 'rgb(34, 197, 94)', borderColor: 'rgba(34, 197, 94, 0.2)' }}
                   >
                     <Download size={12} />
-                    تصدير المشتركين (CSV)
+                    تصدير المشتركين (Excel)
                   </button>
                   <button
                     onClick={() => setSelectedGroup(null)}

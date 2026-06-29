@@ -12,6 +12,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Modules.AI.Services;
 
 namespace Modules.Conversations.API
 {
@@ -27,6 +28,7 @@ namespace Modules.Conversations.API
         private readonly HttpClient _httpClient;
         private readonly StackExchange.Redis.IDatabase _redis;
         private readonly Modules.Facebook.Services.IFacebookGraphService _facebookGraphService;
+        private readonly IAIBehaviorSettingsService _aiBehaviorSettingsService;
 
         public ConversationController(
             AppDbContext context, 
@@ -35,7 +37,8 @@ namespace Modules.Conversations.API
             IHubContext<NotificationHub> hubContext,
             IConfiguration configuration,
             StackExchange.Redis.IConnectionMultiplexer redis,
-            Modules.Facebook.Services.IFacebookGraphService facebookGraphService)
+            Modules.Facebook.Services.IFacebookGraphService facebookGraphService,
+            IAIBehaviorSettingsService aiBehaviorSettingsService)
         {
             _context = context;
             _assignmentEngine = assignmentEngine;
@@ -45,6 +48,7 @@ namespace Modules.Conversations.API
             _httpClient = new HttpClient();
             _redis = redis.GetDatabase();
             _facebookGraphService = facebookGraphService;
+            _aiBehaviorSettingsService = aiBehaviorSettingsService;
         }
 
         [HttpGet("projects/{projectId}/conversations")]
@@ -488,6 +492,15 @@ namespace Modules.Conversations.API
             // 3. Reaction
             if (!string.IsNullOrEmpty(request.Reaction))
             {
+                var settings = await _context.ProjectSettings
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(s => s.ProjectId == projectId);
+                var aiBehavior = _aiBehaviorSettingsService.Resolve(settings, "FacebookComment");
+                if (!_aiBehaviorSettingsService.IsReactionAllowed(aiBehavior, request.Reaction))
+                {
+                    return BadRequest(new { error = "Reaction is disabled or not allowed for this project/channel." });
+                }
+
                 try
                 {
                     await _facebookGraphService.ReactToCommentAsync(
@@ -621,6 +634,15 @@ namespace Modules.Conversations.API
             if (targetMessage == null)
             {
                 return NotFound($"Message {messageId} not found in conversation {id}.");
+            }
+
+            var settings = await _context.ProjectSettings
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(s => s.ProjectId == conversation.ProjectId);
+            var aiBehavior = _aiBehaviorSettingsService.Resolve(settings, conversation.Channel ?? "WhatsApp");
+            if (!_aiBehaviorSettingsService.IsReactionAllowed(aiBehavior, request.ReactionText))
+            {
+                return BadRequest(new { error = "Reaction is disabled or not allowed for this project/channel." });
             }
 
             // Save the outgoing reaction message (represented as an informational message or reaction)
