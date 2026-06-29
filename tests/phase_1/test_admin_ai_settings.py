@@ -52,6 +52,30 @@ def ai_behavior_payload(**overrides):
     return payload
 
 
+async def get_auth_headers(client, project_id):
+    user_email = f"user_{uuid.uuid4().hex[:6]}@smartcore.com"
+    # Register
+    reg_resp = await client.post(
+        f"{BASE_URL}/auth/register",
+        json={
+            "email": user_email,
+            "password": "Password123",
+            "projectId": project_id,
+            "role": "Admin",
+        },
+    )
+    assert reg_resp.status_code in (200, 201)
+
+    # Login
+    login_resp = await client.post(
+        f"{BASE_URL}/auth/login",
+        json={"email": user_email, "password": "Password123"},
+    )
+    assert login_resp.status_code == 200
+    token = login_resp.json()["accessToken"]
+    return {"Authorization": f"Bearer {token}", "X-Project-Id": project_id}
+
+
 @pytest.mark.asyncio
 async def test_admin_ai_behavior_settings_are_saved_and_read_back():
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -59,7 +83,7 @@ async def test_admin_ai_behavior_settings_are_saved_and_read_back():
         create_resp = await client.post(f"{BASE_URL}/projects", json={"name": project_name})
         assert create_resp.status_code == 201
         project_id = create_resp.json()["id"]
-        headers = {"X-Project-Id": project_id}
+        headers = await get_auth_headers(client, project_id)
 
         behavior = ai_behavior_payload()
         update_resp = await client.put(
@@ -113,7 +137,7 @@ async def test_admin_ai_behavior_rejects_invalid_templates_channels_and_reaction
         create_resp = await client.post(f"{BASE_URL}/projects", json={"name": project_name})
         assert create_resp.status_code == 201
         project_id = create_resp.json()["id"]
-        headers = {"X-Project-Id": project_id}
+        headers = await get_auth_headers(client, project_id)
 
         behavior = ai_behavior_payload()
         mutate_payload(behavior)
@@ -139,6 +163,9 @@ async def test_admin_ai_behavior_keeps_project_specific_staff_and_fallbacks_isol
         project_a_id = create_a_resp.json()["id"]
         project_b_id = create_b_resp.json()["id"]
 
+        headers_a = await get_auth_headers(client, project_a_id)
+        headers_b = await get_auth_headers(client, project_b_id)
+
         behavior_a = ai_behavior_payload()
         behavior_a["identity"]["agentNames"] = ["أسماء"]
         behavior_a["fallbacks"]["aiError"] = "رسالة مشروع أ"
@@ -149,19 +176,19 @@ async def test_admin_ai_behavior_keeps_project_specific_staff_and_fallbacks_isol
 
         update_a_resp = await client.put(
             f"{BASE_URL}/projects/{project_a_id}/settings",
-            headers={"X-Project-Id": project_a_id},
+            headers=headers_a,
             json={"projectName": project_a_name, "aiBehavior": behavior_a},
         )
         update_b_resp = await client.put(
             f"{BASE_URL}/projects/{project_b_id}/settings",
-            headers={"X-Project-Id": project_b_id},
+            headers=headers_b,
             json={"projectName": project_b_name, "aiBehavior": behavior_b},
         )
         assert update_a_resp.status_code == 200
         assert update_b_resp.status_code == 200
 
-        get_a_resp = await client.get(f"{BASE_URL}/projects/{project_a_id}", headers={"X-Project-Id": project_a_id})
-        get_b_resp = await client.get(f"{BASE_URL}/projects/{project_b_id}", headers={"X-Project-Id": project_b_id})
+        get_a_resp = await client.get(f"{BASE_URL}/projects/{project_a_id}", headers=headers_a)
+        get_b_resp = await client.get(f"{BASE_URL}/projects/{project_b_id}", headers=headers_b)
         assert get_a_resp.status_code == 200
         assert get_b_resp.status_code == 200
 
