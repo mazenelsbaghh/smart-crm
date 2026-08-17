@@ -53,7 +53,7 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
             {
                 var envelope = await db.AutonomyEnvelopes.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.State == EnvelopeState.Active);
                 if (envelope is null) return;
-                var start = DateTime.UtcNow.Date;
+                var start = CairoDayStartUtc(DateTime.UtcNow);
                 var spend = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.IntervalStartUtc >= start).SumAsync(x => x.Spend);
                 if (!AdvertisingOperationalPolicy.MustEmergencyStop(spend, envelope.DailyCap)) return;
                 await ActivateAutomaticStop(projectId, EmergencyTrigger.CapRisk, $"Observed spend {spend} reached daily cap {envelope.DailyCap}.");
@@ -234,6 +234,13 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
 
     private async Task<List<Guid>> ActiveProjectIdsAsync() => await db.AutonomyEnvelopes.IgnoreQueryFilters()
         .Where(x => x.State == EnvelopeState.Active).Select(x => x.ProjectId).Distinct().ToListAsync();
+
+    private static DateTime CairoDayStartUtc(DateTime utcNow)
+    {
+        var cairo = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo");
+        var cairoDate = TimeZoneInfo.ConvertTimeFromUtc(utcNow, cairo).Date;
+        return TimeZoneInfo.ConvertTimeToUtc(cairoDate, cairo);
+    }
 
     private async Task WithProjectLease(Guid projectId, string job, TimeSpan expiry, Func<Task> work)
     {

@@ -5,6 +5,7 @@ using Modules.Advertising.Services;
 using Shared.Infrastructure;
 using Shared.Security;
 using Hangfire;
+using Modules.Advertising.Jobs;
 using Modules.Advertising.Workers;
 
 namespace Modules.Advertising.API;
@@ -22,14 +23,23 @@ public sealed class AdvertisingOperationsController(
     public async Task<IActionResult> Overview(Guid projectId, CancellationToken cancellationToken)
     {
         if (!CanRead(projectId)) return Forbid();
-        var spend = await db.AdvertisingInsights.Where(x => x.ProjectId == projectId).SumAsync(x => x.Spend, cancellationToken);
+        var cairoTodayStartUtc = CairoDayStartUtc(DateTime.UtcNow);
+        var insights = await db.AdvertisingInsights.AsNoTracking().Where(x => x.ProjectId == projectId).ToListAsync(cancellationToken);
+        var todayInsights = insights.Where(x => x.IntervalStartUtc >= cairoTodayStartUtc).ToList();
+        var spend = todayInsights.Sum(x => x.Spend);
         var conversions = await db.AdvertisingConversions.Where(x => x.ProjectId == projectId).ToListAsync(cancellationToken);
         var ads = await db.ManagedAdvertisements.Where(x => x.ProjectId == projectId).ToListAsync(cancellationToken);
+        var connection = await db.AdvertisingConnections.AsNoTracking().SingleOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken);
         var envelope = await db.AutonomyEnvelopes.AsNoTracking().OrderByDescending(x => x.CreatedAt).FirstOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken);
         var projectAi = await db.ProjectSettings.AsNoTracking().Where(settings => settings.ProjectId == projectId)
             .Select(settings => new { settings.GeminiModel, HasProjectApiKey = settings.GeminiApiKey != null && settings.GeminiApiKey != "" }).SingleOrDefaultAsync(cancellationToken);
         var stop = await db.AdvertisingEmergencyStops.AsNoTracking().AnyAsync(x => x.ProjectId == projectId && x.ResumedAtUtc == null, cancellationToken);
         var totalRevenue = conversions.Where(x => x.CurrentValue > 0).Sum(x => x.CurrentValue ?? 0);
+        var latestDecision = await db.AdvertisingDecisions.AsNoTracking().Where(x => x.ProjectId == projectId).OrderByDescending(x => x.CreatedAt).FirstOrDefaultAsync(cancellationToken);
+        var cycles = await db.AdvertisingCycleRuns.AsNoTracking().Where(x => x.ProjectId == projectId).OrderByDescending(x => x.StartedAtUtc).Take(100).ToListAsync(cancellationToken);
+        var latestCycles = cycles.GroupBy(x => x.JobName).Select(group => group.First()).OrderBy(x => x.JobName).ToList();
+        var openIncidents = await db.TrackingIncidents.AsNoTracking().Where(x => x.ProjectId == projectId && x.State != IncidentState.Recovered).OrderByDescending(x => x.DetectedAtUtc).Take(5).ToListAsync(cancellationToken);
+        var currentCampaign = ads.OrderByDescending(x => x.LastSyncedAtUtc ?? x.ImportedAtUtc ?? x.CreatedAt).FirstOrDefault();
         return Ok(new
         {
             asOfUtc = DateTime.UtcNow,
@@ -46,8 +56,63 @@ public sealed class AdvertisingOperationsController(
             usableCap = envelope is null ? 0 : allocator.Allocate(envelope.DailyCap, envelope.SafetyReservePercent, 1, true).Usable,
             aiModel = projectAi?.GeminiModel ?? "الإعداد الافتراضي للنظام",
             usesProjectApiKey = projectAi?.HasProjectApiKey ?? false,
-            readiness = await readiness.GetAsync(projectId, cancellationToken)
+            readiness = await readiness.GetAsync(projectId, cancellationToken),
+            operations = new
+            {
+                connection = connection is null ? null : new
+                {
+                    state = connection.State.ToString(), connection.LastValidatedAtUtc, connection.LastSyncAtUtc,
+                    connection.LastErrorCode, connection.LastErrorSummary, connection.ExpiresAtUtc,
+                    connected = connection.State == AdvertisingConnectionState.Ready
+                },
+                campaign = currentCampaign is null ? null : new
+                {
+                    currentCampaign.Name, currentCampaign.DailyBudget, currentCampaign.EffectiveStatus,
+                    currentCampaign.LastSyncedAtUtc, currentCampaign.ImportedAtUtc, currentCampaign.ManagementSource
+                },
+                performance = new
+                {
+                    daysLoaded = insights.Select(x => x.IntervalStartUtc.Date).Distinct().Count(),
+                    snapshots = insights.Count,
+                    lastPulledAtUtc = insights.MaxBy(x => x.FetchedAtUtc)?.FetchedAtUtc,
+                    impressions = todayInsights.Sum(x => x.Impressions),
+                    clicks = todayInsights.Sum(x => x.Clicks),
+                    allTimeSpend = insights.Sum(x => x.Spend)
+                },
+                ai = new
+                {
+                    model = projectAi?.GeminiModel ?? "الإعداد الافتراضي للنظام",
+                    usesProjectApiKey = projectAi?.HasProjectApiKey ?? false,
+                    latestDecision = latestDecision is null ? null : new { latestDecision.ActionType, state = latestDecision.State.ToString(), latestDecision.CreatedAt }
+                },
+                tracking = new
+                {
+                    healthy = openIncidents.Count == 0,
+                    mode = connection?.DatasetExternalId is null ? "CRM_WHATSAPP" : "DATASET_AND_CRM",
+                    openIncidents = openIncidents.Select(x => new { x.Category, x.Severity, x.Summary, x.DetectedAtUtc })
+                },
+                jobs = latestCycles.Select(x => new { x.JobName, x.State, x.StartedAtUtc, x.CompletedAtUtc, x.ErrorType }),
+                lastFailure = cycles.FirstOrDefault(x => x.State == "Failed") is { } failedCycle
+                    ? new { failedCycle.JobName, failedCycle.ErrorType, failedCycle.StartedAtUtc }
+                    : null
+            }
         });
+    }
+
+    [HttpPost("sync-now")]
+    public IActionResult SyncNow(Guid projectId)
+    {
+        if (!CanManage(projectId)) return Forbid();
+        backgroundJobs.Enqueue<AdvertisingRecurringJobs>(job => job.SynchronizeAsync());
+        backgroundJobs.Enqueue<AdvertisingRecurringJobs>(job => job.PullInsightsAsync());
+        return Accepted(new { queued = true, message = "تمت جدولة مزامنة الحملة وسحب الأداء الآن." });
+    }
+
+    private static DateTime CairoDayStartUtc(DateTime utcNow)
+    {
+        var cairo = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo");
+        var cairoDate = TimeZoneInfo.ConvertTimeFromUtc(utcNow, cairo).Date;
+        return TimeZoneInfo.ConvertTimeToUtc(cairoDate, cairo);
     }
 
     [HttpPost("autopilot/disable")]

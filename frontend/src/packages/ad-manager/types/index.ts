@@ -1,5 +1,15 @@
 export interface ReadinessItem { key: string; label: string; ready: boolean; reason?: string }
 export interface AdvertisingReadiness { ready: boolean; items: ReadinessItem[] }
+export interface AdvertisingJobStatus { jobName: string; state: string; startedAtUtc: string; completedAtUtc?: string; errorType?: string }
+export interface AdvertisingOperations {
+  connection?: { state: string; lastValidatedAtUtc?: string; lastSyncAtUtc?: string; lastErrorCode?: string; lastErrorSummary?: string; expiresAtUtc?: string; connected: boolean } | null;
+  campaign?: { name: string; dailyBudget: number; effectiveStatus?: string; lastSyncedAtUtc?: string; importedAtUtc?: string; managementSource: string } | null;
+  performance: { daysLoaded: number; snapshots: number; lastPulledAtUtc?: string; impressions: number; clicks: number; allTimeSpend: number };
+  ai: { model: string; usesProjectApiKey: boolean; latestDecision?: { actionType: string; state: string; createdAt: string } | null };
+  tracking: { healthy: boolean; mode: 'CRM_WHATSAPP' | 'DATASET_AND_CRM'; openIncidents: { category: string; severity: string; summary: string; detectedAtUtc: string }[] };
+  jobs: AdvertisingJobStatus[];
+  lastFailure?: { jobName: string; errorType?: string; startedAtUtc: string } | null;
+}
 export interface AdvertisingOverview {
   asOfUtc: string;
   spend: number;
@@ -16,6 +26,7 @@ export interface AdvertisingOverview {
   aiModel: string;
   usesProjectApiKey: boolean;
   readiness: AdvertisingReadiness;
+  operations: AdvertisingOperations;
 }
 
 export interface ManagedAd { id: string; name: string; status: string; effectiveStatus: string; dailyBudget: number; publisherPlatform: string; managementSource: string; positionsJson: string; lastSyncedAtUtc?: string; importedAtUtc?: string }

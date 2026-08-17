@@ -5,6 +5,7 @@ const base = (projectId: string) => `/api/projects/${projectId}/ad-manager`;
 
 export const adManagerApi = {
   overview: async (projectId: string) => (await api.get<AdvertisingOverview>(`${base(projectId)}/overview`)).data,
+  syncNow: async (projectId: string) => (await api.post<{ queued: boolean; message: string }>(`${base(projectId)}/sync-now`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data,
   campaigns: async (projectId: string) => (await api.get<ManagedAd[]>(`${base(projectId)}/campaigns`)).data,
   existingFacebookAds: async (projectId: string) => (await api.get<ExistingFacebookAd[]>(`${base(projectId)}/campaigns/facebook-existing`)).data,
   importFacebookAds: async (projectId: string, adIds: string[]) => (await api.post<{ importedAds: number; existingAds: number; reservedDailyBudget: number }>(`${base(projectId)}/campaigns/import-facebook`, { adIds })).data,
