@@ -17,18 +17,16 @@ export function ExistingCampaignImport({ projectId, dailyCap, refreshToken, onIm
   const [candidates, setCandidates] = useState<ExistingFacebookAd[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const whatsAppCandidates = candidates
-    .filter(ad => ad.eligible && ad.destination === 'WhatsApp')
-    .sort((left, right) => left.dailyBudget - right.dailyBudget || Number(right.effectiveStatus === 'ACTIVE') - Number(left.effectiveStatus === 'ACTIVE'));
-  const recommendedWhatsAppAd = whatsAppCandidates.find(ad => ad.dailyBudget <= dailyCap) ?? whatsAppCandidates[0];
-  const requiresHigherCap = Boolean(recommendedWhatsAppAd && recommendedWhatsAppAd.dailyBudget > dailyCap);
+  const [selectedWhatsAppAdId, setSelectedWhatsAppAdId] = useState<string | null>(null);
+  const selectedWhatsAppAd = candidates.find(ad => ad.adId === selectedWhatsAppAdId && ad.eligible && ad.destination === 'WhatsApp');
+  const requiresHigherCap = Boolean(selectedWhatsAppAd && selectedWhatsAppAd.dailyBudget > dailyCap);
 
   const discover = useCallback(async (showHint = true) => {
     setBusy(true); if (showHint) setMessage(null);
     try {
       const existingAds = await adManagerApi.existingFacebookAds(projectId);
       setCandidates(existingAds);
-      if (showHint) setMessage(existingAds.length ? 'تمت قراءة الحملات. اختر زر إدارة حملة WhatsApp المقترحة إذا أردت أن يتولاها الـAI.' : 'لا توجد إعلانات في حساب Facebook المحدد.');
+      if (showHint) setMessage(existingAds.length ? 'تمت قراءة الحملات. اختر حملة WhatsApp التي تريد أن يديرها الـAI.' : 'لا توجد إعلانات في حساب Facebook المحدد.');
     } catch { setMessage('تعذّر قراءة الحملات الحالية من Facebook. راجع الاتصال والصلاحيات.'); }
     finally { setBusy(false); }
   }, [projectId]);
@@ -38,13 +36,14 @@ export function ExistingCampaignImport({ projectId, dailyCap, refreshToken, onIm
     return () => window.clearTimeout(load);
   }, [discover, refreshToken]);
 
-  const importRecommendedWhatsAppAd = async () => {
-    if (!recommendedWhatsAppAd) return;
+  const importSelectedWhatsAppAd = async () => {
+    if (!selectedWhatsAppAd) return;
     setBusy(true); setMessage(null);
     try {
-      const imported = await adManagerApi.importFacebookAds(projectId, [recommendedWhatsAppAd.adId]);
+      const imported = await adManagerApi.importFacebookAds(projectId, [selectedWhatsAppAd.adId]);
+      setSelectedWhatsAppAdId(null);
       await discover(false); await onImported();
-      setMessage(`تم ضم حملة WhatsApp المقترحة، وحجز ${imported.reservedDailyBudget} من السقف اليومي لإدارتها. لم نغيّر مواضعها على Facebook.`);
+      setMessage(`تم ضم حملة WhatsApp التي اخترتها، وحجز ${imported.reservedDailyBudget} من السقف اليومي لإدارتها. لم نغيّر مواضعها على Facebook.`);
     } catch { setMessage('تعذّر ضم الحملة. ارفع السقف اليومي من الإعدادات أو خفّض ميزانية الحملة في Facebook أولًا.'); setBusy(false); }
   };
 
@@ -54,13 +53,13 @@ export function ExistingCampaignImport({ projectId, dailyCap, refreshToken, onIm
       <button className={styles.secondaryButton} onClick={() => void discover(true)} disabled={busy}>{busy ? <LoaderCircle size={16} /> : <RefreshCw size={16} />} تحديث الآن</button>
     </div>
     {candidates.length > 0 && <div className={styles.importList}>
-      {candidates.map(ad => <div key={ad.adId} className={`${styles.importRow} ${ad.alreadyManaged ? styles.importedRow : ''}`}>
+      {candidates.map(ad => <div key={ad.adId} className={`${styles.importRow} ${ad.alreadyManaged ? styles.importedRow : ''} ${selectedWhatsAppAd?.adId === ad.adId ? styles.selectedImportRow : ''}`}>
         <span className={styles.importState}>{ad.alreadyManaged ? <CheckCircle2 size={17} /> : ad.eligible ? <Download size={17} /> : <ShieldAlert size={17} />}</span>
         <span><strong>{ad.adName}</strong><small>{ad.campaignName} · {ad.adSetName}</small></span>
         <span><strong>{ad.dailyBudget} يوميًا</strong><small>{placementSummary(ad)}</small></span>
-        <span><strong>{ad.effectiveStatus}</strong><small>{ad.alreadyManaged ? 'تحت الإدارة بالفعل' : ad.ineligibleReason ?? 'جاهز للاستيراد'}</small></span>
+        <span><strong>{ad.effectiveStatus}</strong><small>{ad.alreadyManaged ? 'تحت الإدارة بالفعل' : ad.ineligibleReason ?? 'جاهز للاستيراد'}</small>{ad.eligible && ad.destination === 'WhatsApp' && <button type="button" className={styles.selectCampaignButton} aria-pressed={selectedWhatsAppAd?.adId === ad.adId} onClick={() => setSelectedWhatsAppAdId(ad.adId)} disabled={busy || ad.alreadyManaged}>{selectedWhatsAppAd?.adId === ad.adId ? 'تم الاختيار' : 'اختيار هذه الحملة'}</button>}</span>
       </div>)}
-      <div className={styles.importActions}><span>{recommendedWhatsAppAd ? requiresHigherCap ? `الحملة الأقل ميزانية تحتاج سقفًا يوميًا لا يقل عن ${recommendedWhatsAppAd.dailyBudget}. عدّله من الإعدادات أولًا.` : `الحملة المقترحة: ${recommendedWhatsAppAd.adName}` : 'لا توجد حملة WhatsApp جاهزة للإدارة.'}</span><button className={styles.primaryButton} disabled={busy || !recommendedWhatsAppAd || requiresHigherCap} onClick={() => void importRecommendedWhatsAppAd()}><Download size={16} /> ضم حملة WhatsApp لإدارة AI</button></div>
+      <div className={styles.importActions}><span>{selectedWhatsAppAd ? requiresHigherCap ? `الحملة المختارة تحتاج سقفًا يوميًا لا يقل عن ${selectedWhatsAppAd.dailyBudget}. عدّله من الإعدادات أولًا.` : `الحملة المختارة: ${selectedWhatsAppAd.adName}` : 'اختر حملة WhatsApp أولًا.'}</span><button className={styles.primaryButton} disabled={busy || !selectedWhatsAppAd || requiresHigherCap} onClick={() => void importSelectedWhatsAppAd()}><Download size={16} /> ضم الحملة المختارة لإدارة AI</button></div>
     </div>}
     {message && <p className={styles.inlineMessage} role="status" aria-live="polite">{message}</p>}
   </section>;
