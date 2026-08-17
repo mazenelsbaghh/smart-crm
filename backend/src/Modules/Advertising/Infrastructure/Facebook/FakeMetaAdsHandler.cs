@@ -27,7 +27,7 @@ public sealed class FakeMetaAdsHandler : HttpMessageHandler
             return "{\"data\":[{\"id\":\"act_mock_1\",\"name\":\"Mock Ad Account\",\"currency\":\"EGP\",\"timezone_name\":\"Africa/Cairo\",\"account_status\":1}]}";
         if (path.EndsWith("me/accounts", StringComparison.OrdinalIgnoreCase))
             return "{\"data\":[{\"id\":\"page_mock_1\",\"name\":\"Mock Facebook Page\"}]}";
-        if (path.Contains("owned_pixels", StringComparison.OrdinalIgnoreCase))
+        if (path.Contains("adspixels", StringComparison.OrdinalIgnoreCase))
             return "{\"data\":[{\"id\":\"dataset_mock_1\",\"name\":\"Mock Dataset\"}]}";
         if (path.Contains("/posts", StringComparison.OrdinalIgnoreCase))
             return "{\"data\":[{\"id\":\"page_mock_1_101\",\"message\":\"فيديو تعريفي بالخدمة\",\"created_time\":\"2026-08-15T09:00:00Z\",\"attachments\":{\"data\":[{\"media_type\":\"video\",\"url\":\"https://example.invalid/video\"}]}},{\"id\":\"page_mock_1_102\",\"message\":\"صورة العرض الحالية\",\"created_time\":\"2026-08-16T09:00:00Z\",\"attachments\":{\"data\":[{\"media_type\":\"photo\",\"url\":\"https://example.invalid/image\"}]}}]}";

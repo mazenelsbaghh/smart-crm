@@ -43,7 +43,7 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
         var pages = await GetList("me/accounts?fields=id,name&limit=100", accessToken, cancellationToken,
             x => new MetaResource(x.GetProperty("id").GetString()!, x.GetProperty("name").GetString() ?? "Page"));
         var selected = adAccountId ?? accounts.FirstOrDefault()?.Id;
-        var datasets = selected is null ? [] : await GetList($"{selected}/owned_pixels?fields=id,name&limit=100", accessToken, cancellationToken,
+        var datasets = selected is null ? [] : await GetList($"{selected}/adspixels?fields=id,name&limit=100", accessToken, cancellationToken,
             x => new MetaResource(x.GetProperty("id").GetString()!, x.GetProperty("name").GetString() ?? "Dataset"));
         return new(accounts, pages, datasets);
     }
