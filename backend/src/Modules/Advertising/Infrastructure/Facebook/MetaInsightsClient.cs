@@ -32,13 +32,14 @@ public sealed class MetaInsightsClient(HttpClient httpClient)
 
     public async Task<MetaAdState> GetAdStateAsync(string token, string adId, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"{adId}?fields=id,status,effective_status,daily_budget");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{adId}?fields=id,status,effective_status,adset{{id,daily_budget}},campaign{{id,daily_budget}}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccess(response, cancellationToken);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         var root = json.RootElement;
-        return new(Get(root, "id"), Get(root, "status"), Get(root, "effective_status"), ParseDecimal(root, "daily_budget") / 100m);
+        var budget = NestedBudget(root, "adset") ?? NestedBudget(root, "campaign") ?? 0m;
+        return new(Get(root, "id"), Get(root, "status"), Get(root, "effective_status"), budget / 100m);
     }
 
     private static IReadOnlyDictionary<string, decimal> ParseBreakdown(JsonElement element, string property) =>
@@ -47,6 +48,8 @@ public sealed class MetaInsightsClient(HttpClient httpClient)
     private static decimal ParseValue(JsonElement item) => decimal.TryParse(Get(item, "value"), NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : 0m;
     private static decimal ParseDecimal(JsonElement item, string property) => decimal.TryParse(Get(item, property), NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : 0m;
     private static long ParseLong(JsonElement item, string property) => long.TryParse(Get(item, property), NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : 0;
+    private static decimal? NestedBudget(JsonElement item, string property) => item.TryGetProperty(property, out var nested) && nested.ValueKind == JsonValueKind.Object && nested.TryGetProperty("daily_budget", out var budget)
+        && decimal.TryParse(budget.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : null;
     private static DateTime ParseDate(JsonElement item, string property) => DateTime.SpecifyKind(DateTime.ParseExact(Get(item, property), "yyyy-MM-dd", CultureInfo.InvariantCulture), DateTimeKind.Utc);
     private static string Get(JsonElement item, string property) => item.TryGetProperty(property, out var value) ? value.ToString() : string.Empty;
     private static async Task EnsureSuccess(HttpResponseMessage response, CancellationToken cancellationToken)
