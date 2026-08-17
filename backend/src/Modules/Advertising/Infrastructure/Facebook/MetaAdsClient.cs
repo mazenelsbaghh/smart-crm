@@ -18,7 +18,8 @@ public sealed record MetaExistingAd(string AdId, string AdName, string Status, s
 {
     public bool IsFacebookOnly => PublisherPlatforms.Count == 1
         && PublisherPlatforms[0].Equals("facebook", StringComparison.OrdinalIgnoreCase)
-        && FacebookPlacementPolicy.IsAllowed("facebook", FacebookPositions);
+        && (FacebookPlacementPolicy.IsAllowed("facebook", FacebookPositions)
+            || (Destination == "WhatsApp" && FacebookPositions.Count == 0));
 }
 public sealed record MetaAdSetRequest(string AdAccountId, string CampaignId, string Name, decimal DailyBudget, string OptimizationGoal, IReadOnlyCollection<string> Countries, IReadOnlyCollection<string> Positions, string? DatasetId, string? CustomEventType);
 public sealed record MetaExistingPostAdRequest(string AdAccountId, string AdSetId, string ObjectStoryId, string Name);

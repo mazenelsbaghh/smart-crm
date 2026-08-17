@@ -88,7 +88,8 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
                 ProjectId = projectId, PromotionId = promotions[providerAd.CampaignId].Id, CreativeId = creative.Id, Name = providerAd.AdName,
                 CampaignExternalId = providerAd.CampaignId, AdSetExternalId = providerAd.AdSetId, AdExternalId = providerAd.AdId,
                 BudgetOwnerExternalId = providerAd.BudgetOwnerId, BudgetOwnerType = providerAd.BudgetOwnerType,
-                PublisherPlatform = "facebook", ManagementSource = "ImportedFromMeta", PositionsJson = JsonSerializer.Serialize(providerAd.FacebookPositions),
+                PublisherPlatform = "facebook", ManagementSource = "ImportedFromMeta",
+                PositionsJson = JsonSerializer.Serialize(ManagedPositions(providerAd)),
                 DailyBudget = providerAd.DailyBudget, ConfiguredStatus = providerAd.EffectiveStatus == "ACTIVE" ? ManagedDeliveryState.Active : ManagedDeliveryState.Paused,
                 EffectiveStatus = providerAd.EffectiveStatus, LastSyncedAtUtc = DateTime.UtcNow, ImportedAtUtc = DateTime.UtcNow
             });
@@ -111,6 +112,10 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
         if (ad.DailyBudget <= 0) return "تعذّر تحديد الميزانية اليومية من Ad Set أو Campaign.";
         return null;
     }
+
+    private static IReadOnlyList<string> ManagedPositions(MetaExistingAd providerAd) =>
+        providerAd.FacebookPositions.Count > 0 ? providerAd.FacebookPositions :
+        providerAd.Destination == "WhatsApp" ? ["feed"] : [];
 
     private static string Hash(string source) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
     private sealed record ImportedEntities(IReadOnlyCollection<AdvertisingPromotion> Promotions, IReadOnlyCollection<AdvertisingCreative> Creatives, IReadOnlyCollection<ManagedAdvertisement> Ads);
