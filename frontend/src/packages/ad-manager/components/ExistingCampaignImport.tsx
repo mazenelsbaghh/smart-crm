@@ -43,11 +43,22 @@ export function ExistingCampaignImport({ projectId, onImported }: { projectId: s
         <input type="checkbox" disabled={!ad.eligible || busy} checked={selected.includes(ad.adId)} onChange={() => setSelected(current => current.includes(ad.adId) ? current.filter(id => id !== ad.adId) : [...current, ad.adId])} />
         <span className={styles.importState}>{ad.alreadyManaged ? <CheckCircle2 size={17} /> : ad.eligible ? <Download size={17} /> : <ShieldAlert size={17} />}</span>
         <span><strong>{ad.adName}</strong><small>{ad.campaignName} · {ad.adSetName}</small></span>
-        <span><strong>{ad.dailyBudget} يوميًا</strong><small>{ad.facebookPositions.join('، ') || 'مواضع غير محددة'}</small></span>
+        <span><strong>{ad.dailyBudget} يوميًا</strong><small>{placementSummary(ad)}</small></span>
         <span><strong>{ad.effectiveStatus}</strong><small>{ad.alreadyManaged ? 'تحت الإدارة بالفعل' : ad.ineligibleReason ?? 'جاهز للاستيراد'}</small></span>
       </label>)}
       <div className={styles.importActions}><span>{selected.length} إعلان محدد</span><button className={styles.primaryButton} disabled={busy || selected.length === 0} onClick={() => void importSelected()}><Download size={16} /> ضم لإدارة AI</button></div>
     </div>}
     {message && <p className={styles.inlineMessage} role="status" aria-live="polite">{message}</p>}
   </section>;
+}
+
+function placementSummary(ad: ExistingFacebookAd) {
+  const placements = [
+    ad.facebookPositions.length && `Facebook: ${ad.facebookPositions.join('، ')}`,
+    ad.instagramPositions.length && `Instagram: ${ad.instagramPositions.join('، ')}`,
+    ad.messengerPositions.length && `Messenger: ${ad.messengerPositions.join('، ')}`,
+    ad.audienceNetworkPositions.length && `Audience Network: ${ad.audienceNetworkPositions.join('، ')}`,
+    ad.destination && `الوجهة: ${ad.destination}`,
+  ].filter(Boolean);
+  return placements.join(' | ') || 'لم يرجع Facebook تفاصيل المواضع لهذه الحملة';
 }

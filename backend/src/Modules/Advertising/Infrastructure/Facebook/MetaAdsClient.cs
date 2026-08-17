@@ -12,7 +12,9 @@ public sealed record MetaPagePost(string Id, string? Message, string MediaType, 
 public sealed record MetaExistingAd(string AdId, string AdName, string Status, string EffectiveStatus, string AdSetId,
     string AdSetName, string CampaignId, string CampaignName, string Objective, string? ObjectStoryId,
     decimal DailyBudget, string BudgetOwnerId, string BudgetOwnerType,
-    IReadOnlyList<string> PublisherPlatforms, IReadOnlyList<string> FacebookPositions)
+    IReadOnlyList<string> PublisherPlatforms, IReadOnlyList<string> FacebookPositions,
+    IReadOnlyList<string> InstagramPositions, IReadOnlyList<string> MessengerPositions,
+    IReadOnlyList<string> AudienceNetworkPositions, string? Destination)
 {
     public bool IsFacebookOnly => PublisherPlatforms.Count == 1
         && PublisherPlatforms[0].Equals("facebook", StringComparison.OrdinalIgnoreCase)
@@ -135,7 +137,7 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
 
     public async Task<IReadOnlyList<MetaExistingAd>> GetExistingAdsAsync(string accessToken, string adAccountId, CancellationToken cancellationToken)
     {
-        const string fields = "id,name,status,effective_status,adset{id,name,daily_budget,targeting,campaign{id,name,objective,daily_budget}},creative{id,object_story_id}";
+        const string fields = "id,name,status,effective_status,adset{id,name,daily_budget,targeting,promoted_object,campaign{id,name,objective,daily_budget}},creative{id,object_story_id}";
         return await GetList($"{adAccountId}/ads?fields={fields}&limit=200", accessToken, cancellationToken, ParseExistingAd);
     }
 
@@ -145,7 +147,10 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
         var campaign = adSet.GetProperty("campaign");
         var targeting = adSet.TryGetProperty("targeting", out var targetingElement) ? targetingElement : default;
         var publishers = GetStringList(targeting, "publisher_platforms");
-        var positions = GetStringList(targeting, "facebook_positions");
+        var facebookPositions = GetStringList(targeting, "facebook_positions");
+        var instagramPositions = GetStringList(targeting, "instagram_positions");
+        var messengerPositions = GetStringList(targeting, "messenger_positions");
+        var audienceNetworkPositions = GetStringList(targeting, "audience_network_positions");
         var adSetBudget = GetMoney(adSet, "daily_budget");
         var campaignBudget = GetMoney(campaign, "daily_budget");
         string? storyId = null;
@@ -156,13 +161,22 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
             campaign.GetProperty("id").GetString()!, GetString(campaign, "name") ?? "Facebook Campaign", GetString(campaign, "objective") ?? "UNKNOWN",
             storyId, adSetBudget > 0 ? adSetBudget : campaignBudget,
             adSetBudget > 0 ? adSet.GetProperty("id").GetString()! : campaign.GetProperty("id").GetString()!,
-            adSetBudget > 0 ? "AdSet" : "Campaign", publishers, positions);
+            adSetBudget > 0 ? "AdSet" : "Campaign", publishers, facebookPositions, instagramPositions, messengerPositions,
+            audienceNetworkPositions, GetDestination(adSet));
     }
 
     private static IReadOnlyList<string> GetStringList(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var values) && values.ValueKind == JsonValueKind.Array
             ? values.EnumerateArray().Select(entry => entry.GetString()).Where(entry => !string.IsNullOrWhiteSpace(entry)).Select(entry => entry!).ToArray()
             : [];
+
+    private static string? GetDestination(JsonElement adSet)
+    {
+        if (!adSet.TryGetProperty("promoted_object", out var promotedObject) || promotedObject.ValueKind != JsonValueKind.Object) return null;
+        if (promotedObject.TryGetProperty("whatsapp_phone_number", out var whatsapp) && !string.IsNullOrWhiteSpace(whatsapp.ToString())) return "WhatsApp";
+        if (promotedObject.TryGetProperty("page_id", out var page) && !string.IsNullOrWhiteSpace(page.ToString())) return "Facebook Page";
+        return null;
+    }
 
     private static decimal GetMoney(JsonElement element, string name) =>
         decimal.TryParse(GetString(element, name), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var minorUnits)

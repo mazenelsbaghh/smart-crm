@@ -19,7 +19,8 @@ public sealed class AdvertisingCampaignImportController(IProjectAuthorizationSer
             {
                 candidate.Ad.AdId, candidate.Ad.AdName, candidate.Ad.CampaignId, candidate.Ad.CampaignName, candidate.Ad.AdSetName,
                 candidate.Ad.Status, candidate.Ad.EffectiveStatus, candidate.Ad.Objective, candidate.Ad.DailyBudget,
-                candidate.Ad.PublisherPlatforms, candidate.Ad.FacebookPositions, candidate.AlreadyManaged, candidate.Eligible, candidate.IneligibleReason
+                candidate.Ad.PublisherPlatforms, candidate.Ad.FacebookPositions, candidate.Ad.InstagramPositions, candidate.Ad.MessengerPositions,
+                candidate.Ad.AudienceNetworkPositions, candidate.Ad.Destination, candidate.AlreadyManaged, candidate.Eligible, candidate.IneligibleReason
             }));
         }
         catch (AdvertisingException exception) { return StatusCode(exception.StatusCode, new { code = exception.Code, message = exception.Message }); }

@@ -19,7 +19,7 @@ export interface AdvertisingOverview {
 }
 
 export interface ManagedAd { id: string; name: string; status: string; effectiveStatus: string; dailyBudget: number; publisherPlatform: string; managementSource: string; positionsJson: string; lastSyncedAtUtc?: string; importedAtUtc?: string }
-export interface ExistingFacebookAd { adId: string; adName: string; campaignId: string; campaignName: string; adSetName: string; status: string; effectiveStatus: string; objective: string; dailyBudget: number; publisherPlatforms: string[]; facebookPositions: string[]; alreadyManaged: boolean; eligible: boolean; ineligibleReason?: string }
+export interface ExistingFacebookAd { adId: string; adName: string; campaignId: string; campaignName: string; adSetName: string; status: string; effectiveStatus: string; objective: string; dailyBudget: number; publisherPlatforms: string[]; facebookPositions: string[]; instagramPositions: string[]; messengerPositions: string[]; audienceNetworkPositions: string[]; destination?: string; alreadyManaged: boolean; eligible: boolean; ineligibleReason?: string }
 export interface Creative { id: string; sourceType: string; mediaType: string; eligibility: string; recommendationScore: number; recommendationEvidenceJson: string; fatigueState: string }
 export interface Conversion { id: string; eventType: string; occurredAtUtc: string; currentValue?: number; currency?: string; state: string; attributionMethod: string }
 export interface AdDecision { id: string; actionType: string; targetType: string; riskClass: string; state: string; evidenceStartUtc: string; evidenceEndUtc: string; createdAt: string }
