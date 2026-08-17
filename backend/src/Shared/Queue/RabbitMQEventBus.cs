@@ -158,6 +158,7 @@ namespace Shared.Queue
                 var queueName = $"{typeof(T).Name}_{typeof(THandler).Name}_queue";
                 await _channel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false);
                 await _channel.QueueBindAsync(queueName, _exchangeName, typeof(T).Name);
+                await _channel.BasicQosAsync(prefetchSize: 0, prefetchCount: 1, global: false);
 
                 var consumer = new AsyncEventingBasicConsumer(_channel);
                 consumer.ReceivedAsync += async (model, ea) =>
