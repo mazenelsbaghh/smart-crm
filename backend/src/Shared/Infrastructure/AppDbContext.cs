@@ -101,6 +101,13 @@ namespace Shared.Infrastructure
                 .HasForeignKey(m => m.AssetId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            modelBuilder.Entity<Modules.Conversations.Domain.Conversation>()
+                .HasIndex(conversation => new { conversation.Status, conversation.LastMessageTimestamp });
+
+            modelBuilder.Entity<Modules.Conversations.Domain.Message>()
+                .HasIndex(message => new { message.ConversationId, message.Timestamp, message.Id })
+                .IsDescending(false, true, true);
+
             modelBuilder.Entity<Modules.Conversations.Domain.Customer>()
                 .HasIndex(customer => new { customer.ProjectId, customer.WhatsAppLid });
 
