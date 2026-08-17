@@ -120,12 +120,12 @@ export default function AdManagerPage() {
 
       {activeTab === 'campaigns' && <>{projectId && <ExistingCampaignImport projectId={projectId} dailyCap={data.overview?.dailyCap ?? 0} refreshToken={data.overview?.asOfUtc ?? ''} onImported={data.refresh} />}<DataTable empty="لا توجد حملات مدارة بعد." headers={['الإعلان', 'الحالة', 'الميزانية', 'المصدر', 'المنصة']} rows={data.campaigns.map(x => [x.name, `${x.status} / ${x.effectiveStatus}`, money(x.dailyBudget), x.managementSource === 'ImportedFromMeta' ? 'حملة موجودة' : 'أنشأها النظام', x.publisherPlatform === 'facebook' ? 'Facebook فقط' : x.publisherPlatform])} /></>}
       {activeTab === 'creatives' && <>
-        <CreativeLab projectId={projectId ?? ''} creatives={data.creatives} onChanged={data.refresh} />
+        <CreativeLab projectId={projectId ?? ''} creatives={data.creatives} onChanged={data.refresh} latestTest={data.decisions.find(decision => decision.actionType === 'CreateWhatsAppTest')} />
         <DataTable empty="لا توجد نتائج مقارنة بعد. ابدأ اختبار WhatsApp ثم انتظر سحب الأداء من Meta." headers={['الإعلان', 'المحتوى', 'الصرف', 'بدء محادثات/نتائج', 'تكلفة النتيجة', 'حكم AI']} rows={data.creativeComparison.map(x => [x.name, x.mediaType, `${money(x.spend)} ج`, x.results, x.results ? `${money(x.cpa)} ج` : '—', x.verdict])} />
         <DataTable empty="اربط الصفحة أو أضف صورًا وفيديوهات للمشروع." headers={['المصدر', 'النوع', 'الأهلية', 'التقييم', 'الإرهاق']} rows={data.creatives.map(x => [x.sourceType, x.mediaType, x.eligibility, `${x.recommendationScore}%`, x.fatigueState])} />
       </>}
       {activeTab === 'conversions' && <DataTable empty="لم تصل تحويلات مؤكدة بعد." headers={['الحدث', 'الوقت', 'القيمة', 'الحالة', 'الإسناد']} rows={data.conversions.map(x => [x.eventType, new Date(x.occurredAtUtc).toLocaleString('ar-EG'), x.currentValue ? `${money(x.currentValue)} ${x.currency ?? ''}` : '—', x.state, x.attributionMethod])} />}
-      {activeTab === 'decisions' && <DataTable empty="لا توجد قرارات AI حتى الآن." headers={['القرار', 'الهدف', 'المخاطر', 'الحالة', 'الوقت']} rows={data.decisions.map(x => [x.actionType, x.targetType, x.riskClass, x.state, new Date(x.createdAt).toLocaleString('ar-EG')])} />}
+      {activeTab === 'decisions' && <DataTable empty="لا توجد قرارات AI حتى الآن." headers={['القرار', 'الهدف', 'الحالة', 'ماذا حدث؟', 'الوقت']} rows={data.decisions.map(x => [x.actionType, x.targetType, x.state, x.reason ?? 'تم تحليل الأداء واتخاذ القرار.', new Date(x.createdAt).toLocaleString('ar-EG')])} />}
       {activeTab === 'settings' && <div className={styles.settings}>
         {projectId && <SettingsPanel projectId={projectId} dailyCap={data.overview?.dailyCap ?? 0} onSaved={finishFacebookConnection} />}
         <div><Megaphone size={20} /><h2>Facebook فقط في الإصدار الأول</h2><p>حتى لو كانت الوجهة WhatsApp أو Messenger، الـplacement يظل Facebook ولن يتم تشغيل Instagram أو أي منصة أخرى.</p></div>

@@ -186,8 +186,15 @@ public sealed class AdvertisingPlanningController(IProjectAuthorizationService a
     public async Task<IActionResult> Decisions(Guid projectId, CancellationToken cancellationToken)
     {
         if (!CanRead(projectId)) return Forbid();
-        return Ok(await db.AdvertisingDecisions.AsNoTracking().Where(x => x.ProjectId == projectId).OrderByDescending(x => x.CreatedAt)
-            .Select(x => new { x.Id, x.ActionType, x.TargetType, x.RiskClass, state = x.State.ToString(), x.EvidenceStartUtc, x.EvidenceEndUtc, x.EvaluateAfterUtc, x.CreatedAt }).Take(100).ToListAsync(cancellationToken));
+        var decisions = await db.AdvertisingDecisions.AsNoTracking().Where(x => x.ProjectId == projectId).OrderByDescending(x => x.CreatedAt).Take(100).ToListAsync(cancellationToken);
+        return Ok(decisions.Select(decision => new { decision.Id, decision.ActionType, decision.TargetType, decision.RiskClass, state = decision.State.ToString(),
+            decision.EvidenceStartUtc, decision.EvidenceEndUtc, decision.EvaluateAfterUtc, decision.CreatedAt, reason = DecisionReason(decision.EvidenceJson) }));
+    }
+
+    private static string? DecisionReason(string evidenceJson)
+    {
+        using var document = JsonDocument.Parse(evidenceJson);
+        return document.RootElement.TryGetProperty("reason", out var reason) ? reason.GetString() : null;
     }
 }
 

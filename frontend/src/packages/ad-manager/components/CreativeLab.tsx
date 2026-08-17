@@ -1,49 +1,16 @@
 'use client';
 
-import { useState } from 'react';
-import { Film, ImageIcon, LoaderCircle, Rocket, Sparkles } from 'lucide-react';
-import { adManagerApi } from '../api/ad-manager-api';
-import type { Creative, FacebookPagePost } from '../types';
+import { Bot, CheckCircle2, Film, ImageIcon, TimerReset } from 'lucide-react';
+import type { AdDecision, Creative } from '../types';
 import styles from '../AdManager.module.css';
 
-export function CreativeLab({ projectId, creatives, onChanged }: { projectId: string; creatives: Creative[]; onChanged: () => Promise<unknown> }) {
-  const [posts, setPosts] = useState<FacebookPagePost[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false); const [message, setMessage] = useState<string | null>(null);
-
-  const discover = async () => {
-    setBusy(true); setMessage(null);
-    try {
-      const nextPosts = await adManagerApi.pagePosts(projectId);
-      const ranked = [...nextPosts].sort((a, b) => new Date(b.createdAtUtc ?? 0).getTime() - new Date(a.createdAtUtc ?? 0).getTime());
-      setPosts(ranked);
-      setSelected(ranked.slice(0, 3).map(x => x.id)); setMessage(ranked.length ? 'رتّبنا أحدث البوستات أولًا. عدّل الاختيار قبل الإطلاق.' : 'لا توجد بوستات صور أو فيديو متاحة على الصفحة.');
-    } catch { setMessage('تعذّر سحب بوستات الصفحة أو العروض الموثقة.'); } finally { setBusy(false); }
-  };
-
-  const launch = async () => {
-    setBusy(true); setMessage(null);
-    try {
-      if (selected.length > 0) await adManagerApi.importPosts(projectId, posts.filter(x => selected.includes(x.id)));
-      const launch = await adManagerApi.startWhatsAppTest(projectId);
-      setMessage(launch.createdAds > 0
-        ? `تم إنشاء ${launch.createdAds} إعلان اختبار لواتساب. ${launch.state === 'ACTIVATION_QUEUED' ? 'تمت الموافقة على التفعيل.' : 'ما زال متوقفًا لحين مراجعة التفعيل.'}`
-        : launch.reason);
-      await onChanged();
-    } catch { setMessage('لم يكتمل اختبار WhatsApp. تأكد من الحملة النشطة والصفحة وسقف الصرف.'); } finally { setBusy(false); }
-  };
-
+export function CreativeLab({ creatives, latestTest }: { projectId: string; creatives: Creative[]; onChanged: () => Promise<unknown>; latestTest?: AdDecision }) {
+  const videos = creatives.filter(creative => creative.mediaType === 'Video').length;
+  const images = creatives.filter(creative => creative.mediaType === 'Image').length;
   return <div className={styles.creativeLab}>
-    <div className={styles.labHeader}><div><Sparkles size={22} /><h2>اختبار Creatives لواتساب</h2><p>يستخدم بوستات وفيديوهات الصفحة فقط، ويضيفها إلى نفس إعداد حملة WhatsApp بدون Pixel.</p></div><button className={styles.secondaryButton} onClick={() => void discover()} disabled={busy}>{busy ? <LoaderCircle size={17} /> : <Sparkles size={17} />} سحب وترتيب البوستات</button></div>
-    {posts.length > 0 && <>
-      <div className={styles.postGrid}>{posts.map((post, index) => <label key={post.id} className={`${styles.postCard} ${selected.includes(post.id) ? styles.postSelected : ''}`}>
-        <input type="checkbox" checked={selected.includes(post.id)} onChange={() => setSelected(value => value.includes(post.id) ? value.filter(x => x !== post.id) : value.length < 12 ? [...value, post.id] : value)} />
-        <span>{post.mediaType === 'Video' ? <Film size={20} /> : <ImageIcon size={20} />}</span><strong>#{index + 1} · {post.mediaType === 'Video' ? 'فيديو' : 'صورة'}</strong><small>{post.message?.slice(0, 90) || 'بوست بدون نص'}</small>
-      </label>)}</div>
-      <div className={styles.launchForm}><button className={styles.primaryButton} onClick={() => void launch()} disabled={busy || selected.length === 0}><Rocket size={17} /> إنشاء اختبار WhatsApp من {selected.length} محتوى</button></div>
-    </>}
-    {posts.length === 0 && <button className={styles.primaryButton} onClick={() => void launch()} disabled={busy}><Rocket size={17} /> فحص المحتوى المحفوظ وبدء اختبار WhatsApp</button>}
-    {message && <p className={styles.inlineMessage} role="status">{message}</p>}
-    {creatives.length > 0 && <p className={styles.labSummary}>المكتبة الحالية: {creatives.length} محتوى · الفيديو مدعوم في Feed وFacebook Reels، والصور في Feed وStory.</p>}
+    <div className={styles.labHeader}><div><Bot size={22} /><h2>اختبارات WhatsApp تعمل تلقائيًا</h2><p>لا تحتاج لاختيار بوست أو الضغط على أي زر. النظام يسحب بوستات الصفحة وفيديوهاتها، ثم يختبر الأنسب داخل نفس حملة WhatsApp.</p></div><span className={styles.autoBadge}><CheckCircle2 size={16} /> Autopilot</span></div>
+    <div className={styles.testFlow}><span>يسحب المحتوى الجديد</span><span>يختار نسختين</span><span>يراجع AI والأمان</span><span>يقارن المحادثات والتكلفة</span><span>يبقي الفائز</span></div>
+    {latestTest && <p className={styles.testStatus}><strong>آخر دورة: {latestTest.state === 'Executed' ? 'تم إنشاء الاختبار' : latestTest.state === 'Waiting' ? 'بانتظار محتوى أو بيانات كافية' : latestTest.state}</strong>{latestTest.reason && <span>{latestTest.reason}</span>}</p>}
+    <p className={styles.labSummary}><Film size={16} /> {videos} فيديو <ImageIcon size={16} /> {images} صورة <TimerReset size={16} /> يفحص محتوى جديد يوميًا، ولا يبدأ اختبارًا مكررًا لنفس الإعلان.</p>
   </div>;
 }

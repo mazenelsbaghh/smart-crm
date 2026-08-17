@@ -35,7 +35,7 @@ export interface ExistingFacebookAd { adId: string; adName: string; campaignId: 
 export interface Creative { id: string; sourceType: string; mediaType: string; eligibility: string; recommendationScore: number; recommendationEvidenceJson: string; fatigueState: string }
 export interface CreativeComparison { id: string; name: string; mediaType: string; status: string; spend: number; impressions: number; clicks: number; results: number; cpa: number; verdict: string }
 export interface Conversion { id: string; eventType: string; occurredAtUtc: string; currentValue?: number; currency?: string; state: string; attributionMethod: string }
-export interface AdDecision { id: string; actionType: string; targetType: string; riskClass: string; state: string; evidenceStartUtc: string; evidenceEndUtc: string; createdAt: string }
+export interface AdDecision { id: string; actionType: string; targetType: string; riskClass: string; state: string; evidenceStartUtc: string; evidenceEndUtc: string; createdAt: string; reason?: string }
 export interface MetaResource { id: string; name: string; currency?: string; timezone?: string; status?: number }
 export interface MetaResourceCatalog { adAccounts: MetaResource[]; pages: MetaResource[]; datasets: MetaResource[] }
 export interface AdvertisingConnection { adAccountExternalId?: string; pageExternalId?: string; datasetExternalId?: string; state: string; accountCurrency?: string; accountTimezone?: string }
