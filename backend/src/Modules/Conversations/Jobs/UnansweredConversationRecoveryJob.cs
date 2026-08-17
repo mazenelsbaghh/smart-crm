@@ -80,12 +80,14 @@ public sealed class UnansweredConversationRecoveryJob(
         var projectIds = conversations.Select(conversation => conversation.ProjectId).Distinct().ToArray();
         var customers = await LoadCustomersAsync(customerIds, cancellationToken);
         var settings = await LoadSettingsAsync(projectIds, cancellationToken);
+        var paidCustomers = await LoadPaidCustomersAsync(customerIds, cancellationToken);
         var pages = await LoadActivePagesAsync(projectIds, cancellationToken);
 
         return new RecoveryContext(
             conversations.ToDictionary(conversation => conversation.Id),
             customers,
             settings,
+            paidCustomers,
             pages);
     }
 
@@ -102,6 +104,19 @@ public sealed class UnansweredConversationRecoveryJob(
         .IgnoreQueryFilters()
         .Where(settings => projectIds.Contains(settings.ProjectId))
         .ToDictionaryAsync(settings => settings.ProjectId, cancellationToken);
+
+    private async Task<HashSet<Guid>> LoadPaidCustomersAsync(
+        Guid[] customerIds,
+        CancellationToken cancellationToken)
+    {
+        var paidCustomerIds = await dbContext.GroupAppointmentBookings
+            .IgnoreQueryFilters()
+            .Where(booking => customerIds.Contains(booking.CustomerId) && booking.IsPaid)
+            .Select(booking => booking.CustomerId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        return paidCustomerIds.ToHashSet();
+    }
 
     private async Task<Dictionary<Guid, string>> LoadActivePagesAsync(
         Guid[] projectIds,
@@ -135,6 +150,7 @@ public sealed class UnansweredConversationRecoveryJob(
         var conversation = recoveryContext.Conversations[message.ConversationId];
         if (!recoveryContext.Customers.TryGetValue(conversation.CustomerId, out var customer)
             || customer.IsBlacklisted
+            || recoveryContext.PaidCustomers.Contains(customer.Id)
             || !recoveryContext.Settings.TryGetValue(conversation.ProjectId, out var settings)
             || !IsAutoReplyEnabled(conversation.Channel, settings)) return null;
 
@@ -208,5 +224,6 @@ public sealed class UnansweredConversationRecoveryJob(
         IReadOnlyDictionary<Guid, Conversation> Conversations,
         IReadOnlyDictionary<Guid, Customer> Customers,
         IReadOnlyDictionary<Guid, ProjectSettings> Settings,
+        IReadOnlySet<Guid> PaidCustomers,
         IReadOnlyDictionary<Guid, string> Pages);
 }
