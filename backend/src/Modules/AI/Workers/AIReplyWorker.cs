@@ -1218,7 +1218,20 @@ namespace Modules.AI.Workers
             customer ??= await CreateBookingCustomerAsync(session, candidate);
             UpdateBookingCustomer(customer, session, candidate);
             var booking = BuildBooking(session, candidate, customer, existingBooking);
-            if (existingBooking == null) session.Request.DbContext.GroupAppointmentBookings.Add(booking);
+            if (existingBooking == null)
+            {
+                session.Request.DbContext.GroupAppointmentBookings.Add(booking);
+                IntegrationOutbox.Enqueue(session.Request.DbContext, new AdvertisingBookingOutcomeChanged
+                {
+                    ProjectId = session.Request.ProjectId,
+                    BookingId = booking.Id,
+                    CustomerId = customer.Id,
+                    IsPaid = booking.IsPaid,
+                    IsAttended = booking.IsAttended,
+                    Value = 0m,
+                    Currency = "EGP"
+                });
+            }
             await session.Request.DbContext.SaveChangesAsync();
             session.BookedCount++;
             await BroadcastBookingAsync(session, candidate, booking);

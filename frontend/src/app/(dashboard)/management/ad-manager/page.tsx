@@ -104,7 +104,7 @@ export default function AdManagerPage() {
         <div className={styles.metrics}>
           <article><span>الصرف</span><strong>{money(data.overview?.spend ?? 0)}</strong><small>من سقف {money(data.overview?.dailyCap ?? 0)} يوميًا</small></article>
           <article><span>الإيراد المؤكد</span><strong>{money(data.overview?.revenue ?? 0)}</strong><small>ROAS {data.overview?.roas ?? 0}×</small></article>
-          <article><span>النتائج</span><strong>{data.overview?.purchases ?? 0}</strong><small>{data.overview?.leads ?? 0} Lead مؤهل</small></article>
+          <article><span>النتائج</span><strong>{data.overview?.bookings ?? 0}</strong><small>{data.overview?.purchases ?? 0} شراء، {data.overview?.leads ?? 0} Lead مؤهل</small></article>
           <article><span>الإعلانات</span><strong>{data.overview?.activeAds ?? 0}</strong><small>من {data.overview?.totalAds ?? 0} إعلان</small></article>
         </div>
         <OperationalReport
@@ -174,7 +174,7 @@ function OperationalReport({ overview, busy, onSync }: { overview: import('../..
         <dl className={styles.compactFacts}>
           <div><dt>الموديل</dt><dd>{operations.ai.model}</dd></div>
           <div><dt>مفتاح AI</dt><dd>{operations.ai.usesProjectApiKey ? 'مفتاح المشروع' : 'مفتاح النظام'}</dd></div>
-          <div><dt>التحويلات المؤكدة</dt><dd>{overview?.purchases ?? 0} شراء، {overview?.leads ?? 0} Lead مؤهل</dd></div>
+          <div><dt>التحويلات المؤكدة</dt><dd>{overview?.bookings ?? 0} حجز، {overview?.purchases ?? 0} شراء، {overview?.leads ?? 0} Lead مؤهل</dd></div>
           <div><dt>حالة القرارات</dt><dd>{latestDecision ? `${latestDecision.actionType} · ${latestDecision.state}` : 'لا توجد بيانات كافية بعد'}</dd></div>
         </dl>
       </div>

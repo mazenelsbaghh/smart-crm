@@ -20,9 +20,8 @@ public sealed class BusinessOutcomeConsumer(AppDbContext db, ConversionLedgerSer
     public Task HandleAsync(AdvertisingBookingOutcomeChanged e) => Once(e.Id, async () =>
     {
         var type = e.IsAttended ? "AttendanceConfirmed" : e.IsPaid ? "EnrollmentPaid" : "BookingConfirmed";
-        var correction = !e.IsPaid && !e.IsAttended;
-        await ledger.RecordAsync(new(e.Id, e.ProjectId, "Booking", e.BookingId.ToString("N"), type, e.OccurredOn,
-            e.CustomerId.ToString("N"), e.Value, e.Currency, correction, correction ? "Payment or attendance reversed" : null));
+        await ledger.RecordAsync(new(e.Id, e.ProjectId, "Booking", e.BookingId.ToString("N"), type, e.OccurredOn.ToUniversalTime(),
+            e.CustomerId.ToString("N"), e.Value, e.Currency));
     });
 
     public Task HandleAsync(AdvertisingQualifiedMessageChanged e) => Once(e.Id, async () =>

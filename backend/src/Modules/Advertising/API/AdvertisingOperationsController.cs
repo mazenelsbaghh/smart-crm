@@ -47,6 +47,7 @@ public sealed class AdvertisingOperationsController(
             revenue = totalRevenue,
             roas = spend > 0 ? decimal.Round(totalRevenue / spend, 2) : 0,
             leads = conversions.Count(x => x.EventType is "Lead" or "QualifiedLead"),
+            bookings = conversions.Count(x => x.EventType is "BookingConfirmed" or "EnrollmentPaid" or "AttendanceConfirmed"),
             purchases = conversions.Count(x => x.EventType is "Purchase" or "SubscriptionStarted" or "EnrollmentPaid"),
             activeAds = ads.Count(x => x.ConfiguredStatus == ManagedDeliveryState.Active),
             totalAds = ads.Count,

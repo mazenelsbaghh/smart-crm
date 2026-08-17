@@ -16,6 +16,7 @@ export interface AdvertisingOverview {
   revenue: number;
   roas: number;
   leads: number;
+  bookings: number;
   purchases: number;
   activeAds: number;
   totalAds: number;
