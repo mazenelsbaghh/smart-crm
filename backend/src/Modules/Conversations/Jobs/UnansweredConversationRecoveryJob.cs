@@ -17,12 +17,15 @@ public sealed class UnansweredConversationRecoveryJob(
 {
     private const int BatchSize = 200;
     private static readonly TimeSpan MinimumMessageAge = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan RecoveryLookback = TimeSpan.FromHours(48);
     private static readonly TimeSpan RetryLockDuration = TimeSpan.FromMinutes(30);
 
     public async Task ExecuteAsync(CancellationToken cancellationToken = default)
     {
-        var cutoff = DateTime.UtcNow.Subtract(MinimumMessageAge);
-        var conversations = await LoadUnansweredConversationsAsync(cutoff, cancellationToken);
+        var now = DateTime.UtcNow;
+        var cutoff = now.Subtract(MinimumMessageAge);
+        var recoveryStart = now.Subtract(RecoveryLookback);
+        var conversations = await LoadUnansweredConversationsAsync(recoveryStart, cutoff, cancellationToken);
         if (conversations.Count == 0) return;
 
         var messages = await LoadLatestIncomingMessagesAsync(conversations, cutoff, cancellationToken);
@@ -35,10 +38,12 @@ public sealed class UnansweredConversationRecoveryJob(
     }
 
     private Task<List<Conversation>> LoadUnansweredConversationsAsync(
+        DateTime recoveryStart,
         DateTime cutoff,
         CancellationToken cancellationToken) => dbContext.Conversations
         .IgnoreQueryFilters()
         .Where(conversation => (conversation.Status == "Open" || conversation.Status == "Pending")
+            && conversation.LastMessageTimestamp >= recoveryStart
             && conversation.LastMessageTimestamp <= cutoff
             && dbContext.Messages
                 .Where(message => message.ConversationId == conversation.Id)
