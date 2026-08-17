@@ -16,10 +16,20 @@ public sealed record MetaExistingAd(string AdId, string AdName, string Status, s
     IReadOnlyList<string> InstagramPositions, IReadOnlyList<string> MessengerPositions,
     IReadOnlyList<string> AudienceNetworkPositions, string? Destination)
 {
-    public bool IsFacebookOnly => PublisherPlatforms.Count == 1
+    public bool IsFacebookOnly => IsFacebookPlacementOnly
+        || IsWhatsAppDestinationWithoutUnsupportedPlacements;
+
+    private bool IsFacebookPlacementOnly => PublisherPlatforms.Count == 1
         && PublisherPlatforms[0].Equals("facebook", StringComparison.OrdinalIgnoreCase)
-        && (FacebookPlacementPolicy.IsAllowed("facebook", FacebookPositions)
-            || (Destination == "WhatsApp" && FacebookPositions.Count == 0));
+        && FacebookPlacementPolicy.IsAllowed("facebook", FacebookPositions);
+
+    // Meta omits publisher_platforms for some click-to-WhatsApp ad sets. Accept only when it also returns no non-Facebook placement data.
+    private bool IsWhatsAppDestinationWithoutUnsupportedPlacements => Destination == "WhatsApp"
+        && PublisherPlatforms.All(platform => platform.Equals("facebook", StringComparison.OrdinalIgnoreCase))
+        && InstagramPositions.Count == 0
+        && MessengerPositions.Count == 0
+        && AudienceNetworkPositions.Count == 0
+        && (FacebookPositions.Count == 0 || FacebookPlacementPolicy.IsAllowed("facebook", FacebookPositions));
 }
 public sealed record MetaAdSetRequest(string AdAccountId, string CampaignId, string Name, decimal DailyBudget, string OptimizationGoal, IReadOnlyCollection<string> Countries, IReadOnlyCollection<string> Positions, string? DatasetId, string? CustomEventType);
 public sealed record MetaExistingPostAdRequest(string AdAccountId, string AdSetId, string ObjectStoryId, string Name);
