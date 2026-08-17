@@ -155,12 +155,12 @@ namespace Shared.Queue
                     return;
                 }
 
+                var consumerChannel = await CreateConsumerChannelAsync();
                 var queueName = $"{typeof(T).Name}_{typeof(THandler).Name}_queue";
-                await _channel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false);
-                await _channel.QueueBindAsync(queueName, _exchangeName, typeof(T).Name);
-                await _channel.BasicQosAsync(prefetchSize: 0, prefetchCount: 1, global: false);
+                await consumerChannel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false);
+                await consumerChannel.QueueBindAsync(queueName, _exchangeName, typeof(T).Name);
 
-                var consumer = new AsyncEventingBasicConsumer(_channel);
+                var consumer = new AsyncEventingBasicConsumer(consumerChannel);
                 consumer.ReceivedAsync += async (model, ea) =>
                 {
                     try
@@ -179,18 +179,31 @@ namespace Shared.Queue
                             }
                         }
 
-                        await _channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
+                        await consumerChannel.BasicAckAsync(ea.DeliveryTag, multiple: false);
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine($"Error handling event {typeof(T).Name}: {ex.Message}");
-                        await _channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
+                        await consumerChannel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
                     }
                 };
 
-                await _channel.BasicConsumeAsync(queueName, autoAck: false, consumer: consumer);
+                await consumerChannel.BasicConsumeAsync(queueName, autoAck: false, consumer: consumer);
                 Console.WriteLine($"[RabbitMQEventBus] Successfully subscribed to event: {typeof(T).Name}");
             });
+        }
+
+        private async Task<IChannel> CreateConsumerChannelAsync()
+        {
+            await EnsureConnectionAsync();
+            if (_connection == null)
+            {
+                throw new InvalidOperationException("RabbitMQ connection is not initialized.");
+            }
+
+            var consumerChannel = await _connection.CreateChannelAsync();
+            await consumerChannel.BasicQosAsync(prefetchSize: 0, prefetchCount: 1, global: false);
+            return consumerChannel;
         }
     }
 }
