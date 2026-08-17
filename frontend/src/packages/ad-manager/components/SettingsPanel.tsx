@@ -1,12 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Megaphone, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { adManagerApi } from '../api/ad-manager-api';
 import type { MetaResourceCatalog } from '../types';
 import styles from '../AdManager.module.css';
 
-export function SettingsPanel({ projectId, onSaved }: { projectId: string; onSaved: () => Promise<unknown> }) {
+type SettingsPanelProps = {
+  projectId: string;
+  loadResources: boolean;
+  onSaved: () => Promise<unknown>;
+};
+
+export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPanelProps) {
   const [resources, setResources] = useState<MetaResourceCatalog | null>(null);
   const [account, setAccount] = useState('');
   const [page, setPage] = useState('');
@@ -15,14 +21,40 @@ export function SettingsPanel({ projectId, onSaved }: { projectId: string; onSav
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const applyCatalog = useCallback((catalog: MetaResourceCatalog) => {
+    setResources(catalog);
+    setAccount(catalog.adAccounts[0]?.id ?? '');
+    setPage(catalog.pages[0]?.id ?? '');
+    setDataset(catalog.datasets[0]?.id ?? '');
+  }, []);
+
+  useEffect(() => {
+    if (!loadResources || resources) return;
+
+    const loadConnectedResources = async () => {
+      setBusy(true);
+      setMessage(null);
+      try {
+        const catalog = await adManagerApi.resources(projectId);
+        applyCatalog(catalog);
+        setMessage('تم ربط Facebook. اختر حساب الإعلانات والصفحة والـDataset ثم حدّد السقف اليومي.');
+      } catch {
+        setMessage('تم التفويض، لكن تعذّر تحميل الحسابات المتاحة. راجع صلاحيات حساب Facebook ثم أعد المحاولة.');
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    void loadConnectedResources();
+  }, [applyCatalog, loadResources, projectId, resources]);
+
   const connect = async () => {
     setBusy(true); setMessage(null);
     try {
       const result = await adManagerApi.startOAuth(projectId);
       if (result.authorizationUrl.startsWith('http')) { window.location.assign(result.authorizationUrl); return; }
       const catalog = await adManagerApi.resources(projectId);
-      setResources(catalog);
-      setAccount(catalog.adAccounts[0]?.id ?? ''); setPage(catalog.pages[0]?.id ?? ''); setDataset(catalog.datasets[0]?.id ?? '');
+      applyCatalog(catalog);
       setMessage('تم الربط التجريبي. اختر الموارد وحدد السقف.');
     } catch { setMessage('تعذّر بدء ربط Facebook. راجع إعدادات Meta والصلاحيات.'); }
     finally { setBusy(false); }

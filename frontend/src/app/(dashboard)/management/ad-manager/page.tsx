@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertTriangle, CheckCircle2, CircleDollarSign, Gauge, Megaphone, MousePointerClick, PauseCircle, RefreshCw, ShieldAlert, Sparkles, Target } from 'lucide-react';
 import { useAuth } from '../../../../context/auth-context';
 import { adManagerApi } from '../../../../packages/ad-manager/api/ad-manager-api';
@@ -20,10 +21,19 @@ const money = (value: number) => new Intl.NumberFormat('ar-EG', { maximumFractio
 export default function AdManagerPage() {
   const { activeProject } = useAuth();
   const projectId = activeProject?.id;
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const data = useAdManager(projectId);
   const [tab, setTab] = useState<(typeof tabs)[number][0]>('overview');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const facebookConnected = searchParams.get('facebook') === 'connected';
+  const activeTab = facebookConnected ? 'settings' : tab;
+
+  const finishFacebookConnection = async () => {
+    await data.refresh();
+    router.replace('/management/ad-manager');
+  };
 
   const run = async (action: () => Promise<unknown>, success: string) => {
     setBusy(true); setNotice(null);
@@ -66,10 +76,10 @@ export default function AdManagerPage() {
       </div>
 
       <nav className={styles.tabs} aria-label="أقسام مدير الإعلانات">
-        {tabs.map(([key, label]) => <button key={key} className={tab === key ? styles.activeTab : ''} aria-current={tab === key ? 'page' : undefined} onClick={() => setTab(key)}>{label}</button>)}
+        {tabs.map(([key, label]) => <button key={key} className={activeTab === key ? styles.activeTab : ''} aria-current={activeTab === key ? 'page' : undefined} onClick={() => setTab(key)}>{label}</button>)}
       </nav>
 
-      {tab === 'overview' && <>
+      {activeTab === 'overview' && <>
         {!data.overview?.readiness.ready && <div className={styles.readiness}>
           <div><Target size={22} /><h2>جهّز المشروع قبل الصرف</h2><p>لن يتم إنشاء أو تعديل أي ميزانية قبل اكتمال العناصر التالية.</p></div>
           <ol>{data.overview?.readiness.items.map((item) => <li key={item.key} className={item.ready ? styles.complete : ''}><span>{item.ready ? <CheckCircle2 size={18} /> : item.key === 'budget' ? <CircleDollarSign size={18} /> : <PauseCircle size={18} />}</span><div><strong>{item.label}</strong>{item.reason && <small>{item.reason}</small>}</div></li>)}</ol>
@@ -87,12 +97,12 @@ export default function AdManagerPage() {
         </div>
       </>}
 
-      {tab === 'campaigns' && <>{projectId && <ExistingCampaignImport projectId={projectId} onImported={data.refresh} />}<DataTable empty="لا توجد حملات مدارة بعد." headers={['الإعلان', 'الحالة', 'الميزانية', 'المصدر', 'المنصة']} rows={data.campaigns.map(x => [x.name, `${x.status} / ${x.effectiveStatus}`, money(x.dailyBudget), x.managementSource === 'ImportedFromMeta' ? 'حملة موجودة' : 'أنشأها النظام', x.publisherPlatform === 'facebook' ? 'Facebook فقط' : x.publisherPlatform])} /></>}
-      {tab === 'creatives' && <><CreativeLab projectId={projectId ?? ''} creatives={data.creatives} onChanged={data.refresh} /><DataTable empty="اربط الصفحة أو أضف صورًا وفيديوهات للمشروع." headers={['المصدر', 'النوع', 'الأهلية', 'التقييم', 'الإرهاق']} rows={data.creatives.map(x => [x.sourceType, x.mediaType, x.eligibility, `${x.recommendationScore}%`, x.fatigueState])} /></>}
-      {tab === 'conversions' && <DataTable empty="لم تصل تحويلات مؤكدة بعد." headers={['الحدث', 'الوقت', 'القيمة', 'الحالة', 'الإسناد']} rows={data.conversions.map(x => [x.eventType, new Date(x.occurredAtUtc).toLocaleString('ar-EG'), x.currentValue ? `${money(x.currentValue)} ${x.currency ?? ''}` : '—', x.state, x.attributionMethod])} />}
-      {tab === 'decisions' && <DataTable empty="لا توجد قرارات AI حتى الآن." headers={['القرار', 'الهدف', 'المخاطر', 'الحالة', 'الوقت']} rows={data.decisions.map(x => [x.actionType, x.targetType, x.riskClass, x.state, new Date(x.createdAt).toLocaleString('ar-EG')])} />}
-      {tab === 'settings' && <div className={styles.settings}>
-        {projectId && <SettingsPanel projectId={projectId} onSaved={data.refresh} />}
+      {activeTab === 'campaigns' && <>{projectId && <ExistingCampaignImport projectId={projectId} onImported={data.refresh} />}<DataTable empty="لا توجد حملات مدارة بعد." headers={['الإعلان', 'الحالة', 'الميزانية', 'المصدر', 'المنصة']} rows={data.campaigns.map(x => [x.name, `${x.status} / ${x.effectiveStatus}`, money(x.dailyBudget), x.managementSource === 'ImportedFromMeta' ? 'حملة موجودة' : 'أنشأها النظام', x.publisherPlatform === 'facebook' ? 'Facebook فقط' : x.publisherPlatform])} /></>}
+      {activeTab === 'creatives' && <><CreativeLab projectId={projectId ?? ''} creatives={data.creatives} onChanged={data.refresh} /><DataTable empty="اربط الصفحة أو أضف صورًا وفيديوهات للمشروع." headers={['المصدر', 'النوع', 'الأهلية', 'التقييم', 'الإرهاق']} rows={data.creatives.map(x => [x.sourceType, x.mediaType, x.eligibility, `${x.recommendationScore}%`, x.fatigueState])} /></>}
+      {activeTab === 'conversions' && <DataTable empty="لم تصل تحويلات مؤكدة بعد." headers={['الحدث', 'الوقت', 'القيمة', 'الحالة', 'الإسناد']} rows={data.conversions.map(x => [x.eventType, new Date(x.occurredAtUtc).toLocaleString('ar-EG'), x.currentValue ? `${money(x.currentValue)} ${x.currency ?? ''}` : '—', x.state, x.attributionMethod])} />}
+      {activeTab === 'decisions' && <DataTable empty="لا توجد قرارات AI حتى الآن." headers={['القرار', 'الهدف', 'المخاطر', 'الحالة', 'الوقت']} rows={data.decisions.map(x => [x.actionType, x.targetType, x.riskClass, x.state, new Date(x.createdAt).toLocaleString('ar-EG')])} />}
+      {activeTab === 'settings' && <div className={styles.settings}>
+        {projectId && <SettingsPanel projectId={projectId} loadResources={facebookConnected} onSaved={finishFacebookConnection} />}
         <div><Megaphone size={20} /><h2>Facebook فقط في الإصدار الأول</h2><p>حتى لو كانت الوجهة WhatsApp أو Messenger، الـplacement يظل Facebook ولن يتم تشغيل Instagram أو أي منصة أخرى.</p></div>
         <div><Sparkles size={20} /><h2>المحتوى المسموح</h2><p>بوستات الصفحة وصور وفيديوهات المشروع، مع نصوص وCTA وقص ومقاسات وThumbnail؛ بدون توليد صورة أو فيديو من الصفر.</p></div>
         <div><MousePointerClick size={20} /><h2>التحويل الحقيقي</h2><p>الدفع والاشتراك والحضور أولوية، ثم الحجز والـTrial والـLead المؤهل، حسب جودة البيانات.</p></div>
