@@ -9,7 +9,7 @@ import styles from '../AdManager.module.css';
 type SettingsPanelProps = {
   projectId: string;
   loadResources: boolean;
-  onSaved: () => Promise<unknown>;
+  onSaved: (message: string) => Promise<unknown>;
 };
 
 export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPanelProps) {
@@ -67,7 +67,7 @@ export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPan
     try {
       await adManagerApi.selectConnection(projectId, { adAccountId: account, pageId: page, datasetId: dataset || undefined, currency: selectedAccount?.currency ?? 'EGP', timezone: selectedAccount?.timezone ?? 'Africa/Cairo' });
       await adManagerApi.saveEnvelope(projectId, { dailyCap, currency: selectedAccount?.currency ?? 'EGP', safetyReservePercent: 15, maximumIncreasePercent: 20, cooldownHours: 24, allowedCountries: ['EG'] });
-      setMessage(dataset ? 'تم حفظ موارد Facebook والسقف اليومي مع هامش أمان 15%.' : 'تم الحفظ بدون Pixel. ستكون الحملات مخصّصة لرسائل Facebook وواتساب.'); await onSaved();
+      await onSaved(dataset ? 'تم حفظ موارد Facebook والسقف اليومي مع هامش أمان 15%.' : 'تم الحفظ بدون Pixel. ستكون الحملات مخصّصة لرسائل Facebook وواتساب.');
     } catch { setMessage('تعذّر حفظ الاتصال أو السقف. تأكد أن الموارد متوافقة.'); }
     finally { setBusy(false); }
   };

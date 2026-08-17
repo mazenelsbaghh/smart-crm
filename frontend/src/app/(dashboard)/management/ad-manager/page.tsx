@@ -30,9 +30,10 @@ export default function AdManagerPage() {
   const facebookConnected = searchParams.get('facebook') === 'connected';
   const activeTab = facebookConnected ? 'settings' : tab;
 
-  const finishFacebookConnection = async () => {
-    await data.refresh();
+  const finishFacebookConnection = async (message: string) => {
     router.replace('/management/ad-manager');
+    setNotice(message);
+    await data.refresh();
   };
 
   const run = async (action: () => Promise<unknown>, success: string) => {
