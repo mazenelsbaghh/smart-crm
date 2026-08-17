@@ -15,7 +15,8 @@ namespace Modules.Advertising.API;
 
 [Route("api/projects/{projectId:guid}/ad-manager")]
 public sealed class AdvertisingPlanningController(IProjectAuthorizationService authorization, AppDbContext db, MetaAdsClient meta, AdvertisingSecretVault vault,
-    BudgetAllocator allocator, AdvertisingDecisionService decisions, IBackgroundJobClient backgroundJobs) : AdvertisingControllerBase(authorization)
+    BudgetAllocator allocator, AdvertisingDecisionService decisions, IBackgroundJobClient backgroundJobs, WhatsAppCreativeTestService whatsAppTests,
+    AdvertisingEvidenceService evidence) : AdvertisingControllerBase(authorization)
 {
     private static readonly HashSet<string> AllowedObjectives = new(StringComparer.Ordinal) { "OUTCOME_SALES", "OUTCOME_LEADS", "OUTCOME_TRAFFIC", "OUTCOME_ENGAGEMENT" };
     private static readonly HashSet<string> AllowedOptimizationGoals = new(StringComparer.Ordinal) { "OFFSITE_CONVERSIONS", "LEAD_GENERATION", "LINK_CLICKS", "LANDING_PAGE_VIEWS", "REACH", "IMPRESSIONS" };
@@ -53,6 +54,13 @@ public sealed class AdvertisingPlanningController(IProjectAuthorizationService a
         }
         await db.SaveChangesAsync(cancellationToken);
         return Ok(new { creativeIds = created });
+    }
+
+    [HttpPost("whatsapp-tests/start")]
+    public async Task<IActionResult> StartWhatsAppTest(Guid projectId, CancellationToken cancellationToken)
+    {
+        if (!CanManage(projectId)) return Forbid();
+        return Accepted(await whatsAppTests.CreateAsync(projectId, cancellationToken));
     }
 
     [HttpPost("launch-plans/activate")]
@@ -138,6 +146,32 @@ public sealed class AdvertisingPlanningController(IProjectAuthorizationService a
         if (!CanRead(projectId)) return Forbid();
         return Ok(await db.AdvertisingCreatives.AsNoTracking().Where(x => x.ProjectId == projectId).OrderByDescending(x => x.RecommendationScore)
             .Select(x => new { x.Id, sourceType = x.SourceType.ToString(), mediaType = x.MediaType.ToString(), eligibility = x.EligibilityState.ToString(), x.RecommendationScore, x.RecommendationEvidenceJson, x.FatigueState }).Take(100).ToListAsync(cancellationToken));
+    }
+
+    [HttpGet("creative-comparison")]
+    public async Task<IActionResult> CreativeComparison(Guid projectId, CancellationToken cancellationToken)
+    {
+        if (!CanRead(projectId)) return Forbid();
+        var since = DateTime.UtcNow.AddDays(-7);
+        var ads = await (from ad in db.ManagedAdvertisements.AsNoTracking()
+                         join creative in db.AdvertisingCreatives.AsNoTracking() on ad.CreativeId equals creative.Id
+                         where ad.ProjectId == projectId && ad.AdExternalId != null
+                         orderby ad.CreatedAt descending
+                         select new { Ad = ad, creative.MediaType }).Take(30).ToListAsync(cancellationToken);
+        var adIds = ads.Select(row => row.Ad.Id).ToList();
+        var snapshots = await db.AdvertisingInsights.AsNoTracking().Where(snapshot => snapshot.ProjectId == projectId
+            && adIds.Contains(snapshot.TargetId) && snapshot.IntervalEndUtc >= since).ToListAsync(cancellationToken);
+        var conversions = await db.AdvertisingConversions.AsNoTracking().Where(conversion => conversion.ProjectId == projectId
+            && conversion.AdvertisementId != null && adIds.Contains(conversion.AdvertisementId.Value) && conversion.OccurredAtUtc >= since).ToListAsync(cancellationToken);
+        return Ok(ads.Select(row =>
+        {
+            var result = evidence.Evaluate(snapshots.Where(snapshot => snapshot.TargetId == row.Ad.Id),
+                conversions.Where(conversion => conversion.AdvertisementId == row.Ad.Id), Math.Max(25m, row.Ad.DailyBudget));
+            return new { row.Ad.Id, row.Ad.Name, mediaType = row.MediaType.ToString(), status = row.Ad.EffectiveStatus,
+                spend = result.Spend, impressions = snapshots.Where(snapshot => snapshot.TargetId == row.Ad.Id).Sum(snapshot => snapshot.Impressions),
+                clicks = snapshots.Where(snapshot => snapshot.TargetId == row.Ad.Id).Sum(snapshot => snapshot.Clicks),
+                results = result.Conversions, cpa = result.Cpa, verdict = result.Verdict.ToString() };
+        }));
     }
 
     [HttpGet("conversions")]

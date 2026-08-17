@@ -1,5 +1,5 @@
 import { api } from '../../../services/api';
-import type { AdDecision, AdvertisingConnection, AdvertisingOffer, AdvertisingOverview, Conversion, Creative, ExistingFacebookAd, FacebookPagePost, ManagedAd, MetaResourceCatalog } from '../types';
+import type { AdDecision, AdvertisingConnection, AdvertisingOffer, AdvertisingOverview, Conversion, Creative, CreativeComparison, ExistingFacebookAd, FacebookPagePost, ManagedAd, MetaResourceCatalog } from '../types';
 
 const base = (projectId: string) => `/api/projects/${projectId}/ad-manager`;
 
@@ -10,11 +10,13 @@ export const adManagerApi = {
   existingFacebookAds: async (projectId: string) => (await api.get<ExistingFacebookAd[]>(`${base(projectId)}/campaigns/facebook-existing`)).data,
   importFacebookAds: async (projectId: string, adIds: string[]) => (await api.post<{ importedAds: number; existingAds: number; reservedDailyBudget: number }>(`${base(projectId)}/campaigns/import-facebook`, { adIds })).data,
   creatives: async (projectId: string) => (await api.get<Creative[]>(`${base(projectId)}/creatives`)).data,
+  creativeComparison: async (projectId: string) => (await api.get<CreativeComparison[]>(`${base(projectId)}/creative-comparison`)).data,
   conversions: async (projectId: string) => (await api.get<Conversion[]>(`${base(projectId)}/conversions`)).data,
   decisions: async (projectId: string) => (await api.get<AdDecision[]>(`${base(projectId)}/decisions`)).data,
   offers: async (projectId: string) => (await api.get<AdvertisingOffer[]>(`${base(projectId)}/offers`)).data,
   pagePosts: async (projectId: string) => (await api.get<FacebookPagePost[]>(`${base(projectId)}/facebook/page-posts`)).data,
   importPosts: async (projectId: string, posts: FacebookPagePost[]) => (await api.post<{ creativeIds: string[] }>(`${base(projectId)}/creatives/import-posts`, { posts: posts.map(({ id, mediaType, createdAtUtc }) => ({ id, mediaType, createdAtUtc })) })).data,
+  startWhatsAppTest: async (projectId: string) => (await api.post<{ createdAds: number; state: string; reason: string }>(`${base(projectId)}/whatsapp-tests/start`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data,
   activateLaunch: async (projectId: string, input: { offerId: string; creativeIds: string[]; name: string; objective: string; destinationUrl: string; optimizationEvent: string; customEventType?: string }) =>
     (await api.post<{ ads: number; providerState: 'ACTIVATION_QUEUED' | 'PAUSED_PENDING_AI_REVIEW'; queuedCommands: number }>(`${base(projectId)}/launch-plans/activate`, input, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data,
   startOAuth: async (projectId: string) => (await api.post<{ authorizationUrl: string }>(`${base(projectId)}/facebook/oauth/start`)).data,

@@ -11,7 +11,8 @@ using System.Text.Json;
 namespace Modules.Advertising.Jobs;
 
 public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultiplexer redis, MetaAdsClient meta, MetaInsightsClient insights,
-    AdvertisingSecretVault vault, AllocationPolicyService allocationPolicy, AdvertisingEvidenceService evidenceService, IBackgroundJobClient jobs)
+    AdvertisingSecretVault vault, AllocationPolicyService allocationPolicy, AdvertisingEvidenceService evidenceService, IBackgroundJobClient jobs,
+    WhatsAppCreativeTestService whatsAppTests)
 {
     [DisableConcurrentExecution(timeoutInSeconds: 50)]
     public async Task DeliverConversionsAsync()
@@ -211,11 +212,7 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
         foreach (var projectId in await ActiveProjectIdsAsync())
             await WithProjectLease(projectId, "tests", TimeSpan.FromHours(36), async () =>
             {
-                var eligible = await db.AdvertisingCreatives.IgnoreQueryFilters().CountAsync(x => x.ProjectId == projectId && x.EligibilityState == CreativeEligibility.Eligible);
-                var active = await db.ManagedAdvertisements.IgnoreQueryFilters().CountAsync(x => x.ProjectId == projectId && x.ConfiguredStatus == ManagedDeliveryState.Active);
-                if (eligible <= active) return;
-                db.AdvertisingDecisions.Add(new AdvertisingDecision { ProjectId = projectId, ActionType = "CreateTest", TargetType = "Creative", EvidenceStartUtc = DateTime.UtcNow.AddDays(-3), EvidenceEndUtc = DateTime.UtcNow, EvidenceJson = JsonSerializer.Serialize(new { eligible, active }), ProposedChangeJson = "{}", State = DecisionState.Waiting, RiskClass = "Financial" });
-                await db.SaveChangesAsync();
+                await whatsAppTests.CreateAsync(projectId);
             });
     }
 

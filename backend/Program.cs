@@ -151,6 +151,7 @@ builder.Services.AddScoped<Modules.Advertising.Services.AdvertisingSafetyEngine>
 builder.Services.AddScoped<Modules.Advertising.Services.IProjectAiConfigurationProvider, Modules.Advertising.Services.ProjectAiConfigurationProvider>();
 builder.Services.AddScoped<Modules.Advertising.Services.AdvertisingDecisionAi>();
 builder.Services.AddScoped<Modules.Advertising.Services.AdvertisingDecisionService>();
+builder.Services.AddScoped<Modules.Advertising.Services.WhatsAppCreativeTestService>();
 builder.Services.AddScoped<Modules.Advertising.Services.AllocationPolicyService>();
 builder.Services.AddSingleton<Modules.Advertising.Services.AdvertisingEvidenceService>();
 builder.Services.AddScoped<Modules.Advertising.Workers.AdvertisingCommandWorker>();

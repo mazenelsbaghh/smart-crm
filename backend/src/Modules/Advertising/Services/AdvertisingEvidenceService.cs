@@ -13,7 +13,10 @@ public sealed class AdvertisingEvidenceService
     {
         var rows = snapshots.ToList(); var outcomes = conversions.Where(x => x.State is not ConversionState.Suppressed).ToList();
         var spend = rows.Sum(x => x.Spend); var impressions = rows.Sum(x => x.Impressions); var clicks = rows.Sum(x => x.Clicks);
-        var revenue = outcomes.Sum(x => x.CurrentValue ?? 0m); var count = outcomes.Count(x => IsStrong(x.EventType));
+        var revenue = outcomes.Sum(x => x.CurrentValue ?? 0m);
+        var businessConversions = outcomes.Count(x => IsStrong(x.EventType));
+        var messageStarts = rows.Sum(WhatsAppMessageStarts);
+        var count = businessConversions > 0 ? businessConversions : messageStarts;
         var roas = spend > 0 ? revenue / spend : 0m; var cpa = count > 0 ? spend / count : 0m;
         var ctr = impressions > 0 ? (decimal)clicks / impressions * 100m : 0m; var frequency = rows.Count > 0 ? rows.Max(x => x.Frequency) : 0m;
         var enough = rows.Count >= 2 && (impressions >= 1000 || spend >= targetCpa);
@@ -23,7 +26,16 @@ public sealed class AdvertisingEvidenceService
             : count == 0 && spend >= targetCpa * 2m ? EvidenceVerdict.Loser
             : EvidenceVerdict.Healthy;
         return new(verdict, spend, revenue, count, roas, cpa, ctr, frequency,
-            JsonSerializer.Serialize(new { spend, revenue, count, roas, cpa, ctr, frequency, snapshots = rows.Count }));
+            JsonSerializer.Serialize(new { spend, revenue, count, businessConversions, messageStarts, roas, cpa, ctr, frequency, snapshots = rows.Count }));
+    }
+
+    private static int WhatsAppMessageStarts(InsightsSnapshot snapshot)
+    {
+        using var document = JsonDocument.Parse(snapshot.ProviderActionsJson);
+        if (!document.RootElement.TryGetProperty("Actions", out var actions) || actions.ValueKind != JsonValueKind.Object) return 0;
+        return actions.EnumerateObject().Where(action => action.Name.Contains("messaging", StringComparison.OrdinalIgnoreCase)
+                || action.Name.Contains("conversation", StringComparison.OrdinalIgnoreCase))
+            .Sum(action => decimal.ToInt32(action.Value.GetDecimal()));
     }
 
     private static bool IsStrong(string eventType) => eventType is "Purchase" or "SubscriptionStarted" or "SubscriptionRenewed" or "EnrollmentPaid" or "AttendanceConfirmed" or "DealWon";

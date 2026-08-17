@@ -9,9 +9,11 @@ namespace Modules.Advertising.Services;
 
 public sealed class AdvertisingDecisionService(AppDbContext db, AdvertisingDecisionAi ai, AdvertisingSafetyEngine safety)
 {
-    public async Task<IReadOnlyList<Guid>> ProposeCanaryActivationAsync(Guid projectId, CancellationToken cancellationToken, Guid? promotionId = null)
+    public async Task<IReadOnlyList<Guid>> ProposeCanaryActivationAsync(Guid projectId, CancellationToken cancellationToken, Guid? promotionId = null,
+        IReadOnlyCollection<Guid>? adIds = null)
     {
-        var ads = await db.ManagedAdvertisements.Where(x => x.ProjectId == projectId && x.ConfiguredStatus == ManagedDeliveryState.Paused && x.AdExternalId != null && (promotionId == null || x.PromotionId == promotionId)).ToListAsync(cancellationToken);
+        var ads = await db.ManagedAdvertisements.Where(x => x.ProjectId == projectId && x.ConfiguredStatus == ManagedDeliveryState.Paused && x.AdExternalId != null
+            && (promotionId == null || x.PromotionId == promotionId) && (adIds == null || adIds.Contains(x.Id))).ToListAsync(cancellationToken);
         if (ads.Count == 0) return [];
         var evidence = JsonSerializer.Serialize(new { projectId, ads = ads.Select(x => new { x.Id, x.DailyBudget, x.PublisherPlatform, x.PositionsJson }), mode = "guarded_canary" });
         var review = await ai.ReviewCanaryAsync(projectId, evidence, cancellationToken);
