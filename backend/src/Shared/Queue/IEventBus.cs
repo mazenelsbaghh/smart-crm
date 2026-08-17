@@ -6,7 +6,7 @@ namespace Shared.Queue
     public interface IEventBus
     {
         Task PublishAsync<T>(T @event) where T : IntegrationEvent;
-        void Subscribe<T, THandler>() 
+        void Subscribe<T, THandler>(int consumerCount = 1)
             where T : IntegrationEvent 
             where THandler : IIntegrationEventHandler<T>;
     }

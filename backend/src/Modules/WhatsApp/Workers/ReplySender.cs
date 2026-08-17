@@ -43,6 +43,10 @@ namespace Modules.WhatsApp.Workers
             }
 
             Console.WriteLine($"[ReplySender] Received AIReplyGeneratedEvent for Project: {@event.ProjectId}, Sender: {@event.Sender}");
+            var queuedTooLong = DateTime.UtcNow - @event.OccurredOn > TimeSpan.FromSeconds(10);
+            var chunks = @event.Content.Length <= 4_000
+                ? new System.Collections.Generic.List<string> { @event.Content.Trim() }
+                : System.Linq.Enumerable.ToList(_messagingEngine.SplitIntoChunks(@event.Content));
 
             try
             {
@@ -86,15 +90,13 @@ namespace Modules.WhatsApp.Workers
                             int thinkingDelay = 0;
                             if (lastIncoming != null)
                             {
-                                thinkingDelay = _messagingEngine.CalculateThinkingDelay(lastIncoming.Content, @event.ProjectId);
+                                thinkingDelay = queuedTooLong ? 0 : _messagingEngine.CalculateThinkingDelay(lastIncoming.Content, @event.ProjectId);
                             }
 
-                            // Calculate total remaining typing delay for all chunks
-                            var allChunks = System.Linq.Enumerable.ToList(_messagingEngine.SplitIntoChunks(@event.Content));
                             int totalTypingDelay = 0;
-                            for (int idx = 0; idx < allChunks.Count; idx++)
+                            for (int idx = 0; !queuedTooLong && idx < chunks.Count; idx++)
                             {
-                                totalTypingDelay += _messagingEngine.CalculateTypingDelay(allChunks[idx], @event.ProjectId);
+                                totalTypingDelay += _messagingEngine.CalculateTypingDelay(chunks[idx], @event.ProjectId);
                                 if (idx > 0)
                                 {
                                     totalTypingDelay += 3000; // Average stagger delay
@@ -104,14 +106,17 @@ namespace Modules.WhatsApp.Workers
                             int totalRemainingMs = thinkingDelay + totalTypingDelay;
                             int estSec = (int)Math.Ceiling(totalRemainingMs / 1000.0);
 
-                             var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
-                             try
+                             if (estSec > 0)
                              {
-                                 await redis.StringSetAsync($"ai_typing:{conversation.Id}", "typing", TimeSpan.FromSeconds(estSec));
-                             }
-                             catch (Exception redisEx)
-                             {
-                                 Console.WriteLine($"[ReplySender] Redis set initial failed: {redisEx.Message}");
+                                 var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                                 try
+                                 {
+                                     await redis.StringSetAsync($"ai_typing:{conversation.Id}", "typing", TimeSpan.FromSeconds(estSec));
+                                 }
+                                 catch (Exception redisEx)
+                                 {
+                                     Console.WriteLine($"[ReplySender] Redis set initial failed: {redisEx.Message}");
+                                 }
                              }
 
                              var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<NotificationHub>>();
@@ -132,15 +137,13 @@ namespace Modules.WhatsApp.Workers
                     }
                 }
 
-                var chunks = System.Linq.Enumerable.ToList(_messagingEngine.SplitIntoChunks(@event.Content));
-
                 for (int i = 0; i < chunks.Count; i++)
                 {
                     var chunk = chunks[i];
 
                     // Smart typing delay occurs BEFORE sending the chunk!
-                    int delayMs = _messagingEngine.CalculateTypingDelay(chunk, @event.ProjectId);
-                    Console.WriteLine($"[ReplySender] Simulating human typing delay of {delayMs}ms...");
+                    int delayMs = queuedTooLong ? 0 : _messagingEngine.CalculateTypingDelay(chunk, @event.ProjectId);
+                    if (delayMs > 0) Console.WriteLine($"[ReplySender] Simulating human typing delay of {delayMs}ms...");
 
                     // Broadcast remaining typing delay before delaying
                     using (var scope = _serviceProvider.CreateScope())
@@ -163,7 +166,7 @@ namespace Modules.WhatsApp.Workers
                             if (conversation != null)
                             {
                                 int remainingTypingMs = 0;
-                                for (int j = i; j < chunks.Count; j++)
+                                for (int j = i; !queuedTooLong && j < chunks.Count; j++)
                                 {
                                     remainingTypingMs += _messagingEngine.CalculateTypingDelay(chunks[j], @event.ProjectId);
                                     if (j > i)
@@ -173,14 +176,17 @@ namespace Modules.WhatsApp.Workers
                                 }
                                  int estSec = (int)Math.Ceiling(remainingTypingMs / 1000.0);
 
-                                 var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
-                                 try
+                                 if (estSec > 0)
                                  {
-                                     await redis.StringSetAsync($"ai_typing:{conversation.Id}", "typing", TimeSpan.FromSeconds(estSec));
-                                 }
-                                 catch (Exception redisEx)
-                                 {
-                                     Console.WriteLine($"[ReplySender] Redis set loop failed: {redisEx.Message}");
+                                     var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                                     try
+                                     {
+                                         await redis.StringSetAsync($"ai_typing:{conversation.Id}", "typing", TimeSpan.FromSeconds(estSec));
+                                     }
+                                     catch (Exception redisEx)
+                                     {
+                                         Console.WriteLine($"[ReplySender] Redis set loop failed: {redisEx.Message}");
+                                     }
                                  }
 
                                  await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
@@ -303,9 +309,12 @@ namespace Modules.WhatsApp.Workers
                             // Fallback
                         }
 
-                        int staggerDelayMs = isTest ? 100 : new Random().Next(2, 5) * 1000;
-                        Console.WriteLine($"[ReplySender] Waiting {staggerDelayMs}ms stagger delay between message chunks...");
-                        await Task.Delay(staggerDelayMs);
+                        int staggerDelayMs = queuedTooLong ? 0 : isTest ? 100 : new Random().Next(2, 5) * 1000;
+                        if (staggerDelayMs > 0)
+                        {
+                            Console.WriteLine($"[ReplySender] Waiting {staggerDelayMs}ms stagger delay between message chunks...");
+                            await Task.Delay(staggerDelayMs);
+                        }
                     }
                 }
             }

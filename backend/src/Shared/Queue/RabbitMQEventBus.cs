@@ -131,66 +131,76 @@ namespace Shared.Queue
             );
         }
 
-        public void Subscribe<T, THandler>()
+        public void Subscribe<T, THandler>(int consumerCount = 1)
             where T : IntegrationEvent
             where THandler : IIntegrationEventHandler<T>
         {
             Task.Run(async () =>
             {
-                // Retry subscription if channel is not ready
-                for (int attempt = 0; attempt < 30; attempt++)
+                for (var consumerIndex = 0; consumerIndex < consumerCount; consumerIndex++)
                 {
-                    await EnsureConnectionAsync();
-                    if (_channel != null)
-                    {
-                        break;
-                    }
-                    Console.WriteLine($"[RabbitMQEventBus] Subscribe for {typeof(T).Name} waiting for RabbitMQ channel (attempt {attempt + 1})...");
-                    await Task.Delay(5000);
+                    await SubscribeConsumerAsync<T, THandler>();
                 }
-
-                if (_channel == null)
-                {
-                    Console.WriteLine($"[RabbitMQEventBus] CRITICAL: Subscribe for {typeof(T).Name} failed. RabbitMQ channel is null.");
-                    return;
-                }
-
-                var consumerChannel = await CreateConsumerChannelAsync();
-                var queueName = $"{typeof(T).Name}_{typeof(THandler).Name}_queue";
-                await consumerChannel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false);
-                await consumerChannel.QueueBindAsync(queueName, _exchangeName, typeof(T).Name);
-
-                var consumer = new AsyncEventingBasicConsumer(consumerChannel);
-                consumer.ReceivedAsync += async (model, ea) =>
-                {
-                    try
-                    {
-                        var body = ea.Body.ToArray();
-                        var message = Encoding.UTF8.GetString(body);
-                        var @event = JsonSerializer.Deserialize<T>(message);
-
-                        if (@event != null)
-                        {
-                            using (var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.CreateScope(_serviceProvider))
-                            {
-                                var handler = (THandler)scope.ServiceProvider.GetService(typeof(THandler)) 
-                                              ?? (THandler)Activator.CreateInstance(typeof(THandler));
-                                await handler.HandleAsync(@event);
-                            }
-                        }
-
-                        await consumerChannel.BasicAckAsync(ea.DeliveryTag, multiple: false);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error handling event {typeof(T).Name}: {ex.Message}");
-                        await consumerChannel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
-                    }
-                };
-
-                await consumerChannel.BasicConsumeAsync(queueName, autoAck: false, consumer: consumer);
-                Console.WriteLine($"[RabbitMQEventBus] Successfully subscribed to event: {typeof(T).Name}");
             });
+        }
+
+        private async Task SubscribeConsumerAsync<T, THandler>()
+            where T : IntegrationEvent
+            where THandler : IIntegrationEventHandler<T>
+        {
+            // Retry subscription if channel is not ready
+            for (int attempt = 0; attempt < 30; attempt++)
+            {
+                await EnsureConnectionAsync();
+                if (_channel != null)
+                {
+                    break;
+                }
+                Console.WriteLine($"[RabbitMQEventBus] Subscribe for {typeof(T).Name} waiting for RabbitMQ channel (attempt {attempt + 1})...");
+                await Task.Delay(5000);
+            }
+
+            if (_channel == null)
+            {
+                Console.WriteLine($"[RabbitMQEventBus] CRITICAL: Subscribe for {typeof(T).Name} failed. RabbitMQ channel is null.");
+                return;
+            }
+
+            var consumerChannel = await CreateConsumerChannelAsync();
+            var queueName = $"{typeof(T).Name}_{typeof(THandler).Name}_queue";
+            await consumerChannel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false);
+            await consumerChannel.QueueBindAsync(queueName, _exchangeName, typeof(T).Name);
+
+            var consumer = new AsyncEventingBasicConsumer(consumerChannel);
+            consumer.ReceivedAsync += async (model, ea) =>
+            {
+                try
+                {
+                    var body = ea.Body.ToArray();
+                    var message = Encoding.UTF8.GetString(body);
+                    var @event = JsonSerializer.Deserialize<T>(message);
+
+                    if (@event != null)
+                    {
+                        using (var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.CreateScope(_serviceProvider))
+                        {
+                            var handler = (THandler)scope.ServiceProvider.GetService(typeof(THandler))
+                                          ?? (THandler)Activator.CreateInstance(typeof(THandler));
+                            await handler.HandleAsync(@event);
+                        }
+                    }
+
+                    await consumerChannel.BasicAckAsync(ea.DeliveryTag, multiple: false);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error handling event {typeof(T).Name}: {ex.Message}");
+                    await consumerChannel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
+                }
+            };
+
+            await consumerChannel.BasicConsumeAsync(queueName, autoAck: false, consumer: consumer);
+            Console.WriteLine($"[RabbitMQEventBus] Successfully subscribed to event: {typeof(T).Name}");
         }
 
         private async Task<IChannel> CreateConsumerChannelAsync()
