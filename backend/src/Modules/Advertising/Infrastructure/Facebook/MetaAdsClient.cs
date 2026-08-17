@@ -125,17 +125,19 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
 
     public async Task<IReadOnlyList<MetaPagePost>> GetPagePostsAsync(string accessToken, string pageId, CancellationToken cancellationToken)
     {
-        return await GetList($"{pageId}/posts?fields=id,message,created_time,attachments{{media_type,media,url}}&limit=50", accessToken, cancellationToken, x =>
+        return await GetList($"{pageId}/feed?fields=id,message,created_time,attachments{{media_type,media,url}}&limit=100", accessToken, cancellationToken, ParsePagePost);
+    }
+
+    private static MetaPagePost ParsePagePost(JsonElement x)
+    {
+        var type = "Image"; string? url = null;
+        if (x.TryGetProperty("attachments", out var attachments) && attachments.TryGetProperty("data", out var data) && data.GetArrayLength() > 0)
         {
-            var type = "Image"; string? url = null;
-            if (x.TryGetProperty("attachments", out var attachments) && attachments.TryGetProperty("data", out var data) && data.GetArrayLength() > 0)
-            {
-                var attachment = data[0]; type = GetString(attachment, "media_type")?.Contains("video", StringComparison.OrdinalIgnoreCase) == true ? "Video" : "Image";
-                url = GetString(attachment, "url");
-            }
-            return new MetaPagePost(x.GetProperty("id").GetString()!, GetString(x, "message"), type, url,
-                DateTime.TryParse(GetString(x, "created_time"), out var created) ? created.ToUniversalTime() : null);
-        });
+            var attachment = data[0]; type = GetString(attachment, "media_type")?.Contains("video", StringComparison.OrdinalIgnoreCase) == true ? "Video" : "Image";
+            url = GetString(attachment, "url");
+        }
+        return new MetaPagePost(x.GetProperty("id").GetString()!, GetString(x, "message"), type, url,
+            DateTime.TryParse(GetString(x, "created_time"), out var created) ? created.ToUniversalTime() : null);
     }
 
     public async Task<IReadOnlyList<MetaExistingAd>> GetExistingAdsAsync(string accessToken, string adAccountId, CancellationToken cancellationToken)
