@@ -8,7 +8,7 @@
 .primaryButton { background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); }
 .secondaryButton { background: var(--surface); color: var(--text-strong); border: 1px solid var(--border-strong); }
 .dangerButton { background: var(--danger-soft); color: hsl(var(--accent-danger)); border: 1px solid color-mix(in srgb, hsl(var(--accent-danger)) 34%, transparent); }
-.primaryButton:disabled, .secondaryButton:disabled, .dangerButton:disabled { opacity: .45; cursor: not-allowed; }
+.primaryButton:disabled, .secondaryButton:disabled, .dangerButton:disabled { opacity: 1; cursor: not-allowed; background: var(--surface-muted); color: var(--text-soft); border-color: var(--border-subtle); }
 .primaryButton:focus-visible, .secondaryButton:focus-visible, .dangerButton:focus-visible, .tabs button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .healthBar { display: flex; align-items: center; gap: 22px; min-height: 48px; padding: 10px 0; color: var(--text-base); border-bottom: 1px solid var(--border-subtle); font-size: .85rem; }
 .healthBar span { display: inline-flex; align-items: center; gap: 6px; }

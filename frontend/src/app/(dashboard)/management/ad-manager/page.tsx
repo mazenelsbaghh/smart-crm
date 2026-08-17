@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, CheckCircle2, CircleDollarSign, Gauge, Megaphone, MousePointerClick, PauseCircle, RefreshCw, ShieldAlert, Sparkles, Target } from 'lucide-react';
 import { useAuth } from '../../../../context/auth-context';
 import { adManagerApi } from '../../../../packages/ad-manager/api/ad-manager-api';
@@ -21,17 +21,17 @@ const money = (value: number) => new Intl.NumberFormat('ar-EG', { maximumFractio
 export default function AdManagerPage() {
   const { activeProject } = useAuth();
   const projectId = activeProject?.id;
-  const router = useRouter();
   const searchParams = useSearchParams();
   const data = useAdManager(projectId);
   const [tab, setTab] = useState<(typeof tabs)[number][0]>('overview');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [connectionFinished, setConnectionFinished] = useState(false);
   const facebookConnected = searchParams.get('facebook') === 'connected';
-  const activeTab = facebookConnected ? 'settings' : tab;
+  const activeTab = facebookConnected && !connectionFinished ? 'settings' : tab;
 
   const finishFacebookConnection = async (message: string) => {
-    router.replace('/management/ad-manager');
+    setConnectionFinished(true);
     setNotice(message);
     await data.refresh();
   };
@@ -108,7 +108,7 @@ export default function AdManagerPage() {
         <div><Sparkles size={20} /><h2>المحتوى المسموح</h2><p>بوستات الصفحة وصور وفيديوهات المشروع، مع نصوص وCTA وقص ومقاسات وThumbnail؛ بدون توليد صورة أو فيديو من الصفر.</p></div>
         <div><MousePointerClick size={20} /><h2>التحويل الحقيقي</h2><p>الدفع والاشتراك والحضور أولوية، ثم الحجز والـTrial والـLead المؤهل، حسب جودة البيانات.</p></div>
         <div className={styles.controlRow}>
-          <button className={styles.primaryButton} disabled={busy || !data.overview?.readiness.ready || data.overview?.autopilot} onClick={() => projectId && void run(() => adManagerApi.enable(projectId), 'تم تشغيل Autopilot داخل السقف المفوّض.')}>تشغيل Autopilot</button>
+          <button className={styles.primaryButton} disabled={busy || !data.overview?.readiness.ready || data.overview?.autopilot} onClick={() => projectId && void run(() => adManagerApi.enable(projectId), 'تم تشغيل Autopilot داخل السقف المفوّض.')}>{data.overview?.autopilot ? 'Autopilot يعمل الآن' : 'تشغيل Autopilot'}</button>
           <button className={styles.secondaryButton} disabled={busy || !data.overview?.autopilot} onClick={() => projectId && void run(() => adManagerApi.disable(projectId), 'توقفت القرارات الجديدة وبقيت الإعلانات على آخر حالة آمنة.')}>إيقاف عادي</button>
         </div>
       </div>}
