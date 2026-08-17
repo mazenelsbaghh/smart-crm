@@ -3,41 +3,41 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Megaphone, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { adManagerApi } from '../api/ad-manager-api';
-import type { MetaResourceCatalog } from '../types';
+import type { AdvertisingConnection, MetaResourceCatalog } from '../types';
 import styles from '../AdManager.module.css';
 
 type SettingsPanelProps = {
   projectId: string;
-  loadResources: boolean;
+  dailyCap: number;
   onSaved: (message: string) => Promise<unknown>;
 };
 
-export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPanelProps) {
+export function SettingsPanel({ projectId, dailyCap: savedDailyCap, onSaved }: SettingsPanelProps) {
   const [resources, setResources] = useState<MetaResourceCatalog | null>(null);
   const [account, setAccount] = useState('');
   const [page, setPage] = useState('');
   const [dataset, setDataset] = useState('');
-  const [dailyCap, setDailyCap] = useState(300);
+  const [dailyCap, setDailyCap] = useState(savedDailyCap || 300);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const applyCatalog = useCallback((catalog: MetaResourceCatalog) => {
+  const applyCatalog = useCallback((catalog: MetaResourceCatalog, connection?: AdvertisingConnection | null) => {
     setResources(catalog);
-    setAccount(catalog.adAccounts[0]?.id ?? '');
-    setPage(catalog.pages[0]?.id ?? '');
-    setDataset('');
+    setAccount(connection?.adAccountExternalId ?? catalog.adAccounts[0]?.id ?? '');
+    setPage(connection?.pageExternalId ?? catalog.pages[0]?.id ?? '');
+    setDataset(connection?.datasetExternalId ?? '');
   }, []);
 
   useEffect(() => {
-    if (!loadResources || resources) return;
+    if (resources) return;
 
     const loadConnectedResources = async () => {
       setBusy(true);
       setMessage(null);
       try {
-        const catalog = await adManagerApi.resources(projectId);
-        applyCatalog(catalog);
-        setMessage('تم ربط Facebook. اختر حساب الإعلانات والصفحة وحدّد السقف اليومي. الـPixel اختياري لحملات الموقع فقط.');
+        const [catalog, connection] = await Promise.all([adManagerApi.resources(projectId), adManagerApi.connection(projectId)]);
+        applyCatalog(catalog, connection);
+        setMessage('يمكنك تعديل حساب الإعلانات والصفحة والـPixel والسقف اليومي من هنا.');
       } catch {
         setMessage('تم التفويض، لكن تعذّر تحميل الحسابات المتاحة. راجع صلاحيات حساب Facebook ثم أعد المحاولة.');
       } finally {
@@ -46,7 +46,7 @@ export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPan
     };
 
     void loadConnectedResources();
-  }, [applyCatalog, loadResources, projectId, resources]);
+  }, [applyCatalog, projectId, resources]);
 
   const connect = async () => {
     setBusy(true); setMessage(null);
@@ -73,7 +73,7 @@ export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPan
   };
 
   return <div className={styles.connectionPanel}>
-    <div><Megaphone size={22} /><h2>ربط Facebook Ads</h2><p>التوكن يُحفظ مشفّرًا على السيرفر ولا يظهر في المتصفح بعد الربط.</p></div>
+      <div><Megaphone size={22} /><h2>حساب الإعلانات والتحكم</h2><p>عدّل الحساب والصفحة والـPixel والسقف اليومي. التوكن يُحفظ مشفّرًا على السيرفر.</p></div>
     {!resources ? <button className={styles.primaryButton} onClick={() => void connect()} disabled={busy}>{busy ? <LoaderCircle size={17} /> : <Megaphone size={17} />} ربط حساب Facebook</button> : <div className={styles.formGrid}>
       <label>حساب الإعلانات<select value={account} onChange={(event) => setAccount(event.target.value)}>{resources.adAccounts.map(x => <option key={x.id} value={x.id}>{x.name} · {x.currency}</option>)}</select></label>
       <label>صفحة Facebook<select value={page} onChange={(event) => setPage(event.target.value)}>{resources.pages.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>

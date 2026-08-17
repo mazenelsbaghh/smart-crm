@@ -25,5 +25,6 @@ export interface Conversion { id: string; eventType: string; occurredAtUtc: stri
 export interface AdDecision { id: string; actionType: string; targetType: string; riskClass: string; state: string; evidenceStartUtc: string; evidenceEndUtc: string; createdAt: string }
 export interface MetaResource { id: string; name: string; currency?: string; timezone?: string; status?: number }
 export interface MetaResourceCatalog { adAccounts: MetaResource[]; pages: MetaResource[]; datasets: MetaResource[] }
+export interface AdvertisingConnection { adAccountExternalId?: string; pageExternalId?: string; datasetExternalId?: string; state: string; accountCurrency?: string; accountTimezone?: string }
 export interface FacebookPagePost { id: string; message?: string; mediaType: 'Image' | 'Video'; mediaUrl?: string; createdAtUtc?: string }
 export interface AdvertisingOffer { id: string; name: string; type: string; price?: number; currency?: string; state: string; destinationsJson: string; marketsJson: string }
