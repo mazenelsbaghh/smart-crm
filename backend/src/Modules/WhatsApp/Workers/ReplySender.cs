@@ -63,6 +63,12 @@ namespace Modules.WhatsApp.Workers
                         return;
                     }
 
+                    if (customer != null && await HasPaidBookingAsync(dbContext, customer.Id))
+                    {
+                        Console.WriteLine($"[ReplySender] Customer {customer.Id} has a paid booking. Dropping queued AI reply.");
+                        return;
+                    }
+
                     if (customer != null)
                     {
                         var conversation = await dbContext.Conversations
@@ -353,5 +359,10 @@ namespace Modules.WhatsApp.Workers
                 }
             }
         }
+
+        private static Task<bool> HasPaidBookingAsync(AppDbContext dbContext, Guid customerId) =>
+            dbContext.GroupAppointmentBookings
+                .IgnoreQueryFilters()
+                .AnyAsync(booking => booking.CustomerId == customerId && booking.IsPaid);
     }
 }
