@@ -18,7 +18,7 @@ export const adManagerApi = {
     (await api.post<{ ads: number; providerState: 'ACTIVATION_QUEUED' | 'PAUSED_PENDING_AI_REVIEW'; queuedCommands: number }>(`${base(projectId)}/launch-plans/activate`, input, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data,
   startOAuth: async (projectId: string) => (await api.post<{ authorizationUrl: string }>(`${base(projectId)}/facebook/oauth/start`)).data,
   resources: async (projectId: string, adAccountId?: string) => (await api.get<MetaResourceCatalog>(`${base(projectId)}/facebook/resources`, { params: { adAccountId } })).data,
-  selectConnection: async (projectId: string, input: { adAccountId: string; pageId: string; datasetId: string; currency: string; timezone: string }) => api.put(`${base(projectId)}/connection`, input, { headers: { 'Idempotency-Key': crypto.randomUUID() } }),
+  selectConnection: async (projectId: string, input: { adAccountId: string; pageId: string; datasetId?: string; currency: string; timezone: string }) => api.put(`${base(projectId)}/connection`, input, { headers: { 'Idempotency-Key': crypto.randomUUID() } }),
   saveEnvelope: async (projectId: string, input: { dailyCap: number; periodCap?: number; currency: string; safetyReservePercent: number; maximumIncreasePercent: number; cooldownHours: number; allowedCountries: string[] }) => api.put(`${base(projectId)}/envelope`, input, { headers: { 'Idempotency-Key': crypto.randomUUID() } }),
   disable: async (projectId: string) => api.post(`${base(projectId)}/autopilot/disable`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } }),
   enable: async (projectId: string) => api.post(`${base(projectId)}/autopilot/enable`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } }),

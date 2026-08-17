@@ -128,10 +128,14 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
             {
                 var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId);
                 var open = await db.TrackingIncidents.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.Category == "ConversionTracking" && x.State != IncidentState.Recovered);
-                if (connection?.DatasetExternalId is null && open is null)
+                if (connection?.DatasetExternalId is null)
                 {
-                    db.TrackingIncidents.Add(new TrackingIncident { ProjectId = projectId, Category = "ConversionTracking", Severity = "Critical", Summary = "Facebook Dataset is unavailable; financial changes are frozen.", DetectedAtUtc = DateTime.UtcNow });
-                    await db.SaveChangesAsync();
+                    if (open is not null)
+                    {
+                        open.State = IncidentState.Recovered;
+                        open.RecoveredAtUtc = DateTime.UtcNow;
+                        await db.SaveChangesAsync();
+                    }
                 }
                 else if (connection?.DatasetExternalId is not null && open is not null)
                 {

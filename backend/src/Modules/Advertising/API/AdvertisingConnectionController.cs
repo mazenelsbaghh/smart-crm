@@ -55,21 +55,22 @@ public sealed class AdvertisingConnectionController(
     public async Task<IActionResult> SelectConnection(Guid projectId, [FromBody] SelectConnectionRequest request, CancellationToken cancellationToken)
     {
         if (!CanManage(projectId)) return Forbid();
-        if (string.IsNullOrWhiteSpace(request.AdAccountId) || string.IsNullOrWhiteSpace(request.PageId) || string.IsNullOrWhiteSpace(request.DatasetId))
-            return UnprocessableEntity(new { code = "ADS_RESOURCES_REQUIRED", message = "Ad Account, Page and Dataset are required." });
+        if (string.IsNullOrWhiteSpace(request.AdAccountId) || string.IsNullOrWhiteSpace(request.PageId))
+            return UnprocessableEntity(new { code = "ADS_RESOURCES_REQUIRED", message = "Ad Account and Page are required." });
 
         var connection = await db.AdvertisingConnections.FirstOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken);
         if (connection?.ProtectedAccessToken is null) return Conflict(new { code = "ADS_OAUTH_REQUIRED" });
         var token = vault.Unprotect(connection.ProtectedAccessToken);
         var catalog = await meta.DiscoverAsync(token, request.AdAccountId, cancellationToken);
         var selectedAccount = catalog.AdAccounts.SingleOrDefault(x => x.Id == request.AdAccountId);
-        if (selectedAccount is null || !catalog.Pages.Any(x => x.Id == request.PageId) || !catalog.Datasets.Any(x => x.Id == request.DatasetId))
+        if (selectedAccount is null || !catalog.Pages.Any(x => x.Id == request.PageId) ||
+            (!string.IsNullOrWhiteSpace(request.DatasetId) && !catalog.Datasets.Any(x => x.Id == request.DatasetId)))
             return UnprocessableEntity(new { code = "ADS_RESOURCES_NOT_ELIGIBLE", message = "Selected Facebook resources are not mutually accessible." });
         if (selectedAccount.Status is not null and not 1)
             return UnprocessableEntity(new { code = "ADS_ACCOUNT_INACTIVE", message = "Selected Ad Account is not active." });
         connection.AdAccountExternalId = request.AdAccountId.Trim();
         connection.PageExternalId = request.PageId.Trim();
-        connection.DatasetExternalId = request.DatasetId.Trim();
+        connection.DatasetExternalId = string.IsNullOrWhiteSpace(request.DatasetId) ? null : request.DatasetId.Trim();
         connection.AccountCurrency = selectedAccount.Currency ?? request.Currency.Trim().ToUpperInvariant();
         connection.AccountTimezone = selectedAccount.Timezone ?? request.Timezone.Trim();
         connection.State = AdvertisingConnectionState.Ready;
@@ -114,5 +115,5 @@ public sealed class AdvertisingConnectionController(
     }
 }
 
-public sealed record SelectConnectionRequest(string AdAccountId, string PageId, string DatasetId, string Currency = "EGP", string Timezone = "Africa/Cairo");
+public sealed record SelectConnectionRequest(string AdAccountId, string PageId, string? DatasetId, string Currency = "EGP", string Timezone = "Africa/Cairo");
 public sealed record PutEnvelopeRequest(decimal DailyCap, decimal? PeriodCap, string Currency, decimal SafetyReservePercent, decimal MaximumIncreasePercent, int CooldownHours, string[] AllowedCountries, DateTime? StartsAtUtc, DateTime? EndsAtUtc);

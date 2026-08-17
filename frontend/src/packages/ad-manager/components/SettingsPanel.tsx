@@ -25,7 +25,7 @@ export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPan
     setResources(catalog);
     setAccount(catalog.adAccounts[0]?.id ?? '');
     setPage(catalog.pages[0]?.id ?? '');
-    setDataset(catalog.datasets[0]?.id ?? '');
+    setDataset('');
   }, []);
 
   useEffect(() => {
@@ -37,7 +37,7 @@ export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPan
       try {
         const catalog = await adManagerApi.resources(projectId);
         applyCatalog(catalog);
-        setMessage('تم ربط Facebook. اختر حساب الإعلانات والصفحة والـDataset ثم حدّد السقف اليومي.');
+        setMessage('تم ربط Facebook. اختر حساب الإعلانات والصفحة وحدّد السقف اليومي. الـPixel اختياري لحملات الموقع فقط.');
       } catch {
         setMessage('تم التفويض، لكن تعذّر تحميل الحسابات المتاحة. راجع صلاحيات حساب Facebook ثم أعد المحاولة.');
       } finally {
@@ -62,12 +62,12 @@ export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPan
 
   const save = async () => {
     const selectedAccount = resources?.adAccounts.find(x => x.id === account);
-    if (!account || !page || !dataset || dailyCap <= 0) { setMessage('اختر الحساب والصفحة والـDataset وأدخل سقفًا صحيحًا.'); return; }
+    if (!account || !page || dailyCap <= 0) { setMessage('اختر حساب الإعلانات والصفحة وأدخل سقفًا صحيحًا.'); return; }
     setBusy(true); setMessage(null);
     try {
-      await adManagerApi.selectConnection(projectId, { adAccountId: account, pageId: page, datasetId: dataset, currency: selectedAccount?.currency ?? 'EGP', timezone: selectedAccount?.timezone ?? 'Africa/Cairo' });
+      await adManagerApi.selectConnection(projectId, { adAccountId: account, pageId: page, datasetId: dataset || undefined, currency: selectedAccount?.currency ?? 'EGP', timezone: selectedAccount?.timezone ?? 'Africa/Cairo' });
       await adManagerApi.saveEnvelope(projectId, { dailyCap, currency: selectedAccount?.currency ?? 'EGP', safetyReservePercent: 15, maximumIncreasePercent: 20, cooldownHours: 24, allowedCountries: ['EG'] });
-      setMessage('تم حفظ موارد Facebook والسقف اليومي مع هامش أمان 15%.'); await onSaved();
+      setMessage(dataset ? 'تم حفظ موارد Facebook والسقف اليومي مع هامش أمان 15%.' : 'تم الحفظ بدون Pixel. ستكون الحملات مخصّصة لرسائل Facebook وواتساب.'); await onSaved();
     } catch { setMessage('تعذّر حفظ الاتصال أو السقف. تأكد أن الموارد متوافقة.'); }
     finally { setBusy(false); }
   };
@@ -77,9 +77,9 @@ export function SettingsPanel({ projectId, loadResources, onSaved }: SettingsPan
     {!resources ? <button className={styles.primaryButton} onClick={() => void connect()} disabled={busy}>{busy ? <LoaderCircle size={17} /> : <Megaphone size={17} />} ربط حساب Facebook</button> : <div className={styles.formGrid}>
       <label>حساب الإعلانات<select value={account} onChange={(event) => setAccount(event.target.value)}>{resources.adAccounts.map(x => <option key={x.id} value={x.id}>{x.name} · {x.currency}</option>)}</select></label>
       <label>صفحة Facebook<select value={page} onChange={(event) => setPage(event.target.value)}>{resources.pages.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
-      <label>Dataset / Pixel<select value={dataset} onChange={(event) => setDataset(event.target.value)}>{resources.datasets.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+      <label>Dataset / Pixel (اختياري)<select value={dataset} onChange={(event) => setDataset(event.target.value)}><option value="">بدون Pixel، لحملات الرسائل وواتساب</option>{resources.datasets.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
       <label>السقف اليومي<input type="number" min="1" step="1" value={dailyCap} onChange={(event) => setDailyCap(Number(event.target.value))} /></label>
-      <div className={styles.formNote}><ShieldCheck size={17} /> المتاح للتوزيع أقل من السقف لأن النظام يحجز 15% لتأخر تقارير الصرف.</div>
+      <div className={styles.formNote}><ShieldCheck size={17} /> لا تختَر Pixel غير تابع للمشروع. بدونه لا تُنشأ حملات تحويل موقع أو إرسال أحداث شراء إلى Meta.</div>
       <button className={styles.primaryButton} onClick={() => void save()} disabled={busy}>حفظ واختبار الجاهزية</button>
     </div>}
     {message && <p className={styles.inlineMessage} role="status">{message}</p>}

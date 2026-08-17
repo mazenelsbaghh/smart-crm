@@ -20,7 +20,7 @@ public sealed class AdvertisingReadinessService(AppDbContext db)
         {
             new("connection", "ربط حساب إعلانات وصفحة Facebook", connection?.State == AdvertisingConnectionState.Ready, connection is null ? "لم يتم الربط بعد" : connection.LastErrorSummary),
             new("offer", "عرض موثّق من قاعدة المعرفة", offer, offer ? null : "راجع العرض والسعر والوجهة"),
-            new("tracking", "اختبار تتبع التحويلات", !trackingIncident && connection?.DatasetExternalId is not null, trackingIncident ? "يوجد عطل تتبع مفتوح" : null),
+            new("tracking", connection?.DatasetExternalId is null ? "تتبع نتائج رسائل واتساب من CRM" : "اختبار تتبع التحويلات", !trackingIncident, trackingIncident ? "يوجد عطل تتبع مفتوح" : connection?.DatasetExternalId is null ? "لا يوجد Pixel، لذلك لا تُطلق حملات تحويل الموقع." : null),
             new("budget", "سقف يومي مفوّض", envelope is not null && envelope.DailyCap > 0, envelope is null ? "حدد السقف وحدود التشغيل" : null),
         };
         return new(items.All(x => x.Ready), items);
