@@ -8,6 +8,7 @@ using Shared.Infrastructure;
 using Shared.Security;
 using Modules.Media.Domain;
 using Hangfire;
+using Shared.Queue;
 
 namespace Modules.Media.Services
 {
@@ -95,6 +96,11 @@ namespace Modules.Media.Services
             };
 
             _context.Assets.Add(asset);
+            IntegrationOutbox.Enqueue(_context, new AdvertisingProjectAssetChanged
+            {
+                ProjectId = projectId, AssetId = asset.Id, Action = "Upsert", ContentType = contentType,
+                FileHash = fileHash, StoragePath = objectKey, FileSize = fileBytes.Length, RightsState = "Owned"
+            });
             await _context.SaveChangesAsync();
 
             // 6. Schedule background media transformation job if it's an image
@@ -173,6 +179,11 @@ namespace Modules.Media.Services
             }
 
             _context.Assets.Remove(asset);
+            IntegrationOutbox.Enqueue(_context, new AdvertisingProjectAssetChanged
+            {
+                ProjectId = asset.ProjectId, AssetId = asset.Id, Action = "Delete", ContentType = asset.ContentType,
+                FileHash = asset.FileHash, StoragePath = asset.StoragePath, FileSize = asset.FileSize, RightsState = "Owned"
+            });
             await _context.SaveChangesAsync();
 
             return null;

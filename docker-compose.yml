@@ -97,6 +97,8 @@ services:
       dockerfile: Dockerfile
     container_name: ${COMPOSE_PROJECT_NAME:-smartcustomercore}-backend
     restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-5000}:5000"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: "http://+:5000"
@@ -118,14 +120,29 @@ services:
       WhatsApp__MinTypingDelayMs: "1500"
       WhatsApp__MaxTypingDelayMs: "3000"
       Firebase__ServiceAccountPath: "/app/firebase-key.json"
-      FACEBOOK_APP_ID: "${FACEBOOK_APP_ID:-1008993075392358}"
-      FACEBOOK_APP_SECRET: "${FACEBOOK_APP_SECRET:-cdf99f6c2708e1dc146204488262ec45}"
+      FACEBOOK_APP_ID: "${FACEBOOK_APP_ID:-}"
+      FACEBOOK_APP_SECRET: "${FACEBOOK_APP_SECRET:-}"
       FACEBOOK_VERIFY_TOKEN: "${FACEBOOK_VERIFY_TOKEN:-smartcrm_verify_2026}"
       FACEBOOK_OAUTH_REDIRECT_URI: "${FACEBOOK_OAUTH_REDIRECT_URI:-http://localhost/api/facebook/oauth/callback}"
-      FACEBOOK_GRAPH_API_VERSION: "v20.0"
+      FACEBOOK_GRAPH_API_VERSION: "${FACEBOOK_GRAPH_API_VERSION:-v25.0}"
+      Advertising__Meta__GraphApiVersion: "${FACEBOOK_GRAPH_API_VERSION:-v25.0}"
+      Advertising__Meta__UseMock: "${ADVERTISING_META_USE_MOCK:-true}"
+      Advertising__Meta__AppId: "${FACEBOOK_APP_ID:-}"
+      Advertising__Meta__AppSecret: "${FACEBOOK_APP_SECRET:-}"
+      Advertising__Meta__OAuthRedirectUri: "${FACEBOOK_ADS_OAUTH_REDIRECT_URI:-http://localhost/api/ad-manager/facebook/oauth/callback}"
+      Advertising__SafetyReservePercent: "${ADVERTISING_SAFETY_RESERVE_PERCENT:-15}"
       FRONTEND_URL: "${FRONTEND_URL:-http://localhost:3000}"
+      YOUTUBE_CLIENT_ID: "${YOUTUBE_CLIENT_ID:-}"
+      YOUTUBE_CLIENT_SECRET: "${YOUTUBE_CLIENT_SECRET:-}"
+      YOUTUBE_OAUTH_REDIRECT_URI: "${YOUTUBE_OAUTH_REDIRECT_URI:-http://localhost/api/quran/youtube/callback}"
+      TIKTOK_CLIENT_KEY: "${TIKTOK_CLIENT_KEY:-}"
+      TIKTOK_CLIENT_SECRET: "${TIKTOK_CLIENT_SECRET:-}"
+      TIKTOK_OAUTH_REDIRECT_URI: "${TIKTOK_OAUTH_REDIRECT_URI:-http://localhost/api/quran/tiktok/callback}"
+      QuranChallenge__RendererUrl: "${QURAN_RENDERER_URL:-http://frontend:3000/quran-video/render}"
+      DataProtection__KeysPath: "/app/data-protection-keys"
     volumes:
       - ./firebase-key.json:/app/firebase-key.json:ro
+      - dataprotectionkeys:/app/data-protection-keys
     depends_on:
       postgres:
         condition: service_healthy
@@ -207,6 +224,7 @@ volumes:
   rabbitmqdata:
   esdata:
   miniodata:
+  dataprotectionkeys:
 
 networks:
   smartcore-net:

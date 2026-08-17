@@ -10,10 +10,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Load credentials from .env.deploy if it exists
-ENV_DEPLOY_FILE="${PROJECT_DIR}/.env.deploy"
+ENV_DEPLOY_FILE="${ENV_DEPLOY_FILE:-${PROJECT_DIR}/.env.deploy}"
 if [ -f "$ENV_DEPLOY_FILE" ]; then
     source "$ENV_DEPLOY_FILE"
 fi
+
+# Define which production docker-compose file to use
+COMPOSE_PROD_FILE="${COMPOSE_PROD_FILE:-docker-compose.production.yml}"
 
 # Prompt for credentials if not set
 if [ -z "$SSH_HOST" ]; then
@@ -32,7 +35,7 @@ fi
 REMOTE_DIR="${REMOTE_DIR:-/root/smart-crm}"
 
 echo ""
-echo "🚀 Smart Customer - Deploying to $SSH_HOST"
+echo "🚀 Smart Customer - Deploying to $SSH_HOST using $COMPOSE_PROD_FILE"
 echo "============================================"
 echo "📂 Local:  $PROJECT_DIR"
 echo "📂 Remote: $SSH_USER@$SSH_HOST:$REMOTE_DIR"
@@ -72,8 +75,8 @@ sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" \
     "cd $REMOTE_DIR && \
      if [ ! -f .env ]; then cp .env.example .env && echo '📝 Created .env from .env.example'; else echo '✅ .env already exists'; fi && \
      echo '🔄 Rebuilding and restarting containers...' && \
-     docker compose -f docker-compose.yml -f docker-compose.production.yml down && \
-     docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build && \
+     docker compose -f docker-compose.yml -f $COMPOSE_PROD_FILE down && \
+     docker compose -f docker-compose.yml -f $COMPOSE_PROD_FILE up -d --build && \
      echo '🧹 Cleaning old Docker images...' && \
      docker image prune -af"
 

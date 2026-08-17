@@ -48,14 +48,38 @@ namespace Modules.Facebook.Workers
 
             try
             {
-                // Find connected page for this project
+                var isBlacklisted = await _context.Customers
+                    .IgnoreQueryFilters()
+                    .AnyAsync(customer => customer.ProjectId == @event.ProjectId
+                        && customer.FacebookPSID == @event.Sender
+                        && customer.IsBlacklisted);
+                if (isBlacklisted)
+                {
+                    _logger.LogInformation("[FacebookReplySender] Dropping queued AI reply for blacklisted sender {Sender}", @event.Sender);
+                    return;
+                }
+
+                var pageId = PageIdFromMetadata(@event.ChannelMetadata);
+                if (string.IsNullOrWhiteSpace(pageId))
+                {
+                    _logger.LogWarning(
+                        "[FacebookReplySender] No pageId in metadata for project {ProjectId}; reply skipped",
+                        @event.ProjectId);
+                    return;
+                }
+
                 var connectedPage = await _context.ConnectedPages
                     .IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(cp => cp.ProjectId == @event.ProjectId && cp.IsActive);
+                    .SingleOrDefaultAsync(cp => cp.ProjectId == @event.ProjectId
+                        && cp.FacebookPageId == pageId
+                        && cp.IsActive);
 
                 if (connectedPage == null)
                 {
-                    _logger.LogWarning("[FacebookReplySender] No active connected page for project {ProjectId}", @event.ProjectId);
+                    _logger.LogWarning(
+                        "[FacebookReplySender] Page {PageId} is not active for project {ProjectId}; reply skipped",
+                        pageId,
+                        @event.ProjectId);
                     return;
                 }
 
@@ -71,6 +95,22 @@ namespace Modules.Facebook.Workers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[FacebookReplySender] Error handling reply for channel {Channel}", channel);
+            }
+        }
+
+        private static string? PageIdFromMetadata(string? channelMetadata)
+        {
+            if (string.IsNullOrWhiteSpace(channelMetadata)) return null;
+
+            try
+            {
+                using var document = JsonDocument.Parse(channelMetadata);
+                if (document.RootElement.TryGetProperty("pageId", out var pageId)) return pageId.GetString();
+                return document.RootElement.TryGetProperty("PageId", out pageId) ? pageId.GetString() : null;
+            }
+            catch (JsonException)
+            {
+                return null;
             }
         }
 

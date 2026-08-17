@@ -4,11 +4,12 @@ import React from 'react';
 import { Conversation } from '../../../types/chat';
 import { 
   Search, 
-  User, 
   MessageSquare,
+  MessageCircle,
+  MessageSquareMore,
   AlertTriangle,
-  ArrowUpRight,
-  Clock
+  SquarePen,
+  RefreshCw
 } from 'lucide-react';
 import styles from '../inbox.module.css';
 
@@ -23,6 +24,9 @@ interface ConversationListProps {
   channel: 'WhatsApp' | 'Messenger' | 'Comments';
   searchInputRef: React.RefObject<HTMLInputElement | null>;
   statusLabels: Record<string, string>;
+  loading?: boolean;
+  loadError?: string | null;
+  onRetry?: () => void;
 }
 
 export default function ConversationList({
@@ -35,17 +39,14 @@ export default function ConversationList({
   setFilterStatus,
   channel,
   searchInputRef,
-  statusLabels
+  statusLabels,
+  loading = false,
+  loadError,
+  onRetry
 }: ConversationListProps) {
 
   // Fix React 19 render purity check: capture current timestamp once on mount
   const [now] = React.useState(() => Date.now());
-
-  // Dynamic calculations for KPI cards
-  const worklistCount = conversations.length;
-  const newLeadsCount = conversations.filter(c => c.status === 'Open').length;
-  const updatesCount = conversations.filter(c => c.status === 'Pending').length;
-  const assignedCount = conversations.filter(c => c.status === 'Resolved').length;
 
   const formatEgyptTime = (dateStr: string) => {
     try {
@@ -66,168 +67,184 @@ export default function ConversationList({
     return diff < 24 * 60 * 60 * 1000;
   };
 
-  // Helper for priority/action text and badges
-  const getCardDetails = (conv: Conversation) => {
-    // Generate simulated last action/badge based on conversation properties
-    const defaultDetails = {
-      action: 'متابعة المحادثة',
-      badge: 'متوسط',
-      badgeClass: styles.badgeMid
-    };
+  // Helper to determine customer tags dynamically
+  const getCustomerTag = (conv: Conversation) => {
+    // Simulate label tagging based on status and conversation properties
+    if (conv.status === 'Open') return 'مؤهل للشراء';
+    if (conv.status === 'Pending') return 'عميل حالي';
+    return 'تم التواصل';
+  };
 
-    if (conv.status === 'Open') {
-      return {
-        action: 'بانتظار الرد',
-        badge: 'عالي',
-        badgeClass: styles.badgeHigh
-      };
-    } else if (conv.status === 'Pending') {
-      return {
-        action: 'مكالمة هاتفية',
-        badge: 'عالي',
-        badgeClass: styles.badgeHigh
-      };
-    } else if (conv.status === 'Resolved') {
-      return {
-        action: 'تم التوجيه للطلب',
-        badge: 'منخفض',
-        badgeClass: styles.badgeLow
-      };
-    }
-    
-    return defaultDetails;
+  const getTagColorClass = (tag: string) => {
+    if (tag === 'مؤهل للشراء' || tag === 'VIP Lead') return styles.tagQualified;
+    if (tag === 'عميل حالي') return styles.tagCurrent;
+    return styles.tagCommunicated;
   };
 
   return (
     <div className={styles.conversationPanel}>
-      {/* 4 Top KPI Cards Grid */}
-      <div className={styles.kpiGrid}>
-        <div className={styles.kpiCard}>
-          <div className={styles.kpiHeader}>
-            <span className={`${styles.kpiIndicator} ${styles.indicatorYellow}`}></span>
-            <span className={styles.kpiTitle}>قائمة العمل</span>
-          </div>
-          <span className={styles.kpiValue}>{worklistCount}</span>
+      {/* Chat List Header */}
+      <div className={styles.chatListHeader}>
+        <div className={styles.chatListTitleRow}>
+          <h2 className={styles.chatListTitle}>المحادثات</h2>
+          <button type="button" className={styles.newChatBtn} title="محادثة جديدة">
+            <SquarePen size={18} />
+          </button>
         </div>
 
-        <div className={styles.kpiCard}>
-          <div className={styles.kpiHeader}>
-            <span className={`${styles.kpiIndicator} ${styles.indicatorRed}`}></span>
-            <span className={styles.kpiTitle}>عملاء محتملون جدد</span>
-          </div>
-          <span className={styles.kpiValue}>{newLeadsCount + 12 /* Mock addition for design fidelity */}</span>
-        </div>
-
-        <div className={styles.kpiCard}>
-          <div className={styles.kpiHeader}>
-            <span className={`${styles.kpiIndicator} ${styles.indicatorBlue}`}></span>
-            <span className={styles.kpiTitle}>التحديثات</span>
-          </div>
-          <span className={styles.kpiValue}>{updatesCount + 8}</span>
-        </div>
-
-        <div className={styles.kpiCard}>
-          <div className={styles.kpiHeader}>
-            <span className={`${styles.kpiIndicator} ${styles.indicatorPurple}`}></span>
-            <span className={styles.kpiTitle}>المعلقة / المسندة</span>
-          </div>
-          <span className={styles.kpiValue}>{assignedCount + 2}</span>
-        </div>
-      </div>
-
-      {/* Section Header */}
-      <div className={styles.worklistHeader}>
-        <span className={styles.worklistTitleIndicator}></span>
-        <h3 className={styles.worklistTitle}>قائمة العمل والمتابعة</h3>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className={styles.panelActions}>
-        <div className={styles.searchBox}>
-          <Search size={14} className={styles.searchIcon} />
+        {/* Search Bar */}
+        <div className={styles.searchContainer}>
+          <Search size={18} className={styles.searchBarIcon} />
           <input
             ref={searchInputRef}
             type="text"
-            placeholder="بحث بالاسم..."
+            placeholder="بحث بالاسم أو رقم واتساب..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className={styles.searchInput}
+            className={styles.searchBarInput}
           />
         </div>
 
-        <div className={styles.statusFilter}>
-          {Object.entries(statusLabels).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              className={`${styles.statusBtn} ${filterStatus === key ? styles.statusBtnActive : ''}`}
-              onClick={() => setFilterStatus(key)}
-            >
-              {label}
-            </button>
-          ))}
+        {/* Filters/Tabs Scroll */}
+        <div className={styles.tabsFilterScroll}>
+          {Object.keys(statusLabels).map((key) => {
+            let label = 'الكل';
+            if (key === 'Open') label = 'غير مقروء';
+            else if (key === 'Pending') label = 'مؤهل للشراء';
+            else if (key === 'Resolved') label = 'متابعة';
+
+            const isActive = filterStatus === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                className={`${styles.tabFilterBtn} ${isActive ? styles.tabFilterBtnActive : ''}`}
+                onClick={() => setFilterStatus(key)}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Scrollable Conversation List */}
-      <div className={styles.conversationList}>
-        {conversations.length === 0 ? (
+      <div className={styles.conversationListScroll}>
+        {loading ? (
+          Array.from({ length: 5 }).map((_, idx) => (
+            <div
+              key={idx}
+              className={styles.chatListItem}
+              style={{ pointerEvents: 'none' }}
+            >
+              {/* Avatar placeholder */}
+              <div className={styles.avatarContainer}>
+                <div className={`${styles.avatarCircle} ${styles.skeleton} ${styles.skeletonCircle}`} style={{ width: '40px', height: '40px' }} />
+              </div>
+
+              {/* Content details placeholder */}
+              <div className={styles.itemMainContent} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div className={styles.itemNameRow}>
+                  <div className={styles.skeleton} style={{ width: '80px', height: '14px' }} />
+                  <div className={styles.skeleton} style={{ width: '40px', height: '10px' }} />
+                </div>
+
+                <div className={styles.skeleton} style={{ width: '100%', height: '10px' }} />
+                
+                <div className={styles.itemFooterRow} style={{ marginTop: '4px' }}>
+                  <div className={styles.skeleton} style={{ width: '60px', height: '18px', borderRadius: '12px' }} />
+                  <div className={styles.skeleton} style={{ width: '50px', height: '12px' }} />
+                </div>
+              </div>
+            </div>
+          ))
+        ) : loadError ? (
+          <div className={styles.conversationErrorState} role="alert">
+            <AlertTriangle size={30} aria-hidden="true" />
+            <p>{loadError}</p>
+            {onRetry && (
+              <button type="button" className={styles.retryConversationsBtn} onClick={onRetry}>
+                <RefreshCw size={16} aria-hidden="true" />
+                إعادة المحاولة
+              </button>
+            )}
+          </div>
+        ) : conversations.length === 0 ? (
           <div className={styles.emptyState}>
-            <MessageSquare size={36} />
+            <MessageSquare size={36} style={{ color: 'var(--text-soft)', marginBottom: '8px' }} />
             <p>لا توجد محادثات متطابقة</p>
           </div>
         ) : (
           conversations.map(conv => {
             const isActive = activeConv?.id === conv.id;
-            const details = getCardDetails(conv);
             const customerName = conv.customer.facebookName || conv.customer.name || 'عميل غير معروف';
+            const customerTag = getCustomerTag(conv);
+            const tagClass = getTagColorClass(customerTag);
+            const avatarInitial = (customerName || 'ع')[0].toUpperCase();
+
+            // Simulate online state based on time
+            const isOnline = isWithin24hWindow(conv.lastMessageAt);
 
             return (
               <button
                 key={conv.id}
                 type="button"
-                className={`${styles.conversationItem} ${isActive ? styles.conversationItemActive : ''}`}
+                className={`${styles.chatListItem} ${isActive ? styles.chatListItemActive : ''}`}
                 onClick={() => setActiveConv(conv)}
               >
-                <div className={styles.cardHeaderRow}>
-                  <div className={styles.avatar}>
-                    <User size={16} />
+                {/* Avatar with status indicator */}
+                <div className={styles.avatarContainer}>
+                  <div className={styles.avatarCircle}>
+                    {avatarInitial}
                   </div>
-                  
-                  <div className={styles.cardHeaderMeta}>
-                    <h4 className={styles.customerName}>{customerName}</h4>
-                    <span className={styles.cardSubTitle}>
-                      {conv.customer.phone || 'قناة فيسبوك'}
-                    </span>
-                  </div>
-
-                  <span className={styles.timestamp}>{formatEgyptTime(conv.lastMessageAt)}</span>
+                  {isOnline && <span className={styles.statusDotOnline}></span>}
                 </div>
 
-                <div className={styles.cardActionRow}>
-                  <div className={styles.cardActionLabel}>
-                    <Clock size={12} style={{ marginLeft: '4px' }} />
-                    <span>{details.action}</span>
+                {/* Content details */}
+                <div className={styles.itemMainContent}>
+                  <div className={styles.itemNameRow}>
+                    <span className={styles.chatPartnerName}>{customerName}</span>
+                    <span className={styles.chatTime}>{formatEgyptTime(conv.lastMessageAt)}</span>
                   </div>
 
-                  <span className={`${styles.priorityBadge} ${details.badgeClass}`}>
-                    {details.badge}
-                  </span>
-                </div>
+                  <div className={styles.itemSnippetRow}>
+                    <p className={styles.chatSnippet}>
+                      {conv.status === 'Open' ? 'نعم، من فضلك قم بإنشاء مسودة...' : 'شكراً لك، سأقوم بمراجعة الملف غداً.'}
+                    </p>
+                    
+                    {/* Unread count badge if active/unread */}
+                    {conv.status === 'Open' && (
+                      <span className={styles.unreadBadge}>٢</span>
+                    )}
+                  </div>
 
-                {/* Additional channel/metadata info */}
-                <div className={styles.cardFooterRow}>
-                  <span className={styles.channelLabel}>
-                    {channel === 'WhatsApp' && '🟢 واتساب'}
-                    {channel === 'Messenger' && '🔵 ماسنجر'}
-                    {channel === 'Comments' && '🟠 تعليق'}
-                  </span>
-                  
-                  {channel === 'Messenger' && !isWithin24hWindow(conv.lastMessageAt) && (
-                    <span className={styles.windowWarningPill}>
-                      <AlertTriangle size={10} /> النافذة مغلقة
+                  {/* Metadata & Tag row */}
+                  <div className={styles.itemFooterRow}>
+                    <span className={`${styles.tagPill} ${tagClass}`}>
+                      {customerTag}
                     </span>
-                  )}
+                    
+                    <span className={styles.chatChannelIcon} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: 500 }}>
+                      {channel === 'WhatsApp' && (
+                        <>
+                          <MessageSquare size={12} style={{ color: '#25D366' }} />
+                          <span>واتساب</span>
+                        </>
+                      )}
+                      {channel === 'Messenger' && (
+                        <>
+                          <MessageCircle size={12} style={{ color: '#0084FF' }} />
+                          <span>ماسنجر</span>
+                        </>
+                      )}
+                      {channel === 'Comments' && (
+                        <>
+                          <MessageSquareMore size={12} style={{ color: '#FF9900' }} />
+                          <span>تعليق</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
                 </div>
               </button>
             );

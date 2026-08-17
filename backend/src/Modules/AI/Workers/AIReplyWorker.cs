@@ -16,6 +16,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Modules.Conversations.Domain;
+using Modules.Conversations.Services;
 using Modules.GroupAppointments.Domain;
 using Modules.CRM.Domain;
 
@@ -108,12 +109,11 @@ namespace Modules.AI.Workers
                 return;
             }
 
-            var project = await dbContext.Projects.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == @event.ProjectId);
-            if (project != null && string.Equals(project.Name, "ff", StringComparison.OrdinalIgnoreCase))
+            var systemPromptForReply = settings.SystemPrompt;
+            if (settings.HumanTransferEnabled && !string.IsNullOrEmpty(settings.HumanTransferPhone))
             {
-                settings.SystemPrompt = (settings.SystemPrompt ?? "") + "\n\nCRITICAL PAYMENT RULE:\n" +
-                    "- If the customer asks about prices, fees, cost, or similar, state the exact pricing numbers from the reference knowledge base.\n" +
-                    "- If the customer wants to pay, asks how to pay, asks for payment methods, bank transfer details, Vodafone Cash number, or says they are ready to make a payment (e.g. 'عايز أدفع', 'أدفع إزاي', 'طرق الدفع', 'رقم فودافون كاش'), you MUST immediately direct them to contact the manager/owner at this phone number: 01068690092 to arrange the payment, and provide this number clearly in your reply.";
+                systemPromptForReply = (systemPromptForReply ?? "") + "\n\nCRITICAL CONTACT/PAYMENT RULE:\n" +
+                    "- Provide the human/payment contact phone when the customer explicitly asks to talk/connect to a human agent, supervisor, manager, owner, real person, asks for a phone number, asks someone to call them, or clearly wants to pay / asks for payment methods / transfer details / Vodafone Cash / how to pay (e.g. 'عايز أكلم خدمة العملاء', 'شخص حقيقي', 'كلمني حد', 'ممكن رقم الإدارة', 'عايز أدفع', 'أدفع إزاي', 'طرق الدفع', 'رقم فودافون كاش'). In that case, direct them to this phone number: " + settings.HumanTransferPhone + ". If the customer only asks about price/cost (e.g. 'السعر كام', 'بكام', 'التكلفة كام') without saying they want to pay or asking for payment method, answer with the exact price from the knowledge base and do NOT include this phone number.";
             }
 
             var aiBehaviorSettings = aiBehaviorSettingsService.Resolve(settings, channel);
@@ -143,6 +143,19 @@ namespace Modules.AI.Workers
                 return;
             }
 
+            if (customer?.IsBlacklisted == true)
+            {
+                Console.WriteLine($"[AIReplyWorker] Customer {customer.Id} is blacklisted. Skipping AI reply.");
+                await CompletePendingFollowUpsAsync(dbContext, customer.Id);
+                return;
+            }
+
+            if (await HasReachedDailyAiReplyLimitAsync(dbContext, settings, channel))
+            {
+                Console.WriteLine($"[AIReplyWorker] Daily AI reply limit reached for project {@event.ProjectId}. Skipping AI generation for channel {channel}.");
+                return;
+            }
+
             if (customer != null)
             {
                 var isPaid = await dbContext.GroupAppointmentBookings
@@ -158,7 +171,7 @@ namespace Modules.AI.Workers
             // Intercept Messenger message for phone number transition
             if (channel == "Messenger" && customer != null)
             {
-                var extractedPhone = ExtractEgyptianPhoneNumber(@event.Content);
+                var extractedPhone = EgyptianPhoneNumber.Extract(@event.Content);
                 if (!string.IsNullOrEmpty(extractedPhone))
                 {
                     string pageId = null;
@@ -203,6 +216,12 @@ namespace Modules.AI.Workers
 
             string brainContext = null;
             string cachedContentId = null;
+            string tonePref = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.CustomTone)
+                ? aiBehaviorSettings.Tone.CustomTone
+                : (!string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية الروشة والصايعة");
+            string targetAud = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.TargetAudience)
+                ? aiBehaviorSettings.Tone.TargetAudience
+                : (!string.IsNullOrEmpty(settings.AiTargetAudience) ? settings.AiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل");
 
             try
             {
@@ -216,14 +235,12 @@ namespace Modules.AI.Workers
                     .ToListAsync();
 
                 var approvedChunksText = string.Join("\n\n", approvedChunksList.Select(text => $"- {text}"));
-                var tonePref = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.CustomTone) ? aiBehaviorSettings.Tone.CustomTone : (!string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية الروشة والصايعة");
-                var targetAud = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.TargetAudience) ? aiBehaviorSettings.Tone.TargetAudience : (!string.IsNullOrEmpty(settings.AiTargetAudience) ? settings.AiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل");
                 var agentName = aiBehaviorSettingsService.GetAgentName(aiBehaviorSettings);
-                var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText, settings.SystemPrompt, aiBehaviorSettings, channel);
+                var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText, systemPromptForReply, aiBehaviorSettings, channel);
 
                 var geminiClient = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IGeminiClient>();
-                int staticTokensCount = await geminiClient.CountTokensAsync(staticPrompt, apiKeyOverride, settings.GeminiModel);
-                Console.WriteLine($"[AIReplyWorker] Project {@event.ProjectId} static prompt token count: {staticTokensCount}");
+                int staticTokensCount = Math.Max(1, staticPrompt.Length / 4);
+                Console.WriteLine($"[AIReplyWorker] Project {@event.ProjectId} estimated static prompt token count: {staticTokensCount}");
 
                 if (staticTokensCount >= 32768)
                 {
@@ -405,6 +422,45 @@ namespace Modules.AI.Workers
                         return "أيام " + string.Join(" و ", dayNames);
                     }
 
+                    string GetArabicDateTimeText(DateTime? utcDateTime)
+                    {
+                        if (!utcDateTime.HasValue)
+                            return string.Empty;
+
+                        var utcTimeValue = DateTime.SpecifyKind(utcDateTime.Value, DateTimeKind.Utc);
+                        var localTimeValue = TimeZoneInfo.ConvertTimeFromUtc(utcTimeValue, projectZone);
+                        var dateTextValue = $"{GetArabicDayName(localTimeValue.DayOfWeek)} {localTimeValue:d/M}";
+                        return $"{dateTextValue} الساعة {localTimeValue:h:mm} {(localTimeValue.Hour >= 12 ? "مساءً" : "صباحاً")}";
+                    }
+
+                    string BuildGroupScheduleDetails(GroupAppointment group)
+                    {
+                        var details = new System.Collections.Generic.List<string>();
+                        var instructorName = string.IsNullOrWhiteSpace(group.InstructorName) ? "الإنستراكتور المسؤول عن المجموعة" : group.InstructorName.Trim();
+                        var firstCourseSession = GetArabicDateTimeText(group.DateTime);
+                        var secondCourseSession = GetArabicDateTimeText(group.CourseSecondDateTime);
+                        var freeSession = GetArabicDateTimeText(group.FreeSessionDateTime);
+
+                        if (!string.IsNullOrEmpty(group.InstructorName))
+                        {
+                            details.Add($"إنستراكتور الكورس: {instructorName}");
+                        }
+                        if (!string.IsNullOrEmpty(freeSession))
+                        {
+                            details.Add($"ميعاد السيشن المجانية: {freeSession} مع دكتور مصطفى");
+                        }
+                        if (!string.IsNullOrEmpty(firstCourseSession))
+                        {
+                            details.Add($"ميعاد السيشن الأولى للكورس: {firstCourseSession} مع {instructorName}");
+                        }
+                        if (!string.IsNullOrEmpty(secondCourseSession))
+                        {
+                            details.Add($"ميعاد السيشن الثانية للكورس: {secondCourseSession} مع {instructorName}");
+                        }
+
+                        return details.Count == 0 ? string.Empty : "\n  " + string.Join("\n  ", details);
+                    }
+
                     foreach (var g in availableGroups)
                     {
                         // Convert the database UTC datetime back to the project's local timezone
@@ -414,7 +470,8 @@ namespace Modules.AI.Workers
                         var daysText = GetArabicDaysText(g.Days);
                         var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
                         var dateText = $"{GetArabicDayName(localTime.DayOfWeek)} {localTime:d/M}";
-                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  تاريخ الموعد: {dateText}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
+                        var scheduleDetails = BuildGroupScheduleDetails(g);
+                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  تاريخ المجموعة الأساسي: {dateText}\n  الموعد الأساسي: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}{scheduleDetails}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
                     }
 
                     var fullGroupsContextList = new System.Collections.Generic.List<string>();
@@ -426,7 +483,8 @@ namespace Modules.AI.Workers
                         var daysText = GetArabicDaysText(g.Days);
                         var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
                         var dateText = $"{GetArabicDayName(localTime.DayOfWeek)} {localTime:d/M}";
-                        fullGroupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  تاريخ الموعد: {dateText}\n  الموعد: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")} (مكتملة العدد تماماً - ممتلئة)\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
+                        var scheduleDetails = BuildGroupScheduleDetails(g);
+                        fullGroupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  تاريخ المجموعة الأساسي: {dateText}\n  الموعد الأساسي: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")} (مكتملة العدد تماماً - ممتلئة){scheduleDetails}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
                     }
 
                     // Check if this customer is already booked in any group
@@ -452,11 +510,13 @@ namespace Modules.AI.Workers
                         var bookedDateText = $"{bookedArabicDay} {localTime:d/M}";
                         var timeText = $"الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}";
                         var scheduleInfo = $"مجموعة {modeText} ({bookedDateText} {timeText})";
+                        var bookedScheduleDetails = BuildGroupScheduleDetails(bookedGroup);
 
-                        bookedGroupInfo = $"Group Name: {bookedGroup.Name}\nGroup ID: {bookedGroup.Id}\nSchedule: {modeText} ({bookedDateText} at {timeText})";
+                        bookedGroupInfo = $"Group Name: {bookedGroup.Name}\nGroup ID: {bookedGroup.Id}\nSchedule: {modeText} ({bookedDateText} at {timeText}){bookedScheduleDetails}";
 
                         alreadyBookedNote = $"\nملاحظة هامة جداً وصارمة: العميل مسجل حالياً ومحجوز في الموعد التالي: {scheduleInfo} (اسم المجموعة: {bookedGroup.Name}، معرف المجموعة ID: {bookedGroup.Id})." +
-                                            $"\n- إذا سأل العميل عن موعده أو مجموعته أو متى تم حجزه، أخبره بدقة وصراحة تامة بالموعد الحالي المحجوز فيه: {scheduleInfo} (ولا تخمن أو تخترع أي موعد آخر من المجموعات المتاحة!)." +
+                                            $"\nتفاصيل مواعيده الحالية عند السؤال عنها أو عند تأكيد الحجز:{bookedScheduleDetails}" +
+                                            $"\n- إذا سأل العميل عن موعده أو مجموعته أو متى تم حجزه، أخبره بدقة وصراحة تامة بالموعد الحالي المحجوز فيه وتفاصيل السيشن المجانية وسيشني الكورس إذا كانت موجودة (ولا تخمن أو تخترع أي موعد آخر من المجموعات المتاحة!)." +
                                             $"\n- إذا طلب تغيير موعد المجموعة أو حجز مجموعة أخرى مختلفة، فقم بتسجيله في المجموعة الجديدة بوضع suggestedGroupBookingId = معرف المجموعة الجديد (ID). وسيقوم النظام بنقله تلقائياً." +
                                             $"\n- أما إذا سأل أو طلب الحجز في نفس مجموعته الحالية، أخبره بلطف أنه مسجل ومحجوز بالفعل في هذا الموعد ولا تسجله مرة أخرى (اترك suggestedGroupBookingId = null).";
                     }
@@ -480,9 +540,16 @@ namespace Modules.AI.Workers
                                           "بما أن العميل يعيش في الإسكندرية، يمكنك عرض المجموعات المتاحة 'أونلاين (Online)' و'في السنتر (Offline)' معاً وخيره بينهما.\n";
                     }
 
+                    var bookingPhoneInstruction =
+                        NormalizeBookingPhone(customer?.PhoneNumber) == null
+                            ? "قانون إلزامي لرقم صاحب الحجز:\n" +
+                              "رقم الموبايل الحقيقي للشخص الذي يرسل الرسائل غير مسجل بعد. إذا كان يريد الحجز لنفسه، لا تضع suggestedGroupBookingId ولا تؤكد أن حجزه تم، واطلب رقم موبايله أولاً. أما إذا كان يحجز فقط لشخص آخر وقد أعطاك اسم هذا الشخص ورقمه الحقيقيين، فيمكنك حجز الشخص الآخر وحده داخل suggestedGroupBookingPeople مع isRequester=false. أي username أو @lid أو Messenger ID هو معرف داخلي وليس رقم هاتف، ويُمنع استخدامه أو ذكره كرقم للحجز.\n"
+                            : string.Empty;
+
                     var groupsContextText = "معلومات مواعيد المجموعات المتاحة للحجز (Group Appointments):\n" +
-                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه المجموعات المتاحة المناسبة له مع توضيح نوع كل مجموعة (سواء كانت أونلاين أو في السنتر)، والأيام النشطة للمجموعة، وموعدها (الساعة والتوقيت) فقط. لا تذكر أبداً عدد الأماكن المتبقية أو السعة أو أي أرقام. إذا أراد الحجز في مجموعة محددة،ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً. لا ترسل أي رابط حجز للعميل. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
+                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه المجموعات المتاحة المناسبة له مع توضيح نوع كل مجموعة (سواء كانت أونلاين أو في السنتر)، وأيام الكورس، وميعاد السيشن المجانية، وميعادي سيشني الكورس الأسبوعيين، واسم الإنستراكتور المسؤول. السيشن المجانية سيشن واحدة مع دكتور مصطفى، والكورس عبارة عن سيشنين في الأسبوع مع إنستراكتور المجموعة. لا تذكر تفاصيل السيشن المجانية وسيشني الكورس في كل رد عادي؛ اذكرها فقط عند الحديث عن المواعيد أو الحجز أو قبل تأكيد الحجز أو إذا سأل العميل عنها. قبل تأكيد الحجز ذكّر العميل يتأكد أن ميعاد السيشن المجانية مناسب له وأن ميعادي الكورس الأسبوعيين مناسبين له. لا تذكر أبداً عدد الأماكن المتبقية أو السعة أو أي أرقام. إذا أراد الحجز في مجموعة محددة،ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً. لا ترسل أي رابط حجز للعميل. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
                                             "تنبيه هام جداً وصارم بشأن توافر المجموعات وسعتها: إذا كانت المجموعة مدرجة في 'قائمة المجموعات المتاحة حالياً' بالأسفل، فهذا يعني بشكل قاطع وبقوة النظام أنها متاحة وبها أماكن شاغرة ومفتوحة للحجز الفعلي والمباشر. تجاهل تماماً أي معلومات قديمة أو متعارضة في القاعدة المعرفية أو الملفات المرفقة (مثل التي تدعي أن مجموعات السنتر/سيدي جابر مكتملة تماماً، أو تدعي أن المجموعات الأونلاين مكتملة، أو تطلب تسجيل العملاء في 'قائمة الانتظار'، أو تحدد سعة معينة للمجموعات الأونلاين أو الأوفلاين مثل 12 إلى 20 أو 21). اعتمد فقط وحصرياً على أرقام المشتركين والسعة الموضحة في القائمة بالأسفل (مثلاً إذا كان عدد المشتركين الحالي 41 من أصل 60، فهذا يعني أن هناك 19 مكاناً شاغراً، وبالتالي المجموعة ليست كاملة بل مفتوحة للحجز الفوري). يُمنع منعاً باتاً ذكر 'قائمة الانتظار' للعميل أو الادعاء بأن المجموعات مكتملة طالما أن المجموعة تظهر في القائمة بالأسفل؛ بل احجز للعميل فيها مباشرة وبشكل طبيعي إذا رغب في ذلك، مع الالتزام التام بعدم ذكر العدد أو السعة أو أي أرقام أو إحصائيات للحجز للعميل إطلاقاً (مثل لا تقل له 'متبقي 19 مكان' أو 'العدد الحالي 41/60'، بل قل له فقط 'سجلتك في المجموعة' أو 'المجموعة متاحة للحجز').\n" +
+                                            bookingPhoneInstruction +
                                             cityInstruction + "\n" +
                                             alreadyBookedNote + "\n\n" +
                                             "قائمة المجموعات المتاحة حالياً:\n" +
@@ -540,10 +607,10 @@ namespace Modules.AI.Workers
             string channelAwarenessContext = $"\n[قناة التواصل الحالية]: {(channel == "WhatsApp" ? "واتساب (WhatsApp)" : channel == "Messenger" ? "فيسبوك ماسنجر (Facebook Messenger)" : "تعليقات فيسبوك (Facebook Comment)")}\n" +
                                              $"توجيه هام وصارم للـ AI: أنت تقوم حالياً بالرد على العميل عبر قناة [{channel}]. يرجى صياغة وتنسيق ردك بما يتناسب مع هذه القناة تحديداً (على سبيل المثال: إذا كانت القناة تعليقاً على منشور، يرجى كتابة رد عام وموجز جداً يناسب التعليقات العامة، أما إذا كانت ماسنجر أو واتساب فيمكنك الرد بتفاصيل أوفى والترحيب بالعميل).\n";
 
-            if (channel == "Messenger" || channel == "WhatsApp")
+            if ((channel == "Messenger" || channel == "WhatsApp") && aiBehaviorSettings.Cta.Enabled)
             {
-                channelAwarenessContext += $"\nتوجيه إضافي صارم لقناة ({channel}):\n" +
-                                           "- يجب عليك دائمًا تذكير العميل في ردك بأن أول جلسة (سيشن) حجز معنا هي مجانية تمامًا! (مثال بالعامية: 'حابب أفكرك إن أول سيشن معانا مجانية تماماً وتقدر تجرب بنفسك').\n";
+                channelAwarenessContext += $"\nتوجيه CTA لقناة ({channel}):\n" +
+                                           "- أضف CTA واحداً فقط عندما يكون مناسباً لآخر اهتمام واضح للعميل، وليس في كل رد. اختر موضوع CTA من الإعدادات، ولا تستخدم وعوداً أو عروضاً غير موجودة فيها.\n";
 
                 if (channel == "Messenger" && (customer == null || string.IsNullOrEmpty(customer.PhoneNumber)))
                 {
@@ -698,14 +765,17 @@ namespace Modules.AI.Workers
                 customerProfile,
                 fileBytes,
                 mimeType,
-                settings.AiTonePreference,
-                settings.AiTargetAudience,
+                tonePref,
+                targetAud,
                 settings.GeminiModel,
                 cachedContentId,
-                settings.SystemPrompt,
+                systemPromptForReply,
                 aiBehaviorSettings,
                 channel);
 
+            EnforceDistinctBookingPhones(customer, analysisResult);
+            EnforceRequesterBookingPhoneRequirement(channel, customer, analysisResult);
+            ApplyFollowUpPolicy(aiBehaviorSettings, analysisResult);
             await ApplyKnowledgePricingGuardAsync(dbContext, @event.ProjectId, @event.Content, analysisResult);
             if (!aiBehaviorSettingsService.IsReactionAllowed(aiBehaviorSettings, analysisResult.SuggestedReaction))
             {
@@ -763,19 +833,25 @@ namespace Modules.AI.Workers
             Console.WriteLine($"[AIReplyWorker] Published AIReplyGeneratedEvent for {@event.Sender}");
 
             // Intercept Human Request
-            if (analysisResult.RequestHuman)
+            if (analysisResult.RequestHuman && settings.HumanTransferEnabled && !string.IsNullOrWhiteSpace(settings.HumanTransferPhone))
             {
                 try
                 {
-                    var managerPhone = settings.GroupAutomationManagerPhone;
-                    if (string.IsNullOrEmpty(managerPhone))
-                    {
-                        managerPhone = "+201068690092";
-                    }
+                    var managerPhone = settings.HumanTransferPhone.Trim();
                     var customerName = customer?.Name ?? "عميل غير معروف";
                     var customerPhone = customer?.PhoneNumber ?? @event.Sender;
 
                     var managerMsg = $"العميل {customerName} ({customerPhone}) طلب التحدث مع شخص طبيعي.";
+                    dbContext.NotificationAlerts.Add(new NotificationAlert
+                    {
+                        ProjectId = @event.ProjectId,
+                        UserId = Guid.Empty,
+                        Type = "HumanTransferRequest",
+                        Message = managerMsg,
+                        IsRead = false
+                    });
+                    await dbContext.SaveChangesAsync();
+
                     await SendWhatsAppTransitionMessageAsync(
                         gatewayUrl,
                         @event.ProjectId,
@@ -815,162 +891,28 @@ namespace Modules.AI.Workers
                 {
                     if (Guid.TryParse(analysisResult.SuggestedGroupBookingId, out var groupId))
                     {
-                        var group = await dbContext.GroupAppointments
-                            .Include(g => g.Bookings)
-                            .FirstOrDefaultAsync(g => g.Id == groupId && g.ProjectId == @event.ProjectId && g.IsActive);
-
-                        if (group == null)
+                        var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                        await BookSuggestedPeopleAsync(new AutoBookingRequest
                         {
-                            Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group {groupId} not found or inactive.");
-                        }
-                        else
-                        {
-                            // Adjust date if group date has passed
-                            var projectZone = TimezoneHelper.GetTimeZone(settings?.Timezone);
-                            var localGroupDateTime = TimeZoneInfo.ConvertTimeFromUtc(group.DateTime, projectZone);
-                            var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
-
-                            bool isGroupActive = true;
-                            if (localNow > localGroupDateTime)
-                            {
-                                var timeDiff = localNow - localGroupDateTime;
-                                if (timeDiff.TotalHours >= 24)
-                                {
-                                    if (group.IsActive)
-                                    {
-                                        group.IsActive = false;
-                                        dbContext.Entry(group).State = EntityState.Modified;
-                                        await dbContext.SaveChangesAsync();
-                                        Console.WriteLine($"[AIReplyWorker] Deactivated expired group {group.Id} because 24 hours have passed.");
-                                    }
-                                    isGroupActive = false;
-                                }
-                            }
-
-                            if (!isGroupActive)
-                            {
-                                Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group '{group.Name}' has passed completely.");
-                            }
-                            else if (group.Bookings.Count >= group.Capacity)
-                            {
-                                Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Group '{group.Name}' is full ({group.Bookings.Count}/{group.Capacity}).");
-                            }
-                            else
-                            {
-                                // Resolve or create customer for the booking
-                            var bookingCustomerId = customer?.Id ?? Guid.Empty;
-                            var bookingCustomerName = customer?.Name ?? @event.Sender;
-                            var bookingCustomerPhone = @event.Sender;
-
-                            // Check if already booked in ANY group for this project
-                            var existingBooking = await dbContext.GroupAppointmentBookings
-                                .FirstOrDefaultAsync(b => b.ProjectId == @event.ProjectId && (b.CustomerPhone == bookingCustomerPhone || b.CustomerId == bookingCustomerId));
-
-                            if (existingBooking != null)
-                            {
-                                if (existingBooking.GroupAppointmentId == groupId)
-                                {
-                                    Console.WriteLine($"[AIReplyWorker] Auto-booking skipped: Customer {bookingCustomerPhone} already registered in the SAME group '{group.Name}'.");
-                                }
-                                else
-                                {
-                                    // Transfer booking to new group
-                                    existingBooking.GroupAppointmentId = groupId;
-                                    existingBooking.IsAttended = false; // Reset attendance
-                                    // Keep existingBooking.IsPaid as is so their payment status carries over!
-                                    existingBooking.CreatedAt = DateTime.UtcNow;
-
-                                    dbContext.Entry(existingBooking).State = EntityState.Modified;
-                                    
-                                    // Update customer notes to document the transfer
-                                    if (customer != null)
-                                    {
-                                        var localTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
-                                        customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم نقل حجز الطالب من مجموعة إلى مجموعة: {group.Name} (تلقائياً بالـ AI) بتاريخ {localTime:yyyy-MM-dd HH:mm}";
-                                        dbContext.Entry(customer).State = EntityState.Modified;
-                                    }
-
-                                    await dbContext.SaveChangesAsync();
-                                    Console.WriteLine($"[AIReplyWorker] ✅ Auto-transferred customer {bookingCustomerPhone} ('{bookingCustomerName}') to group '{group.Name}'.");
-
-                                    // Broadcast update via SignalR to refresh dashboard
-                                    try
-                                    {
-                                        var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
-                                        await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("GroupBookingUpdated", new
-                                        {
-                                            groupId = groupId,
-                                            groupName = group.Name,
-                                            customerPhone = bookingCustomerPhone,
-                                            customerName = bookingCustomerName,
-                                            newBookedCount = group.Bookings.Count + 1,
-                                            capacity = group.Capacity,
-                                            isFull = (group.Bookings.Count + 1) >= group.Capacity,
-                                            bookingId = existingBooking.Id,
-                                            isAttended = existingBooking.IsAttended,
-                                            isPaid = existingBooking.IsPaid
-                                        });
-                                    }
-                                    catch (Exception signalREx)
-                                    {
-                                        Console.WriteLine($"[AIReplyWorker] SignalR broadcast for group booking transfer failed: {signalREx.Message}");
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                // Create the booking
-                                var booking = new GroupAppointmentBooking
-                                {
-                                    Id = Guid.NewGuid(),
-                                    ProjectId = @event.ProjectId,
-                                    GroupAppointmentId = groupId,
-                                    CustomerId = bookingCustomerId,
-                                    CustomerName = bookingCustomerName,
-                                    CustomerPhone = bookingCustomerPhone
-                                };
-
-                                dbContext.GroupAppointmentBookings.Add(booking);
-                                await dbContext.SaveChangesAsync();
-
-                                Console.WriteLine($"[AIReplyWorker] ✅ Auto-booked customer {bookingCustomerPhone} ('{bookingCustomerName}') into group '{group.Name}' ({group.Bookings.Count + 1}/{group.Capacity}).");
-
-                                // Broadcast update via SignalR to refresh dashboard
-                                try
-                                {
-                                    var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
-                                    await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("GroupBookingUpdated", new
-                                    {
-                                        groupId = groupId,
-                                        groupName = group.Name,
-                                        customerPhone = bookingCustomerPhone,
-                                        customerName = bookingCustomerName,
-                                        newBookedCount = group.Bookings.Count + 1,
-                                        capacity = group.Capacity,
-                                        isFull = (group.Bookings.Count + 1) >= group.Capacity,
-                                        bookingId = booking.Id,
-                                        isAttended = booking.IsAttended,
-                                        isPaid = booking.IsPaid
-                                    });
-                                }
-                                catch (Exception signalREx)
-                                {
-                                    Console.WriteLine($"[AIReplyWorker] SignalR broadcast for group booking failed: {signalREx.Message}");
-                                }
-                            }
-                        }
+                            DbContext = dbContext,
+                            HubContext = hubContext,
+                            ProjectId = @event.ProjectId,
+                            GroupId = groupId,
+                            Requester = customer,
+                            SuggestedPeople = analysisResult.SuggestedGroupBookingPeople,
+                            Timezone = settings?.Timezone
+                        });
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Invalid GUID '{analysisResult.SuggestedGroupBookingId}'.");
                     }
                 }
-                else
+                catch (Exception bookingEx) when (bookingEx is not System.Data.Common.DbException && !bookingEx.ToString().Contains("EntityFrameworkCore"))
                 {
-                    Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Invalid GUID '{analysisResult.SuggestedGroupBookingId}'.");
+                    _logger.LogWarning(bookingEx, "Auto-booking error");
                 }
             }
-            catch (Exception bookingEx) when (bookingEx is not System.Data.Common.DbException && !bookingEx.ToString().Contains("EntityFrameworkCore"))
-            {
-                _logger.LogWarning(bookingEx, "Auto-booking error");
-            }
-        }
 
             // 2.6. Process AI Auto-Cancellation if CancelGroupBooking is set to true
             if (analysisResult.CancelGroupBooking)
@@ -978,7 +920,7 @@ namespace Modules.AI.Workers
                 try
                 {
                     var bookingCustomerId = customer?.Id ?? Guid.Empty;
-                    var bookingCustomerPhone = @event.Sender;
+                    var bookingCustomerPhone = customer?.PhoneNumber ?? @event.Sender;
 
                     var existingBooking = await dbContext.GroupAppointmentBookings
                         .Include(b => b.GroupAppointment)
@@ -1157,6 +1099,286 @@ namespace Modules.AI.Workers
             }
         }
 
+        private sealed class AutoBookingRequest
+        {
+            public required AppDbContext DbContext { get; init; }
+            public required IHubContext<Modules.Conversations.Hubs.NotificationHub> HubContext { get; init; }
+            public Guid ProjectId { get; init; }
+            public Guid GroupId { get; init; }
+            public Customer? Requester { get; init; }
+            public SuggestedGroupBookingPerson[] SuggestedPeople { get; init; } = Array.Empty<SuggestedGroupBookingPerson>();
+            public string? Timezone { get; init; }
+        }
+
+        private sealed class AutoBookingSession
+        {
+            public required AutoBookingRequest Request { get; init; }
+            public required GroupAppointment Group { get; init; }
+            public required DateTime LocalNow { get; init; }
+            public int BookedCount { get; set; }
+        }
+
+        private sealed record BookingCandidate(string Name, string Phone, Customer? Customer);
+
+        private async Task BookSuggestedPeopleAsync(AutoBookingRequest request)
+        {
+            var group = await FindActiveBookingGroupAsync(request);
+            if (group == null) return;
+
+            var projectZone = TimezoneHelper.GetTimeZone(request.Timezone);
+            if (GroupIsExpired(group, projectZone))
+            {
+                await DeactivateGroupAsync(request, group);
+                return;
+            }
+            var session = new AutoBookingSession
+            {
+                Request = request,
+                Group = group,
+                LocalNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone),
+                BookedCount = group.Bookings.Count
+            };
+
+            foreach (var candidate in GetBookingCandidates(request))
+            {
+                await BookCandidateAsync(session, candidate);
+            }
+        }
+
+        private async Task<GroupAppointment?> FindActiveBookingGroupAsync(AutoBookingRequest request)
+        {
+            var group = await request.DbContext.GroupAppointments
+                .Include(groupAppointment => groupAppointment.Bookings)
+                .FirstOrDefaultAsync(groupAppointment => groupAppointment.Id == request.GroupId && groupAppointment.ProjectId == request.ProjectId && groupAppointment.IsActive);
+            if (group == null)
+            {
+                _logger.LogWarning("Auto-booking failed: active group {GroupId} was not found in project {ProjectId}.", request.GroupId, request.ProjectId);
+            }
+            return group;
+        }
+
+        private static bool GroupIsExpired(GroupAppointment group, TimeZoneInfo projectZone)
+        {
+            var localGroupTime = TimeZoneInfo.ConvertTimeFromUtc(group.DateTime, projectZone);
+            var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
+            return (localNow - localGroupTime).TotalHours >= 24;
+        }
+
+        private async Task DeactivateGroupAsync(AutoBookingRequest request, GroupAppointment group)
+        {
+            group.IsActive = false;
+            await request.DbContext.SaveChangesAsync();
+            _logger.LogInformation("Deactivated expired group {GroupId} before AI auto-booking.", group.Id);
+        }
+
+        private IEnumerable<BookingCandidate> GetBookingCandidates(AutoBookingRequest request)
+        {
+            var people = request.SuggestedPeople.Length > 0
+                ? request.SuggestedPeople
+                : new[] { new SuggestedGroupBookingPerson { IsRequester = true } };
+            var uniquePhones = new HashSet<string>(StringComparer.Ordinal);
+            var requesterPhone = NormalizeBookingPhone(request.Requester?.PhoneNumber);
+
+            foreach (var person in people)
+            {
+                var customer = person.IsRequester ? request.Requester : null;
+                var phone = person.IsRequester
+                    ? requesterPhone ?? NormalizeBookingPhone(person.PhoneNumber)
+                    : NormalizeBookingPhone(person.PhoneNumber);
+                var name = (person.IsRequester
+                    ? person.Name?.Trim() ?? customer?.Name
+                    : person.Name)?.Trim();
+                var usesRequesterPhoneForOtherPerson = !person.IsRequester && phone == requesterPhone;
+                if (phone != null && !usesRequesterPhoneForOtherPerson && !string.IsNullOrWhiteSpace(name) && uniquePhones.Add(phone))
+                {
+                    yield return new BookingCandidate(name, phone, customer);
+                }
+                else
+                {
+                    _logger.LogWarning("Skipped invalid or duplicate AI booking person in project {ProjectId}.", request.ProjectId);
+                }
+            }
+        }
+
+        private async Task BookCandidateAsync(AutoBookingSession session, BookingCandidate candidate)
+        {
+            var customer = candidate.Customer ?? await FindBookingCustomerAsync(session, candidate.Phone);
+            var existingBooking = await FindExistingBookingAsync(session, candidate.Phone, customer?.Id);
+            if (existingBooking?.GroupAppointmentId == session.Group.Id)
+            {
+                await RefreshExistingBookingAsync(session, candidate, existingBooking);
+                return;
+            }
+            if (session.BookedCount >= session.Group.Capacity)
+            {
+                _logger.LogWarning("AI auto-booking stopped because group {GroupId} reached capacity.", session.Group.Id);
+                return;
+            }
+
+            customer ??= await CreateBookingCustomerAsync(session, candidate);
+            UpdateBookingCustomer(customer, session, candidate);
+            var booking = BuildBooking(session, candidate, customer, existingBooking);
+            if (existingBooking == null) session.Request.DbContext.GroupAppointmentBookings.Add(booking);
+            await session.Request.DbContext.SaveChangesAsync();
+            session.BookedCount++;
+            await BroadcastBookingAsync(session, candidate, booking);
+        }
+
+        private Task<Customer?> FindBookingCustomerAsync(AutoBookingSession session, string phone) =>
+            session.Request.DbContext.Customers.FirstOrDefaultAsync(customer => customer.ProjectId == session.Request.ProjectId && customer.PhoneNumber == phone);
+
+        private Task<GroupAppointmentBooking?> FindExistingBookingAsync(AutoBookingSession session, string phone, Guid? customerId) =>
+            session.Request.DbContext.GroupAppointmentBookings.FirstOrDefaultAsync(booking =>
+                booking.ProjectId == session.Request.ProjectId &&
+                (booking.CustomerPhone == phone || (customerId.HasValue && booking.CustomerId == customerId.Value)));
+
+        private async Task RefreshExistingBookingAsync(AutoBookingSession session, BookingCandidate candidate, GroupAppointmentBooking booking)
+        {
+            booking.CustomerName = candidate.Name;
+            booking.CustomerPhone = candidate.Phone;
+            await session.Request.DbContext.SaveChangesAsync();
+            _logger.LogInformation("AI auto-booking skipped because {Phone} is already registered in group {GroupId}.", candidate.Phone, session.Group.Id);
+        }
+
+        private async Task<Customer> CreateBookingCustomerAsync(AutoBookingSession session, BookingCandidate candidate)
+        {
+            var customer = new Customer
+            {
+                ProjectId = session.Request.ProjectId,
+                PhoneNumber = candidate.Phone,
+                Name = candidate.Name,
+                City = string.Empty,
+                LeadScore = 10,
+                Tags = new[] { "حجز مجموعة" },
+                Notes = $"تم الحجز تلقائياً بواسطة عميل آخر في مجموعة: {session.Group.Name}"
+            };
+            session.Request.DbContext.Customers.Add(customer);
+            await session.Request.DbContext.SaveChangesAsync();
+            return customer;
+        }
+
+        private static void UpdateBookingCustomer(Customer customer, AutoBookingSession session, BookingCandidate candidate)
+        {
+            var tags = customer.Tags?.ToList() ?? new List<string>();
+            if (!tags.Contains("حجز مجموعة")) tags.Add("حجز مجموعة");
+            customer.Tags = tags.ToArray();
+            customer.Name = candidate.Name;
+            customer.Notes = (customer.Notes ?? string.Empty) +
+                $"\nتم حجز موعد في مجموعة: {session.Group.Name} (تلقائياً بالـ AI) بتاريخ {session.LocalNow:yyyy-MM-dd HH:mm}";
+        }
+
+        private static GroupAppointmentBooking BuildBooking(
+            AutoBookingSession session,
+            BookingCandidate candidate,
+            Customer customer,
+            GroupAppointmentBooking? existingBooking)
+        {
+            var booking = existingBooking ?? new GroupAppointmentBooking { Id = Guid.NewGuid(), ProjectId = session.Request.ProjectId };
+            booking.GroupAppointmentId = session.Group.Id;
+            booking.CustomerId = customer.Id;
+            booking.CustomerName = candidate.Name;
+            booking.CustomerPhone = candidate.Phone;
+            booking.IsAttended = false;
+            booking.CreatedAt = DateTime.UtcNow;
+            return booking;
+        }
+
+        private async Task BroadcastBookingAsync(AutoBookingSession session, BookingCandidate candidate, GroupAppointmentBooking booking)
+        {
+            try
+            {
+                await session.Request.HubContext.Clients.Group($"project_{session.Request.ProjectId}").SendAsync("GroupBookingUpdated", new
+                {
+                    groupId = session.Group.Id,
+                    groupName = session.Group.Name,
+                    customerPhone = candidate.Phone,
+                    customerName = candidate.Name,
+                    newBookedCount = session.BookedCount,
+                    capacity = session.Group.Capacity,
+                    isFull = session.BookedCount >= session.Group.Capacity,
+                    bookingId = booking.Id,
+                    isAttended = booking.IsAttended,
+                    isPaid = booking.IsPaid
+                });
+            }
+            catch (Exception signalRException)
+            {
+                _logger.LogWarning(signalRException, "SignalR broadcast failed after AI group booking {BookingId}.", booking.Id);
+            }
+        }
+
+        private static string? NormalizeBookingPhone(string? phone)
+        {
+            if (string.IsNullOrWhiteSpace(phone) || phone.EndsWith("@lid", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return EgyptianPhoneNumber.Extract(phone);
+        }
+
+        private static void ApplyFollowUpPolicy(AIBehaviorSettings settings, MarketingAnalysisResult analysisResult)
+        {
+            var followUp = analysisResult.SuggestedFollowUp;
+            if (followUp == null)
+            {
+                return;
+            }
+
+            var policy = settings.FollowUps;
+            var isDisabled =
+                (string.Equals(followUp.Type, "AppointmentReminder", StringComparison.OrdinalIgnoreCase) && !policy.AppointmentRemindersEnabled) ||
+                (string.Equals(followUp.Type, "Nurturing", StringComparison.OrdinalIgnoreCase) && !policy.NurturingEnabled);
+            if (!isDisabled) return;
+
+            followUp.Needed = false;
+            followUp.AppointmentTime = null;
+            followUp.DueDate = null;
+            followUp.Notes = null;
+        }
+
+        private static void EnforceRequesterBookingPhoneRequirement(
+            string channel,
+            Customer? customer,
+            MarketingAnalysisResult analysisResult)
+        {
+            var booksRequester = analysisResult.SuggestedGroupBookingPeople.Length == 0 ||
+                                 analysisResult.SuggestedGroupBookingPeople.Any(person => person.IsRequester);
+            if (string.IsNullOrWhiteSpace(analysisResult.SuggestedGroupBookingId) ||
+                !booksRequester ||
+                NormalizeBookingPhone(customer?.PhoneNumber) != null)
+            {
+                return;
+            }
+
+            analysisResult.SuggestedGroupBookingId = null;
+            analysisResult.ReplyContent = string.Equals(channel, "Messenger", StringComparison.OrdinalIgnoreCase)
+                ? "علشان أتمم الحجز، ابعتلي رقم موبايلك الأول لو سمحت."
+                : "علشان أتمم الحجز، ابعتلي رقم موبايلك الأول لو سمحت لأن رقمك مش ظاهر عندي.";
+            if (analysisResult.SuggestedFollowUp?.Type == "AppointmentReminder")
+            {
+                analysisResult.SuggestedFollowUp.Needed = false;
+            }
+        }
+
+        private static void EnforceDistinctBookingPhones(Customer? requester, MarketingAnalysisResult analysisResult)
+        {
+            var requesterPhone = NormalizeBookingPhone(requester?.PhoneNumber);
+            if (requesterPhone == null || string.IsNullOrWhiteSpace(analysisResult.SuggestedGroupBookingId)) return;
+
+            var reusesRequesterPhone = analysisResult.SuggestedGroupBookingPeople.Any(person =>
+                !person.IsRequester && NormalizeBookingPhone(person.PhoneNumber) == requesterPhone);
+            if (!reusesRequesterPhone) return;
+
+            analysisResult.SuggestedGroupBookingId = null;
+            analysisResult.SuggestedGroupBookingPeople = Array.Empty<SuggestedGroupBookingPerson>();
+            analysisResult.ReplyContent = "مينفعش نسجل شخص تاني على رقم حضرتك. ابعتلي رقم الموبايل الخاص بالشخص اللي عايز تحجزله لو سمحت.";
+            if (analysisResult.SuggestedFollowUp?.Type == "AppointmentReminder")
+            {
+                analysisResult.SuggestedFollowUp.Needed = false;
+            }
+        }
+
         private async Task CompletePendingFollowUpsAsync(AppDbContext dbContext, Guid customerId)
         {
             try
@@ -1179,35 +1401,35 @@ namespace Modules.AI.Workers
             }
         }
 
-        private static string NormalizeDigits(string input)
+        private static async Task<bool> HasReachedDailyAiReplyLimitAsync(AppDbContext dbContext, Modules.Projects.Domain.ProjectSettings settings, string channel)
         {
-            if (string.IsNullOrEmpty(input)) return input;
-            return input
-                .Replace("٠", "0")
-                .Replace("١", "1")
-                .Replace("٢", "2")
-                .Replace("٣", "3")
-                .Replace("٤", "4")
-                .Replace("٥", "5")
-                .Replace("٦", "6")
-                .Replace("٧", "7")
-                .Replace("٨", "8")
-                .Replace("٩", "9");
-        }
-
-        private static string ExtractEgyptianPhoneNumber(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return null;
-            
-            var normalized = NormalizeDigits(text);
-            var cleaned = Regex.Replace(normalized, @"[\s\-\(\)\+]", "");
-            
-            var match = Regex.Match(cleaned, @"(?:20)?(1[0125]\d{8})\b");
-            if (match.Success)
+            if (settings.MaxDailyMessages <= 0)
             {
-                return "20" + match.Groups[1].Value;
+                return false;
             }
-            return null;
+
+            var projectZone = TimezoneHelper.GetTimeZone(settings.Timezone);
+            var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
+            var localStart = localNow.Date;
+            var utcStart = TimeZoneInfo.ConvertTimeToUtc(localStart, projectZone);
+            var utcEnd = TimeZoneInfo.ConvertTimeToUtc(localStart.AddDays(1), projectZone);
+
+            var sentToday = await dbContext.Messages
+                .IgnoreQueryFilters()
+                .Join(
+                    dbContext.Conversations.IgnoreQueryFilters(),
+                    message => message.ConversationId,
+                    conversation => conversation.Id,
+                    (message, conversation) => new { message, conversation })
+                .CountAsync(row =>
+                    row.conversation.ProjectId == settings.ProjectId &&
+                    row.conversation.Channel == channel &&
+                    row.message.Direction == "Outgoing" &&
+                    row.message.MessageType == "Text" &&
+                    row.message.Timestamp >= utcStart &&
+                    row.message.Timestamp < utcEnd);
+
+            return sentToday >= settings.MaxDailyMessages;
         }
 
         private async Task<bool> SendWhatsAppTransitionMessageAsync(
@@ -1231,6 +1453,26 @@ namespace Modules.AI.Workers
             
             var response = await httpClient.PostAsync($"{gatewayUrl}/api/whatsapp/send", content);
             return response.IsSuccessStatusCode;
+        }
+
+        private static async Task SaveCustomerAndBookingPhoneAsync(
+            AppDbContext dbContext,
+            Guid projectId,
+            Customer customer,
+            string phoneNumber)
+        {
+            customer.PhoneNumber = phoneNumber;
+            dbContext.Entry(customer).State = EntityState.Modified;
+
+            var bookings = await dbContext.GroupAppointmentBookings
+                .Where(booking => booking.ProjectId == projectId && booking.CustomerId == customer.Id)
+                .ToListAsync();
+            foreach (var booking in bookings)
+            {
+                booking.CustomerPhone = phoneNumber;
+            }
+
+            await dbContext.SaveChangesAsync();
         }
 
         private async Task HandleMessengerToWhatsAppTransitionAsync(
@@ -1293,9 +1535,11 @@ namespace Modules.AI.Workers
             {
                 Console.WriteLine($"[AIReplyWorker] WhatsApp message successfully sent to {extractedPhone}. Proceeding with transition.");
 
-                customer.PhoneNumber = extractedPhone;
-                dbContext.Entry(customer).State = EntityState.Modified;
-                await dbContext.SaveChangesAsync();
+                await SaveCustomerAndBookingPhoneAsync(
+                    dbContext,
+                    settings.ProjectId,
+                    customer,
+                    extractedPhone);
 
                 var successMsg = behaviorService.RenderTemplate(messengerBehavior.Fallbacks.WhatsAppTransitionSuccess, new Modules.AI.Services.AIBehaviorTemplateContext
                 {

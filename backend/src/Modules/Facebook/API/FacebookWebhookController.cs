@@ -28,6 +28,7 @@ namespace Modules.Facebook.API
         private readonly Shared.Queue.IEventBus _eventBus;
         private readonly StackExchange.Redis.IDatabase _redis;
         private readonly IFacebookGraphService _graphService;
+        private readonly CustomerOptOutService _customerOptOutService;
 
         public FacebookWebhookController(
             AppDbContext context,
@@ -36,7 +37,8 @@ namespace Modules.Facebook.API
             IMessageAggregator messageAggregator,
             Shared.Queue.IEventBus eventBus,
             StackExchange.Redis.IConnectionMultiplexer redis,
-            IFacebookGraphService graphService)
+            IFacebookGraphService graphService,
+            CustomerOptOutService customerOptOutService)
         {
             _context = context;
             _configuration = configuration;
@@ -45,6 +47,7 @@ namespace Modules.Facebook.API
             _eventBus = eventBus;
             _redis = redis.GetDatabase();
             _graphService = graphService;
+            _customerOptOutService = customerOptOutService;
         }
 
         /// <summary>
@@ -202,6 +205,8 @@ namespace Modules.Facebook.API
                 }
             }
 
+            await _customerOptOutService.ApplyIfRequestedAsync(customer, messageText, HttpContext.RequestAborted);
+
             // Resolve or create Conversation
             var conversation = await _context.Conversations
                 .IgnoreQueryFilters()
@@ -280,14 +285,17 @@ namespace Modules.Facebook.API
             }
 
             // Publish to aggregator for AI auto-reply
-            await _eventBus.PublishAsync(new Shared.Events.MessageAggregatedEvent
+            if (!customer.IsBlacklisted)
             {
-                ProjectId = projectId,
-                Sender = senderPSID,
-                Content = messageText,
-                Channel = "Messenger",
-                ChannelMetadata = JsonSerializer.Serialize(new { pageId, senderPSID })
-            });
+                await _eventBus.PublishAsync(new Shared.Events.MessageAggregatedEvent
+                {
+                    ProjectId = projectId,
+                    Sender = senderPSID,
+                    Content = messageText,
+                    Channel = "Messenger",
+                    ChannelMetadata = JsonSerializer.Serialize(new { pageId, senderPSID })
+                });
+            }
         }
 
         private async Task HandleCommentReceived(string pageId, JsonElement value)
@@ -306,8 +314,10 @@ namespace Modules.Facebook.API
 
             if (string.IsNullOrEmpty(commentId) || string.IsNullOrEmpty(senderPSID)) return;
 
-            // Skip if the commenter is the page itself
-            if (senderPSID == pageId) return;
+            var senderIsConnectedPage = senderPSID == pageId || await _context.ConnectedPages
+                .IgnoreQueryFilters()
+                .AnyAsync(page => page.FacebookPageId == senderPSID && page.IsActive);
+            if (senderIsConnectedPage) return;
 
             // Resolve ConnectedPage
             var connectedPage = await _context.ConnectedPages
@@ -342,6 +352,8 @@ namespace Modules.Facebook.API
                 customer.FacebookName = senderName;
                 customer.Name = senderName;
             }
+
+            await _customerOptOutService.ApplyIfRequestedAsync(customer, commentText, HttpContext.RequestAborted);
 
             // Resolve or create Conversation (grouped by Post)
             var conversation = await _context.Conversations
@@ -422,14 +434,17 @@ namespace Modules.Facebook.API
             }
 
             // Publish for AI auto-reply
-            await _eventBus.PublishAsync(new Shared.Events.MessageAggregatedEvent
+            if (!customer.IsBlacklisted)
             {
-                ProjectId = projectId,
-                Sender = senderPSID,
-                Content = commentText ?? "",
-                Channel = "FacebookComment",
-                ChannelMetadata = JsonSerializer.Serialize(new { pageId, commentId, postId, senderPSID })
-            });
+                await _eventBus.PublishAsync(new Shared.Events.MessageAggregatedEvent
+                {
+                    ProjectId = projectId,
+                    Sender = senderPSID,
+                    Content = commentText ?? "",
+                    Channel = "FacebookComment",
+                    ChannelMetadata = JsonSerializer.Serialize(new { pageId, commentId, postId, senderPSID })
+                });
+            }
         }
 
         private static bool ValidateSignature(string payload, string signatureHeader, string appSecret)

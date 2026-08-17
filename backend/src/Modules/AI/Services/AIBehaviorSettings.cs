@@ -6,6 +6,8 @@ namespace Modules.AI.Services
     {
         public AIIdentitySettings Identity { get; set; } = new();
         public AIToneSettings Tone { get; set; } = new();
+        public CTASettings Cta { get; set; } = new();
+        public FollowUpPolicySettings FollowUps { get; set; } = new();
         public ReactionPolicySettings Reactions { get; set; } = new();
         public FallbackMessageSettings Fallbacks { get; set; } = new();
         public Dictionary<string, ChannelAIBehaviorSettings> Channels { get; set; } = new();
@@ -40,6 +42,19 @@ namespace Modules.AI.Services
         public string? BusinessInstructions { get; set; }
     }
 
+    public class CTASettings
+    {
+        public bool Enabled { get; set; }
+        public string? Instructions { get; set; }
+        public string[] Topics { get; set; } = System.Array.Empty<string>();
+    }
+
+    public class FollowUpPolicySettings
+    {
+        public bool NurturingEnabled { get; set; } = true;
+        public bool AppointmentRemindersEnabled { get; set; } = true;
+    }
+
     public class ReactionPolicySettings
     {
         public bool Enabled { get; set; } = true;
@@ -56,7 +71,7 @@ namespace Modules.AI.Services
         public string FacebookPublicComment { get; set; } = "تم الرد في الخاص يا فندم! ❤️";
         public string WhatsAppTransitionSuccess { get; set; } = "أنا بعتلك رسالة على الواتساب، خلينا نتواصل هناك. ✨";
         public string WhatsAppTransitionFailure { get; set; } = "حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.";
-        public string WhatsAppTransitionMessage { get; set; } = "أهلاً يا {customerName}، منورنا يا فندم! 😊 معاك {agentName}.. زي ما اتفقنا على ماسنجر، هنكمل كلامنا هنا على واتساب عشان نتابع مع بعض أسرع ونبعتلك كل التفاصيل بسهولة. وحابب أفكرك إن أول جلسة ليك معانا مجانية تماماً! لو تحب تحجزها دلوقتي، قولي الميعاد المناسب ليك وهسجلك فيه فوراً.";
+        public string WhatsAppTransitionMessage { get; set; } = "أهلاً يا {customerName}، معاك {agentName} من {projectName}. نكمل مع حضرتك هنا على واتساب عشان نساعدك بشكل أسرع.";
         public string FollowUpDefault { get; set; } = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟";
         public string GroupReminderOnline { get; set; } = "أهلاً يا {customerName}، هذا هو رابط الجروب الذي سيرسل عليه رابط الحصة: {groupInviteLink}";
         public string GroupReminderOffline { get; set; } = "أهلاً يا {customerName}، هذا هو رابط الجروب: {groupInviteLink}. نحن بانتظاركم!";

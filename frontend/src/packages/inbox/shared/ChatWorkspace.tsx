@@ -21,7 +21,10 @@ import {
   Briefcase,
   Plus,
   Check,
-  Trash2
+  Trash2,
+  ThumbsUp,
+  Heart,
+  ShieldBan
 } from 'lucide-react';
 import styles from '../inbox.module.css';
 
@@ -58,6 +61,8 @@ interface ChatWorkspaceProps {
   reaction?: 'LIKE' | 'LOVE' | null;
   setReaction?: (val: 'LIKE' | 'LOVE' | null) => void;
   setActiveConv?: (conv: Conversation | null) => void;
+  onUpdateCustomer: (fields: Partial<Customer>) => Promise<void>;
+  updating: boolean;
 }
 
 export default function ChatWorkspace({
@@ -80,7 +85,9 @@ export default function ChatWorkspace({
   setPrivateDM,
   reaction,
   setReaction,
-  setActiveConv
+  setActiveConv,
+  onUpdateCustomer,
+  updating
 }: ChatWorkspaceProps) {
   
   const [activeTab, setActiveTab] = useState<'Timeline' | 'Conversation' | 'Notes' | 'Analytics' | 'Orders' | 'Files' | 'History'>('Conversation');
@@ -297,6 +304,17 @@ export default function ChatWorkspace({
 
         {/* Quick action buttons row + tabs */}
         <div className={styles.headerActionsRow}>
+          <button
+            type="button"
+            className={`${styles.aiBlockToggle} ${customer?.isBlacklisted ? styles.aiBlockToggleActive : ''}`}
+            onClick={() => onUpdateCustomer({ isBlacklisted: !customer?.isBlacklisted })}
+            disabled={updating || !customer}
+            aria-pressed={customer?.isBlacklisted ?? false}
+          >
+            <ShieldBan size={16} />
+            {customer?.isBlacklisted ? 'الرد الآلي محظور' : 'حظر الرد الآلي'}
+          </button>
+
           <div className={styles.circularActionsGroup}>
             <button type="button" className={styles.circularBtn} title="اتصال">
               <Phone size={16} />

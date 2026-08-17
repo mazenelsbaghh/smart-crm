@@ -240,6 +240,14 @@
   color: hsl(var(--text-primary));
 }
 
+.sectionHint {
+  margin: calc(var(--space-xs) * -1) 0 0;
+  max-width: 68ch;
+  color: hsl(var(--text-secondary));
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
 .inlineGrid {
   display: grid;
   grid-template-columns: 1fr;

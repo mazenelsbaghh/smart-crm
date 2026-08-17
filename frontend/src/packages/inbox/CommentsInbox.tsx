@@ -119,9 +119,10 @@ export default function CommentsInbox() {
 
   // Fetch messages and customer details for active conversation
   useEffect(() => {
+    // Reset activeCustomer state immediately to clear previous workspace state
+    setActiveCustomer(null);
+    
     if (!activeConv) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setActiveCustomer(null);
       return;
     }
     const fetchData = async () => {
@@ -287,7 +288,7 @@ export default function CommentsInbox() {
         return c;
       }));
 
-      showToast('تم تحديث بيانات العميل بنجاح ✨', 'success');
+      showToast('تم تحديث بيانات العميل بنجاح', 'success');
     } catch (e) {
       console.error('Failed to update CRM info', e);
       showToast('فشل تحديث بيانات العميل', 'error');
@@ -295,12 +296,6 @@ export default function CommentsInbox() {
       setUpdating(false);
     }
   };
-
-  if (loading) return (
-    <PhantomLoader loading={true}>
-      <div style={{ height: '100vh' }} />
-    </PhantomLoader>
-  );
 
   return (
     <InboxLayout
@@ -333,6 +328,7 @@ export default function CommentsInbox() {
       setPrivateDM={setPrivateDM}
       reaction={reaction}
       setReaction={setReaction}
+      loading={loading}
     />
   );
 }

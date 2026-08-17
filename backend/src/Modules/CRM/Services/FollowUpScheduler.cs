@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Hangfire;
+using System.Globalization;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -105,6 +106,15 @@ namespace Modules.CRM.Services
                     }
 
                     bool isMessenger = string.IsNullOrEmpty(customer.PhoneNumber) && !string.IsNullOrEmpty(customer.FacebookPSID);
+
+                    if (customer.IsBlacklisted)
+                    {
+                        Console.WriteLine($"[Hangfire Job] Customer {customer.PhoneNumber ?? customer.FacebookPSID} is blacklisted. Cancelling follow-up {followUp.Id}.");
+                        followUp.Status = "Cancelled";
+                        dbContext.Entry(followUp).State = EntityState.Modified;
+                        await dbContext.SaveChangesAsync();
+                        continue;
+                    }
 
                     // Check if customer has any paid group booking
                     var hasPaid = await dbContext.GroupAppointmentBookings
@@ -431,25 +441,22 @@ namespace Modules.CRM.Services
 
             var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
             var cairoNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
-            var tomorrowDate = cairoNow.Date.AddDays(1);
+            var startOfWindowCairo = cairoNow.Date;
+            var endOfWindowCairo = cairoNow.Date.AddDays(2);
 
-            // Start and end of tomorrow in Cairo timezone
-            var startOfTomorrowCairo = tomorrowDate;
-            var endOfTomorrowCairo = tomorrowDate.AddDays(1);
+            var startOfWindowUtc = TimeZoneInfo.ConvertTimeToUtc(startOfWindowCairo, cairoZone);
+            var endOfWindowUtc = TimeZoneInfo.ConvertTimeToUtc(endOfWindowCairo, cairoZone);
 
-            var startOfTomorrowUtc = TimeZoneInfo.ConvertTimeToUtc(startOfTomorrowCairo, cairoZone);
-            var endOfTomorrowUtc = TimeZoneInfo.ConvertTimeToUtc(endOfTomorrowCairo, cairoZone);
-
-            Console.WriteLine($"[Hangfire Group Lifecycle] Checking for active waves/appointments tomorrow: {tomorrowDate:yyyy-MM-dd} (UTC range: {startOfTomorrowUtc:O} to {endOfTomorrowUtc:O})");
+            Console.WriteLine($"[Hangfire Group Lifecycle] Checking for active waves/appointments from today through tomorrow in Cairo timezone (UTC range: {startOfWindowUtc:O} to {endOfWindowUtc:O})");
 
             var appointments = await dbContext.GroupAppointments
                 .IgnoreQueryFilters()
-                .Where(a => a.IsActive && a.DateTime >= startOfTomorrowUtc && a.DateTime < endOfTomorrowUtc)
+                .Where(a => a.IsActive && a.DateTime >= startOfWindowUtc && a.DateTime < endOfWindowUtc)
                 .ToListAsync();
 
             if (!appointments.Any())
             {
-                Console.WriteLine("[Hangfire Group Lifecycle] No active waves scheduled for tomorrow.");
+                Console.WriteLine("[Hangfire Group Lifecycle] No active waves scheduled from today through tomorrow.");
                 return;
             }
 
@@ -477,19 +484,20 @@ namespace Modules.CRM.Services
                         continue;
                     }
 
-                    Console.WriteLine($"[Hangfire Group Lifecycle] Creating group for appointment {appointment.Id}: 'wave {appointment.Name}'");
+                    var groupSubject = BuildWhatsAppGroupSubject(appointment.Name, appointment.Mode, appointment.DateTime, cairoZone);
+                    Console.WriteLine($"[Hangfire Group Lifecycle] Creating group for appointment {appointment.Id}: '{groupSubject}'");
 
-                    var managerPhone = settings.GroupAutomationManagerPhone;
+                    var managerPhone = NormalizeWhatsAppParticipantPhone(settings.GroupAutomationManagerPhone);
                     if (string.IsNullOrEmpty(managerPhone))
                     {
-                        managerPhone = "+201068690092";
+                        managerPhone = "201068690092";
                     }
 
                     // Create the group via WhatsApp Gateway
                     var payload = new
                     {
                         projectId = appointment.ProjectId,
-                        subject = $"wave {appointment.Name}",
+                        subject = groupSubject,
                         participants = new[] { managerPhone }
                     };
 
@@ -610,6 +618,43 @@ namespace Modules.CRM.Services
                     Console.WriteLine(ex.StackTrace);
                 }
             }
+        }
+
+        private static string NormalizeWhatsAppParticipantPhone(string? phoneNumber)
+        {
+            if (string.IsNullOrWhiteSpace(phoneNumber))
+            {
+                return string.Empty;
+            }
+
+            var digits = new string(phoneNumber.Where(char.IsDigit).ToArray());
+            if (digits.StartsWith("00"))
+            {
+                digits = digits[2..];
+            }
+
+            if (digits.Length == 11 && digits.StartsWith("0"))
+            {
+                digits = $"20{digits[1..]}";
+            }
+
+            return digits;
+        }
+
+        private static string BuildWhatsAppGroupSubject(string appointmentName, string appointmentMode, DateTime appointmentDateTime, TimeZoneInfo timezone)
+        {
+            var utcDateTime = appointmentDateTime.Kind == DateTimeKind.Utc
+                ? appointmentDateTime
+                : DateTime.SpecifyKind(appointmentDateTime, DateTimeKind.Utc);
+            var localDateTime = TimeZoneInfo.ConvertTimeFromUtc(utcDateTime, timezone);
+            var formattedDateTime = localDateTime.ToString("d MMMM yyyy h:mm tt", new CultureInfo("ar-EG"));
+            var groupKind = appointmentMode == "online"
+                ? "أونلاين"
+                : appointmentMode == "offline"
+                    ? "أوفلاين"
+                    : appointmentName;
+
+            return $"مجموعة {groupKind} - {formattedDateTime}";
         }
     }
 }

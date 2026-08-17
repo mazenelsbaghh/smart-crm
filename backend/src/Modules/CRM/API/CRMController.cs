@@ -274,6 +274,17 @@ namespace Modules.CRM.API
                 }
             }
 
+            foreach (var changedDeal in _context.ChangeTracker.Entries<Deal>()
+                         .Where(x => x.State is EntityState.Added or EntityState.Modified)
+                         .Select(x => x.Entity)
+                         .Where(x => x.Status is DealStatus.Won or DealStatus.Lost))
+            {
+                IntegrationOutbox.Enqueue(_context, new AdvertisingDealOutcomeChanged
+                {
+                    ProjectId = changedDeal.ProjectId, DealId = changedDeal.Id, CustomerId = changedDeal.CustomerId,
+                    Outcome = changedDeal.Status == DealStatus.Won ? "Won" : "Lost", Value = changedDeal.Amount, Currency = "EGP"
+                });
+            }
             await _context.SaveChangesAsync();
 
             // Find newly added tags
@@ -1012,6 +1023,8 @@ JSON:";
         [HttpPost("projects/{projectId}/import-blacklist")]
         public async Task<IActionResult> ImportBlacklist(Guid projectId, [FromBody] List<string> phones)
         {
+            const string paidBlacklistGroupName = "المحظورين للدفع";
+
             if (phones == null || phones.Count == 0)
             {
                 return BadRequest("No data provided.");
@@ -1029,21 +1042,21 @@ JSON:";
                 return BadRequest("No valid phone numbers found.");
             }
 
-            // 1. Fetch existing customers for this project with these phone numbers
             var existingCustomers = await _context.Customers
                 .Where(c => c.ProjectId == projectId && normalizedPhones.Contains(c.PhoneNumber))
                 .ToListAsync();
 
             var existingPhones = existingCustomers.Select(c => c.PhoneNumber).ToHashSet();
 
-            // 2. Update existing customers to IsBlacklisted = true
             foreach (var customer in existingCustomers)
             {
                 customer.IsBlacklisted = true;
+                customer.Label = paidBlacklistGroupName;
+                customer.Tags = AddUniqueTag(customer.Tags, paidBlacklistGroupName);
+                customer.Notes = AppendImportNote(customer.Notes);
                 _context.Entry(customer).State = EntityState.Modified;
             }
 
-            // 3. Pre-create new customers that don't exist in DB
             var newPhones = normalizedPhones.Where(p => !existingPhones.Contains(p)).ToList();
             var newCustomersToCreate = newPhones
                 .Select(phone => new Customer
@@ -1052,6 +1065,8 @@ JSON:";
                     PhoneNumber = phone,
                     Name = $"طالب مدفوع ({phone})",
                     IsBlacklisted = true,
+                    Label = paidBlacklistGroupName,
+                    Tags = new[] { paidBlacklistGroupName },
                     City = string.Empty,
                     Notes = "تمت إضافته كطالب مدفوع ومحظور تلقائياً عبر رفع ملف إكسل."
                 })
@@ -1062,14 +1077,65 @@ JSON:";
                 _context.Customers.Add(newCustomer);
             }
 
+            var allImportedCustomerIds = existingCustomers
+                .Select(c => c.Id)
+                .Concat(newCustomersToCreate.Select(c => c.Id))
+                .ToList();
+
+            var bookingsToRemove = await _context.GroupAppointmentBookings
+                .IgnoreQueryFilters()
+                .Where(b =>
+                    b.ProjectId == projectId &&
+                    (normalizedPhones.Contains(b.CustomerPhone) || allImportedCustomerIds.Contains(b.CustomerId)))
+                .ToListAsync();
+
+            var pendingFollowUpsToCancel = await _context.FollowUps
+                .IgnoreQueryFilters()
+                .Where(f => f.ProjectId == projectId && allImportedCustomerIds.Contains(f.CustomerId) && f.Status == "Pending")
+                .ToListAsync();
+
+            foreach (var followUp in pendingFollowUpsToCancel)
+            {
+                followUp.Status = "Cancelled";
+                _context.Entry(followUp).State = EntityState.Modified;
+            }
+
+            _context.GroupAppointmentBookings.RemoveRange(bookingsToRemove);
             await _context.SaveChangesAsync();
 
-            return Ok(new { 
-                matchedCount = existingCustomers.Count, 
+            return Ok(new
+            {
+                matchedCount = existingCustomers.Count,
                 newCount = newCustomersToCreate.Count,
+                removedBookingsCount = bookingsToRemove.Count,
+                cancelledFollowUpsCount = pendingFollowUpsToCancel.Count,
+                blacklistGroupName = paidBlacklistGroupName,
                 matchedPhones = existingCustomers.Select(c => c.PhoneNumber).ToList(),
                 newPhones = newPhones
             });
+        }
+
+        private static string[] AddUniqueTag(string[]? tags, string tag)
+        {
+            return (tags ?? Array.Empty<string>())
+                .Concat(new[] { tag })
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private static string AppendImportNote(string? notes)
+        {
+            const string importNote = "تمت إضافته كطالب مدفوع ومحظور تلقائياً عبر رفع ملف إكسل.";
+            if (string.IsNullOrWhiteSpace(notes))
+            {
+                return importNote;
+            }
+            if (notes.Contains(importNote, StringComparison.OrdinalIgnoreCase))
+            {
+                return notes;
+            }
+            return $"{notes}\n{importNote}";
         }
 
         private static string NormalizePhoneNumber(string phone)

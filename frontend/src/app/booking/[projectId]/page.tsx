@@ -14,6 +14,9 @@ interface GroupAppointment {
   bookedCount: number;
   slotsLeft: number;
   mode?: string;
+  instructorName?: string;
+  freeSessionDateTime?: string | null;
+  courseSecondDateTime?: string | null;
 }
 
 interface PageProps {
@@ -115,6 +118,8 @@ export default function PublicBookingPage({ params }: PageProps) {
     };
     return new Date(isoString).toLocaleDateString('ar-EG', options);
   };
+
+  const selectedGroup = groups.find(group => group.id === selectedGroupId);
 
   if (loading) {
     return (
@@ -320,9 +325,10 @@ export default function PublicBookingPage({ params }: PageProps) {
                             cursor: isFull ? 'not-allowed' : 'pointer',
                             opacity: isFull ? 0.5 : 1,
                             transition: 'all 0.2s',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center'
+                            display: 'grid',
+                            gridTemplateColumns: '1fr auto',
+                            gap: '1rem',
+                            alignItems: 'start'
                           }}
                         >
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -331,8 +337,25 @@ export default function PublicBookingPage({ params }: PageProps) {
                             </span>
                             <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <Clock size={12} />
-                              {formatDate(group.dateTime)}
+                              أول سيشن للكورس: {formatDate(group.dateTime)}
                             </span>
+                            {group.courseSecondDateTime && (
+                              <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Clock size={12} />
+                                تاني سيشن للكورس: {formatDate(group.courseSecondDateTime)}
+                              </span>
+                            )}
+                            {group.freeSessionDateTime && (
+                              <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Calendar size={12} />
+                                السيشن المجانية: {formatDate(group.freeSessionDateTime)} مع دكتور مصطفى
+                              </span>
+                            )}
+                            {group.instructorName && (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--accent)', fontWeight: 700 }}>
+                                إنستراكتور الكورس: {group.instructorName}
+                              </span>
+                            )}
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
                             <span style={{
@@ -352,6 +375,20 @@ export default function PublicBookingPage({ params }: PageProps) {
                     })}
                   </div>
                 </div>
+
+                {selectedGroup && (
+                  <div style={{
+                    padding: '0.85rem 1rem',
+                    backgroundColor: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.22)',
+                    borderRadius: '8px',
+                    color: '#fbbf24',
+                    fontSize: '0.8rem',
+                    lineHeight: 1.7
+                  }}>
+                    قبل تأكيد الحجز تأكد أن ميعاد السيشن المجانية مناسب لك، وأن ميعادي الكورس الأسبوعيين مناسبين لك أيضا.
+                  </div>
+                )}
 
                 {/* Submit */}
                 <button

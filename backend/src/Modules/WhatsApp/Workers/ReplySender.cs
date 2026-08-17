@@ -57,6 +57,12 @@ namespace Modules.WhatsApp.Workers
                         .IgnoreQueryFilters()
                         .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.PhoneNumber == @event.Sender);
 
+                    if (customer?.IsBlacklisted == true)
+                    {
+                        Console.WriteLine($"[ReplySender] Customer {customer.Id} is blacklisted. Dropping queued AI reply.");
+                        return;
+                    }
+
                     if (customer != null)
                     {
                         var conversation = await dbContext.Conversations

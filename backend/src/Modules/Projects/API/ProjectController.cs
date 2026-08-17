@@ -13,6 +13,8 @@ namespace Modules.Projects.API
     [Route("api/projects")]
     public class ProjectController : ControllerBase
     {
+        private const int MaxSystemPromptLength = 20_000;
+
         private readonly AppDbContext _context;
         private readonly IAIBehaviorSettingsService _aiBehaviorSettingsService;
 
@@ -39,7 +41,7 @@ namespace Modules.Projects.API
                 ProjectId = project.Id,
                 AiAutoReplyEnabled = false,
                 Timezone = "Africa/Cairo",
-                GeminiModel = "gemini-3.5-flash",
+                GeminiModel = "gemini-flash-latest",
                 ReplyDelay = 3,
                 MaxDailyMessages = 500
             };
@@ -100,6 +102,9 @@ namespace Modules.Projects.API
                     settings.IsGroupAppointmentsEnabled,
                     settings.IsWhatsAppGroupAutomationEnabled,
                     settings.GroupAutomationManagerPhone,
+                    settings.ActiveInstructors,
+                    settings.HumanTransferEnabled,
+                    settings.HumanTransferPhone,
                     settings.MessengerAiAutoReplyEnabled,
                     settings.MessengerReplyDelay,
                     settings.CommentsAiAutoReplyEnabled,
@@ -107,6 +112,41 @@ namespace Modules.Projects.API
                     settings.SystemPrompt,
                     AiBehavior = _aiBehaviorSettingsService.Resolve(settings)
                 } : null
+            });
+        }
+
+        [HttpGet("{id}/human-transfer-overview")]
+        public async Task<IActionResult> GetHumanTransferOverview(Guid id)
+        {
+            var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == id);
+            if (settings == null)
+            {
+                return NotFound(new { error = "Settings not found for this project" });
+            }
+
+            var projectZone = TimezoneHelper.GetTimeZone(settings.Timezone);
+            var localToday = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone).Date;
+            var utcStartOfToday = TimeZoneInfo.ConvertTimeToUtc(localToday, projectZone);
+            var humanTransferRequests = await _context.NotificationAlerts
+                .Where(a => a.ProjectId == id && a.Type == "HumanTransferRequest")
+                .OrderByDescending(a => a.CreatedAt)
+                .ToListAsync();
+
+            return Ok(new
+            {
+                settings.HumanTransferEnabled,
+                settings.HumanTransferPhone,
+                IsReady = settings.HumanTransferEnabled && !string.IsNullOrWhiteSpace(settings.HumanTransferPhone),
+                TotalRequests = humanTransferRequests.Count,
+                TodayRequests = humanTransferRequests.Count(a => a.CreatedAt >= utcStartOfToday),
+                UnreadRequests = humanTransferRequests.Count(a => !a.IsRead),
+                RecentRequests = humanTransferRequests.Take(8).Select(a => new
+                {
+                    a.Id,
+                    a.Message,
+                    a.CreatedAt,
+                    a.IsRead
+                })
             });
         }
 
@@ -124,6 +164,11 @@ namespace Modules.Projects.API
             if (validationErrors.Count > 0)
             {
                 return BadRequest(new { error = string.Join(" ", validationErrors) });
+            }
+
+            if (!string.IsNullOrEmpty(request.SystemPrompt) && request.SystemPrompt.Length > MaxSystemPromptLength)
+            {
+                return BadRequest(new { error = $"systemPrompt exceeds {MaxSystemPromptLength} characters. Keep only short project-specific instructions here; the protected core AI prompt is already built into the backend." });
             }
 
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == id);
@@ -149,6 +194,9 @@ namespace Modules.Projects.API
                     IsGroupAppointmentsEnabled = request.IsGroupAppointmentsEnabled,
                     IsWhatsAppGroupAutomationEnabled = request.IsWhatsAppGroupAutomationEnabled,
                     GroupAutomationManagerPhone = request.GroupAutomationManagerPhone ?? "+201068690092",
+                    ActiveInstructors = request.ActiveInstructors ?? string.Empty,
+                    HumanTransferEnabled = request.HumanTransferEnabled,
+                    HumanTransferPhone = request.HumanTransferPhone,
                     SystemPrompt = request.SystemPrompt,
                     AiBehaviorSettingsJson = request.AiBehavior != null ? _aiBehaviorSettingsService.Serialize(request.AiBehavior) : null,
                     UpdatedAt = DateTime.UtcNow
@@ -168,6 +216,9 @@ namespace Modules.Projects.API
                 settings.IsGroupAppointmentsEnabled = request.IsGroupAppointmentsEnabled;
                 settings.IsWhatsAppGroupAutomationEnabled = request.IsWhatsAppGroupAutomationEnabled;
                 settings.GroupAutomationManagerPhone = request.GroupAutomationManagerPhone ?? "+201068690092";
+                if (request.ActiveInstructors != null) settings.ActiveInstructors = request.ActiveInstructors;
+                settings.HumanTransferEnabled = request.HumanTransferEnabled;
+                settings.HumanTransferPhone = request.HumanTransferPhone;
                 settings.MessengerAiAutoReplyEnabled = request.MessengerAiAutoReplyEnabled;
                 if (request.MessengerReplyDelay.HasValue) settings.MessengerReplyDelay = request.MessengerReplyDelay.Value;
                 settings.CommentsAiAutoReplyEnabled = request.CommentsAiAutoReplyEnabled;
@@ -188,10 +239,14 @@ namespace Modules.Projects.API
         {
             return model switch
             {
+                "gemini-flash-latest" => "gemini-flash-latest",
+                "gemini-flash-lite-latest" => "gemini-flash-lite-latest",
+                "gemini-3.6-flash" => "gemini-3.6-flash",
+                "gemini-3.5-flash-lite" => "gemini-3.5-flash-lite",
                 "gemini-2.5-flash-lite" => "gemini-2.5-flash-lite",
                 "gemini-3.1-flash-lite" => "gemini-3.1-flash-lite",
                 "gemini-3.5-flash" => "gemini-3.5-flash",
-                _ => "gemini-3.5-flash"
+                _ => "gemini-flash-latest"
             };
         }
     }
@@ -215,6 +270,9 @@ namespace Modules.Projects.API
         public bool IsGroupAppointmentsEnabled { get; set; }
         public bool IsWhatsAppGroupAutomationEnabled { get; set; }
         public string? GroupAutomationManagerPhone { get; set; }
+        public string? ActiveInstructors { get; set; }
+        public bool HumanTransferEnabled { get; set; }
+        public string? HumanTransferPhone { get; set; }
         public bool MessengerAiAutoReplyEnabled { get; set; }
         public int? MessengerReplyDelay { get; set; }
         public bool CommentsAiAutoReplyEnabled { get; set; }

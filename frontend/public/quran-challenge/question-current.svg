@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+  <rect width="1080" height="1920" fill="#18372d"/>
+  <circle cx="900" cy="420" r="520" fill="none" stroke="#d6b75b" stroke-opacity=".22" stroke-width="3"/>
+  <text x="100" y="145" fill="#d6b75b" font-family="Cairo, sans-serif" font-size="42" font-weight="700">أكمل الآية</text>
+  <text x="980" y="145" fill="#f4edd9" font-family="Cairo, sans-serif" font-size="32" text-anchor="end">الحلقة ٠٠١</text>
+  <text x="540" y="500" fill="#d6b75b" font-family="Cairo, sans-serif" font-size="42" text-anchor="middle">ما الكلمة الناقصة؟</text>
+  <text x="540" y="650" fill="#f4edd9" font-family="Cairo, sans-serif" font-size="55" font-weight="700" text-anchor="middle">الَّذِينَ يُؤْمِنُونَ بِالْغَيْبِ</text>
+  <text x="540" y="755" fill="#f4edd9" font-family="Cairo, sans-serif" font-size="55" font-weight="700" text-anchor="middle">وَيُقِيمُونَ</text>
+  <text x="540" y="860" fill="#d6b75b" font-family="Cairo, sans-serif" font-size="68" font-weight="700" text-anchor="middle">············</text>
+  <text x="540" y="965" fill="#f4edd9" font-family="Cairo, sans-serif" font-size="48" font-weight="700" text-anchor="middle">وَمِمَّا رَزَقْنَاهُمْ يُنْفِقُونَ</text>
+  <g font-family="Cairo, sans-serif" font-size="43" fill="#f4edd9" text-anchor="middle">
+    <rect x="130" y="1110" width="820" height="120" rx="28" fill="#214638" stroke="#e8dfc8" stroke-opacity=".5" stroke-width="2"/><text x="540" y="1188">أ · الَّذِينَ</text>
+    <rect x="130" y="1265" width="820" height="120" rx="28" fill="#214638" stroke="#e8dfc8" stroke-opacity=".5" stroke-width="2"/><text x="540" y="1343">ب · الصَّلَاةَ</text>
+    <rect x="130" y="1420" width="820" height="120" rx="28" fill="#214638" stroke="#e8dfc8" stroke-opacity=".5" stroke-width="2"/><text x="540" y="1498">ج · يُؤْمِنُونَ</text>
+  </g>
+  <text x="540" y="1660" fill="#d6b75b" font-family="Cairo, sans-serif" font-size="36" font-weight="700" text-anchor="middle">توقّف وفكّر، الإجابة بعد ٥ ثوانٍ</text>
+  <text x="540" y="1765" fill="#f4edd9" fill-opacity=".78" font-family="Cairo, sans-serif" font-size="32" text-anchor="middle">سورة البقرة · الآية ٣</text>
+</svg>

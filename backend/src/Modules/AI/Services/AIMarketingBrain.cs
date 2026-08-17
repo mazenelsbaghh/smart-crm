@@ -29,10 +29,18 @@ namespace Modules.AI.Services
         public string[] SuggestedButtons { get; set; } = Array.Empty<string>();
         public string? SuggestedReaction { get; set; }
         public string? SuggestedGroupBookingId { get; set; }
+        public SuggestedGroupBookingPerson[] SuggestedGroupBookingPeople { get; set; } = Array.Empty<SuggestedGroupBookingPerson>();
         public bool CancelGroupBooking { get; set; } = false;
         public bool RequestHuman { get; set; } = false;
         public bool BlacklistCustomer { get; set; } = false;
         public string[] AIInsights { get; set; } = Array.Empty<string>();
+    }
+
+    public class SuggestedGroupBookingPerson
+    {
+        public string? Name { get; set; }
+        public string? PhoneNumber { get; set; }
+        public bool IsRequester { get; set; }
     }
 
     public class SuggestedFollowUpResult
@@ -134,6 +142,7 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
   },
   ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null"",
   ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null"",
+  ""suggestedGroupBookingPeople"": [],
   ""cancelGroupBooking"": true | false,
   ""requestHuman"": true | false,
   ""blacklistCustomer"": true | false,
@@ -141,7 +150,8 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
 }
 
 Guidelines for requestHuman:
-- Set requestHuman to true ONLY if the customer explicitly requests to talk to a human, call a manager, transfer to support, or says they want a human agent (e.g. ""عايز أكلم بني آدم"", ""تواصل مع الدعم"", ""مكالمة مع خدمة العملاء"", ""كلمني"", ""عايز رقم صاحب الشغل"", ""ممكن تليفون الإدارة""). Otherwise, set to false.
+- Set requestHuman to true ONLY if the customer explicitly requests to talk to a human, call a manager, transfer to support, says they want a human agent, asks for a responsible person's phone number, or clearly wants to pay / asks for payment methods / transfer details / Vodafone Cash / how to pay (e.g. ""عايز أكلم بني آدم"", ""تواصل مع الدعم"", ""مكالمة مع خدمة العملاء"", ""كلمني"", ""عايز رقم صاحب الشغل"", ""ممكن تليفون الإدارة"", ""عايز أدفع"", ""أدفع إزاي"", ""طرق الدفع"", ""رقم فودافون كاش""). Otherwise, set to false.
+- If the customer only asks about price/cost (e.g. ""السعر كام"", ""بكام"", ""التكلفة كام"") without saying they want to pay or asking for payment method, set requestHuman to false and answer with the exact price normally.
 
 Guidelines for blacklistCustomer:
 - Set blacklistCustomer to true ONLY if the customer confirms they have subscribed/registered in the paid course/session (e.g. ""اشتركت خلاص"", ""دفعت واشتركت"", ""سجلت في الكورس المدفوع"", ""نعم حضرت واشتركت""). Otherwise, set to false.
@@ -166,6 +176,14 @@ Guidelines for suggestedGroupBookingId (Auto-Booking):
 - If ALL groups are full (or no groups are listed), set to null and tell the customer there are no available slots currently.
 - When you set suggestedGroupBookingId, write a warm confirmation in replyContent telling the customer they have been registered successfully. The system will handle the actual booking automatically.
 - NEVER set suggestedGroupBookingId if the customer hasn't explicitly asked to book/register.
+- When suggestedGroupBookingId is null, suggestedGroupBookingPeople must be an empty array.
+- When suggestedGroupBookingId is set, each suggestedGroupBookingPeople entry must use this shape: { ""name"": ""person name or null"", ""phoneNumber"": ""phone supplied by customer or null"", ""isRequester"": true | false }.
+- suggestedGroupBookingPeople MUST list every person the customer explicitly wants registered in this booking. Use isRequester=true for the person currently chatting, and isRequester=false for a friend, relative, or any other person they are booking for.
+- If the customer is booking only for someone else, do NOT include the requester. Include only that other person with the exact name and phone number the customer supplied.
+- If the customer is booking for themselves and one or more other people, include the requester plus every additional person as separate array entries. Never merge two people into one entry.
+- For every person other than the requester, both the real name and mobile number are mandatory. If either is missing, do not set suggestedGroupBookingId and ask for the missing details instead. Never use the requester's phone, WhatsApp username, Messenger ID, or internal identifier for another person.
+- The requester's own mobile number may be used only for the requester. If they try to register a friend or any other person using the requester's number, do not set suggestedGroupBookingId; ask for that other person's own mobile number.
+- For the requester, set isRequester=true; name and phoneNumber may be null because the system resolves their verified customer record. Never copy an @lid value, username, PSID, or other platform identifier into phoneNumber.
 - NEVER mention any group that is marked as ""ممتلئة تماماً"" (full) to the customer.
 - STRICTOR VERIFICATION RULES (قوانين صارمة للتحقق من المواعيد وتغييرها):
   1. يُمنع منعاً باتاً الموافقة أو تأكيد أي حجز في موعد أو وقت غير متوفر في 'قائمة المجموعات المتاحة حالياً'. إذا طلب العميل موعداً غير متاح أو طلب تعديل الموعد لوقت آخر (مثل تغيير موعد من 4 إلى 5 ولا توجد مجموعة متاحة الساعة 5)، فلا تقل له 'تمام' أو 'ماشي' ولا تؤكد الحجز؛ بل وضح له بدقة ولطف المواعيد والتواريخ المتاحة فعلياً من القائمة واطلب منه الاختيار منها.
@@ -203,7 +221,7 @@ Guidelines for replyContent tone, style, and vocabulary:
 
 Guidelines for replyContent formatting and unity:
 - CRITICAL: Write a SINGLE cohesive response. Do NOT paste multiple different scripts, greeting scripts, or welcome templates together.
-- CRITICAL PRICING RULE: You MUST strictly use the exact pricing numbers from the reference knowledge base (e.g. 1000 EGP monthly subscription, 3000 EGP cash for the full 4-month course). NEVER invent, hallucinate, or change these numbers (e.g. do not say the price is 1500 EGP). If the customer asks about price, cost, fees, payment, ""السعر"", ""الأسعار"", ""بكام"", or similar, you MUST answer with the exact pricing numbers immediately. NEVER say pricing is decided after the free session, after level assessment, or after a trial session.
+- CRITICAL PRICING RULE: Use only the exact prices stated in this project's reference knowledge base. Never use examples, prices, offers, plans, or payment terms from another project. If this project's knowledge base does not contain the requested price, say that you will connect the customer with the team for the current details; never guess or invent a number.
 - Do NOT repeat greetings (e.g. do not say 'أهلاً' or 'مرحباً' or 'نورتنا' more than once in the same response).
 - Do NOT include multiple signature lines or repeat agent names (e.g. never output '- [AGENT_NAME] ✨' or '- [AGENT_NAME]' more than once).
 - If the reference knowledge base contains multiple templates, scripts, or FAQs, synthesize their facts into a single natural message.
@@ -510,6 +528,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     result.Entities ??= new CRMEntities();
                     result.Entities.Interests ??= Array.Empty<string>();
                     result.SuggestedButtons ??= Array.Empty<string>();
+                    result.SuggestedGroupBookingPeople ??= Array.Empty<SuggestedGroupBookingPerson>();
                     result.AIInsights ??= Array.Empty<string>();
                     if (string.IsNullOrEmpty(result.Label))
                     {

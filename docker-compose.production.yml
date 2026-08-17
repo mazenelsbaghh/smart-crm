@@ -31,6 +31,8 @@ services:
       Logging__LogLevel__Microsoft: Warning
       Logging__LogLevel__Microsoft.AspNetCore: Warning
       Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command: Warning
+      YOUTUBE_OAUTH_REDIRECT_URI: "${YOUTUBE_OAUTH_REDIRECT_URI:-https://n8n-mazen.online/api/quran/youtube/callback}"
+      TIKTOK_OAUTH_REDIRECT_URI: "${TIKTOK_OAUTH_REDIRECT_URI:-https://n8n-mazen.online/api/quran/tiktok/callback}"
 
   postgres:
     logging: *log-rotation

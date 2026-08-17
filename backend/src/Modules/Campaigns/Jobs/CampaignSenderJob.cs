@@ -87,7 +87,7 @@ namespace Modules.Campaigns.Jobs
             // Query matching customers for the project
             var query = _dbContext.Customers
                 .IgnoreQueryFilters()
-                .Where(c => c.ProjectId == campaign.ProjectId);
+                .Where(c => c.ProjectId == campaign.ProjectId && !c.IsBlacklisted);
 
             if (!string.IsNullOrEmpty(filterCity))
             {
@@ -172,10 +172,10 @@ namespace Modules.Campaigns.Jobs
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(c => c.Id == recipient.CustomerId);
 
-            if (customer == null)
+            if (customer == null || customer.IsBlacklisted)
             {
                 recipient.Status = RecipientStatus.Failed;
-                recipient.ErrorMessage = "Customer not found.";
+                recipient.ErrorMessage = customer == null ? "Customer not found." : "Customer opted out.";
                 await _dbContext.SaveChangesAsync();
                 return;
             }

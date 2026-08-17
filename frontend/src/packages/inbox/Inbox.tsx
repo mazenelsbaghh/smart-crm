@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { useToast } from '../../context/toast-context';
-import PhantomLoader from '../../components/shared/PhantomLoader';
 import { api } from '../../services/api';
 import { SignalRService } from '../../services/signalr';
 import { Conversation, Message } from '../../types/chat';
@@ -19,7 +18,7 @@ const statusLabels: Record<string, string> = {
 };
 
 export default function Inbox() {
-  const { activeProject } = useAuth();
+  const { activeProject, loading: authLoading, refreshProjects } = useAuth();
   const { showToast } = useToast();
   
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -31,6 +30,8 @@ export default function Inbox() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [updating, setUpdating] = useState(false);
 
   // AI Typing States
@@ -84,39 +85,62 @@ export default function Inbox() {
     }
   }, [activeConv]);
 
-  // Fetch conversations with channel=WhatsApp
-  const fetchConversations = async () => {
-    if (!activeProject) return;
-    try {
-      const response = await api.get<Conversation[]>(`/api/projects/${activeProject.id}/conversations`, {
-        params: {
-          status: filterStatus === 'All' ? undefined : filterStatus,
-          channel: 'WhatsApp',
-          search: debouncedSearchQuery || undefined,
-          limit: 20
-        }
-      });
-      setConversations(response.data);
-    } catch (e) {
-      console.error('Error loading WhatsApp conversations', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const activeProjectId = activeProject?.id;
+  const projectUnavailable = !authLoading && !activeProjectId;
 
+  // Bound the request so unstable mobile connections cannot leave the worklist suspended.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    const controller = new AbortController();
+
+    if (!activeProjectId) {
+      return () => controller.abort();
+    }
+
+    const fetchConversations = async () => {
+      setLoading(true);
+      setLoadError(null);
+
+      try {
+        const response = await api.get<Conversation[]>(`/api/projects/${activeProjectId}/conversations`, {
+          params: {
+            status: filterStatus === 'All' ? undefined : filterStatus,
+            channel: 'WhatsApp',
+            search: debouncedSearchQuery || undefined,
+            limit: 20
+          },
+          signal: controller.signal,
+          timeout: 15_000
+        });
+        setConversations(response.data);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error('Error loading WhatsApp conversations', error);
+        setLoadError('تعذر تحميل المحادثات. تحقق من الاتصال ثم أعد المحاولة.');
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    };
+
     fetchConversations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProject, filterStatus, debouncedSearchQuery]);
+    return () => controller.abort();
+  }, [activeProjectId, authLoading, filterStatus, debouncedSearchQuery, reloadToken]);
+
+  const retryConversations = async () => {
+    setLoadError(null);
+    setLoading(true);
+    if (!activeProjectId) {
+      await refreshProjects();
+    }
+    setReloadToken((current) => current + 1);
+  };
 
   const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
 
   // Fetch messages and customer details for active conversation
   useEffect(() => {
     if (!activeConv) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setActiveCustomer(null);
       return;
     }
     const fetchData = async () => {
@@ -134,6 +158,10 @@ export default function Inbox() {
     };
     fetchData();
   }, [activeConv]);
+
+  const displayedCustomer = activeConv && activeCustomer?.id === activeConv.customer.id
+    ? activeCustomer
+    : null;
 
   // SignalR for real-time updates
   useEffect(() => {
@@ -279,7 +307,7 @@ export default function Inbox() {
         return c;
       }));
 
-      showToast('تم تحديث بيانات العميل بنجاح ✨', 'success');
+      showToast('تم تحديث بيانات العميل بنجاح', 'success');
     } catch (e) {
       console.error('Failed to update CRM info', e);
       showToast('فشل تحديث بيانات العميل', 'error');
@@ -288,16 +316,10 @@ export default function Inbox() {
     }
   };
 
-  if (loading) return (
-    <PhantomLoader loading={true}>
-      <div style={{ height: '100vh' }} />
-    </PhantomLoader>
-  );
-
   return (
     <InboxLayout
       channel="WhatsApp"
-      customer={activeCustomer}
+      customer={displayedCustomer}
       conversations={conversations}
       activeConv={activeConv}
       setActiveConv={setActiveConv}
@@ -319,6 +341,11 @@ export default function Inbox() {
       messageEndRef={messageEndRef}
       onUpdateCustomer={handleUpdateCustomer}
       updating={updating}
+      loading={loading && !projectUnavailable}
+      loadError={projectUnavailable
+        ? 'تعذر تحديد المشروع النشط. أعد المحاولة لتحميل المحادثات.'
+        : loadError}
+      onRetryConversations={retryConversations}
     />
   );
 }

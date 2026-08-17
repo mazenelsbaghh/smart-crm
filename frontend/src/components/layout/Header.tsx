@@ -17,12 +17,15 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'light') {
-      document.body.classList.add('light-theme');
-      setIsLight(true);
-    } else {
-      document.body.classList.remove('light-theme');
+    if (savedTheme === 'dark') {
+      document.body.classList.add('dark-theme');
       setIsLight(false);
+    } else {
+      document.body.classList.remove('dark-theme');
+      setIsLight(true);
+      if (!savedTheme) {
+        localStorage.setItem('theme', 'light');
+      }
     }
   }, []);
 
@@ -30,10 +33,10 @@ export default function Header({ onMenuClick }: HeaderProps) {
     const nextTheme = !isLight;
     setIsLight(nextTheme);
     if (nextTheme) {
-      document.body.classList.add('light-theme');
+      document.body.classList.remove('dark-theme');
       localStorage.setItem('theme', 'light');
     } else {
-      document.body.classList.remove('light-theme');
+      document.body.classList.add('dark-theme');
       localStorage.setItem('theme', 'dark');
     }
   };

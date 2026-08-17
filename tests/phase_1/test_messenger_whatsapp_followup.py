@@ -257,6 +257,146 @@ async def test_messenger_to_whatsapp_transition():
 
 
 @pytest.mark.asyncio
+async def test_messenger_group_booking_requires_and_uses_customer_phone():
+    # Regression for the 2026-07-26 production incident where Messenger PSIDs were saved as booking phone numbers.
+    sender_psid = f"psid_{uuid.uuid4().hex[:8]}"
+    page_id = f"page_booking_{uuid.uuid4().hex[:6]}"
+    customer_phone = "201023456789"
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        project_response = await client.post(
+            f"{BASE_URL}/projects",
+            json={"name": "MessengerPhoneBookingProj"},
+        )
+        assert project_response.status_code == 201
+        project_id = project_response.json()["id"]
+        headers = {"X-Project-Id": project_id}
+
+        page_response = await client.post(
+            f"{BASE_URL}/projects/{project_id}/facebook/pages/confirm",
+            json={
+                "facebookPageId": page_id,
+                "pageName": "MockBookingPage",
+                "pageAccessToken": "mock_token",
+            },
+        )
+        assert page_response.status_code == 201
+
+        session_response = await client.post(
+            f"{BASE_URL}/whatsapp/session/mock",
+            json={
+                "projectId": project_id,
+                "status": "Connected",
+                "phoneNumber": "201111111111",
+            },
+        )
+        assert session_response.status_code == 200
+
+        group_response = await client.post(
+            f"{BASE_URL}/group-appointments",
+            headers=headers,
+            json={
+                "name": "مجموعة اختبار رقم الموبايل",
+                "dateTime": (datetime.utcnow() + timedelta(days=3)).isoformat() + "Z",
+                "capacity": 5,
+                "isActive": True,
+                "mode": "online",
+            },
+        )
+        assert group_response.status_code == 200
+        group_id = group_response.json()["id"]
+
+        ai_booking_response = {
+            "replyContent": "تم تسجيل الحجز.",
+            "intent": "booking",
+            "sentiment": "positive",
+            "replyStyle": "Sales",
+            "suggestedGroupBookingId": group_id,
+        }
+        settings_response = await client.put(
+            f"{BASE_URL}/projects/{project_id}/settings",
+            headers=headers,
+            json={
+                "messengerAiAutoReplyEnabled": True,
+                "aiAutoReplyEnabled": True,
+                "isGroupAppointmentsEnabled": True,
+                "geminiApiKey": "mock_json_" + json.dumps(ai_booking_response),
+            },
+        )
+        assert settings_response.status_code == 200
+
+        async def send_messenger_message(text):
+            response = await client.post(
+                f"{BASE_URL}/webhooks/facebook",
+                json={
+                    "object": "page",
+                    "entry": [
+                        {
+                            "id": page_id,
+                            "messaging": [
+                                {
+                                    "sender": {"id": sender_psid},
+                                    "recipient": {"id": page_id},
+                                    "timestamp": int(time.time() * 1000),
+                                    "message": {
+                                        "mid": f"msg_{uuid.uuid4().hex}",
+                                        "text": text,
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+            assert response.status_code == 200
+
+        await send_messenger_message("عايز أحجز في المجموعة")
+        await pytest.importorskip("asyncio").sleep(15.0)
+
+        groups_response = await client.get(
+            f"{BASE_URL}/group-appointments",
+            headers=headers,
+        )
+        assert groups_response.status_code == 200
+        group = next(item for item in groups_response.json() if item["id"] == group_id)
+        assert group["bookedCount"] == 0
+
+        conversations_response = await client.get(
+            f"{BASE_URL}/projects/{project_id}/conversations?channel=Messenger",
+            headers=headers,
+        )
+        assert conversations_response.status_code == 200
+        conversation_id = conversations_response.json()[0]["id"]
+        messages_response = await client.get(
+            f"{BASE_URL}/conversations/{conversation_id}/messages",
+            headers=headers,
+        )
+        assert messages_response.status_code == 200
+        outgoing_messages = [
+            message["content"]
+            for message in messages_response.json()
+            if message["direction"] == "Outgoing"
+        ]
+        assert any("رقم موبايلك" in message for message in outgoing_messages)
+
+        await send_messenger_message("رقمي هو 01023456789")
+        await pytest.importorskip("asyncio").sleep(12.0)
+
+        await send_messenger_message("تمام، احجزلي في المجموعة")
+        await pytest.importorskip("asyncio").sleep(15.0)
+
+        groups_response = await client.get(
+            f"{BASE_URL}/group-appointments",
+            headers=headers,
+        )
+        assert groups_response.status_code == 200
+        group = next(item for item in groups_response.json() if item["id"] == group_id)
+        assert group["bookedCount"] == 1
+        assert group["bookings"][0]["customerPhone"] == customer_phone
+        assert group["bookings"][0]["customerPhone"] != sender_psid
+
+
+@pytest.mark.asyncio
 async def test_followup_messenger_routing():
     # US3: Route scheduled follow-ups to Messenger if customer has no PhoneNumber but has FacebookPSID
     sender_psid = f"psid_{uuid.uuid4().hex[:8]}"

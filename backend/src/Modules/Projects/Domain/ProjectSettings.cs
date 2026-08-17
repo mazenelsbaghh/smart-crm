@@ -11,7 +11,7 @@ namespace Modules.Projects.Domain
         public bool AiAutoReplyEnabled { get; set; } = false;
         public string Timezone { get; set; } = "UTC";
         public string GeminiApiKey { get; set; } = string.Empty;
-        public string GeminiModel { get; set; } = "gemini-3.5-flash";
+        public string GeminiModel { get; set; } = "gemini-flash-latest";
         public string AiTonePreference { get; set; } = "العامية المصرية الروشة والصايعة";
         public string AiTargetAudience { get; set; } = "طلاب كورس كول سنتر يبحثون عن عمل";
         public int ReplyDelay { get; set; } = 3;
@@ -25,6 +25,9 @@ namespace Modules.Projects.Domain
         public string? AiBehaviorSettingsJson { get; set; }
         public bool IsWhatsAppGroupAutomationEnabled { get; set; } = false;
         public string GroupAutomationManagerPhone { get; set; } = "+201068690092";
+        public string ActiveInstructors { get; set; } = string.Empty;
+        public bool HumanTransferEnabled { get; set; } = false;
+        public string? HumanTransferPhone { get; set; }
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }

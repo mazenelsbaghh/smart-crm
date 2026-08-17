@@ -60,7 +60,16 @@ export default function PrivacyPolicy() {
 
         <section style={{ marginBottom: '30px' }}>
           <h2 style={{ fontSize: '1.35rem', fontWeight: 700, color: '#FFFFFF', marginBottom: '12px' }}>
-            3. طلب حذف البيانات (Data Deletion Instructions)
+            3. بيانات TikTok (TikTok Data)
+          </h2>
+          <p style={{ color: '#B0B0B0', fontSize: '0.95rem' }}>
+            عند ربط TikTok داخل استوديو «أكمل الآية»، نستخدم اسم الحساب ومعرّفه ورموز الوصول التي يمنحها المستخدم لإظهار الحساب المرتبط وإرسال الفيديو الذي يراجعه المستخدم إلى TikTok. تُحفظ الرموز بشكل مشفر على الخادم، ويمكن للمستخدم فصل حساب TikTok من الاستوديو لإزالة الربط.
+          </p>
+        </section>
+
+        <section style={{ marginBottom: '30px' }}>
+          <h2 style={{ fontSize: '1.35rem', fontWeight: 700, color: '#FFFFFF', marginBottom: '12px' }}>
+            4. طلب حذف البيانات (Data Deletion Instructions)
           </h2>
           <p style={{ color: '#B0B0B0', fontSize: '0.95rem', marginBottom: '10px' }}>
             نحن نحترم حقك الكامل في التحكم ببياناتك وحذفها في أي وقت. يمكنك إزالة أو إلغاء ربط صفحتك وحذف كافة البيانات المرتبطة بها بالطرق التالية:
@@ -74,7 +83,7 @@ export default function PrivacyPolicy() {
 
         <section style={{ marginBottom: '30px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', paddingTop: '20px' }}>
           <h2 style={{ fontSize: '1.35rem', fontWeight: 700, color: '#FFFFFF', marginBottom: '12px' }}>
-            4. معلومات الاتصال (Contact Information)
+            5. معلومات الاتصال (Contact Information)
           </h2>
           <p style={{ color: '#B0B0B0', fontSize: '0.95rem' }}>
             إذا كان لديك أي استفسار بخصوص سياسة الخصوصية أو معالجة البيانات، يرجى التواصل معنا عبر البريد الإلكتروني: <a href="mailto:mazenelsbagh12@gmail.com" style={{ color: '#D8F15D', textDecoration: 'none' }}>mazenelsbagh12@gmail.com</a>

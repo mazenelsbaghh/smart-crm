@@ -17,6 +17,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const PROJECT_REQUEST_TIMEOUT_MS = 15_000;
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -38,7 +39,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         // Fetch projects list
         try {
-          const response = await api.get<Project[]>('/api/projects');
+          const response = await api.get<Project[]>('/api/projects', {
+            timeout: PROJECT_REQUEST_TIMEOUT_MS,
+          });
           setProjects(response.data);
           
           // If no active project or stored project is not in list, set first
@@ -79,7 +82,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(response.user);
       
       // Fetch projects
-      const projectsResponse = await api.get<Project[]>('/api/projects');
+      const projectsResponse = await api.get<Project[]>('/api/projects', {
+        timeout: PROJECT_REQUEST_TIMEOUT_MS,
+      });
       setProjects(projectsResponse.data);
       if (projectsResponse.data.length > 0) {
         const defaultProj = projectsResponse.data[0];
@@ -117,14 +122,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshProjects = async () => {
     try {
-      const response = await api.get<Project[]>('/api/projects');
+      const response = await api.get<Project[]>('/api/projects', {
+        timeout: PROJECT_REQUEST_TIMEOUT_MS,
+      });
       setProjects(response.data);
-      if (activeProject) {
-        const fresh = response.data.find((p) => p.id === activeProject.id);
-        if (fresh) {
-          setActiveProject(fresh);
-          authService.setActiveProject(fresh);
-        }
+      const freshActiveProject = activeProject
+        ? response.data.find((p) => p.id === activeProject.id)
+        : null;
+      const nextActiveProject = freshActiveProject ?? response.data[0] ?? null;
+
+      if (nextActiveProject) {
+        setActiveProject(nextActiveProject);
+        authService.setActiveProject(nextActiveProject);
+      } else {
+        setActiveProject(null);
       }
     } catch (e) {
       console.error('Failed to refresh projects list', e);

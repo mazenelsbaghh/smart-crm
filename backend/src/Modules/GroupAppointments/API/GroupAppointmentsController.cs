@@ -13,6 +13,9 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using FirebaseAdmin.Messaging;
 using StackExchange.Redis;
+using Hangfire;
+using Modules.CRM.Services;
+using Shared.Queue;
 
 namespace Modules.GroupAppointments.API
 {
@@ -71,6 +74,9 @@ namespace Modules.GroupAppointments.API
                 g.IsActive,
                 g.Days,
                 g.Mode,
+                g.InstructorName,
+                g.FreeSessionDateTime,
+                g.CourseSecondDateTime,
                 g.CreatedAt,
                 g.UpdatedAt,
                 BookedCount = g.Bookings.Count,
@@ -89,6 +95,92 @@ namespace Modules.GroupAppointments.API
             return Ok(result);
         }
 
+        [HttpGet("group-appointments/automation-overview")]
+        public async Task<IActionResult> GetAutomationOverview()
+        {
+            var projectId = _tenantContext.ProjectId;
+            var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+
+            var groups = await _context.GroupAppointments
+                .Include(g => g.Bookings)
+                .OrderBy(g => g.DateTime)
+                .ToListAsync();
+
+            var groupBookingIds = groups
+                .SelectMany(g => g.Bookings.Select(b => new { g.Id, b.CustomerId }))
+                .ToList();
+
+            var customerIds = groupBookingIds.Select(b => b.CustomerId).Distinct().ToList();
+            var pendingFollowUps = await _context.FollowUps
+                .Where(f => f.ProjectId == projectId && f.Status == "Pending" && customerIds.Contains(f.CustomerId))
+                .ToListAsync();
+
+            var isAutomationEnabled = settings?.IsWhatsAppGroupAutomationEnabled ?? false;
+            var groupRows = groups.Select(group =>
+            {
+                var bookingCustomerIds = group.Bookings.Select(b => b.CustomerId).ToHashSet();
+                var pendingFollowUpCount = pendingFollowUps.Count(f =>
+                    bookingCustomerIds.Contains(f.CustomerId) &&
+                    f.AppointmentTime.HasValue &&
+                    f.AppointmentTime.Value == group.DateTime);
+                var hasWhatsAppGroup = !string.IsNullOrWhiteSpace(group.WhatsAppGroupJid);
+                var followUpStatus = !group.IsActive
+                    ? "inactive"
+                    : !isAutomationEnabled
+                    ? "disabled"
+                    : pendingFollowUpCount > 0
+                        ? "active"
+                        : hasWhatsAppGroup && group.Bookings.Count > 0
+                            ? "created-no-pending"
+                            : "waiting";
+
+                return new
+                {
+                    group.Id,
+                    group.Name,
+                    group.Mode,
+                    group.DateTime,
+                    group.IsActive,
+                    group.Capacity,
+                    group.WhatsAppGroupJid,
+                    group.WhatsAppGroupInviteLink,
+                    BookedCount = group.Bookings.Count,
+                    HasWhatsAppGroup = hasWhatsAppGroup,
+                    PendingFollowUpCount = pendingFollowUpCount,
+                    FollowUpStatus = followUpStatus
+                };
+            }).ToList();
+
+            return Ok(new
+            {
+                IsEnabled = settings?.IsWhatsAppGroupAutomationEnabled ?? false,
+                ManagerPhone = settings?.GroupAutomationManagerPhone ?? string.Empty,
+                TotalGroups = groups.Count,
+                ActiveGroups = groups.Count(g => g.IsActive),
+                InactiveGroups = groups.Count(g => !g.IsActive),
+                WhatsAppGroupsCreated = groups.Count(g => !string.IsNullOrWhiteSpace(g.WhatsAppGroupJid)),
+                TotalBookings = groups.Sum(g => g.Bookings.Count),
+                TotalBookingsInWhatsAppGroups = groups
+                    .Where(g => !string.IsNullOrWhiteSpace(g.WhatsAppGroupJid))
+                    .Sum(g => g.Bookings.Count),
+                PendingFollowUps = groupRows.Sum(g => g.PendingFollowUpCount),
+                Groups = groupRows
+            });
+        }
+
+        [HttpPost("group-appointments/automation/run-now")]
+        public IActionResult RunAutomationNow()
+        {
+            var jobId = BackgroundJob.Enqueue<FollowUpScheduler>(
+                scheduler => scheduler.RunWhatsAppGroupAutomationLifecycleJobAsync());
+
+            return Accepted(new
+            {
+                Message = "WhatsApp group automation lifecycle job queued.",
+                JobId = jobId
+            });
+        }
+
         [HttpPost("group-appointments")]
         public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest request)
         {
@@ -101,7 +193,10 @@ namespace Modules.GroupAppointments.API
                 Capacity = request.Capacity,
                 IsActive = request.IsActive,
                 Days = request.Days ?? string.Empty,
-                Mode = mode
+                Mode = mode,
+                InstructorName = request.InstructorName?.Trim() ?? string.Empty,
+                FreeSessionDateTime = ToUtcOrNull(request.FreeSessionDateTime),
+                CourseSecondDateTime = ToUtcOrNull(request.CourseSecondDateTime)
             };
 
             _context.GroupAppointments.Add(group);
@@ -140,6 +235,18 @@ namespace Modules.GroupAppointments.API
                 {
                     group.Name = request.Mode == "online" ? "أونلاين" : "في السنتر";
                 }
+            }
+            if (request.InstructorName != null)
+            {
+                group.InstructorName = request.InstructorName.Trim();
+            }
+            if (request.FreeSessionDateTime.HasValue)
+            {
+                group.FreeSessionDateTime = DateTime.SpecifyKind(request.FreeSessionDateTime.Value, DateTimeKind.Utc);
+            }
+            if (request.CourseSecondDateTime.HasValue)
+            {
+                group.CourseSecondDateTime = DateTime.SpecifyKind(request.CourseSecondDateTime.Value, DateTimeKind.Utc);
             }
 
             _context.Entry(group).State = EntityState.Modified;
@@ -222,6 +329,8 @@ namespace Modules.GroupAppointments.API
 
             if (booking == null) return NotFound();
 
+            var previousPaid = booking.IsPaid;
+            var previousAttended = booking.IsAttended;
             if (request.IsAttended.HasValue)
             {
                 booking.IsAttended = request.IsAttended.Value;
@@ -247,6 +356,12 @@ namespace Modules.GroupAppointments.API
             }
 
             _context.Entry(booking).State = EntityState.Modified;
+            if (previousPaid != booking.IsPaid || previousAttended != booking.IsAttended)
+                IntegrationOutbox.Enqueue(_context, new AdvertisingBookingOutcomeChanged
+                {
+                    ProjectId = booking.ProjectId, BookingId = booking.Id, CustomerId = booking.CustomerId,
+                    IsPaid = booking.IsPaid, IsAttended = booking.IsAttended, Value = 0m, Currency = "EGP"
+                });
             await _context.SaveChangesAsync();
 
             // Broadcast SignalR update
@@ -325,6 +440,9 @@ namespace Modules.GroupAppointments.API
                 g.DateTime,
                 g.Capacity,
                 g.Mode,
+                g.InstructorName,
+                g.FreeSessionDateTime,
+                g.CourseSecondDateTime,
                 BookedCount = g.Bookings.Count,
                 SlotsLeft = Math.Max(0, g.Capacity - g.Bookings.Count)
             });
@@ -448,6 +566,11 @@ namespace Modules.GroupAppointments.API
                 };
 
                 _context.GroupAppointmentBookings.Add(booking);
+                IntegrationOutbox.Enqueue(_context, new AdvertisingBookingOutcomeChanged
+                {
+                    ProjectId = request.ProjectId, BookingId = booking.Id, CustomerId = customer.Id,
+                    IsPaid = false, IsAttended = false, Value = 0m, Currency = "EGP"
+                });
                 await _context.SaveChangesAsync();
             }
 
@@ -543,6 +666,40 @@ namespace Modules.GroupAppointments.API
             });
         }
 
+        [HttpGet("group-appointments/instructors")]
+        public async Task<IActionResult> GetInstructors()
+        {
+            var projectId = _tenantContext.ProjectId;
+            var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            var instructors = SplitInstructors(settings?.ActiveInstructors);
+            return Ok(new { instructors });
+        }
+
+        [HttpPut("group-appointments/instructors")]
+        public async Task<IActionResult> UpdateInstructors([FromBody] UpdateInstructorsRequest request)
+        {
+            var projectId = _tenantContext.ProjectId;
+            var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            if (settings == null)
+            {
+                return NotFound(new { error = "Settings not found for this project" });
+            }
+
+            var instructors = (request.Instructors ?? Array.Empty<string>())
+                .Select(i => i.Trim())
+                .Where(i => !string.IsNullOrWhiteSpace(i))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(100)
+                .ToArray();
+
+            settings.ActiveInstructors = string.Join("\n", instructors);
+            settings.UpdatedAt = DateTime.UtcNow;
+            _context.Entry(settings).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { instructors });
+        }
+
         private async Task<GroupAppointment?> AdjustGroupIfPassedAsync(GroupAppointment group, string timezone)
         {
             var projectZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone(timezone);
@@ -565,6 +722,20 @@ namespace Modules.GroupAppointments.API
             }
             return group;
         }
+
+        private static DateTime? ToUtcOrNull(DateTime? value)
+        {
+            return value.HasValue ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc) : null;
+        }
+
+        private static string[] SplitInstructors(string? value)
+        {
+            return (value ?? string.Empty)
+                .Split(new[] { '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(i => !string.IsNullOrWhiteSpace(i))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
     }
 
     public class CreateGroupRequest
@@ -575,6 +746,9 @@ namespace Modules.GroupAppointments.API
         public bool IsActive { get; set; } = true;
         public string? Days { get; set; }
         public string? Mode { get; set; }
+        public string? InstructorName { get; set; }
+        public DateTime? FreeSessionDateTime { get; set; }
+        public DateTime? CourseSecondDateTime { get; set; }
     }
 
     public class UpdateGroupRequest
@@ -585,6 +759,9 @@ namespace Modules.GroupAppointments.API
         public bool? IsActive { get; set; }
         public string? Days { get; set; }
         public string? Mode { get; set; }
+        public string? InstructorName { get; set; }
+        public DateTime? FreeSessionDateTime { get; set; }
+        public DateTime? CourseSecondDateTime { get; set; }
     }
 
     public class PublicBookRequest
@@ -599,5 +776,10 @@ namespace Modules.GroupAppointments.API
     {
         public bool? IsAttended { get; set; }
         public bool? IsPaid { get; set; }
+    }
+
+    public class UpdateInstructorsRequest
+    {
+        public string[]? Instructors { get; set; }
     }
 }

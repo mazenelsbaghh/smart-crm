@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+  <rect width="1080" height="1920" fill="#18372d"/>
+  <circle cx="900" cy="420" r="520" fill="none" stroke="#d6b75b" stroke-opacity=".28" stroke-width="3"/>
+  <text x="540" y="500" fill="#d6b75b" font-family="Cairo, sans-serif" font-size="42" text-anchor="middle">الإجابة الصحيحة</text>
+  <text x="540" y="665" fill="#f4edd9" font-family="Cairo, sans-serif" font-size="55" font-weight="700" text-anchor="middle">الَّذِينَ يُؤْمِنُونَ بِالْغَيْبِ وَيُقِيمُونَ</text>
+  <text x="540" y="790" fill="#d6b75b" font-family="Cairo, sans-serif" font-size="72" font-weight="700" text-anchor="middle">الصَّلَاةَ</text>
+  <text x="540" y="915" fill="#f4edd9" font-family="Cairo, sans-serif" font-size="48" font-weight="700" text-anchor="middle">وَمِمَّا رَزَقْنَاهُمْ يُنْفِقُونَ</text>
+  <rect x="130" y="1115" width="820" height="138" rx="30" fill="#2f624b" stroke="#d6b75b" stroke-width="3"/>
+  <text x="540" y="1205" fill="#fff7df" font-family="Cairo, sans-serif" font-size="46" font-weight="700" text-anchor="middle">ب · الصَّلَاةَ ✓</text>
+  <text x="540" y="1765" fill="#f4edd9" fill-opacity=".78" font-family="Cairo, sans-serif" font-size="32" text-anchor="middle">سورة البقرة · الآية ٣</text>
+</svg>

@@ -15,8 +15,14 @@ using Hangfire.PostgreSql;
 using Serilog;
 using FirebaseAdmin;
 using Google.Apis.Auth.OAuth2;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+if (!builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("Advertising:Meta:UseMock"))
+{
+    throw new InvalidOperationException("Advertising Meta mock provider is restricted to Development.");
+}
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -55,6 +61,13 @@ else
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
+builder.Services.AddHttpClient();
+
+var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, "data-protection-keys");
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath))
+    .SetApplicationName("SmartCustomerCore");
 
 var allowedCorsOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
@@ -124,6 +137,48 @@ builder.Services.AddHangfireServer(options =>
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 builder.Services.AddScoped<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<IJwtService, JwtService>();
+builder.Services.AddScoped<IProjectAuthorizationService, ProjectAuthorizationService>();
+
+builder.Services.Configure<Modules.Advertising.Services.AdvertisingOptions>(
+    builder.Configuration.GetSection(Modules.Advertising.Services.AdvertisingOptions.SectionName));
+builder.Services.AddScoped<Modules.Advertising.Services.AdvertisingSecretVault>();
+builder.Services.AddScoped<Modules.Advertising.Services.AdvertisingReadinessService>();
+builder.Services.AddScoped<Modules.Advertising.Services.ConversionIngressService>();
+builder.Services.AddScoped<Modules.Advertising.Services.ConversionLedgerService>();
+builder.Services.AddScoped<Modules.Advertising.Services.FacebookAdsOAuthService>();
+builder.Services.AddScoped<Modules.Advertising.Services.ExistingCampaignImportService>();
+builder.Services.AddScoped<Modules.Advertising.Services.AdvertisingSafetyEngine>();
+builder.Services.AddScoped<Modules.Advertising.Services.IProjectAiConfigurationProvider, Modules.Advertising.Services.ProjectAiConfigurationProvider>();
+builder.Services.AddScoped<Modules.Advertising.Services.AdvertisingDecisionAi>();
+builder.Services.AddScoped<Modules.Advertising.Services.AdvertisingDecisionService>();
+builder.Services.AddScoped<Modules.Advertising.Services.AllocationPolicyService>();
+builder.Services.AddSingleton<Modules.Advertising.Services.AdvertisingEvidenceService>();
+builder.Services.AddScoped<Modules.Advertising.Workers.AdvertisingCommandWorker>();
+builder.Services.AddScoped<Modules.Advertising.Jobs.AdvertisingRecurringJobs>();
+builder.Services.AddScoped<Modules.Advertising.Jobs.AdvertisingRetentionJob>();
+builder.Services.AddScoped<Modules.Advertising.Workers.KnowledgeProjectionConsumer>();
+builder.Services.AddScoped<Modules.Advertising.Workers.MediaProjectionConsumer>();
+builder.Services.AddScoped<Modules.Advertising.Workers.BusinessOutcomeConsumer>();
+builder.Services.AddScoped<Shared.Queue.IntegrationOutboxDispatcher>();
+var metaClient = builder.Services.AddHttpClient<Modules.Advertising.Infrastructure.Facebook.MetaAdsClient>((sp, client) =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var version = config["Advertising:Meta:GraphApiVersion"] ?? config["FACEBOOK_GRAPH_API_VERSION"] ?? "v25.0";
+    client.BaseAddress = new Uri($"https://graph.facebook.com/{version.Trim('/')}/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("Advertising:Meta:UseMock"))
+    metaClient.ConfigurePrimaryHttpMessageHandler(() => new Modules.Advertising.Infrastructure.Facebook.FakeMetaAdsHandler());
+var metaInsightsClient = builder.Services.AddHttpClient<Modules.Advertising.Infrastructure.Facebook.MetaInsightsClient>((sp, client) =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var version = config["Advertising:Meta:GraphApiVersion"] ?? config["FACEBOOK_GRAPH_API_VERSION"] ?? "v25.0";
+    client.BaseAddress = new Uri($"https://graph.facebook.com/{version.Trim('/')}/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("Advertising:Meta:UseMock"))
+    metaInsightsClient.ConfigurePrimaryHttpMessageHandler(() => new Modules.Advertising.Infrastructure.Facebook.FakeMetaAdsHandler());
+builder.Services.AddSingleton<Modules.Advertising.Services.BudgetAllocator>();
 
 // Register Redis Connection Multiplexer
 builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(sp =>
@@ -146,6 +201,9 @@ builder.Services.AddSingleton<Elastic.Clients.Elasticsearch.ElasticsearchClient>
 // Register Conversations Aggregator
 builder.Services.AddScoped<Modules.Conversations.Services.IMessageAggregator, Modules.Conversations.Services.MessageAggregator>();
 builder.Services.AddScoped<Modules.Conversations.Services.IAssignmentEngine, Modules.Conversations.Services.AssignmentEngine>();
+builder.Services.AddScoped<Modules.Conversations.Services.CustomerOptOutService>();
+builder.Services.AddScoped<Modules.Conversations.Jobs.UnansweredConversationRecoveryJob>();
+builder.Services.AddScoped<Modules.Conversations.Jobs.WhatsAppLidContactRecoveryJob>();
 
 // Register Media Services
 builder.Services.AddSingleton<Modules.Media.Services.IMinIoStorageService, Modules.Media.Services.MinIoStorageService>();
@@ -213,6 +271,22 @@ builder.Services.AddScoped<Modules.Facebook.Workers.FacebookReplySender>();
 
 // Register CRM/Follow-up Hosted Services
 builder.Services.AddHostedService<Modules.CRM.Services.FollowUpScheduler>();
+builder.Services.AddSingleton<Modules.QuranChallenge.Services.YouTubeOAuthClient>();
+builder.Services.AddSingleton<Modules.QuranChallenge.Services.YouTubeUploadClient>();
+builder.Services.AddSingleton<Modules.QuranChallenge.Services.YouTubeTokenVault>();
+builder.Services.AddSingleton<Modules.QuranChallenge.Services.YouTubeConnectionService>();
+builder.Services.AddSingleton<Modules.QuranChallenge.Services.YouTubePublishingClient>();
+builder.Services.AddSingleton<Modules.QuranChallenge.Services.FacebookReelsUploadClient>();
+builder.Services.AddSingleton<Modules.QuranChallenge.Services.TikTokApiClient>();
+builder.Services.AddSingleton<Modules.QuranChallenge.Services.TikTokTokenVault>();
+builder.Services.AddScoped<Modules.QuranChallenge.Services.TikTokConnectionService>();
+builder.Services.AddScoped<Modules.QuranChallenge.Services.QuranVideoGenerator>();
+builder.Services.AddScoped<Modules.QuranChallenge.Services.QuranVideoPublisher>();
+builder.Services.AddScoped<Modules.QuranChallenge.Services.QuranFacebookPublisher>();
+builder.Services.AddScoped<Modules.QuranChallenge.Services.QuranTikTokPublisher>();
+builder.Services.AddScoped<Modules.QuranChallenge.Jobs.QuranTikTokPublishJob>();
+builder.Services.AddHostedService<Modules.QuranChallenge.Jobs.QuranYouTubeScheduler>();
+builder.Services.AddHostedService<Modules.QuranChallenge.Jobs.QuranFacebookScheduler>();
 
 // Register RabbitMQ Event Bus as a singleton
 builder.Services.AddSingleton<IEventBus, RabbitMQEventBus>();
@@ -250,19 +324,21 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("✅ Database migrations applied successfully.");
         await DbSeeder.SeedAsync(context, passwordHasher);
 
-        // One-time startup routine to re-chunk all existing documents using the new paragraph-based logic
-        Console.WriteLine("⏳ Starting startup Knowledge Base re-chunking...");
+        // Backfill only missing knowledge chunks. Do not re-embed all documents on every restart.
+        Console.WriteLine("⏳ Checking Knowledge Base chunks...");
         var documents = await context.KnowledgeDocuments.IgnoreQueryFilters().ToListAsync();
         var geminiClient = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IGeminiClient>();
         int totalChunksCreated = 0;
         foreach (var doc in documents)
         {
-            var oldChunks = await context.KnowledgeChunks
+            var hasChunks = await context.KnowledgeChunks
                 .IgnoreQueryFilters()
-                .Where(c => c.KnowledgeDocumentId == doc.Id)
-                .ToListAsync();
-            context.KnowledgeChunks.RemoveRange(oldChunks);
-            await context.SaveChangesAsync();
+                .AnyAsync(c => c.KnowledgeDocumentId == doc.Id);
+
+            if (hasChunks)
+            {
+                continue;
+            }
 
             var paragraphs = doc.Content.Split(new[] { "\r\n\r\n", "\n\n", "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
             var currentChunk = new System.Text.StringBuilder();
@@ -308,7 +384,7 @@ using (var scope = app.Services.CreateScope())
             }
             await context.SaveChangesAsync();
         }
-        Console.WriteLine($"✅ Startup Knowledge Base re-chunking complete. Re-chunked {documents.Count} documents, created {totalChunksCreated} chunks.");
+        Console.WriteLine($"✅ Knowledge Base chunk check complete. Created {totalChunksCreated} missing chunks.");
     }
     catch (Exception ex)
     {
@@ -327,6 +403,12 @@ using (var scope = app.Services.CreateScope())
     eventBus.Subscribe<Shared.Events.ConversationClosedEvent, Modules.Customers.Workers.CustomerMemoryWorker>();
     eventBus.Subscribe<Shared.Events.EntityIndexedEvent, Modules.Search.Workers.ElasticsearchIndexerWorker>();
     eventBus.Subscribe<Shared.Events.AIReplyGeneratedEvent, Modules.Facebook.Workers.FacebookReplySender>();
+    eventBus.Subscribe<Shared.Events.KnowledgePublishedChangedEvent, Modules.Advertising.Workers.KnowledgeProjectionConsumer>();
+    eventBus.Subscribe<Shared.Queue.AdvertisingProjectAssetChanged, Modules.Advertising.Workers.MediaProjectionConsumer>();
+    eventBus.Subscribe<Shared.Queue.AdvertisingDealOutcomeChanged, Modules.Advertising.Workers.BusinessOutcomeConsumer>();
+    eventBus.Subscribe<Shared.Queue.AdvertisingBookingOutcomeChanged, Modules.Advertising.Workers.BusinessOutcomeConsumer>();
+    eventBus.Subscribe<Shared.Queue.AdvertisingQualifiedMessageChanged, Modules.Advertising.Workers.BusinessOutcomeConsumer>();
+    eventBus.Subscribe<Shared.Queue.AdvertisingProjectLifecycleChanged, Modules.Advertising.Jobs.AdvertisingRetentionJob>();
 }
 
 // Register Hangfire Daily Analytics snapshot recurring job
@@ -334,6 +416,21 @@ using (var scope = app.Services.CreateScope())
 {
     var manager = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
     manager.AddOrUpdate<Modules.Analytics.Jobs.DailyAnalyticsJob>("daily-analytics-snapshot", job => job.ExecuteAsync(), Cron.Daily);
+    manager.AddOrUpdate<Modules.Conversations.Jobs.UnansweredConversationRecoveryJob>("recover-unanswered-conversations", job => job.ExecuteAsync(CancellationToken.None), Cron.Minutely);
+    manager.AddOrUpdate<Modules.Conversations.Jobs.WhatsAppLidContactRecoveryJob>("recover-whatsapp-lid-contacts", job => job.ExecuteAsync(CancellationToken.None), "*/10 * * * *");
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-conversion-delivery", job => job.DeliverConversionsAsync(), Cron.Minutely);
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-spend-monitor", job => job.MonitorSpendAsync(), "*/5 * * * *");
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-provider-sync", job => job.SynchronizeAsync(), "*/10 * * * *");
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-insights", job => job.PullInsightsAsync(), "7,37 * * * *");
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-tracking-health", job => job.CheckTrackingAsync(), "*/15 * * * *");
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-decision-cycle", job => job.RunDecisionCycleAsync(), Cron.Hourly);
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-creative-fatigue", job => job.EvaluateFatigueAsync(), "17 */6 * * *");
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-daily-rebalance", job => job.RebalanceAsync(), "0 1 * * *"); // 04:00 Cairo (UTC+3)
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-impact-review", job => job.ReviewImpactAsync(), "11 */2 * * *");
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-new-tests", job => job.CreateTestsAsync(), "23 2 */2 * *");
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRecurringJobs>("ads-strategy-review", job => job.AnalyzeStrategyAsync(), "31 3 * * 1");
+    manager.AddOrUpdate<Shared.Queue.IntegrationOutboxDispatcher>("integration-outbox", job => job.DispatchAsync(CancellationToken.None), Cron.Minutely);
+    manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingRetentionJob>("ads-retention", job => job.CompactAsync(), "43 2 * * *");
 }
 
 app.Run();

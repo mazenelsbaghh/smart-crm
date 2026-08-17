@@ -329,9 +329,17 @@ namespace Modules.CRM.Services
                 @event.FollowUpNeeded = false;
             }
 
+            if (customer.IsBlacklisted)
+            {
+                Console.WriteLine($"[CRMAutoUpdateEngine] Overriding FollowUpNeeded to false because customer {@event.CustomerId} is blacklisted.");
+                @event.FollowUpNeeded = false;
+            }
+
             // Process Suggested Follow-up
             var existingFollowUp = await _context.FollowUps
-                .FirstOrDefaultAsync(f => f.CustomerId == @event.CustomerId && f.Status == "Pending");
+                .Where(f => f.ProjectId == @event.ProjectId && f.CustomerId == @event.CustomerId && f.Status == "Pending")
+                .OrderByDescending(f => f.CreatedAt)
+                .FirstOrDefaultAsync();
 
             if (@event.FollowUpNeeded)
             {

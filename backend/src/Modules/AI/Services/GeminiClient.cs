@@ -38,6 +38,10 @@ namespace Modules.AI.Services
                 "gemini-2.5-flash-lite" => "gemini-2.5-flash-lite",
                 "gemini-3.1-flash-lite" => "gemini-3.1-flash-lite",
                 "gemini-3.5-flash" => "gemini-3.5-flash",
+                "gemini-3.5-flash-lite" => "gemini-3.5-flash-lite",
+                "gemini-3.6-flash" => "gemini-3.6-flash",
+                "gemini-flash-latest" => "gemini-flash-latest",
+                "gemini-flash-lite-latest" => "gemini-flash-lite-latest",
                 _ => "gemini-3.5-flash"
             };
         }

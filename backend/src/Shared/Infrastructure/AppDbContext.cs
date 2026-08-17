@@ -44,6 +44,36 @@ namespace Shared.Infrastructure
         public DbSet<Modules.GroupAppointments.Domain.GroupAppointment> GroupAppointments { get; set; }
         public DbSet<Modules.GroupAppointments.Domain.GroupAppointmentBooking> GroupAppointmentBookings { get; set; }
         public DbSet<Modules.Facebook.Domain.ConnectedPage> ConnectedPages { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingConnection> AdvertisingConnections { get; set; }
+        public DbSet<Modules.Advertising.Domain.AutonomyEnvelope> AutonomyEnvelopes { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingProfile> AdvertisingProfiles { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingOffer> AdvertisingOffers { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingFactSource> AdvertisingFactSources { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingPromotion> AdvertisingPromotions { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingCreative> AdvertisingCreatives { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingCreativeVariant> AdvertisingCreativeVariants { get; set; }
+        public DbSet<Modules.Advertising.Domain.ManagedAdvertisement> ManagedAdvertisements { get; set; }
+        public DbSet<Modules.Advertising.Domain.BudgetPeriodLedger> AdvertisingBudgetLedgers { get; set; }
+        public DbSet<Modules.Advertising.Domain.BudgetAllocation> AdvertisingBudgetAllocations { get; set; }
+        public DbSet<Modules.Advertising.Domain.InsightsSnapshot> AdvertisingInsights { get; set; }
+        public DbSet<Modules.Advertising.Domain.ConversionSourceEvent> AdvertisingConversionSourceEvents { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingWebhookSource> AdvertisingWebhookSources { get; set; }
+        public DbSet<Modules.Advertising.Domain.CanonicalConversion> AdvertisingConversions { get; set; }
+        public DbSet<Modules.Advertising.Domain.ConversionAdjustment> AdvertisingConversionAdjustments { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingAttributionTouch> AdvertisingAttributionTouches { get; set; }
+        public DbSet<Modules.Advertising.Domain.ConversionDeliveryAttempt> AdvertisingConversionDeliveryAttempts { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingDecision> AdvertisingDecisions { get; set; }
+        public DbSet<Modules.Advertising.Domain.DecisionReview> AdvertisingDecisionReviews { get; set; }
+        public DbSet<Modules.Advertising.Domain.ExecutionCommand> AdvertisingExecutionCommands { get; set; }
+        public DbSet<Modules.Advertising.Domain.TrackingIncident> TrackingIncidents { get; set; }
+        public DbSet<Modules.Advertising.Domain.EmergencyStopRecord> AdvertisingEmergencyStops { get; set; }
+        public DbSet<Modules.Advertising.Domain.AdvertisingCycleRun> AdvertisingCycleRuns { get; set; }
+        public DbSet<IntegrationOutboxMessage> IntegrationOutboxMessages { get; set; }
+        public DbSet<IntegrationInboxReceipt> IntegrationInboxReceipts { get; set; }
+
+        public DbSet<Modules.QuranChallenge.Domain.QuranYouTubeSettings> QuranYouTubeSettings { get; set; }
+        public DbSet<Modules.QuranChallenge.Domain.QuranFacebookSettings> QuranFacebookSettings { get; set; }
+        public DbSet<Modules.QuranChallenge.Domain.QuranTikTokSettings> QuranTikTokSettings { get; set; }
 
         public Guid CurrentProjectId => _tenantContext.ProjectId;
 
@@ -71,6 +101,9 @@ namespace Shared.Infrastructure
                 .HasForeignKey(m => m.AssetId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            modelBuilder.Entity<Modules.Conversations.Domain.Customer>()
+                .HasIndex(customer => new { customer.ProjectId, customer.WhatsAppLid });
+
             modelBuilder.Entity<Modules.GroupAppointments.Domain.GroupAppointment>()
                 .HasMany(g => g.Bookings)
                 .WithOne(b => b.GroupAppointment)
@@ -83,6 +116,56 @@ namespace Shared.Infrastructure
             modelBuilder.Entity<Modules.Facebook.Domain.ConnectedPage>()
                 .HasIndex(cp => cp.FacebookPageId)
                 .IsUnique();
+
+            modelBuilder.Entity<Modules.QuranChallenge.Domain.QuranYouTubeSettings>()
+                .HasIndex(settings => settings.ProjectId)
+                .IsUnique();
+
+            modelBuilder.Entity<Modules.QuranChallenge.Domain.QuranFacebookSettings>()
+                .HasIndex(settings => settings.ProjectId)
+                .IsUnique();
+
+            modelBuilder.Entity<Modules.QuranChallenge.Domain.QuranTikTokSettings>()
+                .HasIndex(settings => settings.ProjectId)
+                .IsUnique();
+
+            modelBuilder.Entity<Modules.Advertising.Domain.AdvertisingConnection>()
+                .HasIndex(x => new { x.ProjectId, x.Provider }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.AutonomyEnvelope>()
+                .HasIndex(x => new { x.ProjectId, x.State });
+            modelBuilder.Entity<Modules.Advertising.Domain.AdvertisingFactSource>()
+                .HasIndex(x => new { x.ProjectId, x.ProfileId, x.FactName });
+            modelBuilder.Entity<Modules.Advertising.Domain.ConversionSourceEvent>()
+                .HasIndex(x => new { x.ProjectId, x.SourceSystem, x.ExternalEventId }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.AdvertisingWebhookSource>()
+                .HasIndex(x => new { x.ProjectId, x.SourceKey }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.CanonicalConversion>()
+                .HasIndex(x => new { x.ProjectId, x.CanonicalKey }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.AdvertisingCreativeVariant>()
+                .HasIndex(x => new { x.ProjectId, x.CreativeId, x.Placement, x.SourceHash }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.ConversionAdjustment>()
+                .HasIndex(x => new { x.ProjectId, x.ExternalEventId }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.ExecutionCommand>()
+                .HasIndex(x => new { x.ProjectId, x.IdempotencyKey }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.BudgetPeriodLedger>()
+                .HasIndex(x => new { x.ProjectId, x.EnvelopeId, x.PeriodStartUtc }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.InsightsSnapshot>()
+                .HasIndex(x => new { x.ProjectId, x.TargetId, x.IntervalStartUtc, x.IntervalEndUtc }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.ManagedAdvertisement>()
+                .HasIndex(x => new { x.ProjectId, x.AdExternalId }).IsUnique();
+            modelBuilder.Entity<Modules.Advertising.Domain.AdvertisingCycleRun>()
+                .HasIndex(x => new { x.ProjectId, x.JobName, x.BucketStartUtc }).IsUnique();
+            modelBuilder.Entity<IntegrationOutboxMessage>().HasIndex(x => new { x.PublishedAtUtc, x.NextAttemptAtUtc });
+            modelBuilder.Entity<IntegrationOutboxMessage>().HasIndex(x => x.EventId).IsUnique();
+            modelBuilder.Entity<IntegrationInboxReceipt>().HasIndex(x => new { x.EventId, x.Consumer }).IsUnique();
+
+            modelBuilder.Entity<Modules.Advertising.Domain.AutonomyEnvelope>().Property(x => x.DailyCap).HasPrecision(18, 4);
+            modelBuilder.Entity<Modules.Advertising.Domain.AutonomyEnvelope>().Property(x => x.PeriodCap).HasPrecision(18, 4);
+            modelBuilder.Entity<Modules.Advertising.Domain.BudgetPeriodLedger>().Property(x => x.AuthorizedCap).HasPrecision(18, 4);
+            modelBuilder.Entity<Modules.Advertising.Domain.BudgetAllocation>().Property(x => x.AllocatedAmount).HasPrecision(18, 4);
+            modelBuilder.Entity<Modules.Advertising.Domain.InsightsSnapshot>().Property(x => x.Spend).HasPrecision(18, 4);
+            modelBuilder.Entity<Modules.Advertising.Domain.CanonicalConversion>().Property(x => x.CurrentValue).HasPrecision(18, 4);
+
 
             // Apply global query filter for all entities implementing ITenantEntity
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
@@ -119,6 +202,11 @@ namespace Shared.Infrastructure
         public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
             ApplyTenantAndAuditInfo();
+
+            var deletedProjects = ChangeTracker.Entries<Modules.Projects.Domain.Project>()
+                .Where(x => x.State == EntityState.Deleted).Select(x => x.Entity.Id).ToList();
+            foreach (var projectId in deletedProjects)
+                Shared.Queue.IntegrationOutbox.Enqueue(this, new Shared.Queue.AdvertisingProjectLifecycleChanged { ProjectId = projectId, State = "Deleted" });
 
             // Intercept and generate audit logs for business entities
             var auditEntries = new System.Collections.Generic.List<Modules.Audit.Domain.AuditLog>();

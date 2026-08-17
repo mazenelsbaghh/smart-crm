@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Modules.Facebook.Domain;
 using Modules.Facebook.Services;
 using Shared.Infrastructure;
+using Shared.Security;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -10,16 +12,22 @@ using System.Threading.Tasks;
 namespace Modules.Facebook.API
 {
     [ApiController]
+    [Authorize]
     [Route("api/projects/{projectId}/facebook/pages")]
     public class FacebookPageController : ControllerBase
     {
         private readonly AppDbContext _context;
         private readonly IFacebookGraphService _graphService;
+        private readonly ITenantContext _tenantContext;
 
-        public FacebookPageController(AppDbContext context, IFacebookGraphService graphService)
+        public FacebookPageController(
+            AppDbContext context,
+            IFacebookGraphService graphService,
+            ITenantContext tenantContext)
         {
             _context = context;
             _graphService = graphService;
+            _tenantContext = tenantContext;
         }
 
         /// <summary>
@@ -28,6 +36,7 @@ namespace Modules.Facebook.API
         [HttpPost("confirm")]
         public async Task<IActionResult> ConfirmPage(Guid projectId, [FromBody] ConfirmPageRequest request)
         {
+            if (projectId != ActiveProjectId()) return Forbid();
             if (string.IsNullOrEmpty(request.FacebookPageId) || string.IsNullOrEmpty(request.PageAccessToken))
                 return BadRequest(new { error = "facebookPageId and pageAccessToken are required" });
 
@@ -38,41 +47,15 @@ namespace Modules.Facebook.API
 
             if (existing != null)
             {
-                if (!existing.IsActive)
+                if (existing.IsActive && existing.ProjectId != projectId)
                 {
-                    // Reactivate page and update token details
-                    existing.ProjectId = projectId;
-                    existing.PageName = request.PageName ?? existing.PageName;
-                    existing.PageAccessToken = request.PageAccessToken;
-                    existing.UserAccessToken = request.UserAccessToken;
-                    existing.FacebookUserId = request.FacebookUserId;
-                    existing.IsActive = true;
-                    existing.TokenExpiresAt = DateTime.UtcNow.AddDays(60);
-                    existing.UpdatedAt = DateTime.UtcNow;
-
-                    await _context.SaveChangesAsync();
-
-                    try
-                    {
-                        await _graphService.SubscribePageToAppAsync(request.FacebookPageId, request.PageAccessToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"⚠️ Failed to subscribe page to webhooks: {ex.Message}");
-                    }
-
-                    return Ok(new
-                    {
-                        existing.Id,
-                        existing.FacebookPageId,
-                        existing.PageName,
-                        existing.IsActive,
-                        existing.TokenExpiresAt,
-                        existing.CreatedAt
-                    });
+                    return Conflict(new { error = "This Facebook Page is already connected to a project" });
                 }
 
-                return Conflict(new { error = "This Facebook Page is already connected to a project" });
+                UpdateConnectedPage(existing, projectId, request);
+                await _context.SaveChangesAsync();
+                await TrySubscribeAsync(request.FacebookPageId, request.PageAccessToken);
+                return Ok(PageResponse(existing));
             }
 
             var connectedPage = new ConnectedPage
@@ -118,6 +101,7 @@ namespace Modules.Facebook.API
         [HttpGet]
         public async Task<IActionResult> GetPages(Guid projectId)
         {
+            if (projectId != ActiveProjectId()) return Forbid();
             var pages = await _context.ConnectedPages
                 .Where(cp => cp.ProjectId == projectId && cp.IsActive)
                 .OrderByDescending(cp => cp.CreatedAt)
@@ -141,6 +125,7 @@ namespace Modules.Facebook.API
         [HttpDelete("{pageId}")]
         public async Task<IActionResult> DisconnectPage(Guid projectId, Guid pageId)
         {
+            if (projectId != ActiveProjectId()) return Forbid();
             var page = await _context.ConnectedPages
                 .Where(cp => cp.ProjectId == projectId && cp.Id == pageId)
                 .FirstOrDefaultAsync();
@@ -153,6 +138,47 @@ namespace Modules.Facebook.API
 
             return NoContent();
         }
+
+        private Guid ActiveProjectId()
+        {
+            return _tenantContext.ProjectId != Guid.Empty
+                ? _tenantContext.ProjectId
+                : throw new UnauthorizedAccessException("Request does not contain a valid project.");
+        }
+
+        private static void UpdateConnectedPage(ConnectedPage page, Guid projectId, ConfirmPageRequest request)
+        {
+            page.ProjectId = projectId;
+            page.PageName = request.PageName ?? page.PageName;
+            page.PageAccessToken = request.PageAccessToken;
+            page.UserAccessToken = request.UserAccessToken;
+            page.FacebookUserId = request.FacebookUserId;
+            page.IsActive = true;
+            page.TokenExpiresAt = DateTime.UtcNow.AddDays(60);
+            page.UpdatedAt = DateTime.UtcNow;
+        }
+
+        private async Task TrySubscribeAsync(string pageId, string pageAccessToken)
+        {
+            try
+            {
+                await _graphService.SubscribePageToAppAsync(pageId, pageAccessToken);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ Failed to subscribe page to webhooks: {ex.Message}");
+            }
+        }
+
+        private static object PageResponse(ConnectedPage page) => new
+        {
+            page.Id,
+            page.FacebookPageId,
+            page.PageName,
+            page.IsActive,
+            page.TokenExpiresAt,
+            page.CreatedAt
+        };
     }
 
     public class ConfirmPageRequest

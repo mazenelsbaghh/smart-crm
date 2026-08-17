@@ -55,15 +55,10 @@ Return the output ONLY as a JSON object of this structure:
 Conversation Transcript:
 {transcript}";
 
-            string response;
-            try
-            {
-                response = await _geminiClient.GenerateReplyAsync(prompt);
-            }
-            catch (Exception ex)
-            {
-                response = $"Error: {ex.Message}";
-            }
+            var settings = await _dbContext.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            string? apiKeyOverride = !string.IsNullOrEmpty(settings?.GeminiApiKey) ? settings.GeminiApiKey : null;
+
+            string response = string.Empty;
 
             List<string> facts = new();
             List<string> triggers = new();
@@ -233,10 +228,13 @@ Return the output ONLY as a JSON object of this structure:
 Conversation Transcript:
 {transcript}";
 
+            var settings = await _dbContext.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            string? apiKeyOverride = !string.IsNullOrEmpty(settings?.GeminiApiKey) ? settings.GeminiApiKey : null;
+
             string response;
             try
             {
-                response = await _geminiClient.GenerateReplyAsync(prompt);
+                response = await _geminiClient.GenerateReplyAsync(prompt, apiKeyOverride);
             }
             catch (Exception ex)
             {

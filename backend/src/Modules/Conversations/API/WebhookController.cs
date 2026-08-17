@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.SignalR;
 using Shared.Infrastructure;
 using Shared.Security;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using StackExchange.Redis;
 
@@ -21,6 +22,7 @@ namespace Modules.Conversations.API
         private readonly IMessageAggregator _messageAggregator;
         private readonly IHubContext<NotificationHub> _hubContext;
         private readonly IAssignmentEngine _assignmentEngine;
+        private readonly CustomerOptOutService _customerOptOutService;
         private readonly IDatabase _redis;
 
         public WebhookController(
@@ -29,6 +31,7 @@ namespace Modules.Conversations.API
             IMessageAggregator messageAggregator, 
             IHubContext<NotificationHub> hubContext, 
             IAssignmentEngine assignmentEngine,
+            CustomerOptOutService customerOptOutService,
             IConnectionMultiplexer redisConnection)
         {
             _context = context;
@@ -36,6 +39,7 @@ namespace Modules.Conversations.API
             _messageAggregator = messageAggregator;
             _hubContext = hubContext;
             _assignmentEngine = assignmentEngine;
+            _customerOptOutService = customerOptOutService;
             _redis = redisConnection.GetDatabase();
         }
 
@@ -45,7 +49,12 @@ namespace Modules.Conversations.API
             // Set context tenant project id
             _tenantContext.SetProjectId(payload.ProjectId);
             var normalizedSender = NormalizeWhatsAppPhone(payload.Sender);
-            var senderLid = string.IsNullOrWhiteSpace(payload.SenderLid) ? null : payload.SenderLid.Trim();
+            var senderLid = !string.IsNullOrWhiteSpace(payload.SenderLid)
+                ? payload.SenderLid.Trim()
+                : normalizedSender.EndsWith("@lid", StringComparison.OrdinalIgnoreCase) ? normalizedSender : null;
+            var sharedContact = WhatsAppSharedContactParser.ExtractOwnContact(payload.Content);
+            var sharedOwnPhone = sharedContact?.PhoneNumber;
+            var sharedOwnName = sharedContact?.Name;
 
             // 1. Resolve Customer by PhoneNumber globally but within payload Project.
             // WhatsApp multi-device may send a @lid as remoteJid and the real phone in remoteJidAlt.
@@ -53,17 +62,20 @@ namespace Modules.Conversations.API
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(c =>
                     c.ProjectId == payload.ProjectId &&
-                    (c.PhoneNumber == normalizedSender || (senderLid != null && c.PhoneNumber == senderLid)));
+                    (c.PhoneNumber == normalizedSender ||
+                     c.WhatsAppLid == normalizedSender ||
+                     (senderLid != null && (c.PhoneNumber == senderLid || c.WhatsAppLid == senderLid))));
 
             if (customer == null)
             {
                 customer = new Customer
                 {
                     ProjectId = payload.ProjectId,
-                    PhoneNumber = normalizedSender,
-                    Name = !string.IsNullOrWhiteSpace(payload.Name) 
+                    PhoneNumber = sharedOwnPhone ?? normalizedSender,
+                    WhatsAppLid = senderLid,
+                    Name = sharedOwnName ?? (!string.IsNullOrWhiteSpace(payload.Name)
                         ? payload.Name.Trim() 
-                        : $"WA Customer {normalizedSender.Substring(Math.Max(0, normalizedSender.Length - 4))}",
+                        : $"WA Customer {normalizedSender.Substring(Math.Max(0, normalizedSender.Length - 4))}"),
                     City = string.Empty,
                     Notes = string.Empty
                 };
@@ -73,10 +85,43 @@ namespace Modules.Conversations.API
             else
             {
                 bool modified = false;
+                bool replacedLidPhone = false;
+                if (senderLid != null && customer.WhatsAppLid != senderLid)
+                {
+                    customer.WhatsAppLid = senderLid;
+                    modified = true;
+                }
+
                 if (customer.PhoneNumber.EndsWith("@lid", StringComparison.OrdinalIgnoreCase) && normalizedSender != customer.PhoneNumber)
                 {
                     customer.PhoneNumber = normalizedSender;
                     modified = true;
+                }
+
+                if (customer.PhoneNumber.EndsWith("@lid", StringComparison.OrdinalIgnoreCase) && sharedOwnPhone != null)
+                {
+                    customer.PhoneNumber = sharedOwnPhone;
+                    replacedLidPhone = true;
+                    modified = true;
+                }
+
+                if (sharedOwnName != null && customer.Name != sharedOwnName)
+                {
+                    customer.Name = sharedOwnName;
+                    modified = true;
+                }
+
+                if (replacedLidPhone || sharedOwnName != null)
+                {
+                    var bookings = await _context.GroupAppointmentBookings
+                        .IgnoreQueryFilters()
+                        .Where(booking => booking.ProjectId == payload.ProjectId && booking.CustomerId == customer.Id)
+                        .ToListAsync();
+                    foreach (var booking in bookings)
+                    {
+                        if (replacedLidPhone) booking.CustomerPhone = sharedOwnPhone!;
+                        if (sharedOwnName != null) booking.CustomerName = sharedOwnName;
+                    }
                 }
 
                 if (!string.IsNullOrWhiteSpace(payload.Name) && 
@@ -92,6 +137,8 @@ namespace Modules.Conversations.API
                     await _context.SaveChangesAsync();
                 }
             }
+
+            await _customerOptOutService.ApplyIfRequestedAsync(customer, payload.Content, HttpContext.RequestAborted);
 
             // 2. Resolve or create active Conversation thread
             var conversation = await _context.Conversations
@@ -273,7 +320,10 @@ namespace Modules.Conversations.API
                 }
 
                 // 4. Pass message to aggregator for grouping window
-                await _messageAggregator.AggregateMessageAsync(payload.ProjectId, normalizedSender, payload.Content);
+                if (!customer.IsBlacklisted)
+                {
+                    await _messageAggregator.AggregateMessageAsync(payload.ProjectId, customer.PhoneNumber, payload.Content);
+                }
             }
 
             return Ok(new { status = "Received" });
@@ -294,6 +344,7 @@ namespace Modules.Conversations.API
 
             return trimmed;
         }
+
     }
 
     public class IncomingMessagePayload

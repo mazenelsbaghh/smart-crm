@@ -141,26 +141,37 @@ namespace Modules.Brain.Services
 
         public async Task<List<KnowledgeChunkSearchDto>> SearchBrainAsync(Guid projectId, string query, int limit = 3)
         {
-            var queryEmbeddingFloats = await _geminiClient.GenerateEmbeddingAsync(query);
-            var queryVector = new Vector(queryEmbeddingFloats);
-
-            // Npgsql pgvector CosineDistance query
-            var results = await _dbContext.KnowledgeChunks
+            var chunks = await _dbContext.KnowledgeChunks
                 .Include(c => c.KnowledgeDocument)
                 .Where(c => c.KnowledgeDocument!.ProjectId == projectId && 
                         (c.KnowledgeDocument.Status == "Published" || c.KnowledgeDocument.Status == "Approved"))
-                .OrderBy(c => c.Embedding!.CosineDistance(queryVector))
-                .Take(limit)
                 .Select(c => new KnowledgeChunkSearchDto
                 {
                     ChunkId = c.Id,
                     DocumentId = c.KnowledgeDocumentId,
                     ChunkText = c.ChunkText,
-                    SimilarityScore = 1.0 - (double)c.Embedding.CosineDistance(queryVector)
+                    SimilarityScore = 0
                 })
                 .ToListAsync();
 
-            return results;
+            var terms = (query ?? string.Empty)
+                .ToLowerInvariant()
+                .Split(new[] { ' ', '\t', '\r', '\n', '.', ',', '،', '?', '؟', '!', ':', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(term => term.Length > 2)
+                .Distinct()
+                .ToArray();
+
+            return chunks
+                .Select(chunk =>
+                {
+                    var text = chunk.ChunkText.ToLowerInvariant();
+                    chunk.SimilarityScore = terms.Length == 0 ? 0 : terms.Count(text.Contains);
+                    return chunk;
+                })
+                .OrderByDescending(chunk => chunk.SimilarityScore)
+                .ThenBy(chunk => chunk.ChunkText.Length)
+                .Take(limit)
+                .ToList();
         }
     }
 }

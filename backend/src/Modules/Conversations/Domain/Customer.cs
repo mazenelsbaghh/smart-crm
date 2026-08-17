@@ -7,6 +7,7 @@ namespace Modules.Conversations.Domain
     {
         public Guid ProjectId { get; set; }
         public string PhoneNumber { get; set; }
+        public string? WhatsAppLid { get; set; }
         public string Name { get; set; }
         public string City { get; set; }
         public int LeadScore { get; set; } = 0;

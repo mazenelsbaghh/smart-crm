@@ -15,6 +15,7 @@ namespace Shared.Queue
         private readonly string _username;
         private readonly string _password;
         private readonly string _exchangeName = "smartcore_exchange";
+        private readonly string _deadLetterExchangeName = "smartcore_dead_exchange";
         private IConnection _connection;
         private IChannel _channel;
         private readonly IServiceProvider _serviceProvider;
@@ -93,6 +94,7 @@ namespace Shared.Queue
                     _connection = await factory.CreateConnectionAsync();
                     _channel = await _connection.CreateChannelAsync();
                     await _channel.ExchangeDeclareAsync(_exchangeName, ExchangeType.Direct, durable: true);
+                    await _channel.ExchangeDeclareAsync(_deadLetterExchangeName, ExchangeType.Direct, durable: true);
                     Console.WriteLine("[RabbitMQEventBus] Successfully connected to RabbitMQ and declared exchange.");
                     break;
                 }
@@ -156,7 +158,11 @@ namespace Shared.Queue
                 }
 
                 var queueName = $"{typeof(T).Name}_{typeof(THandler).Name}_queue";
-                await _channel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false);
+                var deadLetterQueue = $"{queueName}_dead";
+                await _channel.QueueDeclareAsync(deadLetterQueue, durable: true, exclusive: false, autoDelete: false);
+                await _channel.QueueBindAsync(deadLetterQueue, _deadLetterExchangeName, typeof(T).Name);
+                await _channel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false,
+                    arguments: new Dictionary<string, object?> { ["x-dead-letter-exchange"] = _deadLetterExchangeName });
                 await _channel.QueueBindAsync(queueName, _exchangeName, typeof(T).Name);
 
                 var consumer = new AsyncEventingBasicConsumer(_channel);
@@ -183,14 +189,39 @@ namespace Shared.Queue
                     catch (Exception ex)
                     {
                         Console.WriteLine($"Error handling event {typeof(T).Name}: {ex.Message}");
-                        // Nack and requeue
-                        await _channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true);
+                        var retryCount = ReadRetryCount(ea.BasicProperties.Headers);
+                        if (retryCount < 5)
+                        {
+                            var retryProperties = new BasicProperties
+                            {
+                                Persistent = true,
+                                Headers = new Dictionary<string, object?> { ["x-smartcore-retry-count"] = retryCount + 1 }
+                            };
+                            await _channel.BasicPublishAsync(_exchangeName, typeof(T).Name, true, retryProperties, ea.Body);
+                            await _channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
+                        }
+                        else
+                        {
+                            await _channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
+                        }
                     }
                 };
 
                 await _channel.BasicConsumeAsync(queueName, autoAck: false, consumer: consumer);
                 Console.WriteLine($"[RabbitMQEventBus] Successfully subscribed to event: {typeof(T).Name}");
             });
+        }
+
+        private static int ReadRetryCount(IDictionary<string, object?>? headers)
+        {
+            if (headers is null || !headers.TryGetValue("x-smartcore-retry-count", out var value) || value is null) return 0;
+            return value switch
+            {
+                int number => number,
+                long number => checked((int)number),
+                byte[] bytes when int.TryParse(Encoding.UTF8.GetString(bytes), out var number) => number,
+                _ => 0
+            };
         }
     }
 }

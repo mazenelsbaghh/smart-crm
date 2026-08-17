@@ -51,6 +51,8 @@ interface ProjectSettingsResponse {
     isGroupAppointmentsEnabled?: boolean;
     isWhatsAppGroupAutomationEnabled?: boolean;
     groupAutomationManagerPhone?: string;
+    humanTransferEnabled?: boolean;
+    humanTransferPhone?: string;
     messengerAiAutoReplyEnabled?: boolean;
     messengerReplyDelay?: number;
     commentsAiAutoReplyEnabled?: boolean;
@@ -77,6 +79,15 @@ interface AIBehaviorSettings {
     allowedPhrases: string[];
     prohibitedPhrases: string[];
     businessInstructions?: string | null;
+  };
+  cta: {
+    enabled: boolean;
+    instructions?: string | null;
+    topics: string[];
+  };
+  followUps: {
+    nurturingEnabled: boolean;
+    appointmentRemindersEnabled: boolean;
   };
   reactions: {
     enabled: boolean;
@@ -121,6 +132,15 @@ const defaultAiBehavior = (): AIBehaviorSettings => ({
     prohibitedPhrases: [],
     businessInstructions: '',
   },
+  cta: {
+    enabled: false,
+    instructions: 'أضف CTA واحداً فقط عندما يتوافق مع اهتمام العميل الأخير، ولا تضفه في الردود العادية أو الشكاوى.',
+    topics: [],
+  },
+  followUps: {
+    nurturingEnabled: true,
+    appointmentRemindersEnabled: true,
+  },
   reactions: {
     enabled: true,
     allowedReactions: ['👍', '❤️', '💖', '😢', '😂', '😮'],
@@ -163,7 +183,7 @@ export default function Settings() {
   // General settings state
   const [projectName, setProjectName] = useState('');
   const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [geminiModel, setGeminiModel] = useState('gemini-3.5-flash');
+  const [geminiModel, setGeminiModel] = useState('gemini-flash-latest');
   const [timezone, setTimezone] = useState('Africa/Cairo');
   const [aiTonePreference, setAiTonePreference] = useState('العامية المصرية الروشة والصايعة');
   const [aiTargetAudience, setAiTargetAudience] = useState('طلاب كورس كول سنتر يبحثون عن عمل');
@@ -172,6 +192,8 @@ export default function Settings() {
   const [isGroupAppointmentsEnabled, setIsGroupAppointmentsEnabled] = useState(false);
   const [isWhatsAppGroupAutomationEnabled, setIsWhatsAppGroupAutomationEnabled] = useState(false);
   const [groupAutomationManagerPhone, setGroupAutomationManagerPhone] = useState('+201068690092');
+  const [humanTransferEnabled, setHumanTransferEnabled] = useState(false);
+  const [humanTransferPhone, setHumanTransferPhone] = useState('');
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [messengerAutoReplyEnabled, setMessengerAutoReplyEnabled] = useState(false);
   const [messengerReplyDelay, setMessengerReplyDelay] = useState(3);
@@ -248,7 +270,7 @@ export default function Settings() {
       const settings = response.data.settings;
       setTimezone(settings?.timezone || 'Africa/Cairo');
       setGeminiApiKey(settings?.geminiApiKey || '');
-      setGeminiModel(settings?.geminiModel || 'gemini-3.5-flash');
+      setGeminiModel(settings?.geminiModel || 'gemini-flash-latest');
       setAiTonePreference(settings?.aiTonePreference || 'العامية المصرية الروشة والصايعة');
       setAiTargetAudience(settings?.aiTargetAudience || 'طلاب كورس كول سنتر يبحثون عن عمل');
       setReplyDelay(settings?.replyDelay ?? 3);
@@ -256,6 +278,8 @@ export default function Settings() {
       setIsGroupAppointmentsEnabled(settings?.isGroupAppointmentsEnabled ?? false);
       setIsWhatsAppGroupAutomationEnabled(settings?.isWhatsAppGroupAutomationEnabled ?? false);
       setGroupAutomationManagerPhone(settings?.groupAutomationManagerPhone ?? '+201068690092');
+      setHumanTransferEnabled(settings?.humanTransferEnabled ?? false);
+      setHumanTransferPhone(settings?.humanTransferPhone || '');
       setAutoReplyEnabled(settings?.aiAutoReplyEnabled ?? false);
       setMessengerAutoReplyEnabled(settings?.messengerAiAutoReplyEnabled ?? false);
       setMessengerReplyDelay(settings?.messengerReplyDelay ?? 3);
@@ -491,6 +515,8 @@ export default function Settings() {
         isGroupAppointmentsEnabled,
         isWhatsAppGroupAutomationEnabled,
         groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
+        humanTransferEnabled,
+        humanTransferPhone: humanTransferPhone.trim(),
         messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
@@ -519,6 +545,10 @@ export default function Settings() {
         replyDelay,
         maxDailyMessages,
         isGroupAppointmentsEnabled: enabled,
+        isWhatsAppGroupAutomationEnabled,
+        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
+        humanTransferEnabled,
+        humanTransferPhone: humanTransferPhone.trim(),
         messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
@@ -549,6 +579,8 @@ export default function Settings() {
         isGroupAppointmentsEnabled,
         isWhatsAppGroupAutomationEnabled: enabled,
         groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
+        humanTransferEnabled,
+        humanTransferPhone: humanTransferPhone.trim(),
         messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
@@ -579,6 +611,8 @@ export default function Settings() {
         isGroupAppointmentsEnabled,
         isWhatsAppGroupAutomationEnabled,
         groupAutomationManagerPhone: phone.trim(),
+        humanTransferEnabled,
+        humanTransferPhone: humanTransferPhone.trim(),
         messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
         messengerReplyDelay,
         commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
@@ -587,6 +621,70 @@ export default function Settings() {
         aiBehavior,
       });
       setGroupAutomationManagerPhone(phone);
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  };
+
+  const handleToggleHumanTransfer = async (enabled: boolean) => {
+    if (!activeProject) return;
+    try {
+      await api.put(`/api/projects/${activeProject.id}/settings`, {
+        projectName: projectName.trim(),
+        aiAutoReplyEnabled: autoReplyEnabled,
+        timezone,
+        geminiApiKey: geminiApiKey.trim(),
+        geminiModel,
+        aiTonePreference: aiTonePreference.trim(),
+        aiTargetAudience: aiTargetAudience.trim(),
+        replyDelay,
+        maxDailyMessages,
+        isGroupAppointmentsEnabled,
+        isWhatsAppGroupAutomationEnabled,
+        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
+        humanTransferEnabled: enabled,
+        humanTransferPhone: humanTransferPhone.trim(),
+        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
+        messengerReplyDelay,
+        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
+        commentsReplyDelay,
+        systemPrompt: systemPrompt.trim(),
+        aiBehavior,
+      });
+      setHumanTransferEnabled(enabled);
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  };
+
+  const handleUpdateHumanTransferPhone = async (phone: string) => {
+    if (!activeProject) return;
+    try {
+      await api.put(`/api/projects/${activeProject.id}/settings`, {
+        projectName: projectName.trim(),
+        aiAutoReplyEnabled: autoReplyEnabled,
+        timezone,
+        geminiApiKey: geminiApiKey.trim(),
+        geminiModel,
+        aiTonePreference: aiTonePreference.trim(),
+        aiTargetAudience: aiTargetAudience.trim(),
+        replyDelay,
+        maxDailyMessages,
+        isGroupAppointmentsEnabled,
+        isWhatsAppGroupAutomationEnabled,
+        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
+        humanTransferEnabled,
+        humanTransferPhone: phone.trim(),
+        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
+        messengerReplyDelay,
+        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
+        commentsReplyDelay,
+        systemPrompt: systemPrompt.trim(),
+        aiBehavior,
+      });
+      setHumanTransferPhone(phone);
     } catch (e) {
       console.error(e);
       throw e;
@@ -933,6 +1031,10 @@ export default function Settings() {
                   value={geminiModel}
                   onChange={(e) => setGeminiModel(e.target.value)}
                 >
+                  <option value="gemini-flash-latest">Gemini Flash Latest (أعلى Flash تلقائيًا)</option>
+                  <option value="gemini-flash-lite-latest">Gemini Flash-Lite Latest (أعلى Flash-Lite تلقائيًا)</option>
+                  <option value="gemini-3.6-flash">Gemini 3.6 Flash (الأحدث)</option>
+                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (الأحدث والأوفر)</option>
                   <option value="gemini-3.5-flash">Gemini 3.5 Flash (المحرك الموحد)</option>
                   <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (أرخص من 3.5)</option>
                   <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (الأوفر)</option>
@@ -1120,6 +1222,41 @@ export default function Settings() {
                     />
                   </div>
                 ))}
+              </div>
+
+              <div className={styles.settingsSection}>
+                <h3 className={styles.sectionTitle}>CTA ذكي</h3>
+                <p className={styles.sectionHint}>اختياري، يختار الذكاء الاصطناعي دعوة إجراء واحدة تناسب آخر اهتمام للعميل، بدلاً من تكرار عرض ثابت في كل رسالة.</p>
+                <label className={styles.checkboxGroup}>
+                  <input
+                    type="checkbox"
+                    checked={aiBehavior.cta.enabled}
+                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, enabled: e.target.checked })}
+                    className={styles.checkbox}
+                  />
+                  <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل CTA ديناميكي</span>
+                </label>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>متى يظهر CTA؟</label>
+                  <textarea
+                    value={aiBehavior.cta.instructions || ''}
+                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, instructions: e.target.value })}
+                    className={styles.input}
+                    rows={3}
+                    placeholder="مثال: عند السؤال عن المنصة أو الباقات، اقترح الخطوة التالية المناسبة فقط"
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>موضوعات CTA المتاحة</label>
+                  <textarea
+                    value={arrayToLines(aiBehavior.cta.topics)}
+                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, topics: linesToArray(e.target.value) })}
+                    className={styles.input}
+                    rows={4}
+                    placeholder={'ابدأ تجربة البحث المجانية\nاطلع على الباقات\nشاهد الفيديو التوضيحي'}
+                  />
+                  <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>اكتب موضوعاً واحداً في كل سطر.</span>
+                </div>
               </div>
 
               <div className={styles.settingsSection}>
@@ -1353,6 +1490,10 @@ export default function Settings() {
               onToggleWhatsAppGroupAutomation={handleToggleWhatsAppGroupAutomation}
               groupAutomationManagerPhone={groupAutomationManagerPhone}
               onUpdateGroupAutomationManagerPhone={handleUpdateGroupAutomationManagerPhone}
+              humanTransferEnabled={humanTransferEnabled}
+              onToggleHumanTransfer={handleToggleHumanTransfer}
+              humanTransferPhone={humanTransferPhone}
+              onUpdateHumanTransferPhone={handleUpdateHumanTransferPhone}
               onManageGroups={() => setViewMode('manage-groups')} 
             />
           )}

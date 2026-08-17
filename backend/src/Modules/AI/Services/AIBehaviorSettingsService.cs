@@ -171,6 +171,9 @@ namespace Modules.AI.Services
                 $"Tone preset: {settings.Tone.TonePreset}",
                 $"Tone/custom style: {ResolveToneText(settings.Tone)}",
                 $"Target audience: {settings.Tone.TargetAudience}",
+                $"CTA enabled: {settings.Cta.Enabled}",
+                $"Nurturing follow-ups enabled: {settings.FollowUps.NurturingEnabled}",
+                $"Appointment reminders enabled: {settings.FollowUps.AppointmentRemindersEnabled}",
                 $"Signature enabled: {settings.Identity.SignatureEnabled}",
                 $"Signature template: {settings.Identity.SignatureTemplate}",
                 $"Complaint signature template: {settings.Identity.ComplaintSignatureTemplate}",
@@ -190,6 +193,15 @@ namespace Modules.AI.Services
             if (!string.IsNullOrWhiteSpace(settings.Tone.BusinessInstructions))
             {
                 instructions.Add($"Business behavior instructions: {settings.Tone.BusinessInstructions}");
+            }
+
+            if (settings.Cta.Enabled)
+            {
+                instructions.Add($"CTA instructions: {settings.Cta.Instructions}");
+                if (settings.Cta.Topics.Length > 0)
+                {
+                    instructions.Add($"CTA topics: {string.Join(", ", settings.Cta.Topics)}");
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(settings.Reactions.Rules))
@@ -254,6 +266,8 @@ namespace Modules.AI.Services
         {
             if (source.Identity != null) target.Identity = MergeIdentity(target.Identity, source.Identity);
             if (source.Tone != null) target.Tone = MergeTone(target.Tone, source.Tone);
+            if (source.Cta != null) target.Cta = MergeCta(target.Cta, source.Cta);
+            if (source.FollowUps != null) target.FollowUps = source.FollowUps;
             if (source.Reactions != null) target.Reactions = MergeReactions(target.Reactions, source.Reactions);
             if (source.Fallbacks != null) target.Fallbacks = MergeFallbacks(target.Fallbacks, source.Fallbacks);
             if (source.Channels != null) target.Channels = source.Channels;
@@ -301,6 +315,14 @@ namespace Modules.AI.Services
             if (source.AllowedPhrases.Length > 0) target.AllowedPhrases = source.AllowedPhrases;
             if (source.ProhibitedPhrases.Length > 0) target.ProhibitedPhrases = source.ProhibitedPhrases;
             if (!string.IsNullOrWhiteSpace(source.BusinessInstructions)) target.BusinessInstructions = source.BusinessInstructions;
+            return target;
+        }
+
+        private static CTASettings MergeCta(CTASettings target, CTASettings source)
+        {
+            target.Enabled = source.Enabled;
+            if (!string.IsNullOrWhiteSpace(source.Instructions)) target.Instructions = source.Instructions;
+            if (source.Topics.Length > 0) target.Topics = source.Topics;
             return target;
         }
 

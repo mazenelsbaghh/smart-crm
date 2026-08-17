@@ -3,21 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { useRouter, usePathname } from 'next/navigation';
-import {
-  LayoutDashboard,
-  Inbox,
-  Users,
-  GitBranch,
-  Calendar,
-  Megaphone,
-  BarChart3,
-  GitFork,
-  BookOpen,
-  ShieldCheck,
-  Settings,
-  LogOut,
-  X,
-} from 'lucide-react';
+import { LogOut, X } from 'lucide-react';
+import { navigationItems, shortcutNavigationItems } from '../../config/navigation';
 import ThinSidebar from '../../packages/inbox/shared/ThinSidebar';
 import Header from '../../components/layout/Header';
 import PhantomLoader from '../../components/shared/PhantomLoader';
@@ -44,21 +31,10 @@ export default function DashboardLayout({
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
-        if (e.key === '1') {
+        const destination = shortcutNavigationItems.find((item) => item.shortcut === e.key);
+        if (destination) {
           e.preventDefault();
-          router.push('/dashboard');
-        } else if (e.key === '2') {
-          e.preventDefault();
-          router.push('/inbox');
-        } else if (e.key === '3') {
-          e.preventDefault();
-          router.push('/inbox/messenger');
-        } else if (e.key === '4') {
-          e.preventDefault();
-          router.push('/inbox/comments');
-        } else if (e.key === '5') {
-          e.preventDefault();
-          router.push('/crm');
+          router.push(destination.path);
         }
       }
     };
@@ -84,18 +60,7 @@ export default function DashboardLayout({
     );
   }
 
-  const navItems = [
-    { name: 'لوحة التحكم', path: '/dashboard', icon: LayoutDashboard },
-    { name: 'صندوق المحادثات', path: '/inbox', icon: Inbox },
-    { name: 'العملاء CRM', path: '/crm', icon: Users },
-    { name: 'جدول المتابعات', path: '/management/follow-ups', icon: Calendar },
-    { name: 'الحملات التسويقية', path: '/management/campaigns', icon: Megaphone },
-    { name: 'أتمتة العمليات', path: '/management/workflows', icon: GitFork },
-    { name: 'قاعدة المعرفة', path: '/management/knowledge', icon: BookOpen },
-    { name: 'إدارة الموافقات', path: '/management/approvals', icon: ShieldCheck },
-    { name: 'التقارير والإحصائيات', path: '/management/reports', icon: BarChart3 },
-    { name: 'إعدادات المشروع', path: '/settings', icon: Settings },
-  ];
+  const navItems = navigationItems;
 
 
 

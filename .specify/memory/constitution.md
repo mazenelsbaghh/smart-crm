@@ -1,16 +1,10 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-- Version change: Initial Template -> v1.0.0
+- Version change: v1.0.0 -> v2.0.0
 - List of modified principles:
-  - [PRINCIPLE_1_NAME] -> I. Modular Monolith Architecture
-  - [PRINCIPLE_2_NAME] -> II. Strict Multi-Tenant Project Isolation
-  - [PRINCIPLE_3_NAME] -> III. Gemini 3.5 Flash Unified AI Engine
-  - [PRINCIPLE_4_NAME] -> IV. Human-Like Messaging and Aggregation
-  - [PRINCIPLE_5_NAME] -> V. Risk-Based Action Approval System (Human-in-the-Loop)
-- Added sections:
-  - Tech Stack & Infrastructure
-  - Development Rules & Best Practices
+  - V. Risk-Based Action Approval System (Human-in-the-Loop) -> V. Risk-Based Action Authorization & Bounded Autonomy
+- Added sections: None
 - Removed sections: None
 - Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ updated / verified
@@ -39,9 +33,15 @@ All unstructured inputs, including Text, Images, and Audio/Voice Notes, MUST be 
 The WhatsApp module MUST aggregate consecutive messages from the same sender over a dynamic window (3-10s) to understand overall intent before generating a reply. AI-generated replies MUST be sent in natural chunks with realistic typing delays.
 *Rationale: Simulates genuine human conversation, prevents flooding the customer with multiple disjointed messages, and protects the WhatsApp numbers from being flagged or banned.*
 
-### V. Risk-Based Action Approval System (Human-in-the-Loop)
-Every AI action must pass through the Risk Analyzer. Low-risk actions (tagging, notes, lead scoring) execute immediately. Medium-risk actions (CRM updates, supervisor transfers) log audits. High-risk or critical actions (marketing campaigns, discounts, price changes, or system data modifications) MUST require supervisor or administrator approval before execution.
-*Rationale: Maintains human control over critical business decisions and protects database integrity from potential AI hallucinations.*
+### V. Risk-Based Action Authorization & Bounded Autonomy
+Every AI action MUST pass through a deterministic Risk Analyzer and MUST produce a durable audit record. Low-risk actions such as tagging, notes, and lead scoring MAY execute immediately. Medium-risk actions such as CRM updates and supervisor transfers MAY execute within code-owned validation and audit controls. High-risk or critical actions such as marketing campaigns, spend changes, discounts, price changes, or system data modifications MUST satisfy one of the following before execution:
+
+1. A supervisor or administrator explicitly approves the individual action; or
+2. An Owner or Admin has already granted an active, specific, time-bounded authorization envelope that defines the permitted project, action types, resources, platforms, financial caps, maximum change size, commercial facts, and emergency-stop conditions.
+
+Actions inside a valid authorization envelope MAY execute autonomously only after independent review and deterministic safety checks. Any action outside the envelope, any attempt to broaden it, any action taken while required tracking or connection health is unsafe, or any action after the envelope expires MUST stop and require new authorized approval. Authorization envelopes MUST be revocable immediately, MUST NOT permit cross-project access, MUST NOT override protected business facts, and MUST NOT allow destructive deletion by AI.
+
+*Rationale: Preserves accountable human control over risk boundaries while allowing explicitly authorized automation to operate safely without requiring repetitive approval for every bounded action.*
 
 ## Tech Stack & Infrastructure
 
@@ -62,4 +62,4 @@ The project runs on a single Ubuntu server using Docker/Docker Compose:
 
 All pull requests and code modifications must verify compliance against this Constitution. Any updates to this document require an explicit version increment (`CONSTITUTION_VERSION`), updating of ratification and amendment dates, and updating dependent templates in `.specify/templates/`.
 
-**Version**: 1.0.0 | **Ratified**: 2026-05-24 | **Last Amended**: 2026-05-24
+**Version**: 2.0.0 | **Ratified**: 2026-05-24 | **Last Amended**: 2026-08-17

@@ -6,6 +6,8 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Pgvector;
+using Shared.Queue;
+using Shared.Events;
 
 namespace Modules.Brain.Services
 {
@@ -23,11 +25,13 @@ namespace Modules.Brain.Services
     {
         private readonly AppDbContext _dbContext;
         private readonly IGeminiClient _geminiClient;
+        private readonly IEventBus _eventBus;
 
-        public KnowledgeBaseService(AppDbContext dbContext, IGeminiClient geminiClient)
+        public KnowledgeBaseService(AppDbContext dbContext, IGeminiClient geminiClient, IEventBus eventBus)
         {
             _dbContext = dbContext;
             _geminiClient = geminiClient;
+            _eventBus = eventBus;
         }
 
         public async Task<KnowledgeDocument> CreateDocumentAsync(Guid projectId, string title, string content, string? sourceUrl)
@@ -77,6 +81,15 @@ namespace Modules.Brain.Services
 
             doc.Status = "Approved";
             await _dbContext.SaveChangesAsync();
+            await _eventBus.PublishAsync(new KnowledgePublishedChangedEvent
+            {
+                ProjectId = doc.ProjectId,
+                DocumentId = doc.Id,
+                Version = doc.Version,
+                Title = doc.Title,
+                Content = doc.Content,
+                Status = doc.Status
+            });
             return doc;
         }
 

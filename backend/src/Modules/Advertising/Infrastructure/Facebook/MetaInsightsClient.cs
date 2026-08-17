@@ -1,0 +1,58 @@
+using System.Globalization;
+using System.Net.Http.Headers;
+using System.Text.Json;
+
+namespace Modules.Advertising.Infrastructure.Facebook;
+
+public sealed record MetaInsightRow(string AdExternalId, DateTime StartUtc, DateTime EndUtc, decimal Spend, long Impressions,
+    long Clicks, decimal Frequency, IReadOnlyDictionary<string, decimal> Actions, IReadOnlyDictionary<string, decimal> ActionValues);
+public sealed record MetaAdState(string Id, string Status, string EffectiveStatus, decimal DailyBudget);
+
+public sealed class MetaInsightsClient(HttpClient httpClient)
+{
+    public async Task<IReadOnlyList<MetaInsightRow>> GetAdInsightsAsync(string token, string adAccountId, DateOnly since, DateOnly until, CancellationToken cancellationToken)
+    {
+        var fields = "ad_id,date_start,date_stop,spend,impressions,clicks,frequency,actions,action_values";
+        var path = $"{adAccountId}/insights?fields={fields}&level=ad&time_increment=1&time_range={{\"since\":\"{since:yyyy-MM-dd}\",\"until\":\"{until:yyyy-MM-dd}\"}}&limit=500";
+        var rows = new List<MetaInsightRow>();
+        while (!string.IsNullOrWhiteSpace(path))
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, path);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            await EnsureSuccess(response, cancellationToken);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            foreach (var item in json.RootElement.GetProperty("data").EnumerateArray())
+                rows.Add(new(Get(item, "ad_id"), ParseDate(item, "date_start"), ParseDate(item, "date_stop").AddDays(1), ParseDecimal(item, "spend"),
+                    ParseLong(item, "impressions"), ParseLong(item, "clicks"), ParseDecimal(item, "frequency"), ParseBreakdown(item, "actions"), ParseBreakdown(item, "action_values")));
+            path = json.RootElement.TryGetProperty("paging", out var paging) && paging.TryGetProperty("next", out var next) ? next.GetString() ?? string.Empty : string.Empty;
+        }
+        return rows;
+    }
+
+    public async Task<MetaAdState> GetAdStateAsync(string token, string adId, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{adId}?fields=id,status,effective_status,daily_budget");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccess(response, cancellationToken);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        var root = json.RootElement;
+        return new(Get(root, "id"), Get(root, "status"), Get(root, "effective_status"), ParseDecimal(root, "daily_budget") / 100m);
+    }
+
+    private static IReadOnlyDictionary<string, decimal> ParseBreakdown(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var values) ? values.EnumerateArray().Where(x => x.TryGetProperty("action_type", out _))
+            .GroupBy(x => Get(x, "action_type")).ToDictionary(x => x.Key, x => x.Sum(ParseValue), StringComparer.OrdinalIgnoreCase) : new Dictionary<string, decimal>();
+    private static decimal ParseValue(JsonElement item) => decimal.TryParse(Get(item, "value"), NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : 0m;
+    private static decimal ParseDecimal(JsonElement item, string property) => decimal.TryParse(Get(item, property), NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : 0m;
+    private static long ParseLong(JsonElement item, string property) => long.TryParse(Get(item, property), NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : 0;
+    private static DateTime ParseDate(JsonElement item, string property) => DateTime.SpecifyKind(DateTime.ParseExact(Get(item, property), "yyyy-MM-dd", CultureInfo.InvariantCulture), DateTimeKind.Utc);
+    private static string Get(JsonElement item, string property) => item.TryGetProperty(property, out var value) ? value.ToString() : string.Empty;
+    private static async Task EnsureSuccess(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode) return;
+        await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new HttpRequestException("Meta Insights request failed.", null, response.StatusCode);
+    }
+}

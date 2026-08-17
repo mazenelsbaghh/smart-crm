@@ -14,7 +14,10 @@ import {
   ArrowRight,
   Clock,
   Download,
+  FileDown,
   Search,
+  ShieldAlert,
+  Upload,
   UserCheck
 } from 'lucide-react';
 import styles from './settings.module.css';
@@ -29,16 +32,33 @@ interface Booking {
   isPaid: boolean;
 }
 
+interface InstructorsResponse {
+  instructors: string[];
+}
+
+interface PaidBlacklistImportResult {
+  matchedCount: number;
+  newCount: number;
+  removedBookingsCount: number;
+  cancelledFollowUpsCount: number;
+  blacklistGroupName: string;
+  matchedPhones: string[];
+  newPhones: string[];
+}
+
 interface GroupAppointment {
   id: string;
   name: string;
   dateTime: string;
+  freeSessionDateTime?: string | null;
+  courseSecondDateTime?: string | null;
   capacity: number;
   isActive: boolean;
   days: string;
   bookedCount: number;
   bookings: Booking[];
   mode: string;
+  instructorName?: string;
 }
 
 interface GroupAppointmentsManagerProps {
@@ -66,9 +86,19 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   // Form states
   const [mode, setMode] = useState<string>('offline');
   const [dateTime, setDateTime] = useState('');
+  const [freeSessionDateTime, setFreeSessionDateTime] = useState('');
+  const [courseSecondDateTime, setCourseSecondDateTime] = useState('');
   const [capacity, setCapacity] = useState(5);
   const [isActive, setIsActive] = useState(true);
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  const [instructors, setInstructors] = useState<string[]>([]);
+  const [instructorsText, setInstructorsText] = useState('');
+  const [selectedInstructor, setSelectedInstructor] = useState('');
+  const [savingInstructors, setSavingInstructors] = useState(false);
+  const [paidImportFileName, setPaidImportFileName] = useState('');
+  const [paidImportPhones, setPaidImportPhones] = useState<string[]>([]);
+  const [paidImporting, setPaidImporting] = useState(false);
+  const [paidImportResult, setPaidImportResult] = useState<PaidBlacklistImportResult | null>(null);
   
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -89,10 +119,24 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     }
   }, [activeProject]);
 
+  const fetchInstructors = useCallback(async () => {
+    if (!activeProject) return;
+    try {
+      const response = await api.get<InstructorsResponse>('/api/group-appointments/instructors');
+      const nextInstructors = response.data.instructors || [];
+      setInstructors(nextInstructors);
+      setInstructorsText(nextInstructors.join('\n'));
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'فشل تحميل أسماء الإنستراكتورز.' });
+    }
+  }, [activeProject]);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchGroups();
-  }, [fetchGroups]);
+    void fetchInstructors();
+  }, [fetchGroups, fetchInstructors]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -101,7 +145,15 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
 
   const handleSaveGroup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!dateTime || capacity <= 0) return;
+    if (!dateTime || !freeSessionDateTime || !courseSecondDateTime || capacity <= 0) return;
+    if (selectedDays.length !== 2) {
+      setMessage({ type: 'error', text: 'اختار يومين بالضبط لمواعيد الكورس الأسبوعية.' });
+      return;
+    }
+    if (!selectedInstructor.trim()) {
+      setMessage({ type: 'error', text: 'اختار اسم الإنستراكتور المسؤول عن المجموعة.' });
+      return;
+    }
 
     try {
       setActionLoading(true);
@@ -110,13 +162,18 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       // Parse full local date-time value
       const dateObj = new Date(dateTime);
       const utcDate = dateObj.toISOString();
+      const freeSessionUtcDate = new Date(freeSessionDateTime).toISOString();
+      const courseSecondUtcDate = new Date(courseSecondDateTime).toISOString();
 
       const payload = {
         dateTime: utcDate,
+        freeSessionDateTime: freeSessionUtcDate,
+        courseSecondDateTime: courseSecondUtcDate,
         capacity,
         isActive,
         days: selectedDays.join(','),
-        mode
+        mode,
+        instructorName: selectedInstructor.trim()
       };
 
       if (editingGroupId) {
@@ -129,10 +186,13 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
 
       setIsModalOpen(false);
       setDateTime('');
+      setFreeSessionDateTime('');
+      setCourseSecondDateTime('');
       setCapacity(5);
       setIsActive(true);
       setSelectedDays([]);
       setMode('offline');
+      setSelectedInstructor('');
       setEditingGroupId(null);
       void fetchGroups();
     } catch (e) {
@@ -146,19 +206,123 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   const handleStartEdit = (group: GroupAppointment) => {
     setEditingGroupId(group.id);
     setMode(group.mode || 'offline');
-    
-    // Format UTC time to datetime-local (YYYY-MM-DDTHH:mm)
-    const localDate = new Date(group.dateTime);
-    const year = localDate.getFullYear();
-    const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
-    const date = localDate.getDate().toString().padStart(2, '0');
-    const hours = localDate.getHours().toString().padStart(2, '0');
-    const mins = localDate.getMinutes().toString().padStart(2, '0');
-    setDateTime(`${year}-${month}-${date}T${hours}:${mins}`);
+    setDateTime(formatDateTimeLocal(group.dateTime));
+    setFreeSessionDateTime(group.freeSessionDateTime ? formatDateTimeLocal(group.freeSessionDateTime) : '');
+    setCourseSecondDateTime(group.courseSecondDateTime ? formatDateTimeLocal(group.courseSecondDateTime) : '');
     setCapacity(group.capacity);
     setIsActive(group.isActive);
     setSelectedDays(group.days ? group.days.split(',').filter(Boolean).map(Number) : []);
+    setSelectedInstructor(group.instructorName || '');
     setIsModalOpen(true);
+  };
+
+  const handleSaveInstructors = async () => {
+    const nextInstructors = instructorsText
+      .split(/\n|,|;/)
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    try {
+      setSavingInstructors(true);
+      const response = await api.put<InstructorsResponse>('/api/group-appointments/instructors', {
+        instructors: nextInstructors
+      });
+      const savedInstructors = response.data.instructors || [];
+      setInstructors(savedInstructors);
+      setInstructorsText(savedInstructors.join('\n'));
+      if (selectedInstructor && !savedInstructors.includes(selectedInstructor)) {
+        setSelectedInstructor('');
+      }
+      setMessage({ type: 'success', text: 'تم حفظ أسماء الإنستراكتورز.' });
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'فشل حفظ أسماء الإنستراكتورز.' });
+    } finally {
+      setSavingInstructors(false);
+    }
+  };
+
+  const handleDownloadPaidTemplate = () => {
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ['رقم الهاتف'],
+      ['01068690092'],
+      ['20122334455']
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'أرقام الطلاب المدفوعة');
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'paid_students_blacklist_template.xlsx');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePaidImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setPaidImportResult(null);
+      setPaidImportFileName(file.name);
+      const binaryContent = await readFileAsBinaryString(file);
+      const workbook = XLSX.read(binaryContent, { type: 'binary' });
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet);
+      const phones = rows
+        .map(row => {
+          const phone = row['رقم الهاتف'] || row.Phone || row.phone || row['الرقم'] || Object.values(row)[0] || '';
+          return String(phone).trim();
+        })
+        .filter(Boolean);
+
+      if (phones.length === 0) {
+        setPaidImportPhones([]);
+        setMessage({ type: 'error', text: 'لم يتم العثور على أرقام هواتف داخل ملف Excel.' });
+        return;
+      }
+
+      setPaidImportPhones(phones);
+      setMessage({ type: 'success', text: `تم قراءة ${phones.length} رقم من الملف. اضغط تأكيد لتنفيذ الحظر.` });
+    } catch (e) {
+      console.error(e);
+      setPaidImportPhones([]);
+      setPaidImportFileName('');
+      setMessage({ type: 'error', text: 'فشل قراءة ملف Excel. تأكد من صيغة الملف.' });
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleConfirmPaidImport = async () => {
+    if (!activeProject || paidImportPhones.length === 0) return;
+
+    try {
+      setPaidImporting(true);
+      setMessage(null);
+      const response = await api.post<PaidBlacklistImportResult>(
+        `/api/projects/${activeProject.id}/import-blacklist`,
+        paidImportPhones
+      );
+      setPaidImportResult(response.data);
+      setPaidImportPhones([]);
+      setPaidImportFileName('');
+      setSelectedGroup(null);
+      setMessage({
+        type: 'success',
+        text: `تم الحظر في مجموعة ${response.data.blacklistGroupName} وحذف ${response.data.removedBookingsCount} حجز وإلغاء ${response.data.cancelledFollowUpsCount} متابعة.`
+      });
+      void fetchGroups();
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'فشل تنفيذ استيراد المحظورين للدفع.' });
+    } finally {
+      setPaidImporting(false);
+    }
   };
 
   const triggerDeleteGroup = (id: string) => {
@@ -298,12 +462,56 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     document.body.removeChild(link);
   };
 
+  const handleExportInactiveGroupsExcel = () => {
+    const inactiveGroups = groups.filter(group => !group.isActive && group.bookings.length > 0);
+    const data = inactiveGroups.flatMap(group => {
+      const groupMode = group.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)';
+      return group.bookings.map(booking => ({
+        'اسم الطالب': booking.customerName,
+        'رقم الهاتف': `+${booking.customerPhone}`,
+        'اسم المجموعة': group.name || groupMode,
+        'نوع المجموعة': groupMode,
+        'إنستراكتور الكورس': group.instructorName || '',
+        'ميعاد السيشن المجانية': group.freeSessionDateTime ? new Date(group.freeSessionDateTime).toLocaleString('ar-EG') : '',
+        'ميعاد السيشن الأولى للكورس': new Date(group.dateTime).toLocaleString('ar-EG'),
+        'ميعاد السيشن الثانية للكورس': group.courseSecondDateTime ? new Date(group.courseSecondDateTime).toLocaleString('ar-EG') : '',
+        'أيام الكورس': formatDays(group.days),
+        'تاريخ الحجز': new Date(booking.createdAt).toLocaleString('ar-EG'),
+        'حالة الحضور': booking.isAttended ? 'حضر' : 'لم يحضر',
+        'حالة الدفع': booking.isPaid ? 'دفع' : 'لم يدفع'
+      }));
+    });
+
+    if (data.length === 0) {
+      setMessage({ type: 'error', text: 'لا توجد حجوزات داخل مجموعات غير نشطة للتصدير.' });
+      return;
+    }
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'المجموعات غير النشطة');
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'inactive_group_bookings.xlsx');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const toggleDay = (dayIndex: number) => {
-    setSelectedDays(prev => 
-      prev.includes(dayIndex) 
-        ? prev.filter(d => d !== dayIndex) 
-        : [...prev, dayIndex].sort()
-    );
+    setSelectedDays(prev => {
+      if (prev.includes(dayIndex)) {
+        return prev.filter(d => d !== dayIndex);
+      }
+      if (prev.length >= 2) {
+        return [...prev.slice(1), dayIndex].sort();
+      }
+      return [...prev, dayIndex].sort();
+    });
   };
 
   const formatTime = (isoString: string) => {
@@ -311,6 +519,25 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     const dateStr = dateObj.toLocaleDateString('ar-EG', { month: 'long', day: 'numeric' });
     const timeStr = dateObj.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     return `${dateStr} الساعة ${timeStr}`;
+  };
+
+  const readFileAsBinaryString = (file: File) => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => resolve(String(event.target?.result || ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsBinaryString(file);
+    });
+  };
+
+  const formatDateTimeLocal = (isoString: string) => {
+    const localDate = new Date(isoString);
+    const year = localDate.getFullYear();
+    const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
+    const date = localDate.getDate().toString().padStart(2, '0');
+    const hours = localDate.getHours().toString().padStart(2, '0');
+    const mins = localDate.getMinutes().toString().padStart(2, '0');
+    return `${year}-${month}-${date}T${hours}:${mins}`;
   };
 
   const formatDays = (days: string) => {
@@ -358,22 +585,37 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
           العودة للإضافات
         </button>
 
-        <button 
-          onClick={() => {
-            setEditingGroupId(null);
-            setMode('offline');
-            setDateTime('');
-            setCapacity(5);
-            setIsActive(true);
-            setIsModalOpen(true);
-            setSelectedDays([]);
-          }}
-          className={`${styles.btn} ${styles.btnPrimary}`}
-          style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-        >
-          <Plus size={16} />
-          إضافة مجموعة جديدة
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={handleExportInactiveGroupsExcel}
+            className={`${styles.btn} ${styles.btnSecondary}`}
+            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+          >
+            <Download size={16} />
+            تصدير حجوزات المجموعات غير النشطة
+          </button>
+
+          <button
+            onClick={() => {
+              setEditingGroupId(null);
+              setMode('offline');
+              setDateTime('');
+              setFreeSessionDateTime('');
+              setCourseSecondDateTime('');
+              setCapacity(5);
+              setIsActive(true);
+              setIsModalOpen(true);
+              setSelectedDays([]);
+              setSelectedInstructor(instructors[0] || '');
+            }}
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+          >
+            <Plus size={16} />
+            إضافة مجموعة جديدة
+          </button>
+        </div>
       </div>
 
       {message && (
@@ -388,6 +630,115 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
           {message.text}
         </div>
       )}
+
+      <div className="glass-panel" style={{ padding: 'var(--space-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+          <div>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'hsl(var(--text-primary))' }}>الإنستراكتورز العاملين</h3>
+            <p style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))', marginTop: '4px' }}>
+              اكتب كل اسم في سطر منفصل. نفس الأسماء ستظهر كاختيارات عند إنشاء أو تعديل المجموعة.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSaveInstructors}
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            disabled={savingInstructors}
+            style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+          >
+            {savingInstructors ? 'جاري الحفظ...' : 'حفظ الأسماء'}
+          </button>
+        </div>
+        <textarea
+          value={instructorsText}
+          onChange={(e) => setInstructorsText(e.target.value)}
+          className={styles.input}
+          rows={3}
+          placeholder={'مثال:\nأحمد علي\nمنى حسن'}
+          style={{ resize: 'vertical', minHeight: '86px', lineHeight: 1.7 }}
+        />
+      </div>
+
+      <div className="glass-panel" style={{ padding: 'var(--space-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+          <div>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'hsl(var(--text-primary))', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ShieldAlert size={18} style={{ color: 'hsl(var(--accent-warning))' }} />
+              استيراد المحظورين للدفع
+            </h3>
+            <p style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))', marginTop: '4px', lineHeight: 1.6 }}>
+              ارفع ملف Excel بأرقام الطلاب الذين اشتركوا بالفعل. عند التأكيد سيتم حذفهم من كل المجموعات النشطة والمعطلة، وإلغاء متابعاتهم، ووضعهم في مجموعة المحظورين للدفع.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleDownloadPaidTemplate}
+            className={`${styles.btn} ${styles.btnSecondary}`}
+            style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+          >
+            <FileDown size={14} />
+            تحميل قالب
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <label
+            className={`${styles.btn} ${styles.btnSecondary}`}
+            style={{ padding: '8px 14px', fontSize: '0.82rem', cursor: paidImporting ? 'not-allowed' : 'pointer' }}
+          >
+            <Upload size={14} />
+            اختيار ملف Excel
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handlePaidImportFileChange}
+              disabled={paidImporting}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handleConfirmPaidImport}
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            disabled={paidImporting || paidImportPhones.length === 0}
+            style={{ padding: '8px 16px', fontSize: '0.82rem', opacity: paidImportPhones.length === 0 ? 0.55 : 1 }}
+          >
+            {paidImporting ? 'جاري التنفيذ...' : 'تأكيد الحظر'}
+          </button>
+          <span style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))' }}>
+            {paidImportFileName ? `${paidImportFileName} - ${paidImportPhones.length} رقم جاهز` : 'لم يتم اختيار ملف بعد'}
+          </span>
+        </div>
+
+        {paidImportResult && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gap: 'var(--space-sm)',
+            marginTop: 'var(--space-xs)'
+          }}>
+            {[
+              ['تم حظرهم من العملاء الحاليين', paidImportResult.matchedCount],
+              ['أرقام جديدة تم حظرها', paidImportResult.newCount],
+              ['حجوزات تم حذفها', paidImportResult.removedBookingsCount],
+              ['متابعات تم إلغاؤها', paidImportResult.cancelledFollowUpsCount]
+            ].map(([label, count]) => (
+              <div
+                key={label}
+                style={{
+                  padding: '10px 12px',
+                  background: 'var(--surface-muted)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)'
+                }}
+              >
+                <div style={{ fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: 600 }}>{label}</div>
+                <div style={{ fontSize: '1.2rem', color: 'hsl(var(--text-primary))', fontWeight: 800 }}>{count}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {!loading && groups.length > 0 && (
         <div style={{ 
@@ -613,7 +964,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                     <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>نوع المجموعة</th>
-                    <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>الوقت والأيام</th>
+                    <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>المواعيد والإنستراكتور</th>
                     <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>الحجوزات / السعة</th>
                     <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الحالة</th>
                     <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
@@ -649,7 +1000,22 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                             </div>
                             {group.days && (
                               <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
-                                {formatDays(group.days)}
+                                أيام الكورس: {formatDays(group.days)}
+                              </span>
+                            )}
+                            {group.courseSecondDateTime && (
+                              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
+                                السيشن الثانية: {formatTime(group.courseSecondDateTime)}
+                              </span>
+                            )}
+                            {group.freeSessionDateTime && (
+                              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
+                                السيشن المجانية: {formatTime(group.freeSessionDateTime)} مع دكتور مصطفى
+                              </span>
+                            )}
+                            {group.instructorName && (
+                              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--accent-primary))', fontWeight: 700 }}>
+                                إنستراكتور الكورس: {group.instructorName}
                               </span>
                             )}
                           </div>
@@ -873,7 +1239,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
           zIndex: 9999,
           padding: 'var(--space-md)'
         }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '460px', padding: 'var(--space-xl)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '560px', maxHeight: '92vh', overflowY: 'auto', padding: 'var(--space-xl)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>
                 {editingGroupId ? 'تعديل مجموعة مواعيد' : 'إنشاء مجموعة جديدة'}
@@ -902,7 +1268,38 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>التاريخ والوقت</label>
+                <label className={styles.label}>إنستراكتور المجموعة</label>
+                <select
+                  value={selectedInstructor}
+                  onChange={(e) => setSelectedInstructor(e.target.value)}
+                  className={styles.select}
+                  required
+                >
+                  <option value="">اختر الإنستراكتور</option>
+                  {instructors.map((instructor) => (
+                    <option key={instructor} value={instructor}>{instructor}</option>
+                  ))}
+                </select>
+                {instructors.length === 0 && (
+                  <span style={{ fontSize: '0.72rem', color: 'hsl(var(--accent-danger))' }}>
+                    أضف أسماء الإنستراكتورز من الخانة الموجودة خارج النموذج ثم احفظها.
+                  </span>
+                )}
+              </div>
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>ميعاد السيشن المجانية (مع دكتور مصطفى)</label>
+                <input
+                  type="datetime-local"
+                  value={freeSessionDateTime}
+                  onChange={(e) => setFreeSessionDateTime(e.target.value)}
+                  className={styles.input}
+                  required
+                />
+              </div>
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>ميعاد السيشن الأولى للكورس</label>
                 <input 
                   type="datetime-local" 
                   value={dateTime} 
@@ -913,7 +1310,18 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>الأيام</label>
+                <label className={styles.label}>ميعاد السيشن الثانية للكورس</label>
+                <input
+                  type="datetime-local"
+                  value={courseSecondDateTime}
+                  onChange={(e) => setCourseSecondDateTime(e.target.value)}
+                  className={styles.input}
+                  required
+                />
+              </div>
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>أيام الكورس الأسبوعية (اختر يومين)</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
                   {DAY_NAMES.map((dayName, idx) => (
                     <button
@@ -936,6 +1344,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                     </button>
                   ))}
                 </div>
+                <span style={{ fontSize: '0.72rem', color: selectedDays.length === 2 ? 'hsl(var(--text-secondary))' : 'hsl(var(--accent-danger))' }}>
+                  المختار حالياً: {selectedDays.length} / 2
+                </span>
               </div>
 
               <div className={styles.formGroup}>

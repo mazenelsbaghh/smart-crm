@@ -86,9 +86,21 @@ namespace Modules.Conversations.API
             if (!string.IsNullOrEmpty(search))
             {
                 var searchLower = search.ToLower();
+                var phoneSearch = new string(search.Where(char.IsDigit).ToArray());
+                var internationalPhoneSearch = phoneSearch.StartsWith("0")
+                    ? $"20{phoneSearch.Substring(1)}"
+                    : phoneSearch;
+                var localPhoneSearch = phoneSearch.StartsWith("20")
+                    ? $"0{phoneSearch.Substring(2)}"
+                    : phoneSearch;
+                var hasPhoneSearch = !string.IsNullOrEmpty(phoneSearch);
+
                 joinedQuery = joinedQuery.Where(x => 
                     (x.Customer.Name != null && x.Customer.Name.ToLower().Contains(searchLower)) || 
-                    (x.Customer.PhoneNumber != null && x.Customer.PhoneNumber.Contains(searchLower)));
+                    (hasPhoneSearch && x.Customer.PhoneNumber != null &&
+                        (x.Customer.PhoneNumber.Contains(phoneSearch) ||
+                         x.Customer.PhoneNumber.Contains(internationalPhoneSearch) ||
+                         x.Customer.PhoneNumber.Contains(localPhoneSearch))));
             }
 
             if (before.HasValue)

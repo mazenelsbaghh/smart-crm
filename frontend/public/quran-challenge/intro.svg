@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+  <rect width="1080" height="1920" fill="#18372d"/>
+  <circle cx="870" cy="420" r="520" fill="none" stroke="#d6b75b" stroke-opacity=".25" stroke-width="3"/>
+  <text x="540" y="690" fill="#d6b75b" font-family="Cairo, sans-serif" font-size="66" font-weight="700" text-anchor="middle">مسابقة قرآنية</text>
+  <text x="540" y="815" fill="#f4edd9" font-family="Cairo, sans-serif" font-size="48" font-weight="700" text-anchor="middle">اختبر نفسك ابتغاء مرضاة الله</text>
+  <text x="540" y="930" fill="#d6b75b" font-family="Cairo, sans-serif" font-size="42" text-anchor="middle">صلِّ على النبي ﷺ</text>
+  <text x="540" y="1600" fill="#f4edd9" fill-opacity=".8" font-family="Cairo, sans-serif" font-size="34" text-anchor="middle">أكمل الآية</text>
+</svg>
