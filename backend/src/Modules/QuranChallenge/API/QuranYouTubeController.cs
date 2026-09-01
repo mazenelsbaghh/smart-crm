@@ -18,22 +18,23 @@ public sealed class QuranYouTubeController : ControllerBase
     private const int MaxCaptionLength = 5000;
     private readonly AppDbContext _dbContext;
     private readonly YouTubeConnectionService _connectionService;
-    private readonly ITenantContext _tenantContext;
+    private readonly IProjectAuthorizationService _authorization;
 
     public QuranYouTubeController(
         AppDbContext dbContext,
         YouTubeConnectionService connectionService,
-        ITenantContext tenantContext)
+        IProjectAuthorizationService authorization)
     {
         _dbContext = dbContext;
         _connectionService = connectionService;
-        _tenantContext = tenantContext;
+        _authorization = authorization;
     }
 
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {
         var projectId = ActiveProjectId();
+        if (!_authorization.CanRead(User, projectId)) return Forbid();
         var settings = await SettingsForProjectAsync(projectId, cancellationToken);
         return Ok(new
         {
@@ -56,6 +57,7 @@ public sealed class QuranYouTubeController : ControllerBase
     public async Task<IActionResult> Update(UpdateYouTubeSettingsRequest request, CancellationToken cancellationToken)
     {
         var projectId = ActiveProjectId();
+        if (!_authorization.CanManageProject(User, projectId)) return Forbid();
         var validationError = Validate(request);
         if (validationError is not null) return BadRequest(new { error = validationError });
         var settings = await GetOrCreateSettingsAsync(projectId, cancellationToken);
@@ -72,6 +74,7 @@ public sealed class QuranYouTubeController : ControllerBase
     public async Task<IActionResult> Connect()
     {
         var projectId = ActiveProjectId();
+        if (!_authorization.CanManageProject(User, projectId)) return Forbid();
         if (!_connectionService.IsConfigured) return BadRequest(new { error = "بيانات Google OAuth غير مُعدّة على الخادم." });
         return Ok(new { authorizationUrl = await _connectionService.AuthorizationUrlAsync(projectId) });
     }
@@ -98,6 +101,7 @@ public sealed class QuranYouTubeController : ControllerBase
     public async Task<IActionResult> Disconnect(CancellationToken cancellationToken)
     {
         var projectId = ActiveProjectId();
+        if (!_authorization.CanManageProject(User, projectId)) return Forbid();
         var settings = await SettingsForProjectAsync(projectId, cancellationToken);
         if (settings?.ProtectedRefreshToken is null) return NoContent();
         await _connectionService.RevokeAsync(settings.ProtectedRefreshToken, cancellationToken);
@@ -115,6 +119,7 @@ public sealed class QuranYouTubeController : ControllerBase
     public async Task<IActionResult> PublishNow(PublishCurrentVerseRequest request, CancellationToken cancellationToken)
     {
         var projectId = ActiveProjectId();
+        if (!_authorization.CanManageProject(User, projectId)) return Forbid();
         var settings = await SettingsForProjectAsync(projectId, cancellationToken);
         if (settings?.ProtectedRefreshToken is null) return BadRequest(new { error = "اربط قناة YouTube أولاً." });
         var selection = new QuranVerseSelection(request.SurahNumber, request.AyahNumber, request.HiddenWordIndex);
@@ -124,8 +129,8 @@ public sealed class QuranYouTubeController : ControllerBase
 
     private Guid ActiveProjectId()
     {
-        return _tenantContext.ProjectId != Guid.Empty
-            ? _tenantContext.ProjectId
+        return _authorization.GetProjectId(User) is { } projectId && projectId != Guid.Empty
+            ? projectId
             : throw new UnauthorizedAccessException("الطلب لا يحتوي على مشروع صالح.");
     }
 

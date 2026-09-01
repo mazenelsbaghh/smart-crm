@@ -19,6 +19,7 @@ namespace Modules.Media.Domain
         public string StoragePath { get; set; } = string.Empty;
         public int ReferenceCount { get; set; } = 1;
         public Guid UploadedBy { get; set; }
+        public long ProjectionVersion { get; set; } = 1;
     }
 
     public class AssetVariant : AuditableEntity

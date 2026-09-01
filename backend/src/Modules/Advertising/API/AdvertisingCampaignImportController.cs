@@ -30,9 +30,9 @@ public sealed class AdvertisingCampaignImportController(IProjectAuthorizationSer
     public async Task<IActionResult> Import(Guid projectId, [FromBody] ImportExistingAdsRequest request, CancellationToken cancellationToken)
     {
         if (!CanManage(projectId)) return Forbid();
-        try { return Ok(await importer.ImportAsync(projectId, request.AdIds ?? [], cancellationToken)); }
+        try { return Ok(await importer.ImportAsync(projectId, request.AdIds ?? [], UserId ?? Guid.Empty, request.ConfirmOwnershipTransfer, cancellationToken)); }
         catch (AdvertisingException exception) { return StatusCode(exception.StatusCode, new { code = exception.Code, message = exception.Message }); }
     }
 }
 
-public sealed record ImportExistingAdsRequest(IReadOnlyCollection<string>? AdIds);
+public sealed record ImportExistingAdsRequest(IReadOnlyCollection<string>? AdIds, bool ConfirmOwnershipTransfer);

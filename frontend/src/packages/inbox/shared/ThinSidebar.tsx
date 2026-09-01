@@ -1,52 +1,58 @@
 'use client';
 
 import React from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { User, Zap } from 'lucide-react';
-import { compactNavigationItems } from '../../../config/navigation';
+import { navigationItemsForRole } from '../../../config/navigation';
+import { useAuth } from '../../../context/auth-context';
 import styles from '../inbox.module.css';
 
-export const inboxNavigationItems = compactNavigationItems;
-
 export default function ThinSidebar() {
-  const router = useRouter();
   const pathname = usePathname();
+  const { user } = useAuth();
+  const inboxNavigationItems = navigationItemsForRole(user?.role).filter((item) => item.compact);
 
   return (
-    <div className={styles.thinSidebar}>
-      {/* Premium Logo (Lime Green Zap Icon wrapper) */}
-      <div className={styles.sidebarLogoContainer} onClick={() => router.push('/dashboard')}>
+    <aside className={styles.thinSidebar} aria-label="تنقل المحادثات">
+      <Link
+        href="/dashboard"
+        className={styles.sidebarLogoContainer}
+        aria-label="العودة إلى لوحة التحكم"
+        data-dashboard-navigation
+      >
         <div className={styles.sidebarLogoBox}>
-          <Zap size={22} fill="currentColor" />
+          <Zap size={22} fill="currentColor" aria-hidden="true" />
         </div>
-      </div>
+      </Link>
 
       {/* Navigation Menu */}
-      <nav className={styles.sidebarNav}>
+      <nav className={styles.sidebarNav} aria-label="الأقسام الرئيسية">
         {inboxNavigationItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.path;
+          const isActive = pathname === item.path || pathname.startsWith(`${item.path}/`);
           return (
-            <button
+            <Link
               key={item.path}
-              type="button"
+              href={item.path}
               className={`${styles.sidebarNavItem} ${isActive ? styles.sidebarNavItemActive : ''}`}
-              onClick={() => router.push(item.path)}
               aria-label={item.name}
+              aria-current={isActive ? 'page' : undefined}
+              data-dashboard-navigation
             >
               <Icon size={20} strokeWidth={1.5} />
               <span className={styles.sidebarNavLabel}>{item.name}</span>
-            </button>
+            </Link>
           );
         })}
       </nav>
 
       {/* User profile avatar / Footer */}
-      <div className={styles.sidebarFooter}>
+      <div className={styles.sidebarFooter} aria-hidden="true">
         <div className={styles.sidebarAvatar}>
-          <User size={18} />
+          <User size={18} aria-hidden="true" />
         </div>
       </div>
-    </div>
+    </aside>
   );
 }

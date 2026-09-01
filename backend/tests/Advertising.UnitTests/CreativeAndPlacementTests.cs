@@ -7,20 +7,28 @@ namespace Advertising.UnitTests;
 public sealed class CreativeAndPlacementTests
 {
     [Fact]
-    public void Recent_video_ranks_above_old_image_and_only_uses_facebook_video_placements()
+    public void Eligible_video_is_ranked_from_evidence_and_supports_dynamic_vertical_inventory()
     {
-        var now = new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc);
-        var video = CreativeRankingService.Rank(CreativeMediaType.Video, now.AddDays(-1), now);
-        var image = CreativeRankingService.Rank(CreativeMediaType.Image, now.AddDays(-40), now);
-        Assert.True(video.Score > image.Score); Assert.Equal(new[] { "feed", "facebook_reels" }, video.Placements);
-        Assert.True(FacebookPlacementPolicy.IsAllowed("facebook", video.Placements));
+        var rank = CreativeRankingService.Rank(new CreativeRankingEvidence(
+            CreativeMediaType.Video, DateTime.UtcNow.AddDays(-2), true, "PageOwned", "Allowed", 14m, 18m, true), DateTime.UtcNow);
+
+        Assert.True(rank.Score >= 80m);
+        Assert.Contains("facebook_reels", rank.Placements);
+        Assert.Contains("paid=18", rank.Explanation);
     }
 
-    [Fact]
-    public void Image_variants_target_feed_and_story()
+    [Theory]
+    [InlineData("Unknown", "Allowed", true)]
+    [InlineData("PageOwned", "Blocked", true)]
+    [InlineData("PageOwned", "Allowed", false)]
+    public void Missing_rights_policy_or_supported_source_is_blocked_without_fabrication(
+        string rights, string policy, bool supported)
     {
-        var result = CreativeRankingService.Rank(CreativeMediaType.Image, DateTime.UtcNow, DateTime.UtcNow);
-        Assert.Equal(new[] { "feed", "story" }, result.Placements);
-        Assert.DoesNotContain(result.Placements, x => x.Contains("instagram", StringComparison.OrdinalIgnoreCase));
+        var rank = CreativeRankingService.Rank(new CreativeRankingEvidence(
+            CreativeMediaType.Image, DateTime.UtcNow, true, rights, policy, 20m, 20m, supported), DateTime.UtcNow);
+
+        Assert.Equal(0m, rank.Score);
+        Assert.Empty(rank.Placements);
+        Assert.StartsWith("Blocked", rank.Explanation);
     }
 }

@@ -18,22 +18,23 @@ public sealed class QuranFacebookController : ControllerBase
     private const int MaxCaptionLength = 5000;
     private readonly AppDbContext _dbContext;
     private readonly IConfiguration _configuration;
-    private readonly ITenantContext _tenantContext;
+    private readonly IProjectAuthorizationService _authorization;
 
     public QuranFacebookController(
         AppDbContext dbContext,
         IConfiguration configuration,
-        ITenantContext tenantContext)
+        IProjectAuthorizationService authorization)
     {
         _dbContext = dbContext;
         _configuration = configuration;
-        _tenantContext = tenantContext;
+        _authorization = authorization;
     }
 
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {
         var projectId = ActiveProjectId();
+        if (!_authorization.CanRead(User, projectId)) return Forbid();
         var settings = await SettingsForProjectAsync(projectId, cancellationToken);
         var pages = await ActivePagesAsync(projectId, cancellationToken);
         return Ok(new
@@ -57,9 +58,10 @@ public sealed class QuranFacebookController : ControllerBase
         UpdateFacebookSettingsRequest request,
         CancellationToken cancellationToken)
     {
+        var projectId = ActiveProjectId();
+        if (!_authorization.CanManageProject(User, projectId)) return Forbid();
         var validationError = Validate(request);
         if (validationError is not null) return BadRequest(new { error = validationError });
-        var projectId = ActiveProjectId();
         var page = await ActivePageAsync(projectId, request.FacebookPageId, cancellationToken);
         if (request.IsEnabled && page is null) return BadRequest(new { error = "اختر صفحة Facebook متصلة أولاً." });
         var settings = await GetOrCreateSettingsAsync(projectId, cancellationToken);
@@ -74,6 +76,7 @@ public sealed class QuranFacebookController : ControllerBase
         CancellationToken cancellationToken)
     {
         var projectId = ActiveProjectId();
+        if (!_authorization.CanManageProject(User, projectId)) return Forbid();
         var settings = await SettingsForProjectAsync(projectId, cancellationToken);
         if (settings?.FacebookPageId is null) return BadRequest(new { error = "اختر صفحة Facebook أولاً." });
         var page = await ActivePageAsync(projectId, settings.FacebookPageId, cancellationToken);
@@ -86,8 +89,8 @@ public sealed class QuranFacebookController : ControllerBase
 
     private Guid ActiveProjectId()
     {
-        return _tenantContext.ProjectId != Guid.Empty
-            ? _tenantContext.ProjectId
+        return _authorization.GetProjectId(User) is { } projectId && projectId != Guid.Empty
+            ? projectId
             : throw new UnauthorizedAccessException("الطلب لا يحتوي على مشروع صالح.");
     }
 

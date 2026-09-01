@@ -1,5 +1,7 @@
 import 'dart:convert';
+
 import 'package:dio/dio.dart';
+
 import '../../../../core/services/api_client.dart';
 import '../../../../core/services/secure_storage.dart';
 import '../models/user_model.dart';
@@ -11,40 +13,35 @@ class AuthRepository {
   AuthRepository({
     required ApiClient apiClient,
     required SecureStorageService secureStorage,
-  })  : _apiClient = apiClient,
-        _secureStorage = secureStorage;
+  }) : _apiClient = apiClient,
+       _secureStorage = secureStorage;
 
   Future<AuthSession> login(String email, String password) async {
-    final response = await _apiClient.dio.post('/api/auth/login', data: {
-      'email': email,
-      'password': password,
-    });
-
-    final session = AuthSession.fromJson(response.data);
-    await _secureStorage.saveTokens(
-      accessToken: session.accessToken,
-      refreshToken: session.refreshToken,
+    final response = await _apiClient.dio.post(
+      '/api/auth/login',
+      data: {'email': email, 'password': password},
     );
-    await _secureStorage.saveUser(jsonEncode(session.user.toJson()));
-
-    // Fetch projects automatically upon login
-    try {
-      final projects = await getProjects();
-      if (projects.isNotEmpty) {
-        final fullProject = await getProject(projects.first.id);
-        await _secureStorage.saveActiveProject(jsonEncode(fullProject.toJson()));
-      }
-    } catch (_) {}
-
-    return session;
+    return AuthSession.fromJson(response.data);
   }
 
-  Future<void> register(String email, String password, String fullName) async {
-    await _apiClient.dio.post('/api/auth/register', data: {
-      'email': email,
-      'password': password,
-      'fullName': fullName,
-    });
+  Future<void> saveSession(AuthSession session) async {
+    await _secureStorage.saveSession(
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      userJson: jsonEncode(session.user.toJson()),
+    );
+  }
+
+  Future<String?> getStoredRefreshToken() async {
+    final refreshToken = await _secureStorage.getRefreshToken();
+    return refreshToken == null || refreshToken.trim().isEmpty
+        ? null
+        : refreshToken;
+  }
+
+  Future<void> invalidateSession(String refreshToken) async {
+    await _secureStorage.clearSessionIfRefreshTokenMatches(refreshToken);
+    await _revokeRefreshToken(refreshToken);
   }
 
   Future<List<Project>> getProjects() async {
@@ -58,16 +55,21 @@ class AuthRepository {
     return Project.fromJson(response.data);
   }
 
-  Future<void> setActiveProject(Project project) async {
-    await _secureStorage.saveActiveProject(jsonEncode(project.toJson()));
+  Future<bool> setActiveProject(Project project, String expectedRefreshToken) {
+    return _secureStorage.saveActiveProjectIfCurrent(
+      expectedRefreshToken: expectedRefreshToken,
+      projectJson: jsonEncode(project.toJson()),
+    );
   }
 
   Future<Project?> getActiveProject() async {
     final projectStr = await _secureStorage.getActiveProject();
     if (projectStr == null) return null;
     try {
-      return Project.fromJson(jsonDecode(projectStr));
-    } catch (_) {
+      final cachedProject = jsonDecode(projectStr);
+      if (cachedProject is! Map<String, dynamic>) return null;
+      return Project.fromJson(cachedProject);
+    } on FormatException {
       return null;
     }
   }
@@ -76,22 +78,28 @@ class AuthRepository {
     final userStr = await _secureStorage.getUser();
     if (userStr == null) return null;
     try {
-      return User.fromJson(jsonDecode(userStr));
-    } catch (_) {
+      final cachedUser = jsonDecode(userStr);
+      if (cachedUser is! Map<String, dynamic>) return null;
+      return User.fromJson(cachedUser);
+    } on FormatException {
       return null;
     }
   }
 
   Future<void> logout() async {
+    final refreshToken = await getStoredRefreshToken();
+    await _secureStorage.clearAll();
+    if (refreshToken != null) await _revokeRefreshToken(refreshToken);
+  }
+
+  Future<void> _revokeRefreshToken(String refreshToken) async {
     try {
-      final refreshToken = await _secureStorage.getRefreshToken();
-      if (refreshToken != null) {
-        await _apiClient.dio.post('/api/auth/logout', data: {
-          'refreshToken': refreshToken,
-        });
-      }
-    } catch (_) {} finally {
-      await _secureStorage.clearAll();
+      await _apiClient.dio.post(
+        '/api/auth/logout',
+        data: {'refreshToken': refreshToken},
+      );
+    } on DioException {
+      // The local session is already gone; revocation can expire server-side.
     }
   }
 }

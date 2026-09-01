@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using Modules.Media.Services;
+using Shared.Infrastructure;
 using Shared.Security;
 
 namespace Modules.Media.API
@@ -61,6 +62,7 @@ namespace Modules.Media.API
 
         [HttpPost("/api/projects/{projectId}/assets/upload")]
         [AllowAnonymous]
+        [WhatsAppGatewayAuthenticated]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadAssetAnonymous(Guid projectId, [FromForm] IFormFile file)
         {

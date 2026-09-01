@@ -24,6 +24,75 @@ namespace backend.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "vector");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingAiWorkItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("DeadlineUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("InputHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InputJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InputVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ModelVersion")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("OwnerVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PromptVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("text");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "OwnerId", "OwnerVersion", "Purpose", "State");
+
+                    b.ToTable("AdvertisingAiWorkItems");
+                });
+
             modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingAttributionTouch", b =>
                 {
                     b.Property<Guid>("Id")
@@ -33,21 +102,46 @@ namespace backend.Migrations
                     b.Property<Guid?>("AdvertisementId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("ConversionId")
+                    b.Property<Guid?>("AttributionContextId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ConversionId")
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EligibilityEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("ExternalClickIdHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("JourneyKey")
                         .HasColumnType("text");
 
                     b.Property<string>("Method")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("ObservationId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ProtectedCtwaClid")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderAdExternalId")
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("TouchedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -57,7 +151,184 @@ namespace backend.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ProjectId", "ObservationId")
+                        .IsUnique();
+
                     b.ToTable("AdvertisingAttributionTouches");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingAuditRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ActorType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EntityId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("IndexAttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("IndexState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("IndexedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastIndexErrorCode")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("NextIndexAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SafeEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "OccurredAtUtc", "Id");
+
+                    b.ToTable("AdvertisingAuditRecords");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingCapabilitySnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AutomationFeaturesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BidStrategiesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CheckedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FailureSummary")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GraphApiVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ObjectivesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OptimizationGoalsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PermissionStateJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlacementEligibilityJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProbeEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProductionAccessJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderAccountStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderFieldsVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderTraceId")
+                        .HasColumnType("text");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SupportedValidationObjectsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ValidationSupportJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ConnectionId", "DestinationId", "CheckedAtUtc");
+
+                    b.ToTable("AdvertisingCapabilitySnapshots");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingConnection", b =>
@@ -69,11 +340,21 @@ namespace backend.Migrations
                     b.Property<string>("AccountCurrency")
                         .HasColumnType("text");
 
+                    b.Property<string>("AccountStatus")
+                        .HasColumnType("text");
+
                     b.Property<string>("AccountTimezone")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AccountTimezoneIana")
                         .HasColumnType("text");
 
                     b.Property<string>("AdAccountExternalId")
                         .HasColumnType("text");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -87,7 +368,18 @@ namespace backend.Migrations
                     b.Property<DateTime?>("ExpiresAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("FundingStatus")
+                        .HasColumnType("text");
+
                     b.Property<string>("GrantedCapabilitiesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("GrantedPermissionsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("GraphApiVersion")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -95,6 +387,9 @@ namespace backend.Migrations
                         .HasColumnType("text");
 
                     b.Property<string>("LastErrorSummary")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastProviderTraceId")
                         .HasColumnType("text");
 
                     b.Property<DateTime?>("LastSyncAtUtc")
@@ -116,8 +411,23 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("ReferralProofAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReferralProofHash")
+                        .HasColumnType("text");
+
+                    b.Property<int>("ReferralProofState")
+                        .HasColumnType("integer");
+
                     b.Property<int>("State")
                         .HasColumnType("integer");
+
+                    b.Property<string>("TimezoneSource")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("TimezoneValidatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -125,10 +435,20 @@ namespace backend.Migrations
                     b.Property<long>("Version")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("WabaExternalId")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("WhatsAppIntegrationMode")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProjectId", "Provider")
                         .IsUnique();
+
+                    b.HasIndex("Provider", "AdAccountExternalId")
+                        .IsUnique()
+                        .HasFilter("\"AdAccountExternalId\" IS NOT NULL AND \"State\" <> 5");
 
                     b.ToTable("AdvertisingConnections");
                 });
@@ -139,6 +459,13 @@ namespace backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("ArchivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ConceptKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -146,6 +473,10 @@ namespace backend.Migrations
                         .HasColumnType("integer");
 
                     b.Property<string>("FatigueState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("HookKey")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -158,12 +489,24 @@ namespace backend.Migrations
                     b.Property<Guid?>("OfferId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("OrganicEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PaidEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("PolicyState")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("RecommendationBand")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("RecommendationEvidenceJson")
                         .IsRequired()
@@ -212,6 +555,14 @@ namespace backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CallToAction")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasColumnType("text");
@@ -222,14 +573,41 @@ namespace backend.Migrations
                     b.Property<Guid>("CreativeId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<long?>("DurationMs")
+                        .HasColumnType("bigint");
+
                     b.Property<long>("FileSize")
                         .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("GeneratedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Headline")
+                        .HasColumnType("text");
 
                     b.Property<int>("Height")
                         .HasColumnType("integer");
 
+                    b.Property<string>("OfferFactHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PageCompatibilityJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("Placement")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlacementFormat")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrimaryText")
                         .HasColumnType("text");
 
                     b.Property<Guid>("ProjectId")
@@ -247,8 +625,15 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ThumbnailObjectKey")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WhatsAppDestinationCompatibilityJson")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<int>("Width")
                         .HasColumnType("integer");
@@ -267,6 +652,9 @@ namespace backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime>("BucketEndUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("BucketStartUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -283,8 +671,16 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("LeaseOwner")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ReportingTimezoneIana")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("StartedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -314,14 +710,24 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("EnvelopeId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("EvaluateAfterUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime>("EvidenceEndUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EvidenceHash")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("EvidenceJson")
                         .IsRequired()
@@ -330,6 +736,12 @@ namespace backend.Migrations
                     b.Property<DateTime>("EvidenceStartUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("ExecutionCommandId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PlanId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -337,6 +749,10 @@ namespace backend.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<string>("ProposedChangeJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReasonCodesJson")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -362,6 +778,161 @@ namespace backend.Migrations
                     b.ToTable("AdvertisingDecisions");
                 });
 
+            modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingExperiment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttributionWindowDays")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("BudgetCap")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<string>("BusinessOutcome")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConclusionJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConfidencePolicyJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("CorrectionLagHours")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefinitionHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Hypothesis")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("MaturedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MinimumAttributedOutcomes")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("MinimumAttributionCoverage")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("MinimumElapsedHours")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("MinimumSpend")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OfferId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PrimaryVariable")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StopRuleJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("StoppedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdvertisingExperiments");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingExperimentArm", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("AllocatedBudget")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<string>("ChangedValueJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ExperimentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsControl")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid?>("ManagedTargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ManagedTargetType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId", "IsControl");
+
+                    b.ToTable("AdvertisingExperimentArms");
+                });
+
             modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingFactSource", b =>
                 {
                     b.Property<Guid>("Id")
@@ -371,6 +942,9 @@ namespace backend.Migrations
                     b.Property<string>("Citation")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<decimal>("Confidence")
+                        .HasColumnType("numeric");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -383,11 +957,24 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsContradictory")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsRequiredForLaunch")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid>("KnowledgeDocumentId")
                         .HasColumnType("uuid");
 
                     b.Property<int>("KnowledgeVersion")
                         .HasColumnType("integer");
+
+                    b.Property<string>("NormalizedValueJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid?>("OfferId")
                         .HasColumnType("uuid");
@@ -398,6 +985,10 @@ namespace backend.Migrations
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("SourceVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -406,6 +997,115 @@ namespace backend.Migrations
                     b.HasIndex("ProjectId", "ProfileId", "FactName");
 
                     b.ToTable("AdvertisingFactSources");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingKnowledgeProjection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AffectedOfferKeysJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("DocumentVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("IsTombstoned")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RevisionHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SafeFactsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UpdatedFromEventId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "DocumentId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingKnowledgeProjections");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingMediaProjection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AssetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AssetVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("BrandMetadataJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FileHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("IsTombstoned")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ObjectReference")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RightsState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UpdatedFromEventId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "AssetId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingMediaProjections");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingOffer", b =>
@@ -418,13 +1118,32 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("AttributionWindowDays")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CapacityUpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("ContributionMargin")
+                        .HasColumnType("numeric");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Currency")
                         .HasColumnType("text");
 
+                    b.Property<int?>("CurrentCapacity")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("DailyCapacity")
+                        .HasColumnType("integer");
+
                     b.Property<string>("DestinationsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FallbackOutcomeOrderJson")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -432,12 +1151,27 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<decimal?>("MaximumSustainableCost")
+                        .HasColumnType("numeric");
+
                     b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PolicyEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PolicyState")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<decimal?>("Price")
                         .HasColumnType("numeric");
+
+                    b.Property<string>("PrimaryOutcome")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<Guid>("ProfileId")
                         .HasColumnType("uuid");
@@ -449,6 +1183,13 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ScheduleJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SpecialAdCategory")
+                        .HasColumnType("text");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasColumnType("text");
@@ -456,6 +1197,9 @@ namespace backend.Migrations
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<decimal?>("UnitCost")
+                        .HasColumnType("numeric");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -470,6 +1214,10 @@ namespace backend.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("AudienceFactsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("AudienceJson")
                         .IsRequired()
@@ -493,6 +1241,10 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ModelVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("OfferType")
                         .HasColumnType("text");
 
@@ -502,6 +1254,10 @@ namespace backend.Migrations
 
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("PromptVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<DateTime?>("StaleAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -516,6 +1272,51 @@ namespace backend.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("AdvertisingProfiles");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingProjectionBackfillRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CursorJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastFailureCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ParityJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdvertisingProjectionBackfillRuns");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingPromotion", b =>
@@ -608,6 +1409,12 @@ namespace backend.Migrations
                     b.Property<DateTime?>("LastUsedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("OverlapEndsAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PreviousProtectedSigningSecret")
+                        .HasColumnType("text");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -615,12 +1422,27 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ReplayEvidenceJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RotatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("SourceKey")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
@@ -628,6 +1450,189 @@ namespace backend.Migrations
                         .IsUnique();
 
                     b.ToTable("AdvertisingWebhookSources");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AudienceStrategy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AudienceSuggestionsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AuthorizedSourceGrantIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CustomAudienceExclusionsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DefinitionHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EstimatedReachJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExcludedGeoJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("IncludedGeoJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int?>("MaximumAgeSuggestion")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MinimumAge")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("OfferId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequiredLanguagesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SpecialCategoryConstraintsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "EnvelopeId", "Version");
+
+                    b.ToTable("AdvertisingAudienceStrategies");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AuthorizedWhatsAppDestination", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AdvertisingState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BusinessEventsState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("CapabilitySnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DatasetExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DisplayPhoneE164")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastErrorCode")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastValidatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MessagingState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PageExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PhoneNumberExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReceivingIdentityExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ReferralCaptureState")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ReferralProofAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("WabaExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("WhatsAppAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("WhatsAppIntegrationMode")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WhatsAppAccountId", "ProjectId");
+
+                    b.HasIndex("ProjectId", "ConnectionId", "PhoneNumberExternalId")
+                        .IsUnique();
+
+                    b.HasIndex("Provider", "WabaExternalId", "PhoneNumberExternalId")
+                        .IsUnique()
+                        .HasFilter("\"State\" <> 5");
+
+                    b.ToTable("AdvertisingWhatsAppDestinations");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.AutonomyEnvelope", b =>
@@ -640,11 +1645,22 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("AttributionWindowDays")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("AudienceBoundaryHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("AuthorizedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("AuthorizedByUserId")
                         .HasColumnType("uuid");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
 
                     b.Property<Guid>("ConnectionId")
                         .HasColumnType("uuid");
@@ -663,8 +1679,31 @@ namespace backend.Migrations
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
 
+                    b.Property<string>("DefinitionHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("EndsAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("HardCustomAudienceExclusionsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("HardExcludedGeoJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("HardIncludedGeoJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("HardMinimumAge")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("HardRequiredLanguagesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<decimal>("MaximumIncreasePercent")
                         .HasColumnType("numeric");
@@ -680,8 +1719,15 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("PlacementPolicy")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ReportingTimezoneIana")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<DateTime?>("RevokedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -694,6 +1740,12 @@ namespace backend.Migrations
 
                     b.Property<int>("State")
                         .HasColumnType("integer");
+
+                    b.Property<DateTime?>("TimezoneSnapshotAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TimezoneSource")
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -708,6 +1760,56 @@ namespace backend.Migrations
                     b.ToTable("AutonomyEnvelopes");
                 });
 
+            modelBuilder.Entity("Modules.Advertising.Domain.AutopilotDisableRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ContinuingSpendAcknowledgedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Mode")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ProgressJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RequestedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdvertisingDisableRequests");
+                });
+
             modelBuilder.Entity("Modules.Advertising.Domain.BudgetAllocation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -718,6 +1820,9 @@ namespace backend.Migrations
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
 
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -727,7 +1832,16 @@ namespace backend.Migrations
                     b.Property<DateTime>("EndsAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("ExperimentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ExternalBudgetOwnerId")
+                        .HasColumnType("text");
+
                     b.Property<Guid>("LedgerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PlanId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("ProjectId")
@@ -746,12 +1860,59 @@ namespace backend.Migrations
                     b.Property<Guid>("TargetId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
                     b.ToTable("AdvertisingBudgetAllocations");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.BudgetAllocationLedgerDebit", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("LedgerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ReleasedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("ReservedAmount")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AllocationId", "LedgerId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingBudgetAllocationDebits");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.BudgetPeriodLedger", b =>
@@ -767,6 +1928,10 @@ namespace backend.Migrations
                     b.Property<decimal>("CommittedAmount")
                         .HasColumnType("numeric");
 
+                    b.Property<long>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -774,8 +1939,17 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<decimal>("DelayedSpendEstimate")
+                        .HasColumnType("numeric");
+
                     b.Property<Guid>("EnvelopeId")
                         .HasColumnType("uuid");
+
+                    b.Property<long>("EnvelopeVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("ForecastSpend")
+                        .HasColumnType("numeric");
 
                     b.Property<DateTime?>("LastReconciledAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -785,6 +1959,10 @@ namespace backend.Migrations
 
                     b.Property<DateTime>("PeriodEndUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PeriodKind")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("PeriodStartUtc")
                         .HasColumnType("timestamp with time zone");
@@ -809,10 +1987,180 @@ namespace backend.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProjectId", "EnvelopeId", "PeriodStartUtc")
+                    b.HasIndex("ProjectId", "EnvelopeId", "PeriodKind", "PeriodStartUtc")
                         .IsUnique();
 
                     b.ToTable("AdvertisingBudgetLedgers");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.CampaignPlan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AudienceStrategyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BidStrategy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BudgetMode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BusinessGoal")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("CapabilitySnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("DailyBudget")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<Guid>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("EndsAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("EnvelopeVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("ExperimentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Objective")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OfferId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OptimizationFallbackOrderJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OptimizationGoal")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("PlacementMode")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PlanHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlanJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReadinessJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SpecialAdCategory")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("StartsAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "PlanHash")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingCampaignPlans");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.CampaignPlanCreative", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConceptKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreativeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CreativeVariantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("HookKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlacementCompatibilityJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlanId", "CreativeVariantId", "Role")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingCampaignPlanCreatives");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.CanonicalConversion", b =>
@@ -828,11 +2176,26 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("AttributionState")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("AttributionTouchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AttributionWindowEndsAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("CanonicalKey")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
                     b.Property<int>("ConsentState")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("CorrectionState")
                         .HasColumnType("integer");
 
                     b.Property<DateTime>("CreatedAt")
@@ -867,8 +2230,16 @@ namespace backend.Migrations
                     b.Property<string>("ProtectedMatchData")
                         .HasColumnType("text");
 
+                    b.Property<string>("SourceHistoryJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<int>("State")
                         .HasColumnType("integer");
+
+                    b.Property<string>("TruthState")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -884,7 +2255,128 @@ namespace backend.Migrations
                     b.HasIndex("ProjectId", "CanonicalKey")
                         .IsUnique();
 
+                    b.HasIndex("ProjectId", "OccurredAtUtc");
+
                     b.ToTable("AdvertisingConversions");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ConnectionDisconnectOperation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ContinuingOrUnmonitoredSpendAcknowledgedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("CredentialDisposedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("EmergencyStopRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LastErrorCode")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Mode")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Phase")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RecoveryInstruction")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RequestedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("RouteTombstoneVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdvertisingDisconnectOperations");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ConnectionDisconnectTarget", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DesiredState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("DisconnectOperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FailureCode")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OwnershipRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ProviderOperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReadBackState")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DisconnectOperationId", "TargetType", "TargetId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingDisconnectTargets");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.ConversionAdjustment", b =>
@@ -916,6 +2408,9 @@ namespace backend.Migrations
                     b.Property<string>("Reason")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("SourceEventId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -928,6 +2423,64 @@ namespace backend.Migrations
                         .IsUnique();
 
                     b.ToTable("AdvertisingConversionAdjustments");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ConversionDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AcceptedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ConversionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EventIdentity")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SuppressionReason")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Provider", "EventIdentity")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingConversionDeliveries");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.ConversionDeliveryAttempt", b =>
@@ -948,14 +2501,32 @@ namespace backend.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("DeliveryId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("ErrorCode")
                         .HasColumnType("text");
+
+                    b.Property<int?>("EventsReceived")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Provider")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderRequestId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderTraceId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ResponseHash")
                         .HasColumnType("text");
 
                     b.Property<string>("State")
@@ -965,7 +2536,13 @@ namespace backend.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("WarningsJson")
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("DeliveryId", "AttemptNumber")
+                        .IsUnique();
 
                     b.ToTable("AdvertisingConversionDeliveryAttempts");
                 });
@@ -976,12 +2553,41 @@ namespace backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("BusinessAggregateId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BusinessAggregateType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConsentEvidenceJson")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("ExternalEventId")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("JourneyLocation")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("NormalizedPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PayloadHash")
                         .IsRequired()
@@ -1007,12 +2613,117 @@ namespace backend.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<decimal?>("Value")
+                        .HasColumnType("numeric");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProjectId", "SourceSystem", "ExternalEventId")
                         .IsUnique();
 
                     b.ToTable("AdvertisingConversionSourceEvents");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.CustomerAdvertisingConsentProjection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConsentState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("ConsentVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("EffectiveAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsTombstoned")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LegalBasis")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UpdatedFromEventId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "CustomerId")
+                        .IsUnique();
+
+                    b.ToTable("CustomerAdvertisingConsentProjections");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.DecisionImpact", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BaselineEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("BaselineWindowEndUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("BaselineWindowStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DecisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("EvaluatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EvaluationEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("EvaluationWindowEndUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("EvaluationWindowStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Goal")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Label")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("RollbackCommandId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdvertisingDecisionImpacts");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.DecisionReview", b =>
@@ -1031,12 +2742,21 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ModelVersion")
+                        .HasColumnType("text");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("PromptVersion")
+                        .HasColumnType("text");
 
                     b.Property<string>("ReasonsJson")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<DateTime>("ReviewedAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ReviewerType")
                         .IsRequired()
@@ -1065,8 +2785,15 @@ namespace backend.Migrations
                     b.Property<Guid?>("ActivatedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProgressJson")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
@@ -1081,6 +2808,10 @@ namespace backend.Migrations
                     b.Property<Guid?>("ResumedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<int>("Trigger")
                         .HasColumnType("integer");
 
@@ -1092,6 +2823,111 @@ namespace backend.Migrations
                     b.ToTable("AdvertisingEmergencyStops");
                 });
 
+            modelBuilder.Entity("Modules.Advertising.Domain.EnvelopeAudienceSourceGrant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AllowedUsesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ConsentState")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EndsAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LegalBasis")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LegalBasisRecordedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceLabel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("SourceType")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("StartsAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId", "SourceType", "SourceExternalId", "State")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingAudienceSourceGrants");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.EnvelopeOfferDestinationGrant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("AllowedFromUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("AllowedUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("MaximumDailyAllocation")
+                        .HasColumnType("numeric");
+
+                    b.Property<Guid>("OfferId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId", "OfferId", "DestinationId", "State")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingOfferDestinationGrants");
+                });
+
             modelBuilder.Entity("Modules.Advertising.Domain.ExecutionCommand", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1101,9 +2937,19 @@ namespace backend.Migrations
                     b.Property<int>("AttemptCount")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("ClaimedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("CommandType")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1131,9 +2977,18 @@ namespace backend.Migrations
                     b.Property<string>("ProviderRequestId")
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("ReconciledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReconciliationEvidenceJson")
+                        .HasColumnType("text");
+
                     b.Property<string>("RequestFingerprint")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<DateTime?>("SentAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("State")
                         .HasColumnType("integer");
@@ -1155,17 +3010,96 @@ namespace backend.Migrations
                     b.ToTable("AdvertisingExecutionCommands");
                 });
 
+            modelBuilder.Entity("Modules.Advertising.Domain.ExperimentEvaluation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("AttributionCutoffUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("Coverage")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("EvaluatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ExperimentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Goal")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReasonCodesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("SampleSize")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Verdict")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("WindowEndUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("WindowStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdvertisingExperimentEvaluations");
+                });
+
             modelBuilder.Entity("Modules.Advertising.Domain.InsightsSnapshot", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AccountTimezone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AttributionSetting")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BreakdownHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<long>("Clicks")
                         .HasColumnType("bigint");
 
+                    b.Property<Guid?>("ConnectionId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("FetchRunId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("FetchedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -1182,16 +3116,42 @@ namespace backend.Migrations
                     b.Property<DateTime>("IntervalStartUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("IsCurrent")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LearningStatus")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlacementBreakdownJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderActionValuesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("ProviderActionsJson")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<long>("Reach")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("SourceFreshnessUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<decimal>("Spend")
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
+
+                    b.Property<Guid?>("SupersedesSnapshotId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid>("TargetId")
                         .HasColumnType("uuid");
@@ -1205,10 +3165,128 @@ namespace backend.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProjectId", "TargetId", "IntervalStartUtc", "IntervalEndUtc")
-                        .IsUnique();
+                    b.HasIndex("ProjectId", "IsCurrent", "IntervalStartUtc");
+
+                    b.HasIndex("ProjectId", "TargetType", "TargetId", "IntervalStartUtc", "IntervalEndUtc", "BreakdownHash", "IsCurrent");
+
+                    b.HasIndex("ProjectId", "TargetType", "TargetId", "IntervalStartUtc", "IntervalEndUtc", "BreakdownHash", "Revision")
+                        .IsUnique()
+                        .HasDatabaseName("IX_AdvertisingInsights_ProjectId_TargetType_TargetId_Interval~1");
 
                     b.ToTable("AdvertisingInsights");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ManagedAdSet", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AttributionSetting")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("AudienceStrategyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BudgetOwnerExternalId")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("CampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ConfiguredStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("DailyBudget")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("DestinationType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EffectiveStateHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EffectiveStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ExperimentArmId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastProviderErrorCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastProviderErrorSummary")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastSyncedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("LifetimeBudget")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OptimizationGoal")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OwnershipRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("PlacementMode")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PlannedStateHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PromotedPageExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PromotedWhatsAppPhoneExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ReconciliationState")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReviewStatus")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ConnectionId", "ExternalId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingManagedAdSets");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.ManagedAdvertisement", b =>
@@ -1223,6 +3301,9 @@ namespace backend.Migrations
                     b.Property<string>("AdSetExternalId")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("AdSetId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("BudgetOwnerExternalId")
                         .HasColumnType("text");
 
@@ -1233,8 +3314,14 @@ namespace backend.Migrations
                     b.Property<string>("CampaignExternalId")
                         .HasColumnType("text");
 
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
                     b.Property<int>("ConfiguredStatus")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("ConnectionId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1245,9 +3332,22 @@ namespace backend.Migrations
                     b.Property<decimal>("DailyBudget")
                         .HasColumnType("numeric");
 
+                    b.Property<Guid?>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DestinationType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EffectiveStateHash")
+                        .HasColumnType("text");
+
                     b.Property<string>("EffectiveStatus")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("ExperimentArmId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("ImportedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -1255,11 +3355,24 @@ namespace backend.Migrations
                     b.Property<DateTime?>("LastSyncedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("ManagedProviderCreativeId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("ManagementSource")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("OwnershipRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PlannedStateHash")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -1280,6 +3393,12 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("ReconciliationState")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReviewStatus")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1292,6 +3411,685 @@ namespace backend.Migrations
                         .IsUnique();
 
                     b.ToTable("ManagedAdvertisements");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ManagedCampaign", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BidStrategy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BudgetMode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BuyingType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ConfiguredStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("DailyBudget")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("EffectiveStateHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EffectiveStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastProviderErrorCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastProviderErrorSummary")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastSyncedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("LifetimeBudget")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Objective")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OwnershipRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PlannedStateHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ReconciliationState")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReviewStatus")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SpecialAdCategory")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ConnectionId", "ExternalId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingManagedCampaigns");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ManagedOwnershipRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AllowedMutationScopeJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("AuthorizedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("AuthorizedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ImportEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("OwnershipKind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderCampaignExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RootManagedCampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ProviderCampaignExternalId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingManagedOwnership");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ManagedProviderCreative", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AdvertisingCreativeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CallToAction")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreativeVariantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EffectiveStateHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastProviderErrorCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastProviderErrorSummary")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastSyncedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ObjectStoryExternalId")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OwnershipRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PageExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PlannedStateHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderCreativeType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("VerificationState")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("WhatsAppPhoneExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ConnectionId", "ExternalId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingManagedProviderCreatives");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ProjectAdvertisingContextProjection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AiConfigurationVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("AiSettingsHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AllowedAiModel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LifecycleState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReportingTimezoneIana")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("SourceVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UpdatedFromEventId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId")
+                        .IsUnique();
+
+                    b.ToTable("ProjectAdvertisingContextProjections");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ProviderObjectSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CapturedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GraphApiVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("LocalObjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("NormalizedStateJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ObjectType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderObjectId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderTraceId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SnapshotType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StateHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OperationId", "ObjectType", "SnapshotType", "StateHash")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingProviderObjectSnapshots");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ProviderOperation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("CommandId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DependsOnOperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ErrorCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorSubcode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorSummary")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GraphApiVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LeaseExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("LocalTargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OperationType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PlannedPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderRequestId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderTargetId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderTraceId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RequestFingerprint")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ResponseFingerprint")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Retryable")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("SentAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingProviderOperations");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.ProviderValidationFinding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Field")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("NextSafeAction")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ObjectId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ObjectType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderSubcode")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ResolutionOperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ResolvedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Severity")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdvertisingProviderValidationFindings");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.TrackingHealthPolicy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefinitionHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("EffectiveFromUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Goal")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("MaximumCorrectionRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("MaximumEventDelayMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("MinimumDeliveryAcceptanceRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("MinimumDenominator")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("MinimumExactMatchRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("MinimumReferralCoverage")
+                        .HasColumnType("numeric");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Goal", "Version")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingTrackingPolicies");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.TrackingHealthSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("CorrectionRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("DeliveryAcceptanceRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<Guid>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("EvaluatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("EventDelayMinutesP95")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal?>("ExactMatchRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("InboundConversationCount")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("MissingReferralRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("ProviderMatchQuality")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("ReasonCodesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal?>("ReferralCoverage")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("ReferralObservationCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("SourceFreshnessUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TrackingHealthPolicyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("TrackingHealthPolicyVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ValidReferralCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("WindowEndUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("WindowStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "DestinationId", "WindowStartUtc", "WindowEndUtc");
+
+                    b.ToTable("AdvertisingTrackingHealthSnapshots");
                 });
 
             modelBuilder.Entity("Modules.Advertising.Domain.TrackingIncident", b =>
@@ -1339,6 +4137,136 @@ namespace backend.Migrations
                     b.ToTable("TrackingIncidents");
                 });
 
+            modelBuilder.Entity("Modules.Advertising.Domain.WhatsAppAttributionContext", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("ConcurrencyToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("FirstObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("JourneyKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("LastObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ObservationCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ValidReferralCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ConversationId")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingAttributionContexts");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.WhatsAppAttributionObservation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CtwaClidHash")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("DestinationVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("GatewayType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("IdentifierState")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("IntegrationMode")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("JourneyKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("MessageExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("MessageOccurredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OpaquePayloadHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProtectedCtwaClid")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProtectionPurpose")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderAdExternalId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReceivingIdentityExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "DestinationId", "MessageExternalId", "PayloadHash")
+                        .IsUnique();
+
+                    b.ToTable("AdvertisingAttributionObservations");
+                });
+
             modelBuilder.Entity("Modules.Analytics.Domain.AnalyticsSnapshot", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1371,6 +4299,187 @@ namespace backend.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("AnalyticsSnapshots");
+                });
+
+            modelBuilder.Entity("Modules.Analytics.Domain.ConversationSalesAnalysis", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AiPrimaryReason")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AiStage")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AnalysisVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("AnalyzedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("AnalyzedThroughMessageAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("Confidence")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("numeric(5,4)");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ConversationStartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("CorrectedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CorrectedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("FollowUpPriority")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("LastCustomerIntent")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("LastMessageAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ManualNotes")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("ManualPrimaryReason")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("MissedOpportunity")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("NeedsFollowUp")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Outcome")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Recommendation")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ReplyQualityScore")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RequestedScheduleLabel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RequestedScheduleText")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SecondaryReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("VerifiedStage")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ConversationId")
+                        .IsUnique();
+
+                    b.HasIndex("ProjectId", "ConversationStartedAtUtc");
+
+                    b.HasIndex("ProjectId", "NeedsFollowUp", "FollowUpPriority");
+
+                    b.ToTable("ConversationSalesAnalyses");
+                });
+
+            modelBuilder.Entity("Modules.Analytics.Domain.SalesIntelligenceDigest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DataFingerprint")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExecutiveSummary")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FindingsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("GeneratedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RecommendationsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RisksJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("WindowEndUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("WindowStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WindowTimezone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "GeneratedAtUtc");
+
+                    b.HasIndex("ProjectId", "WindowStartUtc", "WindowEndUtc");
+
+                    b.ToTable("SalesIntelligenceDigests");
                 });
 
             modelBuilder.Entity("Modules.Approvals.Domain.ApprovalRequest", b =>
@@ -1702,13 +4811,26 @@ namespace backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ActiveAutomationSlotKey")
+                        .HasMaxLength(220)
+                        .HasColumnType("character varying(220)");
+
                     b.Property<DateTime?>("AppointmentTime")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Channel")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("DependsOnFollowUpId")
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("DueDate")
@@ -1736,7 +4858,18 @@ namespace backend.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("WhatsAppAccountId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("ProjectId", "ActiveAutomationSlotKey")
+                        .IsUnique()
+                        .HasFilter("\"ActiveAutomationSlotKey\" IS NOT NULL AND \"Status\" IN ('Pending', 'Processing')");
+
+                    b.HasIndex("WhatsAppAccountId", "ProjectId");
 
                     b.ToTable("FollowUps");
                 });
@@ -1850,7 +4983,12 @@ namespace backend.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("WhatsAppAccountId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("WhatsAppAccountId", "ProjectId");
 
                     b.ToTable("Campaigns");
                 });
@@ -1898,7 +5036,493 @@ namespace backend.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CampaignId", "CustomerId")
+                        .IsUnique();
+
                     b.ToTable("CampaignRecipients");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentAutomationSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ApprovedSamplePostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BrandColorsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<TimeSpan>("DailyPublishTimeLocal")
+                        .HasColumnType("interval");
+
+                    b.Property<string>("FacebookPageId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FacebookPageName")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("HasApprovedStyle")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastPublishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LogoFileName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LogoMimeType")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LogoObjectKey")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("NextPublishAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("StylePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Timezone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId")
+                        .IsUnique();
+
+                    b.ToTable("ContentAutomationSettings");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentPost", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ApprovedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("BrandLogoObjectKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BrandStylePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Caption")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FacebookPostId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("GeneratedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ImageMimeType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ImageModel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ImageObjectKey")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ImagePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ImageSize")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsStyleSample")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("KnowledgeDocumentCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("PublishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ScheduledForUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("SettingsId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Topic")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VisualHeadline")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "CreatedAt");
+
+                    b.HasIndex("ProjectId", "ScheduledForUtc");
+
+                    b.ToTable("ContentPosts");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentVideo", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ApprovedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AspectRatio")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("Brief")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Caption")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("FinalVideoMimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("FinalVideoObjectKey")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("Hook")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("IdeaTitle")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<int>("KnowledgeDocumentCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("KnowledgeSnapshotHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("KnowledgeWasTruncated")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PlannerModel")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("RequestedSceneCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RequestedSceneDurationSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Resolution")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VideoModel")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "CreatedAt");
+
+                    b.HasIndex("Status", "UpdatedAt");
+
+                    b.HasIndex("ProjectId", "Status", "UpdatedAt");
+
+                    b.ToTable("ContentVideos");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentVideoScene", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AudioPrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ContentVideoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DurationSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("GenerationStartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Narrative")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderInteractionId")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("ProviderPolledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderProjectId")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTime?>("ProviderSubmittedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SceneIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SubmissionClaimToken")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<int>("TransientRetryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TransitionPrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VideoMimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("VideoObjectKey")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("VisualPrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContentVideoId", "ProjectId");
+
+                    b.HasIndex("ContentVideoId", "SceneIndex")
+                        .IsUnique();
+
+                    b.HasIndex("ProjectId", "Status", "UpdatedAt");
+
+                    b.HasIndex("Status", "NextAttemptAtUtc", "ProjectId");
+
+                    b.ToTable("ContentVideoScenes");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentWeekPlan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ApprovedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("BrandLogoObjectKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BrandStylePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<TimeSpan>("DailyPublishTimeLocal")
+                        .HasColumnType("interval");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("GeneratedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("KnowledgeDocumentCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateOnly>("StartDateLocal")
+                        .HasColumnType("date");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Timezone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Status", "CreatedAt");
+
+                    b.ToTable("ContentWeekPlans");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentWeekPlanItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Caption")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ContentPostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DayIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ImagePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ScheduledForUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Topic")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VisualHeadline")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlanId", "DayIndex")
+                        .IsUnique();
+
+                    b.HasIndex("ProjectId", "ScheduledForUtc");
+
+                    b.ToTable("ContentWeekPlanItems");
                 });
 
             modelBuilder.Entity("Modules.Conversations.Domain.Conversation", b =>
@@ -1923,6 +5547,9 @@ namespace backend.Migrations
                     b.Property<DateTime>("LastMessageTimestamp")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("LastUnansweredRecoveryAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -1933,11 +5560,109 @@ namespace backend.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("WhatsAppAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("WhatsAppDeliveryUnknownAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WhatsAppDeliveryUnknownKey")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("WhatsAppDestinationId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "WhatsAppDestinationId");
 
                     b.HasIndex("Status", "LastMessageTimestamp");
 
+                    b.HasIndex("WhatsAppAccountId", "ProjectId");
+
+                    b.HasIndex("ProjectId", "CustomerId", "Channel", "WhatsAppAccountId", "Status");
+
                     b.ToTable("Conversations");
+                });
+
+            modelBuilder.Entity("Modules.Conversations.Domain.ConversationReplyWindow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AggregatedContent")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ChannelMetadata")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DispatchedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DispatchedEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("DueAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("LatestIncomingAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("LatestIncomingMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("LatestIncomingVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("RequiredWhatsAppConnectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Sender")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("WhatsAppAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("WhatsAppDeliveryIdempotencyKey")
+                        .HasMaxLength(220)
+                        .HasColumnType("character varying(220)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId")
+                        .IsUnique();
+
+                    b.HasIndex("LatestIncomingMessageId");
+
+                    b.HasIndex("DueAtUtc", "DispatchedEventId");
+
+                    b.HasIndex("WhatsAppAccountId", "ProjectId");
+
+                    b.ToTable("ConversationReplyWindows");
                 });
 
             modelBuilder.Entity("Modules.Conversations.Domain.Customer", b =>
@@ -1993,6 +5718,11 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("PhoneNumberCanonical")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("text")
+                        .HasComputedColumnSql("public.canonical_group_booking_phone_v1(\"PhoneNumber\")", true);
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -2010,6 +5740,9 @@ namespace backend.Migrations
                         .HasColumnType("text");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "PhoneNumberCanonical")
+                        .HasFilter("\"PhoneNumberCanonical\" IS NOT NULL");
 
                     b.HasIndex("ProjectId", "WhatsAppLid");
 
@@ -2240,13 +5973,20 @@ namespace backend.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("WhatsAppAccountId")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
                     b.Property<string>("WhatsAppGroupInviteLink")
                         .HasColumnType("text");
 
                     b.Property<string>("WhatsAppGroupJid")
+                        .IsConcurrencyToken()
                         .HasColumnType("text");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("WhatsAppAccountId", "ProjectId");
 
                     b.ToTable("GroupAppointments");
                 });
@@ -2271,6 +6011,11 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("CustomerPhoneCanonical")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("text")
+                        .HasComputedColumnSql("public.canonical_group_booking_phone_v1(\"CustomerPhone\")", true);
+
                     b.Property<Guid>("GroupAppointmentId")
                         .HasColumnType("uuid");
 
@@ -2289,6 +6034,11 @@ namespace backend.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("GroupAppointmentId");
+
+                    b.HasIndex("ProjectId", "CustomerId");
+
+                    b.HasIndex("ProjectId", "CustomerPhoneCanonical")
+                        .HasFilter("\"CustomerPhoneCanonical\" IS NOT NULL");
 
                     b.ToTable("GroupAppointmentBookings");
                 });
@@ -2356,6 +6106,9 @@ namespace backend.Migrations
 
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<long>("ProjectionVersion")
+                        .HasColumnType("bigint");
 
                     b.Property<int>("ReferenceCount")
                         .HasColumnType("integer");
@@ -2439,6 +6192,9 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<long>("AdvertisingContextVersion")
+                        .HasColumnType("bigint");
+
                     b.Property<bool>("AiAutoReplyEnabled")
                         .HasColumnType("boolean");
 
@@ -2459,9 +6215,33 @@ namespace backend.Migrations
                     b.Property<int>("CommentsReplyDelay")
                         .HasColumnType("integer");
 
+                    b.Property<string>("CustomerReplyModel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CustomerReplyOpenAiApiKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CustomerReplyProvider")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CustomerReplyXaiApiKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("GeminiAgentPlatformApiKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("GeminiApiKey")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("GeminiEnterpriseProjectId")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
 
                     b.Property<string>("GeminiModel")
                         .IsRequired()
@@ -2478,6 +6258,9 @@ namespace backend.Migrations
                         .HasColumnType("text");
 
                     b.Property<bool>("IsGroupAppointmentsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsTalkTipsTrialGateEnabled")
                         .HasColumnType("boolean");
 
                     b.Property<bool>("IsWhatsAppGroupAutomationEnabled")
@@ -2497,6 +6280,12 @@ namespace backend.Migrations
 
                     b.Property<string>("SystemPrompt")
                         .HasColumnType("text");
+
+                    b.Property<string>("TemporaryGeminiModel")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("TemporaryGeminiModelExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Timezone")
                         .IsRequired()
@@ -2570,6 +6359,19 @@ namespace backend.Migrations
                     b.Property<DateTime?>("AccessTokenExpiresAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("AllowComment")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("AllowDuet")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("AllowStitch")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("CaptionTemplate")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -2578,6 +6380,12 @@ namespace backend.Migrations
 
                     b.Property<string>("GrantedScopes")
                         .HasColumnType("text");
+
+                    b.Property<int>("IntervalHours")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("LastError")
                         .HasColumnType("text");
@@ -2591,7 +6399,14 @@ namespace backend.Migrations
                     b.Property<DateTime?>("LastPublishedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("NextPublishAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("OpenId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrivacyLevel")
+                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<Guid>("ProjectId")
@@ -2673,6 +6488,208 @@ namespace backend.Migrations
                         .IsUnique();
 
                     b.ToTable("QuranYouTubeSettings");
+                });
+
+            modelBuilder.Entity("Modules.TalkTips.Domain.TrialReminder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("DayReminderSentAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FirstPromptedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FiveMinuteReminderSentAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("OneMinuteReminderSentAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("TalkTipsTrialReminders");
+                });
+
+            modelBuilder.Entity("Modules.WhatsApp.Domain.WhatsAppAccount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "IsDefault")
+                        .IsUnique()
+                        .HasFilter("\"IsDefault\" = TRUE");
+
+                    b.ToTable("WhatsAppAccounts");
+                });
+
+            modelBuilder.Entity("Modules.WhatsApp.Domain.WhatsAppCustomerIdentity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("WhatsAppAccountId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId", "ProjectId");
+
+                    b.HasIndex("WhatsAppAccountId", "ExternalId")
+                        .IsUnique();
+
+                    b.HasIndex("WhatsAppAccountId", "ProjectId");
+
+                    b.ToTable("WhatsAppCustomerIdentities");
+                });
+
+            modelBuilder.Entity("Modules.WhatsApp.Domain.WhatsAppInboundRouteProjection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DestinationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("DestinationVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("IntegrationMode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PhoneNumberExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("SourceAggregateVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SourceEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WabaExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "DestinationId", "DestinationVersion")
+                        .IsUnique();
+
+                    b.HasIndex("Provider", "WabaExternalId", "PhoneNumberExternalId")
+                        .IsUnique()
+                        .HasFilter("\"State\" = 'Active'");
+
+                    b.ToTable("WhatsAppInboundRouteProjections");
+                });
+
+            modelBuilder.Entity("Modules.WhatsApp.Domain.WhatsAppPhoneCustomerIdentity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("NormalizedPhone")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId", "ProjectId");
+
+                    b.HasIndex("ProjectId", "NormalizedPhone")
+                        .IsUnique();
+
+                    b.ToTable("WhatsAppPhoneCustomerIdentities");
                 });
 
             modelBuilder.Entity("Modules.Workflows.Domain.AutomationWorkflow", b =>
@@ -2779,8 +6796,31 @@ namespace backend.Migrations
                     b.Property<Guid>("EventId")
                         .HasColumnType("uuid");
 
-                    b.Property<DateTime>("ProcessedAtUtc")
+                    b.Property<string>("FailureCode")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ProcessedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ReceivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("SourceAggregateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceAggregateType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("SourceVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -2844,6 +6884,64 @@ namespace backend.Migrations
                     b.ToTable("IntegrationOutboxMessages");
                 });
 
+            modelBuilder.Entity("Shared.Domain.IntegrationProjectionWatermark", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Consumer")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("CurrentVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("IsTombstoned")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("LastEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("MissingFromVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("MissingToVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SourceAggregateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceAggregateType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Consumer", "SourceAggregateType", "SourceAggregateId")
+                        .IsUnique();
+
+                    b.ToTable("IntegrationProjectionWatermarks");
+                });
+
+            modelBuilder.Entity("Modules.Advertising.Domain.AuthorizedWhatsAppDestination", b =>
+                {
+                    b.HasOne("Modules.WhatsApp.Domain.WhatsAppAccount", null)
+                        .WithMany()
+                        .HasForeignKey("WhatsAppAccountId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Modules.Brain.Domain.KnowledgeChunk", b =>
                 {
                     b.HasOne("Modules.Brain.Domain.KnowledgeDocument", "KnowledgeDocument")
@@ -2855,12 +6953,90 @@ namespace backend.Migrations
                     b.Navigation("KnowledgeDocument");
                 });
 
+            modelBuilder.Entity("Modules.CRM.Domain.FollowUp", b =>
+                {
+                    b.HasOne("Modules.WhatsApp.Domain.WhatsAppAccount", null)
+                        .WithMany()
+                        .HasForeignKey("WhatsAppAccountId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Campaigns.Domain.Campaign", b =>
+                {
+                    b.HasOne("Modules.WhatsApp.Domain.WhatsAppAccount", null)
+                        .WithMany()
+                        .HasForeignKey("WhatsAppAccountId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentVideoScene", b =>
+                {
+                    b.HasOne("Modules.Content.Domain.ContentVideo", "Video")
+                        .WithMany("Scenes")
+                        .HasForeignKey("ContentVideoId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Video");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentWeekPlanItem", b =>
+                {
+                    b.HasOne("Modules.Content.Domain.ContentWeekPlan", null)
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Conversations.Domain.Conversation", b =>
+                {
+                    b.HasOne("Modules.WhatsApp.Domain.WhatsAppAccount", null)
+                        .WithMany()
+                        .HasForeignKey("WhatsAppAccountId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Conversations.Domain.ConversationReplyWindow", b =>
+                {
+                    b.HasOne("Modules.Conversations.Domain.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Modules.Conversations.Domain.Message", null)
+                        .WithMany()
+                        .HasForeignKey("LatestIncomingMessageId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Modules.WhatsApp.Domain.WhatsAppAccount", null)
+                        .WithMany()
+                        .HasForeignKey("WhatsAppAccountId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Modules.Conversations.Domain.Message", b =>
                 {
                     b.HasOne("Modules.Media.Domain.Asset", null)
                         .WithMany()
                         .HasForeignKey("AssetId")
                         .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("Modules.GroupAppointments.Domain.GroupAppointment", b =>
+                {
+                    b.HasOne("Modules.WhatsApp.Domain.WhatsAppAccount", null)
+                        .WithMany()
+                        .HasForeignKey("WhatsAppAccountId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Modules.GroupAppointments.Domain.GroupAppointmentBooking", b =>
@@ -2872,6 +7048,33 @@ namespace backend.Migrations
                         .IsRequired();
 
                     b.Navigation("GroupAppointment");
+                });
+
+            modelBuilder.Entity("Modules.WhatsApp.Domain.WhatsAppCustomerIdentity", b =>
+                {
+                    b.HasOne("Modules.Conversations.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Modules.WhatsApp.Domain.WhatsAppAccount", null)
+                        .WithMany()
+                        .HasForeignKey("WhatsAppAccountId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.WhatsApp.Domain.WhatsAppPhoneCustomerIdentity", b =>
+                {
+                    b.HasOne("Modules.Conversations.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Workflows.Domain.WorkflowExecutionLog", b =>
@@ -2888,6 +7091,11 @@ namespace backend.Migrations
             modelBuilder.Entity("Modules.Brain.Domain.KnowledgeDocument", b =>
                 {
                     b.Navigation("Chunks");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentVideo", b =>
+                {
+                    b.Navigation("Scenes");
                 });
 
             modelBuilder.Entity("Modules.GroupAppointments.Domain.GroupAppointment", b =>

@@ -1,8 +1,27 @@
 import pytest
 import httpx
 import uuid
+import os
 
-BASE_URL = "http://localhost:80/api/whatsapp"
+BASE_URL = os.getenv("TEST_WHATSAPP_GATEWAY_BASE_URL", "http://localhost:80/api/whatsapp")
+API_BASE_URL = os.getenv("TEST_API_BASE_URL", "http://localhost:80/api")
+
+
+@pytest.mark.asyncio
+async def test_cloud_webhook_public_route_fails_closed_without_valid_verification_or_signature():
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        challenge = await client.get(
+            f"{API_BASE_URL}/integrations/whatsapp/cloud",
+            params={"hub.mode": "subscribe", "hub.verify_token": "invalid", "hub.challenge": "never-echo"},
+        )
+        assert challenge.status_code == 403
+
+        invalid_signature = await client.post(
+            f"{API_BASE_URL}/integrations/whatsapp/cloud",
+            headers={"X-Hub-Signature-256": "sha256=00"},
+            content=b"{}",
+        )
+        assert invalid_signature.status_code in (401, 503)
 
 @pytest.mark.asyncio
 async def test_whatsapp_gateway_flow():
@@ -48,5 +67,3 @@ async def test_whatsapp_gateway_flow():
         send_data = send_resp.json()
         assert send_data["status"] == "Sent"
         assert "messageId" in send_data
-
-

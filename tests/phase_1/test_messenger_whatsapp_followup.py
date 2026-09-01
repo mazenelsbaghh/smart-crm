@@ -3,9 +3,26 @@ import httpx
 import uuid
 import time
 import json
+import os
 from datetime import datetime, timedelta
 
-BASE_URL = "http://localhost:5000/api"
+BASE_URL = os.getenv("TEST_API_BASE_URL", "http://localhost:5000/api")
+
+
+async def project_admin_headers(client, project_id):
+    email = f"messenger_{uuid.uuid4().hex[:8]}@example.test"
+    password = "Password123!"
+    registered = await client.post(
+        f"{BASE_URL}/auth/register",
+        json={"email": email, "password": password, "projectId": project_id, "role": "Admin"},
+    )
+    registered.raise_for_status()
+    login = await client.post(f"{BASE_URL}/auth/login", json={"email": email, "password": password})
+    login.raise_for_status()
+    return {
+        "Authorization": f"Bearer {login.json()['accessToken']}",
+        "X-Project-Id": project_id,
+    }
 
 @pytest.mark.asyncio
 async def test_messenger_first_session_reminder():
@@ -19,11 +36,12 @@ async def test_messenger_first_session_reminder():
         proj_resp = await client.post(f"{BASE_URL}/projects", json={"name": "MsgrFreeSessionProj"})
         assert proj_resp.status_code == 201
         proj_id = proj_resp.json()["id"]
-        headers = {"X-Project-Id": proj_id}
+        headers = await project_admin_headers(client, proj_id)
 
         # 2. Confirm Facebook Page
         confirm_resp = await client.post(
             f"{BASE_URL}/projects/{proj_id}/facebook/pages/confirm",
+            headers=headers,
             json={
                 "facebookPageId": page_id,
                 "pageName": "MockFreeSessionPage",
@@ -119,11 +137,12 @@ async def test_messenger_to_whatsapp_transition():
         proj_resp = await client.post(f"{BASE_URL}/projects", json={"name": "MsgrWATransitionProj"})
         assert proj_resp.status_code == 201
         proj_id = proj_resp.json()["id"]
-        headers = {"X-Project-Id": proj_id}
+        headers = await project_admin_headers(client, proj_id)
 
         # 2. Confirm Facebook Page
         confirm_resp = await client.post(
             f"{BASE_URL}/projects/{proj_id}/facebook/pages/confirm",
+            headers=headers,
             json={
                 "facebookPageId": page_id,
                 "pageName": "MockTransitionPage",
@@ -270,10 +289,11 @@ async def test_messenger_group_booking_requires_and_uses_customer_phone():
         )
         assert project_response.status_code == 201
         project_id = project_response.json()["id"]
-        headers = {"X-Project-Id": project_id}
+        headers = await project_admin_headers(client, project_id)
 
         page_response = await client.post(
             f"{BASE_URL}/projects/{project_id}/facebook/pages/confirm",
+            headers=headers,
             json={
                 "facebookPageId": page_id,
                 "pageName": "MockBookingPage",
@@ -408,11 +428,12 @@ async def test_followup_messenger_routing():
         proj_resp = await client.post(f"{BASE_URL}/projects", json={"name": "MsgrRoutingProj"})
         assert proj_resp.status_code == 201
         proj_id = proj_resp.json()["id"]
-        headers = {"X-Project-Id": proj_id}
+        headers = await project_admin_headers(client, proj_id)
 
         # 2. Confirm Facebook Page
         confirm_resp = await client.post(
             f"{BASE_URL}/projects/{proj_id}/facebook/pages/confirm",
+            headers=headers,
             json={
                 "facebookPageId": page_id,
                 "pageName": "MockRoutingPage",

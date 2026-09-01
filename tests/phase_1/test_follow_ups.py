@@ -87,14 +87,16 @@ async def test_follow_ups_flow():
         pending_list = list_resp.json()
         assert len(pending_list) >= 1
 
-        # 7. Wait for the background scheduler to run (Hangfire checks every 15 seconds)
-        print("Waiting 18 seconds for FollowUpScheduler...")
-        await pytest.importorskip("asyncio").sleep(18.0)
+        # 7. The scheduler is registered on a one-minute cadence. Poll across one full window.
+        pendings = pending_list
+        started = time.time()
+        while time.time() - started < 75.0 and any(f["id"] == overdue_followup["id"] for f in pendings):
+            await pytest.importorskip("asyncio").sleep(2.0)
+            list_pending = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Pending", headers=headers)
+            assert list_pending.status_code == 200
+            pendings = list_pending.json()
 
-        # 8. List follow-ups again
-        list_pending = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Pending", headers=headers)
-        assert list_pending.status_code == 200
-        pendings = list_pending.json()
+        # 8. The future one stays pending and the overdue one is processed.
         assert any(f["id"] == future_followup["id"] for f in pendings)
         assert not any(f["id"] == overdue_followup["id"] for f in pendings)
 
@@ -251,4 +253,3 @@ async def test_delete_follow_up_flow():
         list_resp_after = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Pending", headers=headers)
         assert list_resp_after.status_code == 200
         assert not any(f["id"] == fu_id for f in list_resp_after.json())
-

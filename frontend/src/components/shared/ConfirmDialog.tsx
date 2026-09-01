@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useId, useRef } from 'react';
+import { isolateModal } from './modal-accessibility';
 import styles from './confirm-dialog.module.css';
 
 interface ConfirmDialogProps {
@@ -25,63 +26,93 @@ export default function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
+  const cancelBtnRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onCancelRef = useRef(onCancel);
+  const titleId = useId();
+  const descriptionId = useId();
 
-  // Focus confirm button when modal opens
   useEffect(() => {
-    if (isOpen) {
-      setTimeout(() => {
-        confirmBtnRef.current?.focus();
-      }, 50);
-    }
-  }, [isOpen]);
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
-  // Trap keyboard events
   useEffect(() => {
     if (!isOpen) return;
 
-    const handleKeyDown = (e: KeyboardEvent) => {
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    (isAlertOnly ? confirmBtnRef.current : cancelBtnRef.current)?.focus();
+    const restoreIsolation = overlayRef.current ? isolateModal(overlayRef.current) : () => undefined;
+
+    const trapDialogKeyboard = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCancel();
+        onCancelRef.current();
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        const focusable = Array.from(
+          dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])') ?? [],
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onCancel]);
+    document.addEventListener('keydown', trapDialogKeyboard);
+    return () => {
+      document.removeEventListener('keydown', trapDialogKeyboard);
+      document.body.style.overflow = previousOverflow;
+      restoreIsolation();
+      previouslyFocusedRef.current?.focus();
+    };
+  }, [isAlertOnly, isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <div className={styles.overlay} onClick={onCancel}>
-      <div 
-        className={styles.modal} 
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
+    <div ref={overlayRef} className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+      <div
+        ref={dialogRef}
+        className={styles.modal}
+        role={isAlertOnly ? 'alertdialog' : 'dialog'}
         aria-modal="true"
-        aria-labelledby="confirm-dialog-title"
-        aria-describedby="confirm-dialog-desc"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
       >
         <div className={styles.header}>
-          <h3 id="confirm-dialog-title" className={styles.title}>{title}</h3>
+          <h3 id={titleId} className={styles.title}>{title}</h3>
         </div>
         <div className={styles.body}>
-          <p id="confirm-dialog-desc" className={styles.message}>{message}</p>
+          <p id={descriptionId} className={styles.message}>{message}</p>
         </div>
         <div className={styles.actions}>
           {!isAlertOnly && (
-            <button 
-              type="button" 
-              className={styles.cancelBtn} 
+            <button
+              type="button"
+              ref={cancelBtnRef}
+              className={styles.cancelBtn}
               onClick={onCancel}
             >
               {cancelLabel}
             </button>
           )}
-          <button 
-            type="button" 
+          <button
+            type="button"
             ref={confirmBtnRef}
-            className={styles.confirmBtn} 
+            className={styles.confirmBtn}
             onClick={onConfirm}
           >
             {confirmLabel}

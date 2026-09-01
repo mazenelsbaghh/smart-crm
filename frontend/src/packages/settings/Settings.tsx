@@ -1,19 +1,15 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import { 
-  QrCode, 
-  Smartphone, 
   CheckCircle, 
   AlertCircle, 
   Settings as SettingsIcon,
   RefreshCw,
-  LogOut,
-  Zap,
-  PlusCircle
+  LogOut
 } from 'lucide-react';
 
 const FacebookIcon = ({ size = 20 }: { size?: number }) => (
@@ -25,16 +21,26 @@ import styles from './settings.module.css';
 
 import Addons from './Addons';
 import GroupAppointmentsManager from './GroupAppointmentsManager';
-
-interface SessionStatusResponse {
-  projectId: string;
-  status: 'Disconnected' | 'Initializing' | 'Connected';
-  phoneNumber: string | null;
-  error?: string | null;
-}
+import WhatsAppAccountsPanel from './WhatsAppAccountsPanel';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { useUnsavedNavigationGuard } from '../../hooks/use-unsaved-navigation-guard';
 
 interface ApiErrorResponse {
   error?: string;
+}
+
+interface FacebookOAuthPageMessage {
+  pageId?: unknown;
+  pageName?: unknown;
+  accessToken?: unknown;
+}
+
+interface FacebookOAuthMessage {
+  type?: unknown;
+  projectId?: unknown;
+  userAccessToken?: unknown;
+  pages?: unknown;
+  error?: unknown;
 }
 
 interface ProjectSettingsResponse {
@@ -42,8 +48,17 @@ interface ProjectSettingsResponse {
   settings?: {
     aiAutoReplyEnabled?: boolean;
     timezone?: string;
-    geminiApiKey?: string;
+    geminiApiKeyConfigured?: boolean;
+    geminiAgentPlatformApiKeyConfigured?: boolean;
     geminiModel?: string;
+    temporaryGeminiModel?: string | null;
+    temporaryGeminiModelExpiresAtUtc?: string | null;
+    effectiveGeminiModel?: string;
+    geminiEnterpriseProjectId?: string;
+    customerReplyProvider?: CustomerReplyProvider;
+    customerReplyOpenAiApiKeyConfigured?: boolean;
+    customerReplyXaiApiKeyConfigured?: boolean;
+    customerReplyModel?: string;
     aiTonePreference?: string;
     aiTargetAudience?: string;
     replyDelay?: number;
@@ -53,6 +68,7 @@ interface ProjectSettingsResponse {
     groupAutomationManagerPhone?: string;
     humanTransferEnabled?: boolean;
     humanTransferPhone?: string;
+    isTalkTipsTrialGateEnabled?: boolean;
     messengerAiAutoReplyEnabled?: boolean;
     messengerReplyDelay?: number;
     commentsAiAutoReplyEnabled?: boolean;
@@ -63,6 +79,7 @@ interface ProjectSettingsResponse {
 }
 
 type ChannelName = 'WhatsApp' | 'Messenger' | 'FacebookComment';
+type CustomerReplyProvider = 'Gemini' | 'OpenAI' | 'xAI';
 
 interface AIBehaviorSettings {
   identity: {
@@ -118,16 +135,16 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
 
 const defaultAiBehavior = (): AIBehaviorSettings => ({
   identity: {
-    agentNames: ['ساجي', 'لارا', 'مادلين', 'شاهي', 'ساندي'],
-    nameSelectionMode: 'HourlyRotation',
-    signatureEnabled: true,
-    signatureTemplate: '- {agentName} ✨',
+    agentNames: ['فريق خدمة العملاء'],
+    nameSelectionMode: 'First',
+    signatureEnabled: false,
+    signatureTemplate: '- {agentName}',
     complaintSignatureTemplate: '- {agentName}',
   },
   tone: {
-    tonePreset: 'egyptian-slang-sales',
-    customTone: 'العامية المصرية الروشة والصايعة',
-    targetAudience: 'طلاب كورس كول سنتر يبحثون عن عمل',
+    tonePreset: 'egyptian-polite',
+    customTone: 'العامية المصرية المهذبة والمحترمة',
+    targetAudience: '',
     allowedPhrases: [],
     prohibitedPhrases: [],
     businessInstructions: '',
@@ -151,8 +168,8 @@ const defaultAiBehavior = (): AIBehaviorSettings => ({
     aiError: 'أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.',
     invalidAiOutput: 'أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.',
     genericCustomerService: 'أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.',
-    facebookPublicComment: 'تم الرد في الخاص يا فندم! ❤️',
-    whatsAppTransitionSuccess: 'أنا بعتلك رسالة على الواتساب، خلينا نتواصل هناك. ✨',
+    facebookPublicComment: 'تم إرسال التفاصيل في رسالة خاصة.',
+    whatsAppTransitionSuccess: 'تم إرسال رسالة على واتساب ويمكننا استكمال المحادثة هناك.',
     whatsAppTransitionFailure: 'حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.',
     whatsAppTransitionMessage: 'أهلاً يا {customerName}، منورنا يا فندم! 😊 معاك {agentName}.. زي ما اتفقنا على ماسنجر، هنكمل كلامنا هنا على واتساب.',
     followUpDefault: 'مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟',
@@ -167,41 +184,112 @@ const defaultAiBehavior = (): AIBehaviorSettings => ({
 
 const linesToArray = (value: string) => value.split('\n').map(item => item.trim()).filter(Boolean);
 const arrayToLines = (value?: string[]) => (value || []).join('\n');
+const GEMINI_MODELS = [
+  'gemini-3.5-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-flash-latest',
+  'gemini-flash-lite-latest',
+] as const;
+const OPENAI_CUSTOMER_REPLY_MODELS = [
+  { value: 'gpt-5.6', label: 'GPT-5.6: أعلى جودة (موصى به)' },
+  { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra: متوازن' },
+  { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna: أسرع وأوفر' },
+] as const;
+const XAI_CUSTOMER_REPLY_MODELS = [
+  { value: 'grok-4.6', label: 'Grok 4.6' },
+  { value: 'grok-4.3', label: 'Grok 4.3' },
+] as const;
+const FALLBACK_TIMEZONES = ['Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai', 'Africa/Casablanca', 'Europe/London'];
+const IANA_TIMEZONES = (() => {
+  const intl = Intl as typeof Intl & { supportedValuesOf?: (key: 'timeZone') => string[] };
+  return intl.supportedValuesOf?.('timeZone') ?? FALLBACK_TIMEZONES;
+})();
+const isSupportedGeminiModel = (model: string) => (GEMINI_MODELS as readonly string[]).includes(model);
+const isSupportedOpenAiCustomerReplyModel = (model: string) =>
+  OPENAI_CUSTOMER_REPLY_MODELS.some((option) => option.value === model);
+const isSupportedXaiCustomerReplyModel = (model: string) =>
+  XAI_CUSTOMER_REPLY_MODELS.some((option) => option.value === model);
+const parseCustomerReplyProvider = (provider?: string): CustomerReplyProvider => {
+  if (provider === 'OpenAI' || provider === 'xAI') return provider;
+  return 'Gemini';
+};
+const isValidTimezone = (timezone: string) => {
+  try { new Intl.DateTimeFormat('en', { timeZone: timezone }).format(); return true; }
+  catch { return false; }
+};
+const trustedOAuthOrigins = () => {
+  const origins = new Set([window.location.origin]);
+  if (api.defaults.baseURL?.startsWith('http')) origins.add(new URL(api.defaults.baseURL).origin);
+  return origins;
+};
 
 export default function Settings() {
-  const { activeProject, refreshProjects, switchProject } = useAuth();
+  const { activeProject } = useAuth();
+  return <SettingsProjectView key={activeProject?.id ?? 'no-active-project'} />;
+}
+
+function SettingsProjectView() {
+  const { user, activeProject, refreshProjects } = useAuth();
+  const canManageSettings = user?.role === 'Owner' || user?.role === 'Admin';
   
-  const [status, setStatus] = useState<'Disconnected' | 'Initializing' | 'Connected'>('Disconnected');
-  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
-  const [qrString, setQrString] = useState<string | null>(null);
-  const [qrError, setQrError] = useState<string | null>(null);
+  const [pagesLoadError, setPagesLoadError] = useState<string | null>(null);
   
-  const [loading, setLoading] = useState(true);
+  const [projectSettingsState, setProjectSettingsState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   // General settings state
   const [projectName, setProjectName] = useState('');
   const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [geminiModel, setGeminiModel] = useState('gemini-flash-latest');
+  const [geminiApiKeyConfigured, setGeminiApiKeyConfigured] = useState(false);
+  const [geminiAgentPlatformApiKey, setGeminiAgentPlatformApiKey] = useState('');
+  const [geminiAgentPlatformApiKeyConfigured, setGeminiAgentPlatformApiKeyConfigured] = useState(false);
+  const [clearGeminiAgentPlatformApiKey, setClearGeminiAgentPlatformApiKey] = useState(false);
+  const [geminiModel, setGeminiModel] = useState('gemini-3.5-flash');
+  const [temporaryGeminiModel, setTemporaryGeminiModel] = useState('gemini-flash-latest');
+  const [temporaryGeminiModelExpiresAtUtc, setTemporaryGeminiModelExpiresAtUtc] = useState<string | null>(null);
+  const [temporaryGeminiDurationMinutes, setTemporaryGeminiDurationMinutes] = useState(120);
+  const [temporaryModelActionLoading, setTemporaryModelActionLoading] = useState(false);
+  const [geminiEnterpriseProjectId, setGeminiEnterpriseProjectId] = useState('');
+  const [customerReplyProvider, setCustomerReplyProvider] = useState<CustomerReplyProvider>('Gemini');
+  const [customerReplyOpenAiApiKey, setCustomerReplyOpenAiApiKey] = useState('');
+  const [customerReplyOpenAiApiKeyConfigured, setCustomerReplyOpenAiApiKeyConfigured] = useState(false);
+  const [clearCustomerReplyOpenAiApiKey, setClearCustomerReplyOpenAiApiKey] = useState(false);
+  const [customerReplyXaiApiKey, setCustomerReplyXaiApiKey] = useState('');
+  const [customerReplyXaiApiKeyConfigured, setCustomerReplyXaiApiKeyConfigured] = useState(false);
+  const [clearCustomerReplyXaiApiKey, setClearCustomerReplyXaiApiKey] = useState(false);
+  const [customerReplyModel, setCustomerReplyModel] = useState('gpt-5.6');
   const [timezone, setTimezone] = useState('Africa/Cairo');
-  const [aiTonePreference, setAiTonePreference] = useState('العامية المصرية الروشة والصايعة');
-  const [aiTargetAudience, setAiTargetAudience] = useState('طلاب كورس كول سنتر يبحثون عن عمل');
+  const [aiTonePreference, setAiTonePreference] = useState('العامية المصرية المهذبة والمحترمة');
+  const [aiTargetAudience, setAiTargetAudience] = useState('');
   const [replyDelay, setReplyDelay] = useState(3);
   const [maxDailyMessages, setMaxDailyMessages] = useState(500);
   const [isGroupAppointmentsEnabled, setIsGroupAppointmentsEnabled] = useState(false);
   const [isWhatsAppGroupAutomationEnabled, setIsWhatsAppGroupAutomationEnabled] = useState(false);
-  const [groupAutomationManagerPhone, setGroupAutomationManagerPhone] = useState('+201068690092');
+  const [groupAutomationManagerPhone, setGroupAutomationManagerPhone] = useState('');
   const [humanTransferEnabled, setHumanTransferEnabled] = useState(false);
   const [humanTransferPhone, setHumanTransferPhone] = useState('');
+  const [isTalkTipsTrialGateEnabled, setIsTalkTipsTrialGateEnabled] = useState(false);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [messengerAutoReplyEnabled, setMessengerAutoReplyEnabled] = useState(false);
   const [messengerReplyDelay, setMessengerReplyDelay] = useState(3);
   const [commentsAutoReplyEnabled, setCommentsAutoReplyEnabled] = useState(false);
   const [commentsReplyDelay, setCommentsReplyDelay] = useState(3);
+
+  useEffect(() => {
+    if (!temporaryGeminiModelExpiresAtUtc) return;
+    const remainingMilliseconds = new Date(temporaryGeminiModelExpiresAtUtc).getTime() - Date.now();
+    const timeoutId = window.setTimeout(
+      () => setTemporaryGeminiModelExpiresAtUtc(null),
+      Math.max(0, remainingMilliseconds),
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [temporaryGeminiModelExpiresAtUtc]);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [aiBehavior, setAiBehavior] = useState<AIBehaviorSettings>(() => defaultAiBehavior());
-  const [newProjectName, setNewProjectName] = useState('');
 
   // Facebook Pages state
   const [connectedPages, setConnectedPages] = useState<Array<{ id: string; pageId: string; pageName: string; connectedAt: string }>>([]);
@@ -209,10 +297,40 @@ export default function Settings() {
   const [pagesToConnect, setPagesToConnect] = useState<Array<{ id: string; name: string; access_token: string }>>([]);
   const [showPagesModal, setShowPagesModal] = useState(false);
   const [userAccessToken, setUserAccessToken] = useState('');
+  const [pendingDisconnect, setPendingDisconnect] = useState<{ id: string; name?: string } | null>(null);
+  const oauthPopupRef = useRef<Window | null>(null);
+  const pagesModalRef = useRef<HTMLDivElement>(null);
+  const modalCloseRef = useRef<HTMLButtonElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const generalFormRef = useRef<HTMLFormElement>(null);
+  const settingsMutationInFlightRef = useRef(false);
+  const [generalDirty, setGeneralDirty] = useState(false);
+  const [addonsDirty, setAddonsDirty] = useState(false);
+  const navigationGuard = useUnsavedNavigationGuard(generalDirty || addonsDirty);
 
   // Tabs / Navigation state
   const [activeTab, setActiveTab] = useState<'general' | 'addons'>('general');
   const [viewMode, setViewMode] = useState<'list' | 'manage-groups'>('list');
+
+  const openAddonsTab = () => {
+    if (generalDirty) {
+      setMessage({ type: 'error', text: 'احفظ تغييرات إعدادات المشروع أولًا قبل الانتقال للإضافات.' });
+      generalFormRef.current?.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus();
+      return false;
+    }
+    setActiveTab('addons');
+    return true;
+  };
+
+  const openGeneralTab = () => {
+    if (addonsDirty) {
+      setMessage({ type: 'error', text: 'احفظ أرقام الإضافات المعدّلة أولًا قبل الانتقال لإعدادات المشروع.' });
+      return false;
+    }
+    setActiveTab('general');
+    setViewMode('list');
+    return true;
+  };
 
   const updateAiBehavior = <K extends keyof AIBehaviorSettings>(section: K, value: AIBehaviorSettings[K]) => {
     setAiBehavior(prev => ({ ...prev, [section]: value }));
@@ -231,28 +349,87 @@ export default function Settings() {
     }));
   };
 
+  const handleCustomerReplyProviderChange = (provider: CustomerReplyProvider) => {
+    setCustomerReplyProvider(provider);
+    if (provider === 'OpenAI' && !isSupportedOpenAiCustomerReplyModel(customerReplyModel)) {
+      setCustomerReplyModel('gpt-5.6');
+    }
+    if (provider === 'xAI' && !isSupportedXaiCustomerReplyModel(customerReplyModel)) {
+      setCustomerReplyModel('grok-4.6');
+    }
+  };
+
+  const handleGeminiAgentPlatformApiKeyChange = (apiKey: string) => {
+    setGeminiAgentPlatformApiKey(apiKey);
+    if (apiKey.trim()) setClearGeminiAgentPlatformApiKey(false);
+  };
+
+  const toggleClearGeminiAgentPlatformApiKey = () => {
+    if (!geminiAgentPlatformApiKeyConfigured || geminiAgentPlatformApiKey.trim()) return;
+    setClearGeminiAgentPlatformApiKey(shouldClear => !shouldClear);
+    setGeneralDirty(true);
+  };
+
+  const handleCustomerReplyOpenAiApiKeyChange = (value: string) => {
+    setCustomerReplyOpenAiApiKey(value);
+    if (value.trim()) setClearCustomerReplyOpenAiApiKey(false);
+  };
+
+  const handleCustomerReplyXaiApiKeyChange = (value: string) => {
+    setCustomerReplyXaiApiKey(value);
+    if (value.trim()) setClearCustomerReplyXaiApiKey(false);
+  };
+
+  const toggleClearCustomerReplyOpenAiApiKey = () => {
+    if (!customerReplyOpenAiApiKeyConfigured || customerReplyOpenAiApiKey.trim()) return;
+    setClearCustomerReplyOpenAiApiKey(clear => !clear);
+    setGeneralDirty(true);
+  };
+
+  const toggleClearCustomerReplyXaiApiKey = () => {
+    if (!customerReplyXaiApiKeyConfigured || customerReplyXaiApiKey.trim()) return;
+    setClearCustomerReplyXaiApiKey(clear => !clear);
+    setGeneralDirty(true);
+  };
+
+  const closePagesModal = useCallback(() => {
+    setShowPagesModal(false);
+    setPagesToConnect([]);
+    setUserAccessToken('');
+  }, []);
+
   // Listen for message events from the popup
   useEffect(() => {
     const handleOAuthMessage = (event: MessageEvent) => {
-      if (!event.data) return;
+      if (!trustedOAuthOrigins().has(event.origin) || event.source !== oauthPopupRef.current || !event.data) return;
+      const oauthMessage = event.data as FacebookOAuthMessage;
 
-      if (event.data.type === 'facebook-oauth-success') {
-        const { projectId, userAccessToken: uToken, pages } = event.data;
+      if (oauthMessage.type === 'facebook-oauth-success') {
+        const { projectId, userAccessToken: uToken, pages } = oauthMessage;
         if (activeProject && projectId === activeProject.id) {
-          const mapped = (pages || []).map((p: any) => ({
-            id: p.pageId,
-            name: p.pageName,
-            access_token: p.accessToken
-          }));
+          const mapped = (Array.isArray(pages) ? pages : []).flatMap((candidate) => {
+            const page = candidate as FacebookOAuthPageMessage;
+            return typeof page.pageId === 'string' && typeof page.pageName === 'string' && typeof page.accessToken === 'string'
+              ? [{ id: page.pageId, name: page.pageName, access_token: page.accessToken }]
+              : [];
+          });
+          if (mapped.length === 0) {
+            setFbLoading(false);
+            setMessage({ type: 'error', text: 'لم يرجع Facebook أي صفحة قابلة للربط لهذا الحساب.' });
+            oauthPopupRef.current = null;
+            return;
+          }
           setPagesToConnect(mapped);
-          setUserAccessToken(uToken);
+          setUserAccessToken(typeof uToken === 'string' ? uToken : '');
           setShowPagesModal(true);
           setFbLoading(false);
           setMessage({ type: 'success', text: 'تم تسجيل الدخول بنجاح. الرجاء تحديد الصفحة لربطها.' });
         }
-      } else if (event.data.type === 'facebook-oauth-error') {
+        oauthPopupRef.current = null;
+      } else if (oauthMessage.type === 'facebook-oauth-error') {
         setFbLoading(false);
-        setMessage({ type: 'error', text: event.data.error || 'حدث خطأ أثناء الاتصال بفيسبوك.' });
+        setMessage({ type: 'error', text: typeof oauthMessage.error === 'string' ? oauthMessage.error : 'حدث خطأ أثناء الاتصال بفيسبوك.' });
+        oauthPopupRef.current = null;
       }
     };
 
@@ -262,24 +439,85 @@ export default function Settings() {
     };
   }, [activeProject]);
 
+  useEffect(() => {
+    if (!fbLoading) return;
+    const popupMonitor = window.setInterval(() => {
+      const popup = oauthPopupRef.current;
+      if (!popup?.closed) return;
+      oauthPopupRef.current = null;
+      setFbLoading(false);
+      setMessage({ type: 'error', text: 'أُغلقت نافذة Facebook قبل اكتمال الربط.' });
+    }, 500);
+    return () => window.clearInterval(popupMonitor);
+  }, [fbLoading]);
+
+  useEffect(() => {
+    if (!showPagesModal) return;
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusTimer = window.setTimeout(() => modalCloseRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closePagesModal();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(pagesModalRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      ) ?? []);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocusedRef.current?.focus();
+    };
+  }, [closePagesModal, showPagesModal]);
+
   const fetchProjectSettings = useCallback(async () => {
     if (!activeProject) return;
+    setProjectSettingsState('loading');
     try {
       const response = await api.get<ProjectSettingsResponse>(`/api/projects/${activeProject.id}`);
       setProjectName(response.data.name || '');
       const settings = response.data.settings;
       setTimezone(settings?.timezone || 'Africa/Cairo');
-      setGeminiApiKey(settings?.geminiApiKey || '');
-      setGeminiModel(settings?.geminiModel || 'gemini-flash-latest');
-      setAiTonePreference(settings?.aiTonePreference || 'العامية المصرية الروشة والصايعة');
-      setAiTargetAudience(settings?.aiTargetAudience || 'طلاب كورس كول سنتر يبحثون عن عمل');
+      setGeminiApiKey('');
+      setGeminiApiKeyConfigured(settings?.geminiApiKeyConfigured ?? false);
+      setGeminiAgentPlatformApiKey('');
+      setGeminiAgentPlatformApiKeyConfigured(settings?.geminiAgentPlatformApiKeyConfigured ?? false);
+      setClearGeminiAgentPlatformApiKey(false);
+      setGeminiModel(settings?.geminiModel || 'gemini-3.5-flash');
+      setTemporaryGeminiModel(settings?.temporaryGeminiModel || 'gemini-flash-latest');
+      setTemporaryGeminiModelExpiresAtUtc(settings?.temporaryGeminiModelExpiresAtUtc ?? null);
+      setGeminiEnterpriseProjectId(settings?.geminiEnterpriseProjectId ?? '');
+      const replyProvider = parseCustomerReplyProvider(settings?.customerReplyProvider);
+      setCustomerReplyProvider(replyProvider);
+      setCustomerReplyOpenAiApiKey('');
+      setCustomerReplyOpenAiApiKeyConfigured(settings?.customerReplyOpenAiApiKeyConfigured ?? false);
+      setClearCustomerReplyOpenAiApiKey(false);
+      setCustomerReplyXaiApiKey('');
+      setCustomerReplyXaiApiKeyConfigured(settings?.customerReplyXaiApiKeyConfigured ?? false);
+      setClearCustomerReplyXaiApiKey(false);
+      setCustomerReplyModel(settings?.customerReplyModel || (replyProvider === 'xAI' ? 'grok-4.6' : 'gpt-5.6'));
+      setAiTonePreference(settings?.aiTonePreference || 'العامية المصرية المهذبة والمحترمة');
+      setAiTargetAudience(settings?.aiTargetAudience || '');
       setReplyDelay(settings?.replyDelay ?? 3);
       setMaxDailyMessages(settings?.maxDailyMessages ?? 500);
       setIsGroupAppointmentsEnabled(settings?.isGroupAppointmentsEnabled ?? false);
       setIsWhatsAppGroupAutomationEnabled(settings?.isWhatsAppGroupAutomationEnabled ?? false);
-      setGroupAutomationManagerPhone(settings?.groupAutomationManagerPhone ?? '+201068690092');
+      setGroupAutomationManagerPhone(settings?.groupAutomationManagerPhone ?? '');
       setHumanTransferEnabled(settings?.humanTransferEnabled ?? false);
       setHumanTransferPhone(settings?.humanTransferPhone || '');
+      setIsTalkTipsTrialGateEnabled(settings?.isTalkTipsTrialGateEnabled ?? false);
       setAutoReplyEnabled(settings?.aiAutoReplyEnabled ?? false);
       setMessengerAutoReplyEnabled(settings?.messengerAiAutoReplyEnabled ?? false);
       setMessengerReplyDelay(settings?.messengerReplyDelay ?? 3);
@@ -287,8 +525,11 @@ export default function Settings() {
       setCommentsReplyDelay(settings?.commentsReplyDelay ?? 3);
       setSystemPrompt(settings?.systemPrompt || '');
       setAiBehavior(settings?.aiBehavior || defaultAiBehavior());
+      setGeneralDirty(false);
+      setProjectSettingsState('ready');
     } catch {
       setMessage({ type: 'error', text: 'تعذر تحميل إعدادات الرد الآلي.' });
+      setProjectSettingsState('error');
     }
   }, [activeProject]);
 
@@ -305,135 +546,21 @@ export default function Settings() {
         connectedAt: p.createdAt
       }));
       setConnectedPages(mapped);
+      setPagesLoadError(null);
     } catch {
-      // Silently handle - no pages connected yet
-      setConnectedPages([]);
+      setPagesLoadError('تعذر تحديث حالة صفحات Facebook. البيانات المعروضة قد تكون قديمة.');
     }
   }, [activeProject]);
 
-  const fetchQR = useCallback(async () => {
-    if (!activeProject) return;
-    try {
-      const response = await api.get<{ qr?: string; error?: string }>(
-        `/api/whatsapp/session/qr?projectId=${activeProject.id}`,
-        {
-          validateStatus: (status) => status === 200 || status === 404
-        }
-      );
-      if (response.status === 200 && response.data && response.data.qr) {
-        setQrString(response.data.qr);
-        setQrError(null);
-      } else {
-        setQrString(null);
-        setQrError(response.data?.error || 'QR code is not ready yet. Retrying...');
-      }
-    } catch (e) {
-      console.error('Failed to fetch QR code payload', e);
-      setQrError('Unable to fetch QR code from WhatsApp gateway.');
-    }
-  }, [activeProject]);
-
-  const fetchStatus = useCallback(async (showLoading = false) => {
-    if (!activeProject) return;
-    try {
-      if (showLoading) setLoading(true);
-      const response = await api.get<SessionStatusResponse>(`/api/whatsapp/session/status?projectId=${activeProject.id}`);
-      setStatus(response.data.status);
-      setPhoneNumber(response.data.phoneNumber);
-      setQrError(response.data.error || null);
-      
-      // If it is initializing, fetch the QR code
-      if (response.data.status === 'Initializing') {
-        void fetchQR();
-      } else {
-        setQrString(null);
-        setQrError(null);
-      }
-    } catch (e) {
-      console.error('Failed to fetch WhatsApp session status', e);
-    } finally {
-      if (showLoading) setLoading(false);
-    }
-  }, [activeProject, fetchQR]);
-
-  // Poll status every 5 seconds
+  // Load project resources once when the selected project changes.
   useEffect(() => {
+    if (!activeProject) return;
     queueMicrotask(() => {
-      void fetchStatus(true);
       void fetchProjectSettings();
       void fetchConnectedPages();
     });
-    
-    const interval = setInterval(() => {
-      void fetchStatus(false);
-    }, 5000);
 
-    return () => clearInterval(interval);
-  }, [fetchStatus, fetchProjectSettings, fetchConnectedPages]);
-
-  const handleStartSession = async () => {
-    if (!activeProject) return;
-    try {
-      setActionLoading(true);
-      setMessage(null);
-      await api.post('/api/whatsapp/session/start', {
-        projectId: activeProject.id
-      });
-      setStatus('Initializing');
-      setQrError(null);
-      // Fetch QR immediately
-      setTimeout(() => void fetchQR(), 1000);
-    } catch (e: unknown) {
-      console.error('Failed to start WhatsApp session', e);
-      setMessage({ type: 'error', text: getApiErrorMessage(e, 'تعذر بدء جلسة واتساب.') });
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleMockConnect = async () => {
-    if (!activeProject) return;
-    try {
-      setActionLoading(true);
-      setMessage(null);
-      await api.post('/api/whatsapp/session/mock', {
-        projectId: activeProject.id,
-        status: 'Connected',
-        phoneNumber: '201099887766'
-      });
-      setStatus('Connected');
-      setPhoneNumber('201099887766');
-      setQrString(null);
-      setQrError(null);
-      setMessage({ type: 'success', text: 'تم توصيل واتساب التجريبي بنجاح.' });
-    } catch (e: unknown) {
-      console.error('Failed to mock connect', e);
-      setMessage({ type: 'error', text: getApiErrorMessage(e, 'تعذر التوصيل التجريبي.') });
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleDisconnect = async () => {
-    if (!activeProject) return;
-    try {
-      setActionLoading(true);
-      setMessage(null);
-      await api.post('/api/whatsapp/session/disconnect', {
-        projectId: activeProject.id
-      });
-      setStatus('Disconnected');
-      setPhoneNumber(null);
-      setQrString(null);
-      setQrError(null);
-      setMessage({ type: 'success', text: 'تم فصل جلسة واتساب. بيانات المحادثات محفوظة كما هي.' });
-    } catch (e: unknown) {
-      console.error('Failed to disconnect session', e);
-      setMessage({ type: 'error', text: getApiErrorMessage(e, 'تعذر فصل الجلسة.') });
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  }, [activeProject, fetchProjectSettings, fetchConnectedPages]);
 
   const handleConnectFacebook = () => {
     if (!activeProject) return;
@@ -462,6 +589,8 @@ export default function Settings() {
     if (!popup) {
       setFbLoading(false);
       setMessage({ type: 'error', text: 'تم حظر النافذة المنبثقة. يرجى تفعيل النوافذ المنبثقة في متصفحك والمحاولة مرة أخرى.' });
+    } else {
+      oauthPopupRef.current = popup;
     }
   };
 
@@ -477,7 +606,7 @@ export default function Settings() {
         facebookUserId: ''
       });
       setMessage({ type: 'success', text: `تم ربط الصفحة بنجاح: ${page.name}` });
-      setShowPagesModal(false);
+      closePagesModal();
       void fetchConnectedPages();
     } catch (e: unknown) {
       console.error(e);
@@ -490,72 +619,197 @@ export default function Settings() {
   const handleDisconnectPage = async (pageDbId: string) => {
     if (!activeProject) return;
     try {
+      setActionLoading(true);
+      setMessage(null);
       await api.delete(`/api/projects/${activeProject.id}/facebook/pages/${pageDbId}`);
       setConnectedPages(prev => prev.filter(p => p.id !== pageDbId));
       setMessage({ type: 'success', text: 'تم فصل الصفحة بنجاح.' });
     } catch {
       setMessage({ type: 'error', text: 'تعذر فصل الصفحة.' });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const confirmDisconnect = () => {
+    const pending = pendingDisconnect;
+    setPendingDisconnect(null);
+    if (!pending) return;
+    void handleDisconnectPage(pending.id);
+  };
+
+  const buildSettingsPayload = (overrides: Record<string, unknown> = {}) => ({
+    projectName: projectName.trim(),
+    aiAutoReplyEnabled: autoReplyEnabled,
+    timezone,
+    ...(geminiApiKey.trim() ? { geminiApiKey: geminiApiKey.trim() } : {}),
+    ...(geminiAgentPlatformApiKey.trim()
+      ? { geminiAgentPlatformApiKey: geminiAgentPlatformApiKey.trim() }
+      : {}),
+    clearGeminiAgentPlatformApiKey,
+    ...(isSupportedGeminiModel(geminiModel) ? { geminiModel } : {}),
+    geminiEnterpriseProjectId: geminiEnterpriseProjectId.trim(),
+    customerReplyProvider,
+    ...(customerReplyOpenAiApiKey.trim()
+      ? { customerReplyOpenAiApiKey: customerReplyOpenAiApiKey.trim() }
+      : {}),
+    clearCustomerReplyOpenAiApiKey,
+    ...(customerReplyXaiApiKey.trim()
+      ? { customerReplyXaiApiKey: customerReplyXaiApiKey.trim() }
+      : {}),
+    clearCustomerReplyXaiApiKey,
+    ...(
+      (customerReplyProvider === 'OpenAI' && isSupportedOpenAiCustomerReplyModel(customerReplyModel)) ||
+      (customerReplyProvider === 'xAI' && isSupportedXaiCustomerReplyModel(customerReplyModel))
+        ? { customerReplyModel }
+        : {}
+    ),
+    aiTonePreference: aiTonePreference.trim(),
+    aiTargetAudience: aiTargetAudience.trim(),
+    replyDelay,
+    maxDailyMessages,
+    isGroupAppointmentsEnabled,
+    isWhatsAppGroupAutomationEnabled,
+    groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
+    humanTransferEnabled,
+    humanTransferPhone: humanTransferPhone.trim(),
+    isTalkTipsTrialGateEnabled,
+    messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
+    messengerReplyDelay,
+    commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
+    commentsReplyDelay,
+    systemPrompt: systemPrompt.trim(),
+    aiBehavior,
+    ...overrides,
+  });
+
+  const updateProjectSettings = async (overrides: Record<string, unknown> = {}) => {
+    if (!activeProject) throw new Error('NO_ACTIVE_PROJECT');
+    if (settingsMutationInFlightRef.current) throw new Error('SETTINGS_UPDATE_IN_PROGRESS');
+    settingsMutationInFlightRef.current = true;
+    try {
+      await api.put(`/api/projects/${activeProject.id}/settings`, buildSettingsPayload(overrides));
+    } finally {
+      settingsMutationInFlightRef.current = false;
+    }
+  };
+
+  const activateTemporaryGeminiModel = async () => {
+    if (!activeProject || !isSupportedGeminiModel(temporaryGeminiModel)) return;
+    setTemporaryModelActionLoading(true);
+    setMessage(null);
+    try {
+      const response = await api.put<{ temporaryGeminiModelExpiresAtUtc: string }>(
+        `/api/projects/${activeProject.id}/settings/gemini-model-override`,
+        { model: temporaryGeminiModel, durationMinutes: temporaryGeminiDurationMinutes },
+      );
+      setTemporaryGeminiModelExpiresAtUtc(response.data.temporaryGeminiModelExpiresAtUtc);
+      setMessage({ type: 'success', text: 'تم تشغيل الموديل المؤقت، وسيعود النظام للموديل الأساسي تلقائيًا في الموعد.' });
+    } catch (error) {
+      const apiError = error as AxiosError<ApiErrorResponse>;
+      setMessage({ type: 'error', text: apiError.response?.data?.error || 'تعذر تشغيل الموديل المؤقت.' });
+    } finally {
+      setTemporaryModelActionLoading(false);
+    }
+  };
+
+  const cancelTemporaryGeminiModel = async () => {
+    if (!activeProject) return;
+    setTemporaryModelActionLoading(true);
+    setMessage(null);
+    try {
+      await api.delete(`/api/projects/${activeProject.id}/settings/gemini-model-override`);
+      setTemporaryGeminiModelExpiresAtUtc(null);
+      setMessage({ type: 'success', text: 'تم إيقاف الموديل المؤقت والرجوع للموديل الأساسي.' });
+    } catch (error) {
+      const apiError = error as AxiosError<ApiErrorResponse>;
+      setMessage({ type: 'error', text: apiError.response?.data?.error || 'تعذر إيقاف الموديل المؤقت.' });
+    } finally {
+      setTemporaryModelActionLoading(false);
     }
   };
 
   const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeProject) return;
+    if (!generalFormRef.current?.reportValidity()) {
+      setMessage({ type: 'error', text: 'راجع الحقول المعلّمة قبل الحفظ.' });
+      return;
+    }
+    if (!isSupportedGeminiModel(geminiModel)) {
+      setMessage({ type: 'error', text: 'اختر نموذج Gemini مدعومًا قبل الحفظ؛ لن نغيّر الإعداد القديم تلقائيًا.' });
+      return;
+    }
+    if (customerReplyProvider === 'OpenAI' && !isSupportedOpenAiCustomerReplyModel(customerReplyModel)) {
+      setMessage({ type: 'error', text: 'اختر موديل OpenAI مدعومًا لردود العملاء.' });
+      return;
+    }
+    if (customerReplyProvider === 'xAI' && !isSupportedXaiCustomerReplyModel(customerReplyModel)) {
+      setMessage({ type: 'error', text: 'اختر موديل Grok مدعومًا لردود العملاء.' });
+      return;
+    }
+    if (
+      customerReplyProvider === 'OpenAI' &&
+      !customerReplyOpenAiApiKey.trim() &&
+      (!customerReplyOpenAiApiKeyConfigured || clearCustomerReplyOpenAiApiKey)
+    ) {
+      setMessage({ type: 'error', text: 'أدخل مفتاح OpenAI API أو ألغِ طلب مسحه قبل تشغيل OpenAI لردود العملاء.' });
+      return;
+    }
+    if (
+      customerReplyProvider === 'xAI' &&
+      !customerReplyXaiApiKey.trim() &&
+      (!customerReplyXaiApiKeyConfigured || clearCustomerReplyXaiApiKey)
+    ) {
+      setMessage({ type: 'error', text: 'أدخل مفتاح xAI API أو ألغِ طلب مسحه قبل تشغيل Grok لردود العملاء.' });
+      return;
+    }
+    if (!isValidTimezone(timezone)) {
+      setMessage({ type: 'error', text: 'اكتب اسم منطقة زمنية صالحًا من قاعدة IANA، مثل Africa/Cairo.' });
+      return;
+    }
+    setActionLoading(true);
     try {
-      await api.put(`/api/projects/${activeProject.id}/settings`, {
-        projectName: projectName.trim(),
-        aiAutoReplyEnabled: autoReplyEnabled,
-        timezone,
-        geminiApiKey: geminiApiKey.trim(),
-        geminiModel,
-        aiTonePreference: aiTonePreference.trim(),
-        aiTargetAudience: aiTargetAudience.trim(),
-        replyDelay,
-        maxDailyMessages,
-        isGroupAppointmentsEnabled,
-        isWhatsAppGroupAutomationEnabled,
-        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
-        humanTransferEnabled,
-        humanTransferPhone: humanTransferPhone.trim(),
-        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
-        messengerReplyDelay,
-        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
-        commentsReplyDelay,
-        systemPrompt: systemPrompt.trim(),
-        aiBehavior,
-      });
+      await updateProjectSettings();
+      if (geminiApiKey.trim()) {
+        setGeminiApiKeyConfigured(true);
+        setGeminiApiKey('');
+      }
+      if (geminiAgentPlatformApiKey.trim()) {
+        setGeminiAgentPlatformApiKeyConfigured(true);
+        setGeminiAgentPlatformApiKey('');
+      } else if (clearGeminiAgentPlatformApiKey) {
+        setGeminiAgentPlatformApiKeyConfigured(false);
+      }
+      setClearGeminiAgentPlatformApiKey(false);
+      if (customerReplyOpenAiApiKey.trim()) {
+        setCustomerReplyOpenAiApiKeyConfigured(true);
+        setCustomerReplyOpenAiApiKey('');
+      } else if (clearCustomerReplyOpenAiApiKey) {
+        setCustomerReplyOpenAiApiKeyConfigured(false);
+      }
+      setClearCustomerReplyOpenAiApiKey(false);
+      if (customerReplyXaiApiKey.trim()) {
+        setCustomerReplyXaiApiKeyConfigured(true);
+        setCustomerReplyXaiApiKey('');
+      } else if (clearCustomerReplyXaiApiKey) {
+        setCustomerReplyXaiApiKeyConfigured(false);
+      }
+      setClearCustomerReplyXaiApiKey(false);
       setMessage({ type: 'success', text: 'تم حفظ إعدادات الرد الآلي بنجاح.' });
+      setGeneralDirty(false);
       void refreshProjects();
     } catch (e) {
       setMessage({ type: 'error', text: getApiErrorMessage(e, 'تعذر حفظ إعدادات الرد الآلي.') });
+    } finally {
+      setActionLoading(false);
     }
   };
 
   const handleToggleGroupAppointments = async (enabled: boolean) => {
     if (!activeProject) return;
     try {
-      await api.put(`/api/projects/${activeProject.id}/settings`, {
-        projectName: projectName.trim(),
-        aiAutoReplyEnabled: autoReplyEnabled,
-        timezone,
-        geminiApiKey: geminiApiKey.trim(),
-        geminiModel,
-        aiTonePreference: aiTonePreference.trim(),
-        aiTargetAudience: aiTargetAudience.trim(),
-        replyDelay,
-        maxDailyMessages,
-        isGroupAppointmentsEnabled: enabled,
-        isWhatsAppGroupAutomationEnabled,
-        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
-        humanTransferEnabled,
-        humanTransferPhone: humanTransferPhone.trim(),
-        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
-        messengerReplyDelay,
-        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
-        commentsReplyDelay,
-        systemPrompt: systemPrompt.trim(),
-        aiBehavior,
-      });
+      await updateProjectSettings({ isGroupAppointmentsEnabled: enabled });
       setIsGroupAppointmentsEnabled(enabled);
     } catch (e) {
       console.error(e);
@@ -566,28 +820,7 @@ export default function Settings() {
   const handleToggleWhatsAppGroupAutomation = async (enabled: boolean) => {
     if (!activeProject) return;
     try {
-      await api.put(`/api/projects/${activeProject.id}/settings`, {
-        projectName: projectName.trim(),
-        aiAutoReplyEnabled: autoReplyEnabled,
-        timezone,
-        geminiApiKey: geminiApiKey.trim(),
-        geminiModel,
-        aiTonePreference: aiTonePreference.trim(),
-        aiTargetAudience: aiTargetAudience.trim(),
-        replyDelay,
-        maxDailyMessages,
-        isGroupAppointmentsEnabled,
-        isWhatsAppGroupAutomationEnabled: enabled,
-        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
-        humanTransferEnabled,
-        humanTransferPhone: humanTransferPhone.trim(),
-        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
-        messengerReplyDelay,
-        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
-        commentsReplyDelay,
-        systemPrompt: systemPrompt.trim(),
-        aiBehavior,
-      });
+      await updateProjectSettings({ isWhatsAppGroupAutomationEnabled: enabled });
       setIsWhatsAppGroupAutomationEnabled(enabled);
     } catch (e) {
       console.error(e);
@@ -598,28 +831,7 @@ export default function Settings() {
   const handleUpdateGroupAutomationManagerPhone = async (phone: string) => {
     if (!activeProject) return;
     try {
-      await api.put(`/api/projects/${activeProject.id}/settings`, {
-        projectName: projectName.trim(),
-        aiAutoReplyEnabled: autoReplyEnabled,
-        timezone,
-        geminiApiKey: geminiApiKey.trim(),
-        geminiModel,
-        aiTonePreference: aiTonePreference.trim(),
-        aiTargetAudience: aiTargetAudience.trim(),
-        replyDelay,
-        maxDailyMessages,
-        isGroupAppointmentsEnabled,
-        isWhatsAppGroupAutomationEnabled,
-        groupAutomationManagerPhone: phone.trim(),
-        humanTransferEnabled,
-        humanTransferPhone: humanTransferPhone.trim(),
-        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
-        messengerReplyDelay,
-        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
-        commentsReplyDelay,
-        systemPrompt: systemPrompt.trim(),
-        aiBehavior,
-      });
+      await updateProjectSettings({ groupAutomationManagerPhone: phone.trim() });
       setGroupAutomationManagerPhone(phone);
     } catch (e) {
       console.error(e);
@@ -630,28 +842,7 @@ export default function Settings() {
   const handleToggleHumanTransfer = async (enabled: boolean) => {
     if (!activeProject) return;
     try {
-      await api.put(`/api/projects/${activeProject.id}/settings`, {
-        projectName: projectName.trim(),
-        aiAutoReplyEnabled: autoReplyEnabled,
-        timezone,
-        geminiApiKey: geminiApiKey.trim(),
-        geminiModel,
-        aiTonePreference: aiTonePreference.trim(),
-        aiTargetAudience: aiTargetAudience.trim(),
-        replyDelay,
-        maxDailyMessages,
-        isGroupAppointmentsEnabled,
-        isWhatsAppGroupAutomationEnabled,
-        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
-        humanTransferEnabled: enabled,
-        humanTransferPhone: humanTransferPhone.trim(),
-        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
-        messengerReplyDelay,
-        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
-        commentsReplyDelay,
-        systemPrompt: systemPrompt.trim(),
-        aiBehavior,
-      });
+      await updateProjectSettings({ humanTransferEnabled: enabled });
       setHumanTransferEnabled(enabled);
     } catch (e) {
       console.error(e);
@@ -662,28 +853,7 @@ export default function Settings() {
   const handleUpdateHumanTransferPhone = async (phone: string) => {
     if (!activeProject) return;
     try {
-      await api.put(`/api/projects/${activeProject.id}/settings`, {
-        projectName: projectName.trim(),
-        aiAutoReplyEnabled: autoReplyEnabled,
-        timezone,
-        geminiApiKey: geminiApiKey.trim(),
-        geminiModel,
-        aiTonePreference: aiTonePreference.trim(),
-        aiTargetAudience: aiTargetAudience.trim(),
-        replyDelay,
-        maxDailyMessages,
-        isGroupAppointmentsEnabled,
-        isWhatsAppGroupAutomationEnabled,
-        groupAutomationManagerPhone: groupAutomationManagerPhone.trim(),
-        humanTransferEnabled,
-        humanTransferPhone: phone.trim(),
-        messengerAiAutoReplyEnabled: messengerAutoReplyEnabled,
-        messengerReplyDelay,
-        commentsAiAutoReplyEnabled: commentsAutoReplyEnabled,
-        commentsReplyDelay,
-        systemPrompt: systemPrompt.trim(),
-        aiBehavior,
-      });
+      await updateProjectSettings({ humanTransferPhone: phone.trim() });
       setHumanTransferPhone(phone);
     } catch (e) {
       console.error(e);
@@ -691,34 +861,55 @@ export default function Settings() {
     }
   };
 
-  const handleCreateNewProject = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProjectName.trim()) return;
-    setActionLoading(true);
-    setMessage(null);
+  const handleToggleTalkTipsTrialGate = async (enabled: boolean) => {
+    if (!activeProject) return;
     try {
-      const response = await api.post<{ id: string; name: string }>('/api/projects', {
-        name: newProjectName.trim()
-      });
-      setMessage({ type: 'success', text: `تم إنشاء المشروع "${newProjectName.trim()}" بنجاح وجاري الانتقال إليه.` });
-      setNewProjectName('');
-      await refreshProjects();
-      if (response.data && response.data.id) {
-        switchProject(response.data.id);
-      }
-    } catch (err: unknown) {
-      console.error('Failed to create new project', err);
-      setMessage({ type: 'error', text: getApiErrorMessage(err, 'تعذر إنشاء المشروع الجديد.') });
-    } finally {
-      setActionLoading(false);
+      await updateProjectSettings({ isTalkTipsTrialGateEnabled: enabled });
+      setIsTalkTipsTrialGateEnabled(enabled);
+    } catch (error) {
+      console.error(error);
+      throw error;
     }
   };
 
-  if (loading) {
+  if (activeProject && projectSettingsState === 'loading') {
     return (
       <div className={styles.qrLoading} style={{ padding: '5rem 0' }}>
         <div className={styles.spinner}></div>
         <p>جاري تحميل إعدادات المشروع...</p>
+      </div>
+    );
+  }
+
+  if (!activeProject) {
+    return (
+      <div className={styles.qrLoading} role="status" style={{ padding: '5rem 0' }}>
+        <AlertCircle size={24} />
+        <p>تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.</p>
+        <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={() => void refreshProjects()}>
+          <RefreshCw size={16} aria-hidden="true" /> إعادة المحاولة
+        </button>
+      </div>
+    );
+  }
+
+  if (!canManageSettings) {
+    return (
+      <div className={styles.qrLoading} role="status" style={{ padding: '5rem 0' }}>
+        <AlertCircle size={24} />
+        <p>إعدادات الاتصال والمفاتيح متاحة لمالك المشروع أو المدير فقط.</p>
+      </div>
+    );
+  }
+
+  if (projectSettingsState === 'error') {
+    return (
+      <div className={styles.qrLoading} role="alert" style={{ padding: '5rem 0' }}>
+        <AlertCircle size={24} aria-hidden="true" />
+        <p>تعذّر تحميل إعدادات هذا المشروع، لذلك أوقفنا التعديل حتى لا تُحفظ قيم ناقصة أو تخص مشروعًا آخر.</p>
+        <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={() => void fetchProjectSettings()}>
+          <RefreshCw size={16} aria-hidden="true" /> إعادة المحاولة
+        </button>
       </div>
     );
   }
@@ -731,16 +922,30 @@ export default function Settings() {
       </div>
 
       {/* Tabs / التبويبات */}
-      <div style={{ display: 'flex', gap: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
+      <div role="tablist" aria-label="أقسام الإعدادات" style={{ display: 'flex', gap: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
         <button 
-          onClick={() => { setActiveTab('general'); setViewMode('list'); }}
+          type="button"
+          id="settings-tab-general"
+          role="tab"
+          aria-selected={activeTab === 'general'}
+          aria-controls="settings-panel-general"
+          tabIndex={activeTab === 'general' ? 0 : -1}
+          onClick={() => { openGeneralTab(); }}
+          onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); if (openAddonsTab()) document.getElementById('settings-tab-addons')?.focus(); } }}
           className={`${styles.btn} ${activeTab === 'general' ? styles.btnPrimary : styles.btnSecondary}`}
           style={{ padding: '6px 12px', fontSize: '0.85rem' }}
         >
           إعدادات المشروع
         </button>
         <button 
-          onClick={() => { setActiveTab('addons'); }}
+          type="button"
+          id="settings-tab-addons"
+          role="tab"
+          aria-selected={activeTab === 'addons'}
+          aria-controls="settings-panel-addons"
+          tabIndex={activeTab === 'addons' ? 0 : -1}
+          onClick={() => { openAddonsTab(); }}
+          onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); if (openGeneralTab()) document.getElementById('settings-tab-general')?.focus(); } }}
           className={`${styles.btn} ${activeTab === 'addons' ? styles.btnPrimary : styles.btnSecondary}`}
           style={{ padding: '6px 12px', fontSize: '0.85rem' }}
         >
@@ -749,7 +954,7 @@ export default function Settings() {
       </div>
 
       {message && (
-        <div className={`glass-panel`} style={{ 
+        <div role={message.type === 'error' ? 'alert' : 'status'} aria-live="polite" style={{
           padding: 'var(--space-md)', 
           border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
           backgroundColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.04)' : 'rgba(239, 68, 68, 0.04)',
@@ -764,156 +969,17 @@ export default function Settings() {
       )}
 
       {activeTab === 'general' ? (
-        <div className={styles.grid}>
-          {/* Left Side: WhatsApp Setup */}
-          <div className={`glass-panel ${styles.card}`}>
-            <h2 className={styles.cardTitle}>
-              <Smartphone size={20} style={{ color: 'hsl(var(--accent-primary))' }} />
-              لوحة اتصال واتساب
-            </h2>
-
-            <div className={styles.statusWrapper}>
-              <span className={styles.statusLabel}>حالة الاتصال:</span>
-              <div className={styles.statusIndicator}>
-                <span className={`${styles.dot} ${
-                  status === 'Connected' ? styles.dotConnected :
-                  status === 'Initializing' ? styles.dotInitializing :
-                  styles.dotDisconnected
-                }`}></span>
-                <span style={{
-                  color: status === 'Connected' ? 'hsl(var(--accent-success))' :
-                         status === 'Initializing' ? 'hsl(var(--accent-warning))' :
-                         'hsl(var(--accent-danger))'
-                }}>{status === 'Connected' ? 'متصل' : status === 'Initializing' ? 'جاري التجهيز' : 'غير متصل'}</span>
-              </div>
-            </div>
-
-            {status === 'Disconnected' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                <p style={{ fontSize: '0.9rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
-                  رقم واتساب غير مربوط بهذا المشروع. اربطه حتى يتمكن البوت من الرد على العملاء ومزامنة الرسائل والوسائط.
-                </p>
-                <div className={styles.actions}>
-                  <button 
-                    onClick={handleStartSession} 
-                    disabled={actionLoading}
-                    className={`${styles.btn} ${styles.btnPrimary}`}
-                  >
-                    <QrCode size={18} />
-                    {actionLoading ? 'جاري التجهيز...' : 'ربط واتساب'}
-                  </button>
-
-                  <button 
-                    onClick={handleMockConnect} 
-                    disabled={actionLoading}
-                    className={`${styles.btn} ${styles.btnSecondary}`}
-                    style={{ gap: '4px' }}
-                  >
-                    <Zap size={14} style={{ color: 'hsl(var(--accent-warning))' }} />
-                    توصيل تجريبي
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {status === 'Initializing' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                <div className={styles.qrContainer}>
-                  {qrString ? (
-                    <>
-                      <div className={styles.qrWrapper}>
-                        <img 
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrString)}`} 
-                          alt="كود ربط واتساب" 
-                          className={styles.qrImage}
-                        />
-                      </div>
-                      <p className={styles.qrInstructions}>
-                        افتح واتساب من الموبايل، ادخل على الأجهزة المرتبطة، ثم امسح الكود لتوصيل الرقم.
-                      </p>
-                    </>
-                  ) : (
-                    <div className={styles.qrLoading}>
-                      <div className={styles.spinner}></div>
-                      <p style={{ fontSize: '0.85rem' }}>جاري إنشاء كود الربط الآمن...</p>
-                      {qrError && (
-                        <p style={{ fontSize: '0.8rem', color: 'hsl(var(--accent-warning))', maxWidth: '18rem' }}>
-                          {qrError}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div className={styles.actions}>
-                  <button 
-                    onClick={() => void fetchQR()}
-                    disabled={actionLoading}
-                    className={`${styles.btn} ${styles.btnSecondary}`}
-                  >
-                    <RefreshCw size={16} />
-                    تحديث الكود
-                  </button>
-
-                  <button 
-                    onClick={handleMockConnect} 
-                    disabled={actionLoading}
-                    className={`${styles.btn} ${styles.btnSecondary}`}
-                  >
-                    <Zap size={14} style={{ color: 'hsl(var(--accent-warning))' }} />
-                    توصيل تجريبي
-                  </button>
-
-                  <button 
-                    onClick={handleDisconnect} 
-                    disabled={actionLoading}
-                    className={`${styles.btn} ${styles.btnDanger}`}
-                  >
-                    إلغاء
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {status === 'Connected' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                <ul className={styles.detailsList}>
-                  <li className={styles.detailsItem}>
-                    <span>الرقم المتصل:</span>
-                    <span className={styles.detailsVal}>{phoneNumber ? `+${phoneNumber}` : 'غير معروف'}</span>
-                  </li>
-                  <li className={styles.detailsItem}>
-                    <span>بوابة واتساب:</span>
-                    <span className={styles.detailsVal}>docker-gateway-container</span>
-                  </li>
-                  <li className={styles.detailsItem}>
-                    <span>مفتاح الجلسة:</span>
-                    <span className={styles.detailsVal} style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                      {activeProject?.id?.substring(0, 8)}...session
-                    </span>
-                  </li>
-                </ul>
-
-                <div className={styles.actions}>
-                  <button 
-                    onClick={handleDisconnect} 
-                    disabled={actionLoading}
-                    className={`${styles.btn} ${styles.btnDanger}`}
-                  >
-                    <LogOut size={16} />
-                    {actionLoading ? 'جاري الفصل...' : 'فصل واتساب'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+        <div id="settings-panel-general" role="tabpanel" aria-labelledby="settings-tab-general" className={styles.grid}>
+          <WhatsAppAccountsPanel projectId={activeProject.id} />
 
           {/* Facebook Page Connection Card */}
-          <div className={`glass-panel ${styles.card}`}>
+          <div className={styles.card}>
             <h2 className={styles.cardTitle}>
               <FacebookIcon size={20} />
               ربط صفحة فيسبوك
             </h2>
+
+            {pagesLoadError && <p role="alert" className={styles.inlineError}>{pagesLoadError}</p>}
 
             {connectedPages.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
@@ -935,7 +1001,9 @@ export default function Settings() {
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-soft)' }}>ID: {page.pageId}</div>
                     </div>
                     <button
-                      onClick={() => void handleDisconnectPage(page.id)}
+                      type="button"
+                      onClick={() => setPendingDisconnect({ id: page.id, name: page.pageName })}
+                      disabled={actionLoading}
                       className={`${styles.btn} ${styles.btnDanger}`}
                       style={{ padding: '4px 10px', fontSize: '0.78rem' }}
                     >
@@ -973,48 +1041,19 @@ export default function Settings() {
             )}
           </div>
 
-          {/* Create New Project Card */}
-          <div className={`glass-panel ${styles.card}`}>
-            <h2 className={styles.cardTitle}>
-              <PlusCircle size={20} style={{ color: 'hsl(var(--accent-success))' }} />
-              إنشاء مشروع جديد
-            </h2>
-            <p style={{ fontSize: '0.9rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5', marginBottom: 'var(--space-md)' }}>
-              أنشئ مشروعاً مستقلاً تماماً لإدارة رقم واتساب آخر، قاعدة معرفية جديدة، وإعدادات ذكاء اصطناعي منفصلة.
-            </p>
-            <form onSubmit={handleCreateNewProject} className={styles.form}>
-              <div className={styles.formGroup}>
-                <input
-                  type="text"
-                  placeholder="اسم المشروع الجديد..."
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  className={styles.input}
-                  required
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={actionLoading || !newProjectName.trim()}
-                className={`${styles.btn} ${styles.btnPrimary}`}
-                style={{ alignSelf: 'flex-start' }}
-              >
-                إنشاء مشروع جديد
-              </button>
-            </form>
-          </div>
-
           {/* Right Side: General Preferences */}
-          <div className={`glass-panel ${styles.card}`}>
+          <div className={styles.card}>
             <h2 className={styles.cardTitle}>
               <SettingsIcon size={20} style={{ color: 'hsl(var(--accent-secondary))' }} />
               إعدادات الرد الآلي
             </h2>
 
-            <form onSubmit={handleSaveGeneralSettings} className={styles.form}>
+            <form ref={generalFormRef} onSubmit={handleSaveGeneralSettings} onChangeCapture={() => setGeneralDirty(true)} className={styles.form}>
               <div className={styles.formGroup}>
-                <label className={styles.label}>اسم المشروع</label>
+                <label className={styles.label} htmlFor="settings-project-name">اسم المشروع</label>
                 <input
+                  id="settings-project-name"
+                  name="projectName"
                   type="text"
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
@@ -1024,53 +1063,357 @@ export default function Settings() {
                 />
               </div>
 
-              <div className={styles.formGroup}>
-                <label className={styles.label}>نموذج الذكاء الاصطناعي</label>
-                <select
-                  className={styles.select}
-                  value={geminiModel}
-                  onChange={(e) => setGeminiModel(e.target.value)}
-                >
-                  <option value="gemini-flash-latest">Gemini Flash Latest (أعلى Flash تلقائيًا)</option>
-                  <option value="gemini-flash-lite-latest">Gemini Flash-Lite Latest (أعلى Flash-Lite تلقائيًا)</option>
-                  <option value="gemini-3.6-flash">Gemini 3.6 Flash (الأحدث)</option>
-                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (الأحدث والأوفر)</option>
-                  <option value="gemini-3.5-flash">Gemini 3.5 Flash (المحرك الموحد)</option>
-                  <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (أرخص من 3.5)</option>
-                  <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (الأوفر)</option>
-                </select>
+              <div className={styles.settingsSection}>
+                <div>
+                  <h3 className={styles.sectionTitle}>موديل ردود العملاء</h3>
+                  <p className={styles.sectionHint}>
+                    خاص فقط بردود واتساب وماسنجر وتعليقات فيسبوك. المحتوى والصور والإعلانات تفضل على إعداد Gemini المنفصل بالأسفل.
+                  </p>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-customer-reply-provider">مزود الشات</label>
+                  <select
+                    id="settings-customer-reply-provider"
+                    name="customerReplyProvider"
+                    className={styles.select}
+                    value={customerReplyProvider}
+                    onChange={(e) => handleCustomerReplyProviderChange(parseCustomerReplyProvider(e.target.value))}
+                  >
+                    <option value="xAI">xAI (Grok): مستقل لردود العملاء</option>
+                    <option value="OpenAI">OpenAI: مستقل لردود العملاء</option>
+                    <option value="Gemini">Gemini: الإعداد الحالي</option>
+                  </select>
+                </div>
+
+                {customerReplyProvider === 'OpenAI' && (
+                  <div className={styles.inlineGrid}>
+                    <div className={styles.formGroup}>
+                      <label className={styles.label} htmlFor="settings-customer-reply-model">موديل OpenAI</label>
+                      <select
+                        id="settings-customer-reply-model"
+                        name="customerReplyModel"
+                        className={styles.select}
+                        value={customerReplyModel}
+                        onChange={(e) => setCustomerReplyModel(e.target.value)}
+                        aria-describedby={!isSupportedOpenAiCustomerReplyModel(customerReplyModel) ? 'settings-customer-reply-openai-model-warning' : undefined}
+                      >
+                        {!isSupportedOpenAiCustomerReplyModel(customerReplyModel) && (
+                          <option value={customerReplyModel} disabled>{customerReplyModel} (إعداد قديم، اختر موديلًا مدعومًا)</option>
+                        )}
+                        {OPENAI_CUSTOMER_REPLY_MODELS.map((model) => (
+                          <option key={model.value} value={model.value}>{model.label}</option>
+                        ))}
+                      </select>
+                      {!isSupportedOpenAiCustomerReplyModel(customerReplyModel) && (
+                        <span id="settings-customer-reply-openai-model-warning" role="alert" className={styles.inlineError}>
+                          اختر موديل OpenAI مدعومًا قبل الحفظ.
+                        </span>
+                      )}
+                    </div>
+
+                    <div className={styles.formGroup}>
+                      <label className={styles.label} htmlFor="settings-customer-reply-openai-key">مفتاح OpenAI API</label>
+                      <input
+                        id="settings-customer-reply-openai-key"
+                        name="customerReplyOpenAiApiKey"
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder={customerReplyOpenAiApiKeyConfigured ? 'المفتاح محفوظ. اكتب مفتاحًا جديدًا لاستبداله' : 'ضع مفتاح OpenAI API هنا'}
+                        value={customerReplyOpenAiApiKey}
+                        onChange={(e) => handleCustomerReplyOpenAiApiKeyChange(e.target.value)}
+                        className={styles.input}
+                        aria-describedby="settings-customer-reply-openai-key-help"
+                      />
+                      <span id="settings-customer-reply-openai-key-help" className={styles.fieldHint}>
+                        {clearCustomerReplyOpenAiApiKey
+                          ? 'سيُمسح المفتاح عند الحفظ. اكتب مفتاحًا جديدًا لإلغاء المسح واستبداله.'
+                          : customerReplyOpenAiApiKeyConfigured
+                          ? 'المفتاح محفوظ ومشفّر. اترك الحقل فارغًا للاحتفاظ به.'
+                          : 'مفتاح مستقل؛ مفتاح Gemini لا يعمل مع موديلات OpenAI.'}
+                      </span>
+                      {customerReplyOpenAiApiKeyConfigured && (
+                        <div className={styles.actions}>
+                          <button
+                            type="button"
+                            className={`${styles.btn} ${clearCustomerReplyOpenAiApiKey ? styles.btnSecondary : styles.btnDanger}`}
+                            onClick={toggleClearCustomerReplyOpenAiApiKey}
+                            disabled={actionLoading || Boolean(customerReplyOpenAiApiKey.trim())}
+                          >
+                            {clearCustomerReplyOpenAiApiKey ? 'إلغاء مسح مفتاح OpenAI' : 'مسح مفتاح OpenAI عند الحفظ'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {customerReplyProvider === 'xAI' && (
+                  <div className={styles.inlineGrid}>
+                    <div className={styles.formGroup}>
+                      <label className={styles.label} htmlFor="settings-customer-reply-xai-model">موديل Grok</label>
+                      <select
+                        id="settings-customer-reply-xai-model"
+                        name="customerReplyModel"
+                        className={styles.select}
+                        value={customerReplyModel}
+                        onChange={(e) => setCustomerReplyModel(e.target.value)}
+                        aria-describedby={!isSupportedXaiCustomerReplyModel(customerReplyModel) ? 'settings-customer-reply-xai-model-warning' : undefined}
+                      >
+                        {!isSupportedXaiCustomerReplyModel(customerReplyModel) && (
+                          <option value={customerReplyModel} disabled>{customerReplyModel} (إعداد قديم، اختر موديلًا مدعومًا)</option>
+                        )}
+                        {XAI_CUSTOMER_REPLY_MODELS.map((model) => (
+                          <option key={model.value} value={model.value}>{model.label}</option>
+                        ))}
+                      </select>
+                      {!isSupportedXaiCustomerReplyModel(customerReplyModel) && (
+                        <span id="settings-customer-reply-xai-model-warning" role="alert" className={styles.inlineError}>
+                          اختر موديل Grok مدعومًا قبل الحفظ.
+                        </span>
+                      )}
+                    </div>
+
+                    <div className={styles.formGroup}>
+                      <label className={styles.label} htmlFor="settings-customer-reply-xai-key">مفتاح xAI API</label>
+                      <input
+                        id="settings-customer-reply-xai-key"
+                        name="customerReplyXaiApiKey"
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder={customerReplyXaiApiKeyConfigured ? 'المفتاح محفوظ. اكتب مفتاحًا جديدًا لاستبداله' : 'ضع مفتاح xAI API هنا'}
+                        value={customerReplyXaiApiKey}
+                        onChange={(e) => handleCustomerReplyXaiApiKeyChange(e.target.value)}
+                        className={styles.input}
+                        aria-describedby="settings-customer-reply-xai-key-help"
+                      />
+                      <span id="settings-customer-reply-xai-key-help" className={styles.fieldHint}>
+                        {clearCustomerReplyXaiApiKey
+                          ? 'سيُمسح المفتاح عند الحفظ. اكتب مفتاحًا جديدًا لإلغاء المسح واستبداله.'
+                          : customerReplyXaiApiKeyConfigured
+                          ? 'المفتاح محفوظ ومشفّر. اترك الحقل فارغًا للاحتفاظ به.'
+                          : 'مفتاح مستقل؛ مفاتيح Gemini وOpenAI لا تعمل مع موديلات Grok.'}
+                      </span>
+                      {customerReplyXaiApiKeyConfigured && (
+                        <div className={styles.actions}>
+                          <button
+                            type="button"
+                            className={`${styles.btn} ${clearCustomerReplyXaiApiKey ? styles.btnSecondary : styles.btnDanger}`}
+                            onClick={toggleClearCustomerReplyXaiApiKey}
+                            disabled={actionLoading || Boolean(customerReplyXaiApiKey.trim())}
+                          >
+                            {clearCustomerReplyXaiApiKey ? 'إلغاء مسح مفتاح xAI' : 'مسح مفتاح xAI عند الحفظ'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className={styles.settingsSection}>
+                <div>
+                  <h3 className={styles.sectionTitle}>Gemini لباقي النظام</h3>
+                  <p className={styles.sectionHint}>مفتاح Gemini الأساسي يفهم قاعدة المعرفة ويقترح الأفكار والمحتوى والصور والإعلانات. توليد الفيديو عبر Agent Platform له مفتاح مستقل بالأسفل.</p>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-gemini-model">موديل Gemini الأساسي</label>
+                  <select
+                    id="settings-gemini-model"
+                    name="geminiModel"
+                    className={styles.select}
+                    value={geminiModel}
+                    onChange={(e) => setGeminiModel(e.target.value)}
+                    aria-describedby={!isSupportedGeminiModel(geminiModel) ? 'settings-gemini-model-warning' : undefined}
+                  >
+                    {!isSupportedGeminiModel(geminiModel) && (
+                      <option value={geminiModel} disabled>{geminiModel} (إعداد قديم — اختر نموذجًا مدعومًا)</option>
+                    )}
+                    {GEMINI_MODELS.map((model) => <option key={model} value={model}>{model}</option>)}
+                  </select>
+                  {!isSupportedGeminiModel(geminiModel) && <span id="settings-gemini-model-warning" role="alert" className={styles.inlineError}>لن نبدّل النموذج القديم تلقائيًا. اختر نموذجًا مدعومًا قبل الحفظ.</span>}
+                </div>
+
+                <div className={styles.temporaryModelPanel}>
+                  <div className={styles.temporaryModelHeader}>
+                    <div>
+                      <h4 className={styles.temporaryModelTitle}>تشغيل موديل مؤقت</h4>
+                      <p className={styles.sectionHint}>جرّب موديلًا مختلفًا لمدة محددة، وبعدها يرجع المشروع تلقائيًا إلى <bdi dir="ltr">{geminiModel}</bdi>.</p>
+                    </div>
+                    {temporaryGeminiModelExpiresAtUtc && (
+                      <span className={styles.activeOverrideBadge}>شغال الآن</span>
+                    )}
+                  </div>
+
+                  {temporaryGeminiModelExpiresAtUtc && (
+                    <div className={styles.temporaryModelStatus} role="status">
+                      <span><bdi dir="ltr">{temporaryGeminiModel}</bdi> مستخدم حاليًا</span>
+                      <span>الرجوع التلقائي: {new Intl.DateTimeFormat('ar-EG', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                        timeZone: timezone || 'Africa/Cairo',
+                      }).format(new Date(temporaryGeminiModelExpiresAtUtc))}</span>
+                    </div>
+                  )}
+
+                  <div className={styles.temporaryModelControls}>
+                    <div className={styles.formGroup}>
+                      <label className={styles.label} htmlFor="settings-temporary-gemini-model">الموديل المؤقت</label>
+                      <select
+                        id="settings-temporary-gemini-model"
+                        className={styles.select}
+                        value={temporaryGeminiModel}
+                        onChange={(event) => setTemporaryGeminiModel(event.target.value)}
+                        disabled={temporaryModelActionLoading}
+                      >
+                        {GEMINI_MODELS.map((model) => <option key={model} value={model}>{model}</option>)}
+                      </select>
+                    </div>
+                    <div className={styles.formGroup}>
+                      <label className={styles.label} htmlFor="settings-temporary-gemini-duration">المدة</label>
+                      <select
+                        id="settings-temporary-gemini-duration"
+                        className={styles.select}
+                        value={temporaryGeminiDurationMinutes}
+                        onChange={(event) => setTemporaryGeminiDurationMinutes(Number(event.target.value))}
+                        disabled={temporaryModelActionLoading}
+                      >
+                        <option value={30}>30 دقيقة</option>
+                        <option value={60}>ساعة</option>
+                        <option value={120}>ساعتان</option>
+                        <option value={240}>4 ساعات</option>
+                        <option value={480}>8 ساعات</option>
+                        <option value={1440}>يوم</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className={styles.actions}>
+                    <button
+                      type="button"
+                      className={`${styles.btn} ${styles.btnPrimary}`}
+                      onClick={() => void activateTemporaryGeminiModel()}
+                      disabled={temporaryModelActionLoading || !canManageSettings}
+                    >
+                      {temporaryModelActionLoading ? 'جارٍ التنفيذ…' : temporaryGeminiModelExpiresAtUtc ? 'تحديث الموديل والمدة' : 'تشغيل مؤقتًا'}
+                    </button>
+                    {temporaryGeminiModelExpiresAtUtc && (
+                      <button
+                        type="button"
+                        className={`${styles.btn} ${styles.btnSecondary}`}
+                        onClick={() => void cancelTemporaryGeminiModel()}
+                        disabled={temporaryModelActionLoading || !canManageSettings}
+                      >
+                        الرجوع الآن للموديل الأساسي
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-gemini-key">مفتاح Gemini API للأفكار والمعرفة</label>
+                  <input
+                    id="settings-gemini-key"
+                    name="geminiApiKey"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={geminiApiKeyConfigured ? 'مفتاح الأفكار محفوظ، اكتب مفتاحًا جديدًا لاستبداله' : 'ضع مفتاح Gemini للأفكار والمعرفة هنا'}
+                    value={geminiApiKey}
+                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                    className={styles.input}
+                    aria-describedby="settings-gemini-key-help"
+                  />
+                  <span id="settings-gemini-key-help" className={styles.fieldHint}>
+                    {geminiApiKeyConfigured
+                      ? 'مفتاح الأفكار وفهم قاعدة المعرفة محفوظ. اترك الحقل فارغًا للاحتفاظ به.'
+                      : 'يُستخدم لفهم قاعدة المعرفة واقتراح الأفكار والمشاهد، وليس لتوليد ملفات الفيديو.'}
+                  </span>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-gemini-agent-platform-key">مفتاح Agent Platform API لتوليد الفيديو</label>
+                  <input
+                    id="settings-gemini-agent-platform-key"
+                    name="geminiAgentPlatformApiKey"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={geminiAgentPlatformApiKeyConfigured ? 'مفتاح الفيديو محفوظ، اكتب مفتاحًا جديدًا لاستبداله' : 'ضع مفتاح Agent Platform المستقل هنا'}
+                    value={geminiAgentPlatformApiKey}
+                    onChange={(event) => handleGeminiAgentPlatformApiKeyChange(event.target.value)}
+                    className={styles.input}
+                    aria-describedby="settings-gemini-agent-platform-key-help"
+                  />
+                  <span id="settings-gemini-agent-platform-key-help" className={styles.fieldHint} aria-live="polite">
+                    {clearGeminiAgentPlatformApiKey
+                      ? 'سيُمسح مفتاح توليد الفيديو من الخادم عند الحفظ. اكتب مفتاحًا جديدًا لإلغاء المسح.'
+                      : geminiAgentPlatformApiKeyConfigured
+                        ? 'مفتاح مستقل محفوظ كسر خادمي ولا يُعاد عرضه. اترك الحقل فارغًا للاحتفاظ به.'
+                        : 'مفتاح مستقل لتوليد الفيديو عبر Gemini Enterprise Agent Platform؛ مفتاح الأفكار لا يحل محله.'}
+                  </span>
+                  {geminiAgentPlatformApiKeyConfigured && (
+                    <div className={styles.actions}>
+                      <button
+                        type="button"
+                        className={`${styles.btn} ${clearGeminiAgentPlatformApiKey ? styles.btnSecondary : styles.btnDanger}`}
+                        onClick={toggleClearGeminiAgentPlatformApiKey}
+                        disabled={actionLoading || Boolean(geminiAgentPlatformApiKey.trim())}
+                      >
+                        {clearGeminiAgentPlatformApiKey ? 'إلغاء مسح مفتاح الفيديو' : 'مسح مفتاح الفيديو عند الحفظ'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-gemini-enterprise-project">Google Cloud Project ID للفيديو</label>
+                  <input
+                    id="settings-gemini-enterprise-project"
+                    name="geminiEnterpriseProjectId"
+                    type="text"
+                    autoComplete="off"
+                    placeholder="my-google-cloud-project"
+                    maxLength={30}
+                    pattern="[a-z][a-z0-9-]{4,28}[a-z0-9]"
+                    spellCheck={false}
+                    value={geminiEnterpriseProjectId}
+                    onChange={(e) => setGeminiEnterpriseProjectId(e.target.value)}
+                    className={styles.input}
+                    dir="ltr"
+                    aria-describedby="settings-gemini-enterprise-project-help"
+                  />
+                  <span id="settings-gemini-enterprise-project-help" className={styles.fieldHint}>
+                    مشروع Google Cloud المرتبط بمفتاح Agent Platform لتوليد الفيديو. اكتب Project ID وليس رقم المشروع.
+                  </span>
+                </div>
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>مفتاح API للردود الذكية</label>
+                <label className={styles.label} htmlFor="settings-timezone">المنطقة الزمنية</label>
                 <input
-                  type="password"
-                  autoComplete="off"
-                  placeholder="ضع مفتاح Gemini API هنا"
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  className={styles.input}
-                />
-                <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
-                  يتم استخدام المفتاح للمشروع الحالي فقط حتى يبدأ البوت في الرد التلقائي.
-                </span>
-              </div>
-
-              <div className={styles.formGroup}>
-                <label className={styles.label}>المنطقة الزمنية</label>
-                <input
+                  id="settings-timezone"
+                  name="timezone"
                   type="text"
+                  list="settings-timezone-options"
                   value={timezone}
                   onChange={(e) => setTimezone(e.target.value)}
                   className={styles.input}
+                  dir="ltr"
+                  required
+                  aria-describedby="settings-timezone-help"
                 />
+                <datalist id="settings-timezone-options">
+                  {IANA_TIMEZONES.map((zone) => <option key={zone} value={zone} />)}
+                </datalist>
+                <span id="settings-timezone-help" className={styles.sectionHint}>اكتب اسم IANA كاملًا أو اختاره من القائمة، مثل Africa/Cairo.</span>
               </div>
 
               <div className={styles.settingsSection}>
                 <h3 className={styles.sectionTitle}>الهوية والتوقيع</h3>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>أسماء الموظفين</label>
+                  <label className={styles.label} htmlFor="settings-agent-names">أسماء الموظفين</label>
                   <textarea
+                    id="settings-agent-names"
                     value={arrayToLines(aiBehavior.identity.agentNames)}
                     onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, agentNames: linesToArray(e.target.value) })}
                     className={styles.input}
@@ -1080,8 +1423,9 @@ export default function Settings() {
                 </div>
                 <div className={styles.inlineGrid}>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>طريقة اختيار الاسم</label>
+                    <label className={styles.label} htmlFor="settings-name-mode">طريقة اختيار الاسم</label>
                     <select
+                      id="settings-name-mode"
                       className={styles.select}
                       value={aiBehavior.identity.nameSelectionMode}
                       onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, nameSelectionMode: e.target.value })}
@@ -1104,8 +1448,9 @@ export default function Settings() {
                 </div>
                 <div className={styles.inlineGrid}>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>قالب التوقيع</label>
+                    <label className={styles.label} htmlFor="settings-signature-template">قالب التوقيع</label>
                     <input
+                      id="settings-signature-template"
                       value={aiBehavior.identity.signatureTemplate}
                       onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, signatureTemplate: e.target.value })}
                       className={styles.input}
@@ -1113,8 +1458,9 @@ export default function Settings() {
                     />
                   </div>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>توقيع الشكاوى</label>
+                    <label className={styles.label} htmlFor="settings-complaint-signature">توقيع الشكاوى</label>
                     <input
+                      id="settings-complaint-signature"
                       value={aiBehavior.identity.complaintSignatureTemplate}
                       onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, complaintSignatureTemplate: e.target.value })}
                       className={styles.input}
@@ -1127,8 +1473,9 @@ export default function Settings() {
               <div className={styles.settingsSection}>
                 <h3 className={styles.sectionTitle}>النبرة والجمهور</h3>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>لهجة وأسلوب الرد</label>
+                  <label className={styles.label} htmlFor="settings-tone-preset">لهجة وأسلوب الرد</label>
                   <select
+                    id="settings-tone-preset"
                     className={styles.select}
                     value={aiBehavior.tone.tonePreset}
                     onChange={(e) => {
@@ -1149,6 +1496,8 @@ export default function Settings() {
                     <option value="custom">نبرة مخصصة</option>
                   </select>
                   <input
+                    id="settings-custom-tone"
+                    aria-label="وصف النبرة المخصصة"
                     type="text"
                     placeholder="اكتب النبرة المخصصة أو عدل وصف النبرة المختارة"
                     value={aiBehavior.tone.customTone || ''}
@@ -1161,10 +1510,11 @@ export default function Settings() {
                 </div>
 
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>الجمهور المستهدف</label>
+                  <label className={styles.label} htmlFor="settings-target-audience">الجمهور المستهدف</label>
                   <input
+                    id="settings-target-audience"
                     type="text"
-                    placeholder="مثال: طلاب كورس كول سنتر يبحثون عن عمل"
+                    placeholder="مثال: عملاء المتجر المهتمون بمنتجات العناية الشخصية"
                     value={aiBehavior.tone.targetAudience}
                     onChange={(e) => {
                       setAiTargetAudience(e.target.value);
@@ -1176,8 +1526,9 @@ export default function Settings() {
 
                 <div className={styles.inlineGrid}>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>عبارات مسموحة أو مفضلة</label>
+                    <label className={styles.label} htmlFor="settings-allowed-phrases">عبارات مسموحة أو مفضلة</label>
                     <textarea
+                      id="settings-allowed-phrases"
                       value={arrayToLines(aiBehavior.tone.allowedPhrases)}
                       onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, allowedPhrases: linesToArray(e.target.value) })}
                       className={styles.input}
@@ -1186,8 +1537,9 @@ export default function Settings() {
                     />
                   </div>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>عبارات ممنوعة</label>
+                    <label className={styles.label} htmlFor="settings-prohibited-phrases">عبارات ممنوعة</label>
                     <textarea
+                      id="settings-prohibited-phrases"
                       value={arrayToLines(aiBehavior.tone.prohibitedPhrases)}
                       onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, prohibitedPhrases: linesToArray(e.target.value) })}
                       className={styles.input}
@@ -1197,8 +1549,9 @@ export default function Settings() {
                   </div>
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>تعليمات بيزنس إضافية</label>
+                  <label className={styles.label} htmlFor="settings-business-instructions">تعليمات عمل إضافية</label>
                   <textarea
+                    id="settings-business-instructions"
                     value={aiBehavior.tone.businessInstructions || ''}
                     onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, businessInstructions: e.target.value })}
                     className={styles.input}
@@ -1212,8 +1565,9 @@ export default function Settings() {
                 <h3 className={styles.sectionTitle}>القنوات</h3>
                 {(['WhatsApp', 'Messenger', 'FacebookComment'] as ChannelName[]).map(channel => (
                   <div className={styles.formGroup} key={channel}>
-                    <label className={styles.label}>{channel === 'FacebookComment' ? 'تعليقات فيسبوك' : channel} - تعليمات زيادة فوق الإعدادات العامة</label>
+                    <label className={styles.label} htmlFor={`settings-channel-${channel}`}>{channel === 'FacebookComment' ? 'تعليقات فيسبوك' : channel} — تعليمات إضافية للقناة</label>
                     <textarea
+                      id={`settings-channel-${channel}`}
                       value={aiBehavior.channels[channel]?.additionalInstructions || ''}
                       onChange={(e) => updateChannelInstructions(channel, e.target.value)}
                       className={styles.input}
@@ -1237,8 +1591,9 @@ export default function Settings() {
                   <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل CTA ديناميكي</span>
                 </label>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>متى يظهر CTA؟</label>
+                  <label className={styles.label} htmlFor="settings-cta-instructions">متى تظهر دعوة الإجراء؟</label>
                   <textarea
+                    id="settings-cta-instructions"
                     value={aiBehavior.cta.instructions || ''}
                     onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, instructions: e.target.value })}
                     className={styles.input}
@@ -1247,8 +1602,9 @@ export default function Settings() {
                   />
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>موضوعات CTA المتاحة</label>
+                  <label className={styles.label} htmlFor="settings-cta-topics">موضوعات دعوة الإجراء المتاحة</label>
                   <textarea
+                    id="settings-cta-topics"
                     value={arrayToLines(aiBehavior.cta.topics)}
                     onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, topics: linesToArray(e.target.value) })}
                     className={styles.input}
@@ -1299,8 +1655,9 @@ export default function Settings() {
                   ))}
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>قواعد اختيار الريأكشن</label>
+                  <label className={styles.label} htmlFor="settings-reaction-rules">قواعد اختيار التفاعل</label>
                   <textarea
+                    id="settings-reaction-rules"
                     value={aiBehavior.reactions.rules || ''}
                     onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, rules: e.target.value })}
                     className={styles.input}
@@ -1313,38 +1670,38 @@ export default function Settings() {
               <div className={styles.settingsSection}>
                 <h3 className={styles.sectionTitle}>رسائل fallback</h3>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>خطأ الذكاء الاصطناعي</label>
-                  <textarea value={aiBehavior.fallbacks.aiError} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, aiError: e.target.value })} className={styles.input} rows={3} />
+                  <label className={styles.label} htmlFor="settings-fallback-ai-error">خطأ الذكاء الاصطناعي</label>
+                  <textarea id="settings-fallback-ai-error" value={aiBehavior.fallbacks.aiError} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, aiError: e.target.value })} className={styles.input} rows={3} />
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>خروج الذكاء الاصطناعي بصيغة غير صحيحة</label>
-                  <textarea value={aiBehavior.fallbacks.invalidAiOutput} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, invalidAiOutput: e.target.value })} className={styles.input} rows={3} />
+                  <label className={styles.label} htmlFor="settings-fallback-invalid-ai">صيغة رد غير صحيحة</label>
+                  <textarea id="settings-fallback-invalid-ai" value={aiBehavior.fallbacks.invalidAiOutput} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, invalidAiOutput: e.target.value })} className={styles.input} rows={3} />
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>رسالة خدمة العملاء العامة</label>
-                  <textarea value={aiBehavior.fallbacks.genericCustomerService} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, genericCustomerService: e.target.value })} className={styles.input} rows={3} />
+                  <label className={styles.label} htmlFor="settings-fallback-customer-service">رسالة خدمة العملاء العامة</label>
+                  <textarea id="settings-fallback-customer-service" value={aiBehavior.fallbacks.genericCustomerService} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, genericCustomerService: e.target.value })} className={styles.input} rows={3} />
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>رد التعليق العام على فيسبوك</label>
-                  <textarea value={aiBehavior.fallbacks.facebookPublicComment} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, facebookPublicComment: e.target.value })} className={styles.input} rows={3} />
+                  <label className={styles.label} htmlFor="settings-fallback-facebook-comment">رد التعليق العام على فيسبوك</label>
+                  <textarea id="settings-fallback-facebook-comment" value={aiBehavior.fallbacks.facebookPublicComment} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, facebookPublicComment: e.target.value })} className={styles.input} rows={3} />
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>رسالة الانتقال إلى واتساب</label>
-                  <textarea value={aiBehavior.fallbacks.whatsAppTransitionMessage} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionMessage: e.target.value })} className={styles.input} rows={4} />
+                  <label className={styles.label} htmlFor="settings-fallback-whatsapp-message">رسالة الانتقال إلى واتساب</label>
+                  <textarea id="settings-fallback-whatsapp-message" value={aiBehavior.fallbacks.whatsAppTransitionMessage} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionMessage: e.target.value })} className={styles.input} rows={4} />
                 </div>
                 <div className={styles.inlineGrid}>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>نجاح الانتقال إلى واتساب</label>
-                    <textarea value={aiBehavior.fallbacks.whatsAppTransitionSuccess} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionSuccess: e.target.value })} className={styles.input} rows={3} />
+                    <label className={styles.label} htmlFor="settings-fallback-whatsapp-success">نجاح الانتقال إلى واتساب</label>
+                    <textarea id="settings-fallback-whatsapp-success" value={aiBehavior.fallbacks.whatsAppTransitionSuccess} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionSuccess: e.target.value })} className={styles.input} rows={3} />
                   </div>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>فشل الانتقال إلى واتساب</label>
-                    <textarea value={aiBehavior.fallbacks.whatsAppTransitionFailure} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionFailure: e.target.value })} className={styles.input} rows={3} />
+                    <label className={styles.label} htmlFor="settings-fallback-whatsapp-failure">فشل الانتقال إلى واتساب</label>
+                    <textarea id="settings-fallback-whatsapp-failure" value={aiBehavior.fallbacks.whatsAppTransitionFailure} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionFailure: e.target.value })} className={styles.input} rows={3} />
                   </div>
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>رسالة المتابعة الافتراضية</label>
-                  <textarea value={aiBehavior.fallbacks.followUpDefault} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, followUpDefault: e.target.value })} className={styles.input} rows={3} />
+                  <label className={styles.label} htmlFor="settings-fallback-followup">رسالة المتابعة الافتراضية</label>
+                  <textarea id="settings-fallback-followup" value={aiBehavior.fallbacks.followUpDefault} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, followUpDefault: e.target.value })} className={styles.input} rows={3} />
                 </div>
                 <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
                   المتغيرات المدعومة: {'{customerName}'}, {'{agentName}'}, {'{projectName}'}, {'{phoneNumber}'}, {'{channel}'}.
@@ -1352,10 +1709,11 @@ export default function Settings() {
               </div>
 
               <div className={styles.settingsSection}>
-                <h3 className={styles.sectionTitle}>Advanced</h3>
+                <h3 className={styles.sectionTitle}>إعدادات متقدمة</h3>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>تعليمات إضافية متقدمة</label>
+                  <label className={styles.label} htmlFor="settings-advanced-instructions">تعليمات إضافية متقدمة</label>
                   <textarea
+                    id="settings-advanced-instructions"
                     placeholder="تعليمات إضافية فقط. القواعد المحمية والإعدادات المنظمة أعلى أولوية."
                     value={aiBehavior.advancedInstructions || ''}
                     onChange={(e) => updateAiBehavior('advancedInstructions', e.target.value)}
@@ -1364,8 +1722,9 @@ export default function Settings() {
                   />
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>Legacy System Prompt</label>
+                  <label className={styles.label} htmlFor="settings-legacy-prompt">تعليمات النظام القديمة للتوافق</label>
                   <textarea
+                    id="settings-legacy-prompt"
                     placeholder="تعليمات قديمة محفوظة للتوافق فقط"
                     value={systemPrompt}
                     onChange={(e) => setSystemPrompt(e.target.value)}
@@ -1377,8 +1736,9 @@ export default function Settings() {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>تأخير الرد (بالثواني)</label>
+                <label className={styles.label} htmlFor="settings-reply-delay">تأخير الرد (بالثواني)</label>
                 <input 
+                  id="settings-reply-delay"
                   type="number" 
                   min={0}
                   max={60}
@@ -1392,8 +1752,9 @@ export default function Settings() {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>الحد اليومي للرسائل الصادرة</label>
+                <label className={styles.label} htmlFor="settings-daily-message-limit">الحد اليومي للرسائل الصادرة</label>
                 <input 
+                  id="settings-daily-message-limit"
                   type="number" 
                   min={10}
                   value={maxDailyMessages}
@@ -1417,7 +1778,7 @@ export default function Settings() {
               {/* Messenger AI Settings */}
               <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)' }}>
                 <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 'var(--space-sm)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  💬 إعدادات ماسنجر
+                  إعدادات ماسنجر
                 </h3>
                 <div className={styles.formGroup}>
                   <label className={styles.checkboxGroup}>
@@ -1431,8 +1792,9 @@ export default function Settings() {
                   </label>
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>تأخير الرد (ماسنجر)</label>
+                  <label className={styles.label} htmlFor="settings-messenger-delay">تأخير الرد (ماسنجر)</label>
                   <input 
+                    id="settings-messenger-delay"
                     type="number" 
                     min={0}
                     max={60}
@@ -1446,7 +1808,7 @@ export default function Settings() {
               {/* Comments AI Settings */}
               <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)' }}>
                 <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 'var(--space-sm)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  📝 إعدادات التعليقات
+                  إعدادات التعليقات
                 </h3>
                 <div className={styles.formGroup}>
                   <label className={styles.checkboxGroup}>
@@ -1460,8 +1822,9 @@ export default function Settings() {
                   </label>
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>تأخير الرد (تعليقات)</label>
+                  <label className={styles.label} htmlFor="settings-comments-delay">تأخير الرد (تعليقات)</label>
                   <input 
+                    id="settings-comments-delay"
                     type="number" 
                     min={0}
                     max={60}
@@ -1472,16 +1835,19 @@ export default function Settings() {
                 </div>
               </div>
 
-              <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`} style={{ marginTop: 'var(--space-sm)' }}>
-                حفظ الإعدادات
-              </button>
+              <div className={styles.stickySaveBar}>
+                <span role="status" aria-live="polite">{generalDirty ? 'توجد تغييرات غير محفوظة' : 'كل التغييرات محفوظة'}</span>
+                <button type="submit" disabled={actionLoading || !generalDirty} className={`${styles.btn} ${styles.btnPrimary}`}>
+                  {actionLoading ? 'جارٍ الحفظ…' : 'حفظ الإعدادات'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
       ) : (
-        <div style={{ width: '100%' }}>
+        <div id="settings-panel-addons" role="tabpanel" aria-labelledby="settings-tab-addons" style={{ width: '100%' }}>
           {viewMode === 'manage-groups' ? (
-            <GroupAppointmentsManager onBack={() => setViewMode('list')} />
+            <GroupAppointmentsManager onBack={() => setViewMode('list')} timezone={timezone} />
           ) : (
             <Addons 
               isGroupAppointmentsEnabled={isGroupAppointmentsEnabled} 
@@ -1494,6 +1860,10 @@ export default function Settings() {
               onToggleHumanTransfer={handleToggleHumanTransfer}
               humanTransferPhone={humanTransferPhone}
               onUpdateHumanTransferPhone={handleUpdateHumanTransferPhone}
+              isTalkTipsTrialGateEnabled={isTalkTipsTrialGateEnabled}
+              onToggleTalkTipsTrialGate={handleToggleTalkTipsTrialGate}
+              timezone={timezone}
+              onDirtyChange={setAddonsDirty}
               onManageGroups={() => setViewMode('manage-groups')} 
             />
           )}
@@ -1502,16 +1872,16 @@ export default function Settings() {
 
       {/* Facebook Pages Selection Modal */}
       {showPagesModal && (
-        <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`}>
+        <div className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) closePagesModal(); }}>
+          <div ref={pagesModalRef} className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="facebook-pages-modal-title" aria-describedby="facebook-pages-modal-description">
             <div className={styles.modalHeader}>
-              <h3 className={styles.modalTitle}>ربط صفحة فيسبوك</h3>
-              <div onClick={() => setShowPagesModal(false)} className={styles.closeBtn} style={{ fontSize: '1.5rem', cursor: 'pointer' }}>
+              <h3 id="facebook-pages-modal-title" className={styles.modalTitle}>ربط صفحة فيسبوك</h3>
+              <button ref={modalCloseRef} type="button" aria-label="إغلاق نافذة اختيار الصفحة" onClick={closePagesModal} className={styles.closeBtn} style={{ fontSize: '1.5rem' }}>
                 &times;
-              </div>
+              </button>
             </div>
 
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-soft)' }}>
+            <p id="facebook-pages-modal-description" style={{ fontSize: '0.9rem', color: 'var(--text-soft)' }}>
               تم العثور على الصفحات التالية. يرجى اختيار الصفحة التي تريد ربطها بالمشروع لتفعيل الماسنجر والتعليقات:
             </p>
 
@@ -1535,6 +1905,7 @@ export default function Settings() {
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-soft)' }}>ID: {page.id}</div>
                     </div>
                     <button
+                      type="button"
                       onClick={() => void handleConfirmPage(page)}
                       disabled={actionLoading}
                       className={`${styles.btn} ${styles.btnPrimary}`}
@@ -1550,7 +1921,7 @@ export default function Settings() {
             <div className={styles.formActions} style={{ marginTop: 'var(--space-md)' }}>
               <button
                 type="button"
-                onClick={() => setShowPagesModal(false)}
+                onClick={closePagesModal}
                 className={`${styles.btn} ${styles.btnSecondary}`}
               >
                 إغلاق
@@ -1559,6 +1930,22 @@ export default function Settings() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        isOpen={Boolean(pendingDisconnect)}
+        title="فصل صفحة Facebook؟"
+        message={`سيُوقف استقبال رسائل وتعليقات صفحة «${pendingDisconnect?.name ?? 'الصفحة'}» في هذا المشروع. لن تُحذف المحادثات السابقة.`}
+        confirmLabel="تأكيد الفصل"
+        onCancel={() => setPendingDisconnect(null)}
+        onConfirm={confirmDisconnect}
+      />
+      <ConfirmDialog
+        isOpen={navigationGuard.navigationBlocked}
+        title="مغادرة الإعدادات دون حفظ؟"
+        message="ستفقد التغييرات غير المحفوظة في إعدادات مساحة العمل."
+        confirmLabel="مغادرة دون حفظ"
+        onCancel={navigationGuard.cancelNavigation}
+        onConfirm={navigationGuard.confirmNavigation}
+      />
     </div>
   );
 }

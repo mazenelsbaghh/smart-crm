@@ -4,6 +4,8 @@ namespace Modules.Advertising.Services;
 
 public sealed record ExtractedAdvertisingProfile(string OfferType, decimal? Price, string? Currency, string? Destination,
     bool Eligible, string BlockReason, IReadOnlyList<string> SourceCitations);
+public sealed record ExtractedAdvertisingFact(string Name, string Value, Guid DocumentId, int DocumentVersion,
+    decimal Confidence, DateTime ObservedAtUtc, bool IsContradictory, bool IsRequiredForLaunch, string Citation);
 
 public static partial class AdvertisingProfileExtractor
 {
@@ -26,6 +28,21 @@ public static partial class AdvertisingProfileExtractor
         "Event" => ["Registration", "BookingConfirmed", "AttendanceConfirmed", "Purchase"],
         _ => ["Lead", "QualifiedLead", "BookingConfirmed", "AttendanceConfirmed", "Purchase"]
     };
+
+    public static IReadOnlyList<ExtractedAdvertisingFact> ExtractFacts(Guid documentId, int version, string content, DateTime observedAtUtc)
+    {
+        var profile = Extract(documentId, version, content);
+        var citation = profile.SourceCitations[0];
+        var facts = new List<ExtractedAdvertisingFact>
+        {
+            new("OfferType", profile.OfferType, documentId, version, 0.95m, observedAtUtc, false, true, citation)
+        };
+        if (profile.Price is { } price) facts.Add(new("Price", price.ToString(System.Globalization.CultureInfo.InvariantCulture), documentId, version, 0.98m, observedAtUtc,
+            profile.BlockReason == "ContradictoryPriceFacts", true, citation));
+        if (profile.Currency is { } currency) facts.Add(new("Currency", currency, documentId, version, 0.98m, observedAtUtc, false, true, citation));
+        if (profile.Destination is { } destination) facts.Add(new("Destination", destination, documentId, version, 0.99m, observedAtUtc, false, true, citation));
+        return facts;
+    }
 
     private static string InferType(string value) => value.Contains("كورس", StringComparison.OrdinalIgnoreCase) || value.Contains("دورة", StringComparison.OrdinalIgnoreCase) ? "Course"
         : value.Contains("اشتراك", StringComparison.OrdinalIgnoreCase) || value.Contains("SaaS", StringComparison.OrdinalIgnoreCase) ? "SaaS"

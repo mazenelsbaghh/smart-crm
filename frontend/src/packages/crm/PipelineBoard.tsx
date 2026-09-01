@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
+import { useToast } from '../../context/toast-context';
 import { crmService, Deal, PipelineStage, Customer } from '../../services/crm';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -25,45 +27,67 @@ const stageNamesAr: Record<string, string> = {
 
 export default function PipelineBoard() {
   const { activeProject } = useAuth();
+  const { showToast } = useToast();
   
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingStatusChange, setPendingStatusChange] = useState<{ dealId: string; title: string; status: 1 | 2 } | null>(null);
   
   // Deal creation form
   const [showAddDeal, setShowAddDeal] = useState<string | null>(null); // holds stageId where form is opened
   const [dealTitle, setDealTitle] = useState('');
   const [dealAmount, setDealAmount] = useState('');
   const [dealCustomerId, setDealCustomerId] = useState('');
+  const loadRequestIdRef = React.useRef(0);
 
-  const fetchPipelineData = async () => {
-    if (!activeProject) return;
+  const fetchPipelineData = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
+    if (!activeProject) {
+      setStages([]);
+      setDeals([]);
+      setCustomers([]);
+      setLoading(false);
+      setLoadError('تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.');
+      return;
+    }
     try {
       setLoading(true);
-      const stageData = await crmService.getPipelineStages(activeProject.id);
-      const dealData = await crmService.getDeals(activeProject.id);
-      const custData = await crmService.getCustomers(activeProject.id);
+      setLoadError(null);
+      setStages([]);
+      setDeals([]);
+      setCustomers([]);
+      const [stageData, dealData, custData] = await Promise.all([
+        crmService.getPipelineStages(activeProject.id),
+        crmService.getDeals(activeProject.id),
+        crmService.getCustomers(activeProject.id),
+      ]);
+      if (requestId !== loadRequestIdRef.current) return;
       
       setStages(stageData);
       setDeals(dealData);
       setCustomers(custData);
     } catch (e) {
+      if (requestId !== loadRequestIdRef.current) return;
       console.error('Failed to load pipeline context', e);
+      setLoadError('تعذر تحميل مسار الصفقات.');
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) setLoading(false);
     }
-  };
+  }, [activeProject]);
 
   useEffect(() => {
-    fetchPipelineData();
-  }, [activeProject]);
+    const loadTimer = window.setTimeout(() => void fetchPipelineData(), 0);
+    return () => window.clearTimeout(loadTimer);
+  }, [fetchPipelineData]);
 
   const moveDeal = async (dealId: string, direction: 'prev' | 'next', currentStageId: string) => {
     const currentIndex = stages.findIndex(s => s.id === currentStageId);
     if (currentIndex === -1) return;
 
-    let targetIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
+    const targetIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
     if (targetIndex < 0 || targetIndex >= stages.length) return;
 
     const targetStage = stages[targetIndex];
@@ -73,8 +97,8 @@ export default function PipelineBoard() {
       await crmService.updateDealStage(dealId, targetStage.id);
     } catch (e) {
       console.error('Failed to update deal stage on backend', e);
-      // Revert on error
-      fetchPipelineData();
+      showToast('تعذر نقل الصفقة. تمت استعادة بيانات الخادم.', 'error');
+      void fetchPipelineData();
     }
   };
 
@@ -83,20 +107,27 @@ export default function PipelineBoard() {
       // Optimistic update
       setDeals(prev => prev.map(d => d.id === dealId ? { ...d, status } : d));
       await crmService.updateDealStatus(dealId, status);
+      showToast(status === 1 ? 'تم إغلاق الصفقة كرابحة.' : 'تم إغلاق الصفقة كخاسرة.', 'success');
     } catch (e) {
       console.error('Failed to update deal status', e);
-      fetchPipelineData();
+      showToast('تعذر إغلاق الصفقة. تمت استعادة بيانات الخادم.', 'error');
+      void fetchPipelineData();
     }
   };
 
   const handleAddDealSubmit = async (e: React.FormEvent, stageId: string) => {
     e.preventDefault();
-    if (!activeProject || !dealTitle || !dealCustomerId) return;
+    if (!activeProject || !dealTitle || !dealCustomerId || dealAmount.trim() === '') return;
+    const parsedAmount = Number(dealAmount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+      showToast('أدخل قيمة صفقة صحيحة غير سالبة.', 'error');
+      return;
+    }
 
     try {
       await crmService.createDeal(activeProject.id, {
         title: dealTitle,
-        amount: dealAmount ? parseFloat(dealAmount) : 0,
+        amount: parsedAmount,
         customerId: dealCustomerId,
         pipelineStageId: stageId
       });
@@ -108,8 +139,10 @@ export default function PipelineBoard() {
       // Refresh list
       const dealData = await crmService.getDeals(activeProject.id);
       setDeals(dealData);
+      showToast('تم إنشاء الصفقة.', 'success');
     } catch (err) {
       console.error('Failed to create deal', err);
+      showToast('تعذر إنشاء الصفقة. راجع البيانات وحاول مرة أخرى.', 'error');
     }
   };
 
@@ -118,6 +151,15 @@ export default function PipelineBoard() {
       <div className={styles.loadingBox}>
         <div className={styles.spinner}></div>
         <p>جاري تحميل خط المبيعات ومسار الصفقات...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className={styles.loadingBox} role="alert">
+        <p>{loadError}</p>
+        {activeProject && <button type="button" className={styles.addDealTrigger} onClick={() => void fetchPipelineData()}>إعادة المحاولة</button>}
       </div>
     );
   }
@@ -148,14 +190,16 @@ export default function PipelineBoard() {
                   <span className={styles.dealCount}>{stageDeals.length}</span>
                 </div>
                 <span className={styles.totalValue}>
-                  ${stageDealsTotalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  {stageDealsTotalValue.toLocaleString('ar-EG', { maximumFractionDigits: 0 })} — العملة غير محددة
                 </span>
               </div>
 
               {/* Add deal trigger */}
               {showAddDeal === stage.id ? (
                 <form onSubmit={(e) => handleAddDealSubmit(e, stage.id)} className={styles.addDealForm}>
+                  <label className="sr-only" htmlFor={`deal-title-${stage.id}`}>عنوان الصفقة</label>
                   <input 
+                    id={`deal-title-${stage.id}`}
                     type="text" 
                     placeholder="عنوان الصفقة..."
                     value={dealTitle}
@@ -163,14 +207,21 @@ export default function PipelineBoard() {
                     className={styles.addInput}
                     required
                   />
+                  <label className="sr-only" htmlFor={`deal-amount-${stage.id}`}>قيمة الصفقة دون افتراض عملة</label>
                   <input 
+                    id={`deal-amount-${stage.id}`}
                     type="number" 
-                    placeholder="القيمة ($)..."
+                    min="0"
+                    step="any"
+                    placeholder="القيمة..."
                     value={dealAmount}
                     onChange={(e) => setDealAmount(e.target.value)}
                     className={styles.addInput}
+                    required
                   />
+                  <label className="sr-only" htmlFor={`deal-customer-${stage.id}`}>جهة اتصال الصفقة</label>
                   <select 
+                    id={`deal-customer-${stage.id}`}
                     value={dealCustomerId}
                     onChange={(e) => setDealCustomerId(e.target.value)}
                     className={styles.addSelect}
@@ -205,7 +256,7 @@ export default function PipelineBoard() {
                       <div key={deal.id} className={styles.dealCard}>
                         <div className={styles.dealCardHeader}>
                           <h4 className={styles.dealTitle}>{deal.title}</h4>
-                          <span className={styles.dealAmount}>${deal.amount.toLocaleString()}</span>
+                          <span className={styles.dealAmount}>{deal.amount.toLocaleString('ar-EG')} — العملة غير محددة</span>
                         </div>
 
                         {/* Customer label */}
@@ -231,6 +282,7 @@ export default function PipelineBoard() {
                                 cursor: stages.indexOf(stage) === 0 ? 'not-allowed' : 'pointer'
                               }}
                               title="نقل للخلف"
+                              aria-label={`نقل الصفقة ${deal.title} إلى المرحلة السابقة`}
                             >
                               <ChevronRight size={14} />
                             </button>
@@ -243,6 +295,7 @@ export default function PipelineBoard() {
                                 cursor: stages.indexOf(stage) === stages.length - 1 ? 'not-allowed' : 'pointer'
                               }}
                               title="نقل للأمام"
+                              aria-label={`نقل الصفقة ${deal.title} إلى المرحلة التالية`}
                             >
                               <ChevronLeft size={14} />
                             </button>
@@ -250,16 +303,18 @@ export default function PipelineBoard() {
 
                           <div className={styles.statusActions}>
                             <button 
-                              onClick={() => handleUpdateStatus(deal.id, 1)}
+                              onClick={() => setPendingStatusChange({ dealId: deal.id, title: deal.title, status: 1 })}
                               className={styles.winBtn}
                               title="مغلقة رابحة"
+                              aria-label={`إغلاق الصفقة ${deal.title} كرابحة`}
                             >
                               <Check size={12} />
                             </button>
                             <button 
-                              onClick={() => handleUpdateStatus(deal.id, 2)}
+                              onClick={() => setPendingStatusChange({ dealId: deal.id, title: deal.title, status: 2 })}
                               className={styles.loseBtn}
                               title="مغلقة خاسرة"
+                              aria-label={`إغلاق الصفقة ${deal.title} كخاسرة`}
                             >
                               <XIcon size={12} />
                             </button>
@@ -274,6 +329,18 @@ export default function PipelineBoard() {
           );
         })}
       </div>
+      <ConfirmDialog
+        isOpen={pendingStatusChange !== null}
+        title="تأكيد إغلاق الصفقة"
+        message={pendingStatusChange ? `سيتم إغلاق الصفقة «${pendingStatusChange.title}» ك${pendingStatusChange.status === 1 ? 'رابحة' : 'خاسرة'}.` : ''}
+        confirmLabel="تأكيد الإغلاق"
+        onConfirm={() => {
+          const statusChange = pendingStatusChange;
+          setPendingStatusChange(null);
+          if (statusChange) void handleUpdateStatus(statusChange.dealId, statusChange.status);
+        }}
+        onCancel={() => setPendingStatusChange(null)}
+      />
     </div>
   );
 }

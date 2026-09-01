@@ -10,40 +10,22 @@ using System.Text.Json;
 
 namespace Modules.Advertising.Jobs;
 
-public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultiplexer redis, MetaAdsClient meta, MetaInsightsClient insights,
+public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultiplexer redis, MetaInsightsClient insights,
     AdvertisingSecretVault vault, AllocationPolicyService allocationPolicy, AdvertisingEvidenceService evidenceService, IBackgroundJobClient jobs,
-    WhatsAppCreativeTestService whatsAppTests)
+    WhatsAppCreativeTestService whatsAppTests, AdvertisingDecisionService decisions, ConversionDeliveryJob conversionDelivery,
+    AdvertisingTrackingHealthService trackingHealth, AdvertisingDecisionImpactService impactService,
+    AdvertisingEmergencyStopService emergencyStopService, AdvertisingOwnershipPolicy ownership,
+    AdvertisingCampaignBootstrapService campaignBootstrap, BudgetAllocator budgets)
 {
     [DisableConcurrentExecution(timeoutInSeconds: 50)]
-    public async Task DeliverConversionsAsync()
+    public Task DeliverConversionsAsync() => conversionDelivery.RunAsync();
+
+    [DisableConcurrentExecution(timeoutInSeconds: 240)]
+    public async Task BootstrapCampaignsAsync()
     {
-        var projects = await db.AdvertisingConversions.IgnoreQueryFilters().Where(x => x.State == ConversionState.Verified || x.State == ConversionState.Corrected || x.State == ConversionState.DeliveryFailed).Select(x => x.ProjectId).Distinct().ToListAsync();
-        foreach (var projectId in projects)
-            await WithProjectLease(projectId, "conversion-delivery", TimeSpan.FromSeconds(55), async () =>
-            {
-                var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.State == AdvertisingConnectionState.Ready);
-                if (connection?.DatasetExternalId is null || connection.ProtectedAccessToken is null) return;
-                var conversions = await db.AdvertisingConversions.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && (x.State == ConversionState.Verified || x.State == ConversionState.Corrected || x.State == ConversionState.DeliveryFailed)).OrderBy(x => x.OccurredAtUtc).Take(100).ToListAsync();
-                foreach (var conversion in conversions)
-                {
-                    IReadOnlyDictionary<string, string>? matchData = null;
-                    if (conversion.ConsentState == ConsentState.Granted && conversion.ProtectedMatchData is not null)
-                        matchData = JsonSerializer.Deserialize<Dictionary<string, string>>(vault.Unprotect(conversion.ProtectedMatchData));
-                    var attemptNumber = await db.AdvertisingConversionDeliveryAttempts.IgnoreQueryFilters().CountAsync(x => x.ProjectId == projectId && x.ConversionId == conversion.Id) + 1;
-                    var attempt = new ConversionDeliveryAttempt { ProjectId = projectId, ConversionId = conversion.Id, AttemptNumber = attemptNumber, AttemptedAtUtc = DateTime.UtcNow };
-                    db.AdvertisingConversionDeliveryAttempts.Add(attempt);
-                    try
-                    {
-                        await meta.SendConversionAsync(vault.Unprotect(connection.ProtectedAccessToken), new MetaConversionRequest(connection.DatasetExternalId, conversion, matchData), CancellationToken.None);
-                        attempt.State = "Delivered"; conversion.State = ConversionState.Delivered;
-                    }
-                    catch (HttpRequestException ex)
-                    {
-                        attempt.State = "Failed"; attempt.ErrorCode = ex.StatusCode?.ToString() ?? "MetaRequestFailed"; conversion.State = ConversionState.DeliveryFailed;
-                    }
-                }
-                await db.SaveChangesAsync();
-            });
+        foreach (var projectId in await ActiveProjectIdsAsync())
+            await WithProjectLease(projectId, "bootstrap", TimeSpan.FromMinutes(4), async () =>
+                await campaignBootstrap.EnsurePausedHierarchyAsync(projectId));
     }
 
     [DisableConcurrentExecution(timeoutInSeconds: 240)]
@@ -54,10 +36,33 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
             {
                 var envelope = await db.AutonomyEnvelopes.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.State == EnvelopeState.Active);
                 if (envelope is null) return;
-                var start = CairoDayStartUtc(DateTime.UtcNow);
-                var spend = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.IntervalStartUtc >= start).SumAsync(x => x.Spend);
-                if (!AdvertisingOperationalPolicy.MustEmergencyStop(spend, envelope.DailyCap)) return;
-                await ActivateAutomaticStop(projectId, EmergencyTrigger.CapRisk, $"Observed spend {spend} reached daily cap {envelope.DailyCap}.");
+                var start = AdvertisingSchedulePolicy.DayStartUtc(DateTime.UtcNow, envelope.ReportingTimezoneIana);
+                var managedAds = await ownership.ManagedAdsAsync(projectId, activeOnly: false);
+                var managedAdIds = managedAds.Select(item => item.Id).ToArray();
+                var analyticalSpend = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x =>
+                    x.ProjectId == projectId && managedAdIds.Contains(x.TargetId)
+                    && x.IntervalStartUtc >= start && x.IsCurrent).SumAsync(x => x.Spend);
+                var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(item =>
+                    item.ProjectId == projectId && item.State == AdvertisingConnectionState.Ready);
+                var spend = analyticalSpend;
+                if (connection?.ProtectedAccessToken is not null && connection.AdAccountExternalId is not null)
+                {
+                    var managedIds = managedAds.Where(item => item.AdExternalId != null)
+                        .Select(item => item.AdExternalId!).ToHashSet(StringComparer.Ordinal);
+                    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+                    var liveRows = await insights.GetAdInsightsAsync(vault.Unprotect(connection.ProtectedAccessToken),
+                        connection.AdAccountExternalId, today, today, CancellationToken.None);
+                    spend = Math.Max(analyticalSpend, liveRows.Where(row => managedIds.Contains(row.AdExternalId)).Sum(row => row.Spend));
+                }
+                var ledgers = await budgets.EnsureCurrentLedgersAsync(db, envelope);
+                foreach (var ledger in ledgers) { ledger.ObservedSpend = Math.Max(ledger.ObservedSpend, spend); ledger.LastReconciledAtUtc = DateTime.UtcNow; }
+                var exposure = ledgers.Count == 0 ? spend : Math.Max(spend, ledgers.Max(AdvertisingSpendGuard.Exposure));
+                await db.SaveChangesAsync();
+                if (!AdvertisingOperationalPolicy.MustEmergencyStop(exposure, envelope.DailyCap)) return;
+                var abnormal = ledgers.Any(ledger => AdvertisingOperationalPolicy.IsAbnormalForecast(
+                    Math.Max(ledger.ForecastSpend, ledger.ObservedSpend + ledger.DelayedSpendEstimate), ledger.UsableCap));
+                await ActivateAutomaticStop(projectId, abnormal ? EmergencyTrigger.AbnormalSpend : EmergencyTrigger.CapRisk,
+                    $"Guarded spend exposure {exposure} reached the authorized cap {envelope.DailyCap}.");
             });
     }
 
@@ -68,33 +73,61 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
             await WithProjectLease(projectId, "sync", TimeSpan.FromMinutes(9), async () =>
             {
                 var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId);
-                if (connection?.State != AdvertisingConnectionState.Ready) return;
-                if (connection.ProtectedAccessToken is null) return;
+                var activeManaged = await db.ManagedAdvertisements.IgnoreQueryFilters().AnyAsync(item =>
+                    item.ProjectId == projectId && item.ConfiguredStatus == ManagedDeliveryState.Active
+                    && item.OwnershipRecordId != null);
+                if (activeManaged && (connection?.State != AdvertisingConnectionState.Ready
+                    || connection.ProtectedAccessToken is null))
+                {
+                    await ActivateAutomaticStop(projectId, EmergencyTrigger.LostAuthorization,
+                        "Meta authorization was lost while managed delivery could still spend.");
+                    return;
+                }
+                if (connection?.ProtectedAccessToken is null) return;
+                var recentFinancialCommands = await db.AdvertisingExecutionCommands.IgnoreQueryFilters().CountAsync(item =>
+                    item.ProjectId == projectId && item.CreatedAt >= DateTime.UtcNow.AddMinutes(-10)
+                    && (item.CommandType.Contains("Budget") || item.CommandType.Contains("Resume")));
+                if (recentFinancialCommands >= 5)
+                {
+                    await ActivateAutomaticStop(projectId, EmergencyTrigger.RepeatedFinancialCommands,
+                        "Repeated financial commands exceeded the ten-minute safety threshold.");
+                    return;
+                }
                 var token = vault.Unprotect(connection.ProtectedAccessToken);
-                var ads = await db.ManagedAdvertisements.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.AdExternalId != null).ToListAsync();
+                var ads = await ownership.ManagedAdsAsync(projectId, activeOnly: false);
                 foreach (var ad in ads)
                 {
                     var provider = await insights.GetAdStateAsync(token, ad.AdExternalId!, CancellationToken.None);
                     ad.EffectiveStatus = provider.EffectiveStatus; ad.LastSyncedAtUtc = DateTime.UtcNow;
                     ad.ProviderStateHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{provider.Status}:{provider.EffectiveStatus}:{provider.DailyBudget}"))).ToLowerInvariant();
-                    if (Math.Abs(provider.DailyBudget - ad.DailyBudget) > .01m)
-                    {
-                        db.TrackingIncidents.Add(new TrackingIncident { ProjectId = projectId, Category = "ProviderDrift", Severity = "Warning", Summary = "Meta budget differs from the last authorized local state.", DetectedAtUtc = DateTime.UtcNow, EvidenceJson = JsonSerializer.Serialize(new { adId = ad.Id, local = ad.DailyBudget, provider = provider.DailyBudget }) });
-                    }
+                }
+                var obsoleteAdBudgetDrift = await db.TrackingIncidents.IgnoreQueryFilters().Where(item => item.ProjectId == projectId
+                    && item.Category == "ProviderDrift" && item.Severity == "Warning" && item.State != IncidentState.Recovered).ToListAsync();
+                foreach (var incident in obsoleteAdBudgetDrift)
+                {
+                    incident.State = IncidentState.Recovered;
+                    incident.RecoveredAtUtc = DateTime.UtcNow;
                 }
                 var unknown = await db.AdvertisingExecutionCommands.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.State == CommandState.Unknown).ToListAsync();
                 foreach (var command in unknown)
-                {
-                    var ad = ads.SingleOrDefault(x => x.AdExternalId == command.TargetExternalId || x.AdSetExternalId == command.TargetExternalId || x.BudgetOwnerExternalId == command.TargetExternalId);
-                    if (ad is null) continue;
-                    command.State = CommandState.Reconciling;
-                    if (command.CommandType == "PauseAd" && ad.EffectiveStatus == "PAUSED") command.State = CommandState.Succeeded;
-                    else if (command.CommandType == "ResumeAd" && ad.EffectiveStatus == "ACTIVE") command.State = CommandState.Succeeded;
-                    else command.State = CommandState.Failed;
-                }
+                    jobs.Enqueue<AdvertisingCommandWorker>(worker => worker.ExecuteAsync(projectId, command.Id, CancellationToken.None));
                 connection.LastSyncAtUtc = DateTime.UtcNow;
                 await db.SaveChangesAsync();
+                await QueueHierarchyRecoveryAsync(projectId, ads);
             });
+    }
+
+    private async Task QueueHierarchyRecoveryAsync(Guid projectId, IReadOnlyCollection<ManagedAdvertisement> ads)
+    {
+        var blockedAds = ads.Where(ad => ad.ManagementSource == "CreatedBySystem"
+            && ad.EffectiveStatus is "ADSET_PAUSED" or "CAMPAIGN_PAUSED").ToList();
+        if (blockedAds.Count == 0) return;
+
+        foreach (var ad in blockedAds) ad.ConfiguredStatus = ManagedDeliveryState.Paused;
+        await db.SaveChangesAsync();
+        var commandIds = await decisions.ProposeCanaryActivationAsync(projectId, CancellationToken.None, adIds: blockedAds.Select(ad => ad.Id).ToList());
+        foreach (var commandId in commandIds)
+            jobs.Enqueue<AdvertisingCommandWorker>(worker => worker.ExecuteAsync(projectId, commandId, CancellationToken.None));
     }
 
     [DisableConcurrentExecution(timeoutInSeconds: 1500)]
@@ -105,6 +138,11 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
             {
                 var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.State == AdvertisingConnectionState.Ready);
                 if (connection?.ProtectedAccessToken is null || connection.AdAccountExternalId is null) return;
+                if (string.IsNullOrWhiteSpace(connection.AccountCurrency))
+                    throw new AdvertisingException("ADS_REPORTING_CURRENCY_UNKNOWN", "Meta account currency has not been verified.", 409);
+                if (string.IsNullOrWhiteSpace(connection.AccountTimezoneIana))
+                    throw new AdvertisingException("ADS_REPORTING_TIMEZONE_UNKNOWN", "Meta account timezone has not been verified.", 409);
+                _ = AdvertisingSchedulePolicy.DayStartUtc(DateTime.UtcNow, connection.AccountTimezoneIana);
                 var ads = await db.ManagedAdvertisements.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.AdExternalId != null).ToDictionaryAsync(x => x.AdExternalId!);
                 var latest = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x => x.ProjectId == projectId).MaxAsync(x => (DateTime?)x.IntervalEndUtc);
                 var since = DateOnly.FromDateTime((latest ?? DateTime.UtcNow.AddDays(-7)).AddDays(-1));
@@ -112,10 +150,23 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
                 foreach (var row in rows)
                 {
                     if (!ads.TryGetValue(row.AdExternalId, out var ad)) continue;
-                    var existing = await db.AdvertisingInsights.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.TargetId == ad.Id && x.IntervalStartUtc == row.StartUtc && x.IntervalEndUtc == row.EndUtc);
-                    if (existing is null) { existing = new InsightsSnapshot { ProjectId = projectId, TargetId = ad.Id, IntervalStartUtc = row.StartUtc, IntervalEndUtc = row.EndUtc }; db.AdvertisingInsights.Add(existing); }
-                    existing.Spend = row.Spend; existing.Impressions = row.Impressions; existing.Clicks = row.Clicks; existing.Frequency = row.Frequency;
-                    existing.ProviderActionsJson = JsonSerializer.Serialize(new { row.Actions, row.ActionValues }); existing.FetchedAtUtc = DateTime.UtcNow;
+                    var existing = await db.AdvertisingInsights.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.TargetId == ad.Id
+                        && x.IntervalStartUtc == row.StartUtc && x.IntervalEndUtc == row.EndUtc && x.BreakdownHash == "none" && x.IsCurrent);
+                    var fingerprint = MetaInsightRevisionPolicy.Fingerprint(row);
+                    if (existing is not null && MetaInsightRevisionPolicy.Fingerprint(existing) == fingerprint) continue;
+                    if (existing is not null) existing.IsCurrent = false;
+                    db.AdvertisingInsights.Add(new InsightsSnapshot
+                    {
+                        ProjectId = projectId, ConnectionId = connection.Id, TargetId = ad.Id,
+                        IntervalStartUtc = row.StartUtc, IntervalEndUtc = row.EndUtc, Spend = row.Spend,
+                        Impressions = row.Impressions, Clicks = row.Clicks, Frequency = row.Frequency,
+                        BreakdownHash = "none", Currency = connection.AccountCurrency,
+                        AccountTimezone = connection.AccountTimezoneIana,
+                        AttributionSetting = "provider-reported", ProviderActionsJson = JsonSerializer.Serialize(new { row.Actions }),
+                        ProviderActionValuesJson = JsonSerializer.Serialize(new { row.ActionValues }), FetchedAtUtc = DateTime.UtcNow,
+                        SourceFreshnessUtc = row.EndUtc, FetchRunId = Guid.NewGuid(), Revision = (existing?.Revision ?? 0) + 1,
+                        SupersedesSnapshotId = existing?.Id, IsCurrent = true
+                    });
                 }
                 await db.SaveChangesAsync();
             });
@@ -127,22 +178,28 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
         foreach (var projectId in await ActiveProjectIdsAsync())
             await WithProjectLease(projectId, "tracking", TimeSpan.FromMinutes(14), async () =>
             {
-                var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId);
+                var destinations = await db.AdvertisingWhatsAppDestinations.IgnoreQueryFilters().Where(x => x.ProjectId == projectId
+                    && x.State == AuthorizedDestinationState.Eligible).ToListAsync();
                 var open = await db.TrackingIncidents.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.Category == "ConversionTracking" && x.State != IncidentState.Recovered);
-                if (connection?.DatasetExternalId is null)
+                var snapshots = new List<TrackingHealthSnapshot>();
+                foreach (var destination in destinations) snapshots.Add(await trackingHealth.EvaluateAsync(projectId, destination.Id));
+                if (snapshots.Any(snapshot => snapshot.State == TrackingHealthState.Unsafe))
                 {
-                    if (open is not null)
+                    if (open is null)
                     {
-                        open.State = IncidentState.Recovered;
-                        open.RecoveredAtUtc = DateTime.UtcNow;
-                        await db.SaveChangesAsync();
+                        db.TrackingIncidents.Add(new TrackingIncident { ProjectId = projectId, Category = "ConversionTracking",
+                            Severity = "Critical", Summary = "WhatsApp advertising tracking is unsafe; financial decisions must WAIT.",
+                            EvidenceJson = JsonSerializer.Serialize(new { snapshots = snapshots.Select(snapshot => new { snapshot.Id, snapshot.ReasonCodesJson }) }),
+                            DetectedAtUtc = DateTime.UtcNow });
                     }
+                    await ActivateAutomaticStop(projectId, EmergencyTrigger.TrackingUnsafe,
+                        "WhatsApp advertising tracking became Unsafe.");
                 }
-                else if (connection?.DatasetExternalId is not null && open is not null)
+                else if (snapshots.Count > 0 && snapshots.All(snapshot => snapshot.State == TrackingHealthState.Healthy) && open is not null)
                 {
                     open.State = IncidentState.Recovered; open.RecoveredAtUtc = DateTime.UtcNow;
-                    await db.SaveChangesAsync();
                 }
+                await db.SaveChangesAsync();
             });
     }
 
@@ -152,11 +209,13 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
         foreach (var projectId in await ActiveProjectIdsAsync())
             await WithProjectLease(projectId, "decision", TimeSpan.FromMinutes(55), async () =>
             {
-                if (await db.TrackingIncidents.IgnoreQueryFilters().AnyAsync(x => x.ProjectId == projectId && x.State != IncidentState.Recovered)) return;
+                if (await db.TrackingIncidents.IgnoreQueryFilters().AnyAsync(x => x.ProjectId == projectId
+                    && x.State != IncidentState.Recovered && x.Severity == "Critical")) return;
                 var stop = await db.AdvertisingEmergencyStops.IgnoreQueryFilters().AnyAsync(x => x.ProjectId == projectId && x.ResumedAtUtc == null);
                 if (stop) return;
                 var since = DateTime.UtcNow.AddHours(-24);
-                var snapshots = await db.AdvertisingInsights.IgnoreQueryFilters().CountAsync(x => x.ProjectId == projectId && x.IntervalEndUtc >= since);
+                var snapshots = await db.AdvertisingInsights.IgnoreQueryFilters().CountAsync(x =>
+                    x.ProjectId == projectId && x.IntervalEndUtc >= since && x.IsCurrent);
                 if (snapshots >= 4) { await allocationPolicy.RebalanceAsync(projectId); return; }
                 db.AdvertisingDecisions.Add(new AdvertisingDecision
                 {
@@ -177,7 +236,8 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
                 var ads = await db.ManagedAdvertisements.IgnoreQueryFilters().Where(x => x.ProjectId == projectId).ToListAsync();
                 foreach (var ad in ads)
                 {
-                    var rows = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.TargetId == ad.Id && x.IntervalEndUtc >= DateTime.UtcNow.AddDays(-7)).ToListAsync();
+                    var rows = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x => x.ProjectId == projectId
+                        && x.TargetId == ad.Id && x.IntervalEndUtc >= DateTime.UtcNow.AddDays(-7) && x.IsCurrent).ToListAsync();
                     var outcomes = await db.AdvertisingConversions.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.AdvertisementId == ad.Id && x.OccurredAtUtc >= DateTime.UtcNow.AddDays(-7)).ToListAsync();
                     var result = evidenceService.Evaluate(rows, outcomes, Math.Max(25m, ad.DailyBudget));
                     var creative = await db.AdvertisingCreatives.IgnoreQueryFilters().SingleAsync(x => x.ProjectId == projectId && x.Id == ad.CreativeId);
@@ -192,7 +252,11 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
     public async Task RebalanceAsync()
     {
         foreach (var projectId in await ActiveProjectIdsAsync())
+        {
+            var timezone = await ProjectTimezoneAsync(projectId);
+            if (!AdvertisingSchedulePolicy.IsLocalHour(DateTime.UtcNow, timezone, 4)) continue;
             await WithProjectLease(projectId, "rebalance", TimeSpan.FromHours(20), async () => await allocationPolicy.RebalanceAsync(projectId));
+        }
     }
 
     public async Task ReviewImpactAsync()
@@ -200,43 +264,92 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
         var due = await db.AdvertisingDecisions.IgnoreQueryFilters().Where(x => x.State == DecisionState.Executed && x.EvaluateAfterUtc <= DateTime.UtcNow).Take(200).ToListAsync();
         foreach (var decision in due)
         {
-            var after = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x => x.ProjectId == decision.ProjectId && (decision.TargetId == null || x.TargetId == decision.TargetId) && x.IntervalStartUtc >= decision.EvidenceEndUtc).ToListAsync();
-            db.AdvertisingDecisionReviews.Add(new DecisionReview { ProjectId = decision.ProjectId, DecisionId = decision.Id, ReviewerType = "Impact", Verdict = after.Count > 0 ? DecisionVerdict.Approve : DecisionVerdict.Wait, ReasonsJson = JsonSerializer.Serialize(new { snapshots = after.Count, spend = after.Sum(x => x.Spend) }), EvidenceHash = "impact" });
-            decision.EvaluateAfterUtc = after.Count > 0 ? null : DateTime.UtcNow.AddHours(2);
+            var now = DateTime.UtcNow;
+            var outcomes = await db.AdvertisingConversions.IgnoreQueryFilters().Where(item => item.ProjectId == decision.ProjectId
+                && (decision.TargetId == null || item.AdvertisementId == decision.TargetId)
+                && item.OccurredAtUtc >= decision.EvidenceEndUtc && item.OccurredAtUtc < now).ToListAsync();
+            var baseline = ReadEvidenceMetric(decision.EvidenceJson);
+            var evaluationMetric = outcomes.Where(item => item.CurrentValue > 0).Sum(item => item.CurrentValue ?? 0m);
+            if (evaluationMetric == 0m) evaluationMetric = outcomes.Count;
+            var impact = await impactService.EvaluateAsync(decision.ProjectId, decision.Id,
+                new DecisionImpactEvidence(baseline.Metric, evaluationMetric, baseline.Sample, outcomes.Count,
+                    decision.EvidenceStartUtc, decision.EvidenceEndUtc, decision.EvidenceEndUtc, now,
+                    baseline.Goal, outcomes.Any(item => item.CorrectionState == CorrectionState.PendingBase)), now);
+            decision.EvaluateAfterUtc = impact is null || impact.Label == DecisionImpactLabel.Inconclusive
+                ? now.AddHours(2) : null;
         }
         await db.SaveChangesAsync();
+    }
+
+    private static (decimal Metric, int Sample, string Goal) ReadEvidenceMetric(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.TryGetProperty("evaluation", out var evaluation))
+            {
+                var revenue = evaluation.TryGetProperty("Revenue", out var pascalRevenue) ? pascalRevenue.GetDecimal()
+                    : evaluation.TryGetProperty("revenue", out var camelRevenue) ? camelRevenue.GetDecimal() : 0m;
+                var conversions = evaluation.TryGetProperty("Conversions", out var pascalConversions) ? pascalConversions.GetInt32()
+                    : evaluation.TryGetProperty("conversions", out var camelConversions) ? camelConversions.GetInt32() : 0;
+                return (revenue > 0 ? revenue : conversions, conversions, revenue > 0 ? "NetPaidValue" : "QualifiedOutcomeCount");
+            }
+        }
+        catch (JsonException) { }
+        return (0m, 0, "Unknown");
     }
 
     public async Task CreateTestsAsync()
     {
         foreach (var projectId in await ActiveProjectIdsAsync())
-            await WithProjectLease(projectId, "tests", TimeSpan.FromHours(36), async () =>
+            await WithProjectLease(projectId, "tests", TimeSpan.FromMinutes(5), async () =>
             {
                 await whatsAppTests.CreateAsync(projectId);
+                var commandIds = await decisions.ProposeCanaryActivationAsync(projectId, CancellationToken.None);
+                foreach (var commandId in commandIds)
+                    jobs.Enqueue<AdvertisingCommandWorker>(worker => worker.ExecuteAsync(projectId, commandId, CancellationToken.None));
             });
     }
 
     public async Task AnalyzeStrategyAsync()
     {
         foreach (var projectId in await ActiveProjectIdsAsync())
+        {
+            var timezone = await ProjectTimezoneAsync(projectId);
+            if (!AdvertisingSchedulePolicy.IsLocalWeeklyHour(DateTime.UtcNow, timezone, DayOfWeek.Monday, 6)) continue;
             await WithProjectLease(projectId, "strategy", TimeSpan.FromDays(6), async () =>
             {
                 var since = DateTime.UtcNow.AddDays(-7);
-                var spend = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.IntervalEndUtc >= since).SumAsync(x => x.Spend);
+                var spend = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x =>
+                    x.ProjectId == projectId && x.IntervalEndUtc >= since && x.IsCurrent).SumAsync(x => x.Spend);
                 var revenue = await db.AdvertisingConversions.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.OccurredAtUtc >= since).SumAsync(x => x.CurrentValue ?? 0m);
                 db.AdvertisingDecisions.Add(new AdvertisingDecision { ProjectId = projectId, ActionType = "StrategyReview", TargetType = "Project", EvidenceStartUtc = since, EvidenceEndUtc = DateTime.UtcNow, EvidenceJson = JsonSerializer.Serialize(new { spend, revenue, roas = spend > 0 ? revenue / spend : 0 }), ProposedChangeJson = "{}", State = DecisionState.Waiting, RiskClass = "None" });
                 await db.SaveChangesAsync();
             });
+        }
     }
 
-    private async Task<List<Guid>> ActiveProjectIdsAsync() => await db.AutonomyEnvelopes.IgnoreQueryFilters()
-        .Where(x => x.State == EnvelopeState.Active).Select(x => x.ProjectId).Distinct().ToListAsync();
-
-    private static DateTime CairoDayStartUtc(DateTime utcNow)
+    private async Task<List<Guid>> ActiveProjectIdsAsync()
     {
-        var cairo = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo");
-        var cairoDate = TimeZoneInfo.ConvertTimeFromUtc(utcNow, cairo).Date;
-        return TimeZoneInfo.ConvertTimeToUtc(cairoDate, cairo);
+        var active = await db.AutonomyEnvelopes.IgnoreQueryFilters().Where(x => x.State == EnvelopeState.Active)
+            .Select(x => x.ProjectId).ToListAsync();
+        var monitored = await db.AdvertisingDisableRequests.IgnoreQueryFilters().Where(item =>
+            item.Mode == AutopilotDisableMode.LeaveRunning && item.CompletedAtUtc == null)
+            .Select(item => item.ProjectId).ToListAsync();
+        return active.Concat(monitored).Distinct().ToList();
+    }
+
+    private async Task<string> ProjectTimezoneAsync(Guid projectId)
+    {
+        var timezone = await db.ProjectAdvertisingContextProjections.IgnoreQueryFilters().Where(item => item.ProjectId == projectId)
+            .Select(item => item.ReportingTimezoneIana).SingleOrDefaultAsync()
+        ?? await db.AutonomyEnvelopes.IgnoreQueryFilters().Where(item => item.ProjectId == projectId)
+            .OrderByDescending(item => item.CreatedAt).Select(item => item.ReportingTimezoneIana).FirstOrDefaultAsync();
+        if (string.IsNullOrWhiteSpace(timezone))
+            throw new AdvertisingException("ADS_REPORTING_TIMEZONE_UNKNOWN", "A validated project reporting timezone is required.", 409);
+        _ = AdvertisingSchedulePolicy.DayStartUtc(DateTime.UtcNow, timezone);
+        return timezone;
     }
 
     private async Task WithProjectLease(Guid projectId, string job, TimeSpan expiry, Func<Task> work)
@@ -249,19 +362,25 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
         try
         {
             var now = DateTime.UtcNow;
-            var bucket = new DateTime(now.Ticks / expiry.Ticks * expiry.Ticks, DateTimeKind.Utc);
+            var bucket = AdvertisingSchedulePolicy.BucketStartUtc(now, await ProjectTimezoneAsync(projectId), expiry);
             cycle = await db.AdvertisingCycleRuns.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.JobName == job && x.BucketStartUtc == bucket);
-            if (cycle?.State is "Running" or "Completed") return;
+            if (!AdvertisingLeasePolicy.CanTakeCycle(cycle?.State, cycle?.StartedAtUtc, now, expiry)) return;
             if (cycle is null)
             {
-                cycle = new AdvertisingCycleRun { ProjectId = projectId, JobName = job, BucketStartUtc = bucket, StartedAtUtc = now };
+                cycle = new AdvertisingCycleRun { ProjectId = projectId, JobName = job, BucketStartUtc = bucket,
+                    BucketEndUtc = bucket.Add(expiry), ReportingTimezoneIana = await ProjectTimezoneAsync(projectId),
+                    LeaseOwner = owner, StartedAtUtc = now };
                 db.AdvertisingCycleRuns.Add(cycle);
             }
             else
             {
-                cycle.State = "Running"; cycle.StartedAtUtc = now; cycle.CompletedAtUtc = null; cycle.ErrorType = null;
+                cycle.State = "Running"; cycle.StartedAtUtc = now; cycle.CompletedAtUtc = null;
+                cycle.ErrorType = null; cycle.LeaseOwner = owner;
             }
             await db.SaveChangesAsync();
+            var currentOwner = await cache.StringGetAsync(key);
+            if (!AdvertisingLeasePolicy.CanRelease(currentOwner.HasValue ? currentOwner.ToString() : null, owner))
+                throw new InvalidOperationException("Advertising project lease was lost before the cycle could execute.");
             await work();
             cycle.State = "Completed"; cycle.CompletedAtUtc = DateTime.UtcNow;
             await db.SaveChangesAsync();
@@ -284,21 +403,71 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
 
     private async Task ActivateAutomaticStop(Guid projectId, EmergencyTrigger trigger, string reason)
     {
-        if (!await db.AdvertisingEmergencyStops.IgnoreQueryFilters().AnyAsync(x => x.ProjectId == projectId && x.ResumedAtUtc == null))
-            db.AdvertisingEmergencyStops.Add(new EmergencyStopRecord { ProjectId = projectId, Trigger = trigger, Reason = reason, ActivatedAtUtc = DateTime.UtcNow });
-        var envelopes = await db.AutonomyEnvelopes.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.State == EnvelopeState.Active).ToListAsync();
-        foreach (var envelope in envelopes) envelope.State = EnvelopeState.Suspended;
-        var ads = await db.ManagedAdvertisements.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.ConfiguredStatus == ManagedDeliveryState.Active && x.AdExternalId != null).ToListAsync();
-        var decision = new AdvertisingDecision { ProjectId = projectId, ActionType = "PauseAd", TargetType = "EmergencySet", EvidenceStartUtc = DateTime.UtcNow, EvidenceEndUtc = DateTime.UtcNow, EvidenceJson = JsonSerializer.Serialize(new { trigger, reason }), ProposedChangeJson = "{\"status\":\"PAUSED\"}", RiskClass = "Protective", State = DecisionState.Approved };
-        db.AdvertisingDecisions.Add(decision);
-        var commands = new List<ExecutionCommand>();
-        foreach (var ad in ads)
-        {
-            ad.ConfiguredStatus = ManagedDeliveryState.Paused;
-            var command = new ExecutionCommand { ProjectId = projectId, DecisionId = decision.Id, IdempotencyKey = $"emergency:{projectId:N}:{ad.Id:N}:{DateTime.UtcNow:yyyyMMddHHmm}", CommandType = "PauseAd", TargetExternalId = ad.AdExternalId, DesiredStateJson = JsonSerializer.Serialize(new { adId = ad.Id, status = "PAUSED" }), RequestFingerprint = $"{ad.AdExternalId}:PAUSED" };
-            db.AdvertisingExecutionCommands.Add(command); commands.Add(command);
-        }
-        await db.SaveChangesAsync();
-        foreach (var command in commands) jobs.Enqueue<AdvertisingCommandWorker>(worker => worker.ExecuteAsync(projectId, command.Id, CancellationToken.None));
+        var result = await emergencyStopService.ActivateAsync(projectId, trigger, reason);
+        foreach (var commandId in result.CommandIds)
+            jobs.Enqueue<AdvertisingCommandWorker>(worker => worker.ExecuteAsync(projectId, commandId, CancellationToken.None));
     }
+}
+
+public static class AdvertisingSchedulePolicy
+{
+    public static DateTime DayStartUtc(DateTime utcNow, string timezoneIana)
+    {
+        var zone = ResolveTimezone(timezoneIana);
+        var localDate = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utcNow, DateTimeKind.Utc), zone).Date;
+        return TimeZoneInfo.ConvertTimeToUtc(localDate, zone);
+    }
+
+    public static DateTime BucketStartUtc(DateTime utcNow, string timezoneIana, TimeSpan cadence)
+    {
+        var zone = ResolveTimezone(timezoneIana);
+        var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utcNow, DateTimeKind.Utc), zone);
+        var localBucket = new DateTime(local.Ticks / cadence.Ticks * cadence.Ticks, DateTimeKind.Unspecified);
+        if (zone.IsInvalidTime(localBucket)) localBucket = localBucket.AddHours(1);
+        if (zone.IsAmbiguousTime(localBucket))
+        {
+            var offset = zone.GetAmbiguousTimeOffsets(localBucket).Max();
+            return new DateTimeOffset(localBucket, offset).UtcDateTime;
+        }
+        return TimeZoneInfo.ConvertTimeToUtc(localBucket, zone);
+    }
+
+    public static bool IsLocalHour(DateTime utcNow, string timezoneIana, int hour) =>
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utcNow, DateTimeKind.Utc),
+            ResolveTimezone(timezoneIana)).Hour == hour;
+
+    public static bool IsLocalWeeklyHour(DateTime utcNow, string timezoneIana, DayOfWeek day, int hour)
+    {
+        var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utcNow, DateTimeKind.Utc),
+            ResolveTimezone(timezoneIana));
+        return local.DayOfWeek == day && local.Hour == hour;
+    }
+
+    private static TimeZoneInfo ResolveTimezone(string timezoneIana)
+    {
+        if (string.IsNullOrWhiteSpace(timezoneIana))
+            throw new AdvertisingException("ADS_REPORTING_TIMEZONE_UNKNOWN", "A validated reporting timezone is required.", 409);
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timezoneIana);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            throw new AdvertisingException("ADS_REPORTING_TIMEZONE_INVALID", "The configured reporting timezone is unavailable.", 409);
+        }
+        catch (InvalidTimeZoneException)
+        {
+            throw new AdvertisingException("ADS_REPORTING_TIMEZONE_INVALID", "The configured reporting timezone is invalid.", 409);
+        }
+    }
+}
+
+public static class AdvertisingLeasePolicy
+{
+    public static bool CanRelease(string? currentOwner, string owner) =>
+        string.Equals(currentOwner, owner, StringComparison.Ordinal);
+
+    public static bool CanTakeCycle(string? state, DateTime? startedAtUtc, DateTime utcNow, TimeSpan leaseDuration) =>
+        state != "Completed" && (state != "Running" || startedAtUtc is null
+            || startedAtUtc <= utcNow.Subtract(leaseDuration));
 }

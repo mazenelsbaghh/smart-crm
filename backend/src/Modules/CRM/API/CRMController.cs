@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Modules.Conversations.Domain;
 using Modules.CRM.Domain;
+using Modules.CRM.Services;
 using Shared.Infrastructure;
 using Shared.Events;
 using Shared.Queue;
@@ -18,10 +20,12 @@ using System.Text.Json;
 using System.Collections.Generic;
 
 using Modules.Customers.Services;
+using Modules.WhatsApp.Services;
 
 namespace Modules.CRM.API
 {
     [ApiController]
+    [Authorize]
     [Route("api")]
     public class CRMController : ControllerBase
     {
@@ -31,6 +35,8 @@ namespace Modules.CRM.API
         private readonly IConfiguration _configuration;
         private readonly IHubContext<NotificationHub> _hubContext;
         private readonly ITenantContext _tenantContext;
+        private readonly IProjectSecretVault _secretVault;
+        private readonly IProjectAuthorizationService _authorization;
 
         public CRMController(
             AppDbContext context, 
@@ -38,7 +44,9 @@ namespace Modules.CRM.API
             ICustomerMemoryService customerMemoryService, 
             IConfiguration configuration, 
             IHubContext<NotificationHub> hubContext,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            IProjectSecretVault secretVault,
+            IProjectAuthorizationService authorization)
         {
             _context = context;
             _eventBus = eventBus;
@@ -46,11 +54,14 @@ namespace Modules.CRM.API
             _configuration = configuration;
             _hubContext = hubContext;
             _tenantContext = tenantContext;
+            _secretVault = secretVault;
+            _authorization = authorization;
         }
 
         [HttpGet("projects/{projectId}/customers")]
         public async Task<IActionResult> GetCustomers(Guid projectId)
         {
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
             var customers = await _context.Customers
                 .Where(c => c.ProjectId == projectId)
                 .ToListAsync();
@@ -101,6 +112,7 @@ namespace Modules.CRM.API
         {
             var customer = await _context.Customers.FindAsync(id);
             if (customer == null) return NotFound();
+            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
 
             var lastDeal = await _context.Deals
                 .Where(d => d.CustomerId == id)
@@ -143,6 +155,7 @@ namespace Modules.CRM.API
         {
             var customer = await _context.Customers.FindAsync(id);
             if (customer == null) return NotFound();
+            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
 
             var oldTags = customer.Tags ?? Array.Empty<string>();
             var newTags = request.Tags ?? customer.Tags ?? Array.Empty<string>();
@@ -282,7 +295,42 @@ namespace Modules.CRM.API
                 IntegrationOutbox.Enqueue(_context, new AdvertisingDealOutcomeChanged
                 {
                     ProjectId = changedDeal.ProjectId, DealId = changedDeal.Id, CustomerId = changedDeal.CustomerId,
-                    Outcome = changedDeal.Status == DealStatus.Won ? "Won" : "Lost", Value = changedDeal.Amount, Currency = "EGP"
+                    Outcome = changedDeal.Status == DealStatus.Won ? "Won" : "Lost", Value = changedDeal.Amount, Currency = "EGP",
+                    OutcomeOccurredAtUtc = DateTime.UtcNow, SourceAggregateType = nameof(Deal), SourceAggregateId = changedDeal.Id, SourceVersion = 1
+                });
+            }
+            if (!string.IsNullOrWhiteSpace(request.SalesClassification))
+            {
+                var classification = request.SalesClassification.Trim();
+                var allowedClassifications = new[] { "Spam", "Support", "Unqualified", "Qualified", "BookingIntent", "PurchaseIntent", "ConfirmedPayment" };
+                if (!allowedClassifications.Contains(classification, StringComparer.OrdinalIgnoreCase))
+                    return UnprocessableEntity(new { code = "CRM_SALES_CLASSIFICATION_INVALID" });
+                var conversationId = await _context.Conversations.IgnoreQueryFilters()
+                    .Where(item => item.ProjectId == customer.ProjectId && item.CustomerId == customer.Id)
+                    .OrderByDescending(item => item.LastMessageTimestamp).Select(item => (Guid?)item.Id).FirstOrDefaultAsync();
+                if (conversationId is not null)
+                    IntegrationOutbox.Enqueue(_context, new AdvertisingQualifiedMessageChanged
+                    {
+                        ProjectId = customer.ProjectId, ConversationId = conversationId.Value, CustomerId = customer.Id,
+                        Classification = classification, Confidence = Math.Clamp(request.ClassificationConfidence ?? 1m, 0m, 1m),
+                        ClassifierVersion = "crm-explicit-v1", ClassifiedAtUtc = DateTime.UtcNow,
+                        SourceAggregateType = nameof(Customer), SourceAggregateId = customer.Id, SourceVersion = DateTime.UtcNow.Ticks
+                    });
+            }
+            if (!string.IsNullOrWhiteSpace(request.AdvertisingConsentState))
+            {
+                var consentState = request.AdvertisingConsentState.Trim();
+                var allowedConsent = new[] { "Granted", "Denied", "NotRequired", "Unknown" };
+                if (!allowedConsent.Contains(consentState, StringComparer.OrdinalIgnoreCase))
+                    return UnprocessableEntity(new { code = "CRM_ADVERTISING_CONSENT_INVALID" });
+                if (consentState.Equals("NotRequired", StringComparison.OrdinalIgnoreCase)
+                    && string.IsNullOrWhiteSpace(request.AdvertisingLegalBasis))
+                    return UnprocessableEntity(new { code = "CRM_ADVERTISING_LEGAL_BASIS_REQUIRED" });
+                IntegrationOutbox.Enqueue(_context, new CustomerAdvertisingConsentChanged
+                {
+                    ProjectId = customer.ProjectId, CustomerId = customer.Id, ConsentState = consentState,
+                    LegalBasis = request.AdvertisingLegalBasis?.Trim() ?? string.Empty, EffectiveAtUtc = DateTime.UtcNow,
+                    SourceAggregateType = nameof(Customer), SourceAggregateId = customer.Id, SourceVersion = DateTime.UtcNow.Ticks
                 });
             }
             await _context.SaveChangesAsync();
@@ -325,6 +373,46 @@ namespace Modules.CRM.API
         {
             var customer = await _context.Customers.FindAsync(customerId);
             if (customer == null) return NotFound("Customer not found");
+            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
+            var whatsAppAccounts = HttpContext.RequestServices
+                .GetRequiredService<Modules.WhatsApp.Services.WhatsAppAccountService>();
+            Conversation? sourceConversation = null;
+            Guid whatsAppAccountId;
+            if (request.WhatsAppAccountId.HasValue)
+            {
+                var selectedAccount = await whatsAppAccounts.ResolveAsync(
+                    customer.ProjectId,
+                    request.WhatsAppAccountId.Value,
+                    HttpContext.RequestAborted);
+                if (selectedAccount is null)
+                    return BadRequest(new { code = "WHATSAPP_ACCOUNT_NOT_IN_PROJECT" });
+                whatsAppAccountId = selectedAccount.Id;
+                sourceConversation = await _context.Conversations
+                    .IgnoreQueryFilters()
+                    .Where(conversation => conversation.ProjectId == customer.ProjectId
+                        && conversation.CustomerId == customer.Id
+                        && conversation.Channel == "WhatsApp"
+                        && conversation.WhatsAppAccountId == whatsAppAccountId
+                        && conversation.WhatsAppDestinationId == null
+                        && conversation.Status != "Closed")
+                    .OrderByDescending(conversation => conversation.LastMessageTimestamp)
+                    .FirstOrDefaultAsync();
+            }
+            else
+            {
+                sourceConversation = await _context.Conversations
+                    .IgnoreQueryFilters()
+                    .Where(conversation => conversation.ProjectId == customer.ProjectId
+                        && conversation.CustomerId == customer.Id
+                        && conversation.Channel == "WhatsApp"
+                        && conversation.WhatsAppAccountId != null
+                        && conversation.WhatsAppDestinationId == null
+                        && conversation.Status != "Closed")
+                    .OrderByDescending(conversation => conversation.LastMessageTimestamp)
+                    .FirstOrDefaultAsync();
+                whatsAppAccountId = sourceConversation?.WhatsAppAccountId
+                    ?? (await whatsAppAccounts.GetDefaultAsync(customer.ProjectId)).Id;
+            }
 
             string resolvedType = string.IsNullOrEmpty(request.Type) ? "Nurturing" : request.Type;
             DateTime calculatedDueDate = DateTime.SpecifyKind(request.DueDate, DateTimeKind.Utc);
@@ -350,6 +438,9 @@ namespace Modules.CRM.API
             {
                 CustomerId = customerId,
                 ProjectId = customer.ProjectId, // Inherit from customer
+                ConversationId = sourceConversation?.Id,
+                WhatsAppAccountId = whatsAppAccountId,
+                Channel = "WhatsApp",
                 DueDate = calculatedDueDate,
                 Status = "Pending",
                 Notes = request.Notes ?? string.Empty,
@@ -369,13 +460,21 @@ namespace Modules.CRM.API
         {
             var followUp = await _context.FollowUps.FindAsync(id);
             if (followUp == null) return NotFound();
+            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
+            if (followUp.DependsOnFollowUpId.HasValue
+                && !await _context.FollowUps.IgnoreQueryFilters()
+                    .AnyAsync(candidate => candidate.ProjectId == followUp.ProjectId
+                        && candidate.Id == followUp.DependsOnFollowUpId.Value
+                        && candidate.Status == "Completed"))
+                return Conflict(new { code = "FOLLOW_UP_PREDECESSOR_NOT_COMPLETED" });
             return Ok(followUp);
         }
 
         [HttpGet("projects/{projectId}/follow-ups")]
         public async Task<IActionResult> GetFollowUps(Guid projectId, [FromQuery] string status = null)
         {
-            var query = _context.FollowUps.AsQueryable();
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
+            var query = _context.FollowUps.Where(followUp => followUp.ProjectId == projectId);
 
             if (!string.IsNullOrEmpty(status))
             {
@@ -391,6 +490,7 @@ namespace Modules.CRM.API
         {
             var followUp = await _context.FollowUps.FindAsync(id);
             if (followUp == null) return NotFound();
+            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
 
             followUp.Status = "Completed";
             await _context.SaveChangesAsync();
@@ -402,6 +502,7 @@ namespace Modules.CRM.API
         {
             var followUp = await _context.FollowUps.FindAsync(id);
             if (followUp == null) return NotFound();
+            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
 
             _context.FollowUps.Remove(followUp);
             await _context.SaveChangesAsync();
@@ -416,6 +517,7 @@ namespace Modules.CRM.API
                 .FirstOrDefaultAsync(f => f.Id == id);
             
             if (followUp == null) return NotFound();
+            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
 
             if (!string.IsNullOrEmpty(request.Type))
             {
@@ -482,12 +584,59 @@ namespace Modules.CRM.API
                 .FirstOrDefaultAsync(f => f.Id == id);
             
             if (followUp == null) return NotFound();
+            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
 
             var customer = await _context.Customers
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(c => c.Id == followUp.CustomerId);
 
             if (customer == null) return BadRequest("Customer not found");
+            if (followUp.Channel is not null && followUp.Channel != "WhatsApp")
+                return BadRequest("This follow-up must be sent from its original conversation channel.");
+            Conversation? targetConversation = null;
+            if (followUp.ConversationId.HasValue)
+            {
+                targetConversation = await _context.Conversations
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(conversation =>
+                        conversation.Id == followUp.ConversationId.Value
+                        && conversation.ProjectId == followUp.ProjectId
+                        && conversation.CustomerId == followUp.CustomerId
+                        && conversation.Channel == "WhatsApp"
+                        && conversation.Status != "Closed");
+                if (targetConversation is null)
+                    return Conflict("The target WhatsApp conversation is no longer available.");
+                if (targetConversation.WhatsAppDestinationId.HasValue)
+                    return Conflict(new { code = "WHATSAPP_CLOUD_OUTBOUND_NOT_CONFIGURED" });
+            }
+            if (string.IsNullOrWhiteSpace(customer.PhoneNumber))
+                return BadRequest("Customer has no WhatsApp phone number");
+
+            var gatewaySessionClient = HttpContext.RequestServices
+                .GetRequiredService<Modules.Advertising.Services.WhatsAppGatewaySessionClient>();
+            var whatsAppAccounts = HttpContext.RequestServices
+                .GetRequiredService<Modules.WhatsApp.Services.WhatsAppAccountService>();
+            var whatsAppAccountId = followUp.WhatsAppAccountId
+                ?? targetConversation?.WhatsAppAccountId
+                ?? (await whatsAppAccounts.GetDefaultAsync(followUp.ProjectId)).Id;
+            followUp.WhatsAppAccountId = whatsAppAccountId;
+            var projectSettings = await _context.ProjectSettings
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(s => s.ProjectId == followUp.ProjectId);
+            var gatewaySession = await gatewaySessionClient.GetAsync(
+                followUp.ProjectId,
+                whatsAppAccountId);
+            if (!gatewaySession.Connected || !gatewaySession.ConnectedAt.HasValue)
+            {
+                DeferFollowUpToNextDailySlot(followUp, projectSettings?.Timezone);
+                await _context.SaveChangesAsync();
+                return StatusCode(503, new
+                {
+                    code = "WHATSAPP_DELIVERY_DEFERRED",
+                    followUp.DueDate,
+                    followUp.Status
+                });
+            }
 
             // Check if customer has any paid group booking
             var hasPaid = await _context.GroupAppointmentBookings
@@ -502,8 +651,23 @@ namespace Modules.CRM.API
             }
 
             // Define the message content
+            string? talkTipsTrialInstructions = null;
+            if (projectSettings?.IsTalkTipsTrialGateEnabled == true)
+            {
+                var trialStatusClient = HttpContext.RequestServices.GetRequiredService<Modules.TalkTips.Services.TalkTipsTrialStatusClient>();
+                if (!await trialStatusClient.HasTriedAsync(customer.PhoneNumber))
+                {
+                    talkTipsTrialInstructions = Modules.TalkTips.Services.TalkTipsTrialCtaInstructions.ForCustomerWhoHasNotTried();
+                }
+            }
+
             string messageContent = string.Empty;
-            if (!string.IsNullOrEmpty(followUp.Notes))
+            if (string.Equals(followUp.Tone, "Exact", StringComparison.Ordinal))
+            {
+                messageContent = followUp.Notes;
+                talkTipsTrialInstructions = null;
+            }
+            else if (!string.IsNullOrEmpty(followUp.Notes))
             {
                 var notesTrimmed = followUp.Notes.Trim();
                 bool looksLikeDirectMessage = notesTrimmed.StartsWith("مرحباً", StringComparison.OrdinalIgnoreCase) || 
@@ -513,7 +677,7 @@ namespace Modules.CRM.API
                                              notesTrimmed.StartsWith("مساء الخير", StringComparison.OrdinalIgnoreCase) || 
                                              notesTrimmed.StartsWith("السلام عليكم", StringComparison.OrdinalIgnoreCase);
 
-                if (looksLikeDirectMessage)
+                if (looksLikeDirectMessage && string.IsNullOrWhiteSpace(talkTipsTrialInstructions))
                 {
                     messageContent = followUp.Notes;
                 }
@@ -524,22 +688,20 @@ namespace Modules.CRM.API
                         var aiMarketingBrain = HttpContext.RequestServices.GetService(typeof(Modules.AI.Services.IAIMarketingBrain)) as Modules.AI.Services.IAIMarketingBrain;
                         if (aiMarketingBrain != null)
                         {
-                            var projectSettings = await _context.ProjectSettings
-                                .IgnoreQueryFilters()
-                                .FirstOrDefaultAsync(s => s.ProjectId == followUp.ProjectId);
-                            string apiKey = projectSettings?.GeminiApiKey;
-                            if (string.IsNullOrEmpty(apiKey) || apiKey.StartsWith("mock_"))
-                            {
-                                apiKey = null; // Use default system key
-                            }
-                            string model = projectSettings?.GeminiModel;
+                            string? apiKey = _secretVault.Unprotect(
+                                followUp.ProjectId,
+                                projectSettings?.GeminiApiKey);
+                            string model = projectSettings?.ResolveGeminiModel(DateTime.UtcNow);
 
                             var hasAttended = await _context.GroupAppointmentBookings
                                 .AnyAsync(b => b.CustomerId == customer.Id && b.IsAttended);
 
+                            var followUpNotesForAi = string.IsNullOrWhiteSpace(talkTipsTrialInstructions)
+                                ? followUp.Notes
+                                : $"{followUp.Notes}\n\n{talkTipsTrialInstructions}";
                             messageContent = await aiMarketingBrain.RewriteFollowUpNotesAsync(
                                 customer.Name,
-                                followUp.Notes,
+                                followUpNotesForAi,
                                 hasAttended,
                                 followUp.Tone,
                                 apiKey,
@@ -564,6 +726,25 @@ namespace Modules.CRM.API
                     : "مرحباً، أردنا فقط المتابعة معك لمعرفة ما إذا كان لديك أي استفسار آخر.";
             }
 
+            if (!string.IsNullOrWhiteSpace(talkTipsTrialInstructions))
+            {
+                messageContent = Modules.TalkTips.Services.TalkTipsTrialCtaInstructions.EnsureCta(messageContent);
+            }
+
+            messageContent = Modules.WhatsApp.Services.OutgoingMessageText.Normalize(messageContent);
+
+            var claimed = _context.Database.IsRelational()
+                ? await _context.FollowUps
+                    .IgnoreQueryFilters()
+                    .Where(item => item.Id == id && item.Status == "Pending")
+                    .ExecuteUpdateAsync(update => update
+                        .SetProperty(item => item.Status, "Processing")
+                        .SetProperty(item => item.UpdatedAt, DateTime.UtcNow))
+                : followUp.Status == "Pending" ? 1 : 0;
+            if (claimed == 0) return Conflict("Follow-up is already being processed or has been handled.");
+            followUp.Status = "Processing";
+            if (!_context.Database.IsRelational()) await _context.SaveChangesAsync();
+
             // Call WhatsApp Gateway
             var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
             using var httpClient = new HttpClient();
@@ -571,78 +752,119 @@ namespace Modules.CRM.API
             var gatewayPayload = new
             {
                 projectId = followUp.ProjectId,
+                whatsappAccountId = whatsAppAccountId,
                 to = customer.PhoneNumber,
-                message = messageContent
+                message = messageContent,
+                idempotencyKey = followUp.Id.ToString("N"),
+                expectedConnectedAt = gatewaySession.ConnectedAt
             };
 
             var jsonPayload = JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            string? providerMessageId = null;
 
             try
             {
-                var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
+                var response = await Shared.Infrastructure.GatewayRetryHelper.PostOnceAsync(httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
                 var responseBody = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
                 {
                     Console.WriteLine($"[CRMController] WhatsApp Gateway returned error {response.StatusCode} for follow-up {followUp.Id}: {responseBody}");
+                    if ((int)response.StatusCode is 412 or 503)
+                        DeferFollowUpToNextDailySlot(followUp, projectSettings?.Timezone);
+                    else if ((int)response.StatusCode == 409 || (int)response.StatusCode >= 500)
+                    {
+                        followUp.Status = "DeliveryUnknown";
+                        MarkConversationDeliveryUnknown(targetConversation, followUp.Id.ToString("N"));
+                    }
+                    else
+                        followUp.Status = "Missed";
+                    await _context.SaveChangesAsync();
                     return StatusCode((int)response.StatusCode, $"Failed to send WhatsApp message: {responseBody}");
+                }
+                providerMessageId = ProviderMessageId(responseBody);
+                if (string.IsNullOrWhiteSpace(providerMessageId))
+                {
+                    followUp.Status = "DeliveryUnknown";
+                    MarkConversationDeliveryUnknown(targetConversation, followUp.Id.ToString("N"));
+                    await _context.SaveChangesAsync();
+                    return StatusCode(502, new { code = "WHATSAPP_DELIVERY_UNKNOWN" });
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[CRMController] Exception while calling WhatsApp Gateway: {ex.Message}");
-                return StatusCode(500, $"Internal error communicating with WhatsApp Gateway: {ex.Message}");
-            }
-
-            // Create/get active conversation
-            var conversation = await _context.Conversations
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(c => c.ProjectId == followUp.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
-
-            if (conversation == null)
-            {
-                conversation = new Conversation
-                {
-                    ProjectId = followUp.ProjectId,
-                    CustomerId = customer.Id,
-                    Status = "Open",
-                    LastMessageTimestamp = DateTime.UtcNow
-                };
-                _context.Conversations.Add(conversation);
+                followUp.Status = "DeliveryUnknown";
+                MarkConversationDeliveryUnknown(targetConversation, followUp.Id.ToString("N"));
                 await _context.SaveChangesAsync();
-            }
-            else
-            {
-                conversation.LastMessageTimestamp = DateTime.UtcNow;
-                _context.Entry(conversation).State = EntityState.Modified;
+                return StatusCode(502, new { code = "WHATSAPP_DELIVERY_UNKNOWN" });
             }
 
-            // Add outgoing message
-            var message = new Message
+            // Create/get the deterministic account-scoped conversation slot.
+            var sentAt = DateTime.UtcNow;
+            var whatsAppConversations = HttpContext.RequestServices
+                .GetRequiredService<WhatsAppConversationService>();
+            var conversation = targetConversation
+                ?? await whatsAppConversations.ResolveOrCreateAsync(
+                    followUp.ProjectId,
+                    customer.Id,
+                    whatsAppAccountId,
+                    sentAt);
+            if (string.Equals(
+                    conversation.WhatsAppDeliveryUnknownKey,
+                    followUp.Id.ToString("N"),
+                    StringComparison.Ordinal))
             {
-                ConversationId = conversation.Id,
-                ExternalMessageId = $"msg_fu_{Guid.NewGuid().ToString("N")}",
-                Direction = "Outgoing",
-                Content = messageContent,
-                MessageType = "Text",
-                Timestamp = DateTime.UtcNow
-            };
-            _context.Messages.Add(message);
+                conversation.WhatsAppDeliveryUnknownAt = null;
+                conversation.WhatsAppDeliveryUnknownKey = null;
+            }
+            if (sentAt > conversation.LastMessageTimestamp)
+                conversation.LastMessageTimestamp = sentAt;
+
+            var providerRecordId = WhatsAppMessageIdentity.Outgoing(
+                followUp.ProjectId,
+                whatsAppAccountId,
+                providerMessageId);
+            var message = await _context.Messages.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(existing => existing.Id == providerRecordId);
+            var createdMessage = message is null;
+            if (message is null)
+            {
+                message = new Message
+                {
+                    Id = providerRecordId,
+                    ConversationId = conversation.Id,
+                    ExternalMessageId = providerMessageId,
+                    Direction = "Outgoing",
+                    Content = messageContent,
+                    MessageType = "Text",
+                    Timestamp = sentAt
+                };
+                _context.Messages.Add(message);
+            }
 
             // Mark this specific follow-up as Completed
             followUp.Status = "Completed";
             _context.Entry(followUp).State = EntityState.Modified;
 
             // Also complete any other pending follow-ups for this customer
-            var otherPending = await _context.FollowUps
-                .IgnoreQueryFilters()
-                .Where(f => f.CustomerId == customer.Id && f.Status == "Pending" && f.Id != followUp.Id)
-                .ToListAsync();
-
-            foreach (var fu in otherPending)
+            if (followUp.Type != "DeferredReplyChunk")
             {
-                fu.Status = "Bypassed";
-                _context.Entry(fu).State = EntityState.Modified;
+                var otherPending = await _context.FollowUps
+                    .IgnoreQueryFilters()
+                    .Where(f => f.ProjectId == followUp.ProjectId
+                        && f.CustomerId == customer.Id
+                        && f.Status == "Pending"
+                        && f.Id != followUp.Id
+                        && (f.ConversationId == conversation.Id
+                            || (f.ConversationId == null && f.WhatsAppAccountId == whatsAppAccountId)))
+                    .ToListAsync();
+
+                foreach (var fu in otherPending)
+                {
+                    fu.Status = "Bypassed";
+                    _context.Entry(fu).State = EntityState.Modified;
+                }
             }
 
             // Schedule a new default follow-up 24 hours in the future only if AI auto-reply is enabled and customer is not blacklisted and whatsapp reminder automation is enabled
@@ -663,21 +885,27 @@ namespace Modules.CRM.API
                 catch {}
             }
 
-            bool shouldScheduleFollowUp = settings != null && settings.AiAutoReplyEnabled && !customer.IsBlacklisted && whatsappReminderEnabled;
+            bool shouldScheduleFollowUp = followUp.Type != "DeferredReplyChunk"
+                && settings != null
+                && settings.AiAutoReplyEnabled
+                && !customer.IsBlacklisted
+                && whatsappReminderEnabled;
 
             if (shouldScheduleFollowUp)
             {
-                var defaultFollowUp = new FollowUp
-                {
-                    Id = Guid.NewGuid(),
-                    ProjectId = followUp.ProjectId,
-                    CustomerId = customer.Id,
-                    Type = "Nurturing",
-                    DueDate = DateTime.UtcNow.AddHours(24),
-                    Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
-                    Status = "Pending"
-                };
-                _context.FollowUps.Add(defaultFollowUp);
+                await HttpContext.RequestServices
+                    .GetRequiredService<AutomationFollowUpService>()
+                    .UpsertPendingAutomationFollowUpAsync(
+                        new PendingAutomationFollowUpRequest(
+                            followUp.ProjectId,
+                            customer.Id,
+                            $"whatsapp-ai-nurture:{whatsAppAccountId:N}:{conversation.Id:N}",
+                            DateTime.UtcNow.AddHours(24),
+                            "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                            ConversationId: conversation.Id,
+                            WhatsAppAccountId: whatsAppAccountId,
+                            Channel: "WhatsApp"),
+                        HttpContext.RequestAborted);
             }
 
             await _context.SaveChangesAsync();
@@ -695,7 +923,17 @@ namespace Modules.CRM.API
                 mediaType = (string)null
             };
 
-            await _hubContext.Clients.Group($"project_{followUp.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
+            if (createdMessage)
+            {
+                try
+                {
+                    await _hubContext.Clients.Group($"project_{followUp.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
+                }
+                catch (Exception notificationError)
+                {
+                    Console.WriteLine($"[CRMController] Follow-up {followUp.Id} was persisted, but SignalR failed: {notificationError.Message}");
+                }
+            }
 
             return Ok(followUp);
         }
@@ -703,6 +941,7 @@ namespace Modules.CRM.API
         [HttpPost("projects/{projectId}/follow-ups/re-evaluate-all")]
         public async Task<IActionResult> ReEvaluateAllFollowUps(Guid projectId)
         {
+            if (!_authorization.CanManageProject(User, projectId)) return Forbid();
             _tenantContext.SetProjectId(projectId);
 
             var pendingFollowUps = await _context.FollowUps
@@ -714,14 +953,15 @@ namespace Modules.CRM.API
                 return Ok(new { message = "No pending follow-ups found for this project.", count = 0 });
             }
 
+            var gatewaySessionClient = HttpContext.RequestServices
+                .GetRequiredService<Modules.Advertising.Services.WhatsAppGatewaySessionClient>();
+            var whatsAppAccounts = HttpContext.RequestServices
+                .GetRequiredService<Modules.WhatsApp.Services.WhatsAppAccountService>();
+
             var projectSettings = await _context.ProjectSettings
                 .FirstOrDefaultAsync(s => s.ProjectId == projectId);
-            string apiKey = projectSettings?.GeminiApiKey;
-            if (string.IsNullOrEmpty(apiKey) || apiKey.StartsWith("mock_"))
-            {
-                apiKey = null;
-            }
-            string model = projectSettings?.GeminiModel;
+            string? apiKey = _secretVault.Unprotect(projectId, projectSettings?.GeminiApiKey);
+            string model = projectSettings?.ResolveGeminiModel(DateTime.UtcNow);
 
             var geminiClient = HttpContext.RequestServices.GetService(typeof(Modules.AI.Services.IGeminiClient)) as Modules.AI.Services.IGeminiClient;
             if (geminiClient == null)
@@ -739,6 +979,29 @@ namespace Modules.CRM.API
                         .FirstOrDefaultAsync(c => c.Id == followUp.CustomerId && c.ProjectId == projectId);
 
                     if (customer == null) continue;
+
+                    var conversation = followUp.ConversationId.HasValue
+                        ? await _context.Conversations.FirstOrDefaultAsync(c =>
+                            c.Id == followUp.ConversationId.Value
+                            && c.CustomerId == customer.Id
+                            && c.ProjectId == projectId
+                            && c.Status != "Closed")
+                        : await _context.Conversations.FirstOrDefaultAsync(c =>
+                            c.CustomerId == customer.Id
+                            && c.ProjectId == projectId
+                            && c.Status != "Closed"
+                            && (followUp.Channel != "WhatsApp"
+                                || c.WhatsAppAccountId == followUp.WhatsAppAccountId));
+
+                    if (followUp.Channel != "Messenger")
+                    {
+                        var accountId = followUp.WhatsAppAccountId
+                            ?? conversation?.WhatsAppAccountId
+                            ?? (await whatsAppAccounts.GetDefaultAsync(projectId)).Id;
+                        if (!(await gatewaySessionClient.GetAsync(projectId, accountId)).Connected)
+                            continue;
+                        followUp.WhatsAppAccountId = accountId;
+                    }
 
                     // Skip/cancel if already paid
                     var hasPaid = await _context.GroupAppointmentBookings
@@ -777,9 +1040,6 @@ namespace Modules.CRM.API
                     }
 
                     // Fetch chat history
-                    var conversation = await _context.Conversations
-                        .FirstOrDefaultAsync(c => c.CustomerId == customer.Id && c.Status != "Closed" && c.ProjectId == projectId);
-
                     string chatHistory = "No recent chat history found.";
                     if (conversation != null)
                     {
@@ -872,7 +1132,8 @@ JSON:";
         [HttpGet("projects/{projectId}/crm-proposals")]
         public async Task<IActionResult> GetProposals(Guid projectId, [FromQuery] string status = null)
         {
-            var query = _context.CRMUpdateProposals.AsQueryable();
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
+            var query = _context.CRMUpdateProposals.Where(proposal => proposal.ProjectId == projectId);
 
             if (!string.IsNullOrEmpty(status))
             {
@@ -886,7 +1147,15 @@ JSON:";
         [HttpGet("customers/{customerId}/memory")]
         public async Task<IActionResult> GetCustomerMemory(Guid customerId)
         {
+            var projectId = await _context.Customers
+                .IgnoreQueryFilters()
+                .Where(customer => customer.Id == customerId)
+                .Select(customer => (Guid?)customer.ProjectId)
+                .FirstOrDefaultAsync();
+            if (!projectId.HasValue) return NotFound("Customer not found");
+            if (!_authorization.CanRead(User, projectId.Value)) return Forbid();
             var memory = await _context.CustomerMemories
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(m => m.CustomerId == customerId);
             if (memory == null)
             {
@@ -905,14 +1174,17 @@ JSON:";
         [HttpPut("customers/{customerId}/memory")]
         public async Task<IActionResult> UpdateCustomerMemory(Guid customerId, [FromBody] UpdateCustomerMemoryRequest request)
         {
+            var customer = await _context.Customers
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(item => item.Id == customerId);
+            if (customer == null) return NotFound("Customer not found");
+            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
             var memory = await _context.CustomerMemories
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(m => m.CustomerId == customerId);
             
             if (memory == null)
             {
-                var customer = await _context.Customers.FindAsync(customerId);
-                if (customer == null) return NotFound("Customer not found");
-
                 memory = new Modules.Customers.Domain.CustomerMemory
                 {
                     CustomerId = customerId,
@@ -941,6 +1213,11 @@ JSON:";
         [HttpPost("projects/{projectId}/customers/{customerId}/memory/generate")]
         public async Task<IActionResult> GenerateCustomerProfile(Guid projectId, Guid customerId)
         {
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
+            var customerExists = await _context.Customers
+                .IgnoreQueryFilters()
+                .AnyAsync(customer => customer.Id == customerId && customer.ProjectId == projectId);
+            if (!customerExists) return NotFound("Customer not found");
             try
             {
                 var memory = await _customerMemoryService.GenerateCompleteProfileAsync(projectId, customerId);
@@ -955,7 +1232,15 @@ JSON:";
         [HttpGet("customers/{customerId}/tasks")]
         public async Task<IActionResult> GetCustomerTasks(Guid customerId)
         {
+            var projectId = await _context.Customers
+                .IgnoreQueryFilters()
+                .Where(customer => customer.Id == customerId)
+                .Select(customer => (Guid?)customer.ProjectId)
+                .FirstOrDefaultAsync();
+            if (!projectId.HasValue) return NotFound("Customer not found");
+            if (!_authorization.CanRead(User, projectId.Value)) return Forbid();
             var tasks = await _context.CustomerTasks
+                .IgnoreQueryFilters()
                 .Where(t => t.CustomerId == customerId)
                 .OrderBy(t => t.IsCompleted)
                 .ThenBy(t => t.CreatedAt)
@@ -969,6 +1254,7 @@ JSON:";
             if (string.IsNullOrWhiteSpace(request.Title)) return BadRequest("Title is required");
             var customer = await _context.Customers.FindAsync(customerId);
             if (customer == null) return NotFound("Customer not found");
+            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
 
             var task = new Modules.CRM.Domain.CustomerTask
             {
@@ -990,6 +1276,7 @@ JSON:";
         {
             var task = await _context.CustomerTasks.FindAsync(taskId);
             if (task == null) return NotFound("Task not found");
+            if (!_authorization.CanRead(User, task.ProjectId)) return Forbid();
 
             if (request.Title != null)
             {
@@ -1014,6 +1301,7 @@ JSON:";
         {
             var task = await _context.CustomerTasks.FindAsync(taskId);
             if (task == null) return NotFound("Task not found");
+            if (!_authorization.CanRead(User, task.ProjectId)) return Forbid();
 
             _context.CustomerTasks.Remove(task);
             await _context.SaveChangesAsync();
@@ -1023,6 +1311,7 @@ JSON:";
         [HttpPost("projects/{projectId}/import-blacklist")]
         public async Task<IActionResult> ImportBlacklist(Guid projectId, [FromBody] List<string> phones)
         {
+            if (!_authorization.CanManageProject(User, projectId)) return Forbid();
             const string paidBlacklistGroupName = "المحظورين للدفع";
 
             if (phones == null || phones.Count == 0)
@@ -1124,6 +1413,52 @@ JSON:";
                 .ToArray();
         }
 
+        private static void DeferFollowUpToNextDailySlot(FollowUp followUp, string? timezoneId)
+        {
+            var nowUtc = DateTime.UtcNow;
+            var timezone = Shared.Infrastructure.TimezoneHelper.GetTimeZone(
+                string.IsNullOrWhiteSpace(timezoneId) ? "Africa/Cairo" : timezoneId);
+            var nextDueDate = Modules.WhatsApp.Services.WhatsAppDailyDeliverySchedule
+                .NextOccurrenceAfter(followUp.DueDate, nowUtc, timezone);
+            if (followUp.Type == "AppointmentReminder"
+                && followUp.AppointmentTime.HasValue
+                && nextDueDate >= followUp.AppointmentTime.Value)
+            {
+                followUp.Status = "Cancelled";
+            }
+            else
+            {
+                followUp.DueDate = nextDueDate;
+                followUp.Status = "Pending";
+            }
+            followUp.UpdatedAt = nowUtc;
+        }
+
+        private static void MarkConversationDeliveryUnknown(
+            Conversation? conversation,
+            string deliveryKey)
+        {
+            if (conversation is null) return;
+            conversation.WhatsAppDeliveryUnknownAt = DateTime.UtcNow;
+            conversation.WhatsAppDeliveryUnknownKey = deliveryKey;
+        }
+
+        private static string? ProviderMessageId(string responseBody)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(responseBody);
+                return document.RootElement.TryGetProperty("messageId", out var messageId)
+                    && messageId.ValueKind == JsonValueKind.String
+                    ? messageId.GetString()
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
         private static string AppendImportNote(string? notes)
         {
             const string importNote = "تمت إضافته كطالب مدفوع ومحظور تلقائياً عبر رفع ملف إكسل.";
@@ -1198,7 +1533,6 @@ JSON:";
         public string? Notes { get; set; }
         public string? Label { get; set; }
         public bool? IsBlacklisted { get; set; }
-
         private decimal? _budget;
         public bool IsBudgetSet { get; private set; }
 
@@ -1215,6 +1549,10 @@ JSON:";
         public string? PipelineStage { get; set; }
         public int? PurchaseProbability { get; set; }
         public string? AIInsights { get; set; }
+        public string? SalesClassification { get; set; }
+        public decimal? ClassificationConfidence { get; set; }
+        public string? AdvertisingConsentState { get; set; }
+        public string? AdvertisingLegalBasis { get; set; }
         public string? AutomationRules { get; set; }
     }
 
@@ -1225,6 +1563,7 @@ JSON:";
         public string? Type { get; set; }
         public DateTime? AppointmentTime { get; set; }
         public string? Tone { get; set; }
+        public Guid? WhatsAppAccountId { get; set; }
     }
 
     public class UpdateFollowUpRequest

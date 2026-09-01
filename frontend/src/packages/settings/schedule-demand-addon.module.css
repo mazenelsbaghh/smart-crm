@@ -1,0 +1,26 @@
+.card { padding: var(--space-xl); border-radius: var(--radius-md); display: flex; flex-direction: column; min-height: 220px; gap: var(--space-md); }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-sm); }
+.icon { width: 40px; height: 40px; border-radius: 8px; background: rgba(245, 158, 11, .1); color: rgb(245, 158, 11); display: grid; place-items: center; }
+.aiBadge { font-size: .7rem; font-weight: 800; color: rgb(16, 185, 129); background: rgba(16, 185, 129, .1); padding: 4px 8px; border-radius: 6px; }
+.title { font-size: 1.05rem; font-weight: 700; margin: 0 0 8px; color: var(--text-strong); }
+.description, .empty { margin: 0; font-size: .825rem; color: hsl(var(--text-secondary)); line-height: 1.5; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.metrics div { padding: 9px 0; border-top: 1px solid var(--border-subtle); }
+.metrics strong, .metrics span { display: block; }
+.metrics strong { color: var(--text-strong); font-size: 1.05rem; font-weight: 800; }
+.metrics span { color: hsl(var(--text-secondary)); font-size: .66rem; margin-top: 3px; }
+.empty { padding: 8px 0; }
+.sheet { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.groups { display: flex; gap: 6px; flex-wrap: wrap; }
+.groups span { font-size: .7rem; color: var(--text-strong); background: var(--surface-muted); border: 1px solid var(--border-subtle); padding: 4px 7px; border-radius: 6px; }
+.rows { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border-subtle); }
+.row > div { min-width: 0; }
+.row strong, .row b, .row p, .row small span, .row time { display: block; }
+.row strong { color: var(--text-strong); font-size: .8rem; font-weight: 800; }
+.row b { color: rgb(245, 158, 11); font-size: .74rem; margin-top: 3px; }
+.row p { color: hsl(var(--text-secondary)); font-size: .72rem; line-height: 1.5; margin: 3px 0 0; }
+.row small { color: hsl(var(--text-secondary)); font-size: .68rem; text-align: end; white-space: nowrap; }
+.row time { margin-top: 4px; }
+.actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: auto; }
+@media (max-width: 520px) { .row { grid-template-columns: 1fr; } .row small { display: flex; justify-content: space-between; gap: 8px; } }

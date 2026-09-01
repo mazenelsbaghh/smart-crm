@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using Modules.AI.Services;
+using Shared.Security;
 
 namespace Modules.Brain.API
 {
@@ -17,12 +18,18 @@ namespace Modules.Brain.API
         private readonly IKnowledgeBaseService _kbService;
         private readonly AppDbContext _context;
         private readonly IGeminiClient _geminiClient;
+        private readonly IProjectSecretVault _secretVault;
 
-        public KnowledgeBaseController(IKnowledgeBaseService kbService, AppDbContext context, IGeminiClient geminiClient)
+        public KnowledgeBaseController(
+            IKnowledgeBaseService kbService,
+            AppDbContext context,
+            IGeminiClient geminiClient,
+            IProjectSecretVault secretVault)
         {
             _kbService = kbService;
             _context = context;
             _geminiClient = geminiClient;
+            _secretVault = secretVault;
         }
 
         [HttpGet("projects/{projectId}/knowledge")]
@@ -173,8 +180,8 @@ namespace Modules.Brain.API
             try
             {
                 var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
-                var apiKey = !string.IsNullOrEmpty(settings?.GeminiApiKey) ? settings.GeminiApiKey : null;
-                var model = !string.IsNullOrEmpty(settings?.GeminiModel) ? settings.GeminiModel : null;
+                var apiKey = _secretVault.Unprotect(projectId, settings?.GeminiApiKey);
+                var model = settings?.ResolveGeminiModel(DateTime.UtcNow);
 
                 var aiResponse = await _geminiClient.GenerateReplyAsync(prompt, apiKey, model);
                 var cleanedJson = CleanJson(aiResponse);
@@ -229,8 +236,8 @@ namespace Modules.Brain.API
             try
             {
                 var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
-                var apiKey = !string.IsNullOrEmpty(settings?.GeminiApiKey) ? settings.GeminiApiKey : null;
-                var model = !string.IsNullOrEmpty(settings?.GeminiModel) ? settings.GeminiModel : null;
+                var apiKey = _secretVault.Unprotect(projectId, settings?.GeminiApiKey);
+                var model = settings?.ResolveGeminiModel(DateTime.UtcNow);
 
                 var aiResponse = await _geminiClient.GenerateReplyAsync(prompt, apiKey, model);
                 var cleanedJson = CleanJson(aiResponse);

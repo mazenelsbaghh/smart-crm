@@ -22,28 +22,62 @@ class GroupAppointment {
   });
 
   factory GroupAppointment.fromJson(Map<String, dynamic> json) {
-    var bookingsList = json['bookings'] as List? ?? [];
+    final bookingsList = json['bookings'] as List? ?? [];
+    final rawCapacity = json['capacity'];
     return GroupAppointment(
       id: json['id'] ?? '',
       projectId: json['projectId'] ?? '',
       name: json['name'] ?? '',
-      dateTime: DateTime.tryParse(json['dateTime'] ?? '') ?? DateTime.now(),
-      capacity: json['capacity'] ?? 0,
+      dateTime:
+          DateTime.tryParse(json['dateTime']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      capacity: rawCapacity is num
+          ? rawCapacity.round()
+          : int.tryParse(rawCapacity?.toString() ?? '') ?? 0,
       isActive: json['isActive'] ?? true,
       days: json['days'] ?? '',
       mode: json['mode'] ?? 'offline',
-      bookings: bookingsList.map((item) => GroupAppointmentBooking.fromJson(item)).toList(),
+      bookings: bookingsList
+          .whereType<Map>()
+          .map(
+            (item) => GroupAppointmentBooking.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  GroupAppointment copyWith({
+    String? name,
+    DateTime? dateTime,
+    int? capacity,
+    bool? isActive,
+    String? days,
+    String? mode,
+    List<GroupAppointmentBooking>? bookings,
+  }) {
+    return GroupAppointment(
+      id: id,
+      projectId: projectId,
+      name: name ?? this.name,
+      dateTime: dateTime ?? this.dateTime,
+      capacity: capacity ?? this.capacity,
+      isActive: isActive ?? this.isActive,
+      days: days ?? this.days,
+      mode: mode ?? this.mode,
+      bookings: bookings ?? this.bookings,
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'dateTime': dateTime.toIso8601String(),
-        'capacity': capacity,
-        'isActive': isActive,
-        'days': days,
-        'mode': mode,
-      };
+    'name': name,
+    'dateTime': dateTime.toIso8601String(),
+    'capacity': capacity,
+    'isActive': isActive,
+    'days': days,
+    'mode': mode,
+  };
 }
 
 class GroupAppointmentBooking {
@@ -75,9 +109,9 @@ class GroupAppointmentBooking {
   }
 
   Map<String, dynamic> toJson() => {
-        'groupAppointmentId': groupAppointmentId,
-        'customerId': customerId,
-        'customerName': customerName,
-        'customerPhone': customerPhone,
-      };
+    'groupAppointmentId': groupAppointmentId,
+    'customerId': customerId,
+    'customerName': customerName,
+    'customerPhone': customerPhone,
+  };
 }

@@ -18,12 +18,48 @@ using System.Threading.Tasks;
 using Modules.Conversations.Domain;
 using Modules.Conversations.Services;
 using Modules.GroupAppointments.Domain;
+using Modules.GroupAppointments.Services;
 using Modules.CRM.Domain;
+using Modules.CRM.Services;
+using Modules.Projects.Domain;
+using Modules.Advertising.Services;
+using Modules.WhatsApp.Services;
 
 namespace Modules.AI.Workers
 {
     public class AIReplyWorker : IIntegrationEventHandler<MessageAggregatedEvent>
     {
+        internal enum WhatsAppTransitionDeliveryOutcome
+        {
+            Sent,
+            DefinitelyNotSent,
+            DeliveryUnknown
+        }
+
+        internal sealed record WhatsAppTransitionMessage(
+            Guid ProjectId,
+            Guid WhatsAppAccountId,
+            string ToPhone,
+            string Message,
+            string IdempotencyKey)
+        {
+            public string? ProviderMessageId { get; set; }
+        }
+
+        internal sealed record WhatsAppReactionPersistence(
+            Conversation Conversation,
+            Guid WhatsAppAccountId,
+            string ProviderMessageId,
+            string Reaction);
+
+        internal sealed record MessengerWhatsAppTransition(
+            Customer Customer,
+            string ExtractedPhone,
+            ProjectSettings Settings,
+            string PageId,
+            string SenderPsid,
+            string DeliveryIdempotencyKey);
+
         private readonly IServiceProvider _serviceProvider;
         private readonly IAIMarketingBrain _aiMarketingBrain;
         private readonly IEventBus _eventBus;
@@ -43,14 +79,17 @@ namespace Modules.AI.Workers
 
         private async Task ApplyKnowledgePricingGuardAsync(AppDbContext dbContext, Guid projectId, string customerMessage, MarketingAnalysisResult analysisResult)
         {
-            if (!PricingGuard.IsPricingQuestion(customerMessage))
+            if (analysisResult.IsFallbackResponse || !PricingGuard.IsPricingQuestion(customerMessage))
             {
                 return;
             }
 
             var knowledgeText = await dbContext.KnowledgeDocuments
                 .IgnoreQueryFilters()
-                .Where(d => d.ProjectId == projectId)
+                .Where(d => d.ProjectId == projectId &&
+                            (d.Status == "Published" || d.Status == "Approved"))
+                .OrderByDescending(d => d.UpdatedAt)
+                .ThenBy(d => d.Id)
                 .Select(d => d.Content)
                 .ToListAsync();
 
@@ -74,14 +113,69 @@ namespace Modules.AI.Workers
             Console.WriteLine($"[AIReplyWorker] Received aggregated message for Project: {@event.ProjectId}, Sender: {@event.Sender}");
 
             using var scope = _serviceProvider.CreateScope();
+            var channel = @event.Channel ?? "WhatsApp";
+            WhatsAppGatewaySessionStatus? whatsAppSession = null;
+            if (string.Equals(channel, "WhatsApp", StringComparison.OrdinalIgnoreCase))
+            {
+                // Events produced before multi-account rollout belong to the stable
+                // legacy/default account whose id equals the project id.
+                @event.WhatsAppAccountId ??= @event.ProjectId;
+                var liveSession = await GetWhatsAppSessionAsync(
+                    scope.ServiceProvider,
+                    @event.ProjectId,
+                    @event.WhatsAppAccountId);
+                if (!liveSession.Connected || !liveSession.ConnectedAt.HasValue)
+                {
+                    _logger.LogInformation(
+                        "Skipping WhatsApp AI reply for project {ProjectId} because the gateway session is not connected or has no connection epoch (status: {Status}).",
+                        @event.ProjectId,
+                        liveSession.Status);
+                    return;
+                }
+
+                if (@event.RequiredWhatsAppConnectedAt.HasValue
+                    && !WhatsAppConnectionEpoch.Matches(
+                        @event.RequiredWhatsAppConnectedAt.Value,
+                        liveSession.ConnectedAt.Value))
+                {
+                    _logger.LogInformation(
+                        "Skipping WhatsApp AI reply for project {ProjectId} because its required connection is no longer active.",
+                        @event.ProjectId);
+                    return;
+                }
+
+                if (!@event.RequiredWhatsAppConnectedAt.HasValue
+                    && !@event.SourceMessageTimestampUtc.HasValue)
+                {
+                    _logger.LogInformation(
+                        "Skipping WhatsApp AI reply for project {ProjectId} because the event has no connection freshness proof.",
+                        @event.ProjectId);
+                    return;
+                }
+
+                if (!@event.RequiredWhatsAppConnectedAt.HasValue
+                    && @event.SourceMessageTimestampUtc.HasValue
+                    && !WhatsAppConnectionEpoch.Includes(
+                            @event.SourceMessageTimestampUtc.Value,
+                            liveSession.ConnectedAt.Value))
+                {
+                    _logger.LogInformation(
+                        "Skipping stale WhatsApp AI recovery for project {ProjectId} because the source message predates the current connection.",
+                        @event.ProjectId);
+                    return;
+                }
+
+                whatsAppSession = liveSession;
+            }
+
             var tenantContext = scope.ServiceProvider.GetRequiredService<ITenantContext>();
             tenantContext.SetProjectId(@event.ProjectId);
 
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
             var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
-            var channel = @event.Channel ?? "WhatsApp";
             var aiBehaviorSettingsService = scope.ServiceProvider.GetRequiredService<Modules.AI.Services.IAIBehaviorSettingsService>();
+            var projectSecretVault = scope.ServiceProvider.GetRequiredService<IProjectSecretVault>();
 
             try
             {
@@ -138,7 +232,7 @@ namespace Modules.AI.Workers
                 Console.WriteLine($"[AIReplyWorker] AI Auto-Reply is disabled for channel {channel} in project {@event.ProjectId}. Skipping.");
                 if (customer != null)
                 {
-                    await CompletePendingFollowUpsAsync(dbContext, customer.Id);
+                    await CompletePendingFollowUpsForSourceAsync(dbContext, @event, customer.Id);
                 }
                 return;
             }
@@ -168,6 +262,24 @@ namespace Modules.AI.Workers
                 }
             }
 
+            var shouldOfferTrialAfterBooking = false;
+            if (channel == "WhatsApp" && settings.IsTalkTipsTrialGateEnabled && customer != null)
+            {
+                var trialStatusClient = scope.ServiceProvider.GetRequiredService<Modules.TalkTips.Services.TalkTipsTrialStatusClient>();
+                var hasTried = await trialStatusClient.HasTriedAsync(customer.PhoneNumber);
+                if (!hasTried)
+                {
+                    shouldOfferTrialAfterBooking = true;
+                    systemPromptForReply = string.Join(
+                        "\n\n",
+                        new[]
+                        {
+                            systemPromptForReply,
+                            Modules.TalkTips.Services.TalkTipsTrialCtaInstructions.ForCustomerWhoHasNotTried()
+                        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                }
+            }
+
             // Intercept Messenger message for phone number transition
             if (channel == "Messenger" && customer != null)
             {
@@ -194,34 +306,48 @@ namespace Modules.AI.Workers
                     if (string.IsNullOrEmpty(pageId)) pageId = @event.Sender;
                     if (string.IsNullOrEmpty(senderPSID)) senderPSID = @event.Sender;
 
-                    var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
-
                     await HandleMessengerToWhatsAppTransitionAsync(
                         dbContext,
-                        configuration,
-                        hubContext,
                         scope.ServiceProvider,
-                        customer,
-                        extractedPhone,
-                        settings,
-                        pageId,
-                        senderPSID);
+                        new MessengerWhatsAppTransition(
+                            customer,
+                            extractedPhone,
+                            settings,
+                            pageId,
+                            senderPSID,
+                            $"messenger-transition:{@event.Id:N}"));
 
                     return;
                 }
             }
 
-            // Decide which API key to use. Per-project key, or fall back to system default.
-            string apiKeyOverride = !string.IsNullOrEmpty(settings.GeminiApiKey) ? settings.GeminiApiKey : null;
+            var customerReplyProvider = settings.CustomerReplyProvider switch
+            {
+                CustomerReplyProviders.OpenAI => CustomerReplyProviders.OpenAI,
+                CustomerReplyProviders.Xai => CustomerReplyProviders.Xai,
+                _ => CustomerReplyProviders.Gemini
+            };
+            var customerReplyModel = customerReplyProvider == CustomerReplyProviders.Gemini
+                ? settings.ResolveGeminiModel(DateTime.UtcNow)
+                : settings.CustomerReplyModel;
+            var protectedCustomerReplyKey = customerReplyProvider switch
+            {
+                CustomerReplyProviders.OpenAI => settings.CustomerReplyOpenAiApiKey,
+                CustomerReplyProviders.Xai => settings.CustomerReplyXaiApiKey,
+                _ => settings.GeminiApiKey
+            };
+            string? apiKeyOverride = projectSecretVault.Unprotect(
+                @event.ProjectId,
+                protectedCustomerReplyKey);
 
             string brainContext = null;
             string cachedContentId = null;
             string tonePref = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.CustomTone)
                 ? aiBehaviorSettings.Tone.CustomTone
-                : (!string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية الروشة والصايعة");
+                : (!string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية المهذبة والمحترمة");
             string targetAud = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.TargetAudience)
                 ? aiBehaviorSettings.Tone.TargetAudience
-                : (!string.IsNullOrEmpty(settings.AiTargetAudience) ? settings.AiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل");
+                : (!string.IsNullOrEmpty(settings.AiTargetAudience) ? settings.AiTargetAudience : "الجمهور الذي يحدده المشروع");
 
             try
             {
@@ -242,7 +368,7 @@ namespace Modules.AI.Workers
                 int staticTokensCount = Math.Max(1, staticPrompt.Length / 4);
                 Console.WriteLine($"[AIReplyWorker] Project {@event.ProjectId} estimated static prompt token count: {staticTokensCount}");
 
-                if (staticTokensCount >= 32768)
+                if (customerReplyProvider == CustomerReplyProviders.Gemini && staticTokensCount >= 32768)
                 {
                     // Compute MD5 hash of staticPrompt
                     string contentHash;
@@ -255,14 +381,14 @@ namespace Modules.AI.Workers
                     try
                     {
                         var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
-                        string redisKey = $"gemini:cache:{@event.ProjectId}:{settings.GeminiModel}:{contentHash}";
+                        string redisKey = $"gemini:cache:{@event.ProjectId}:{customerReplyModel}:{contentHash}";
                         cachedContentId = await redis.StringGetAsync(redisKey);
 
                         if (string.IsNullOrEmpty(cachedContentId))
                         {
                             Console.WriteLine($"[AIReplyWorker] Context cache not found/expired in Redis. Creating new cache on Gemini API...");
                             // Create cache with 3600 seconds (1 hour) TTL
-                            cachedContentId = await geminiClient.CreateContextCacheAsync(staticPrompt, settings.GeminiModel, 3600, apiKeyOverride);
+                            cachedContentId = await geminiClient.CreateContextCacheAsync(staticPrompt, customerReplyModel, 3600, apiKeyOverride);
                             
                             // Store in Redis for 55 minutes
                             await redis.StringSetAsync(redisKey, cachedContentId, TimeSpan.FromMinutes(55));
@@ -547,8 +673,8 @@ namespace Modules.AI.Workers
                             : string.Empty;
 
                     var groupsContextText = "معلومات مواعيد المجموعات المتاحة للحجز (Group Appointments):\n" +
-                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه المجموعات المتاحة المناسبة له مع توضيح نوع كل مجموعة (سواء كانت أونلاين أو في السنتر)، وأيام الكورس، وميعاد السيشن المجانية، وميعادي سيشني الكورس الأسبوعيين، واسم الإنستراكتور المسؤول. السيشن المجانية سيشن واحدة مع دكتور مصطفى، والكورس عبارة عن سيشنين في الأسبوع مع إنستراكتور المجموعة. لا تذكر تفاصيل السيشن المجانية وسيشني الكورس في كل رد عادي؛ اذكرها فقط عند الحديث عن المواعيد أو الحجز أو قبل تأكيد الحجز أو إذا سأل العميل عنها. قبل تأكيد الحجز ذكّر العميل يتأكد أن ميعاد السيشن المجانية مناسب له وأن ميعادي الكورس الأسبوعيين مناسبين له. لا تذكر أبداً عدد الأماكن المتبقية أو السعة أو أي أرقام. إذا أراد الحجز في مجموعة محددة،ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً. لا ترسل أي رابط حجز للعميل. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
-                                            "تنبيه هام جداً وصارم بشأن توافر المجموعات وسعتها: إذا كانت المجموعة مدرجة في 'قائمة المجموعات المتاحة حالياً' بالأسفل، فهذا يعني بشكل قاطع وبقوة النظام أنها متاحة وبها أماكن شاغرة ومفتوحة للحجز الفعلي والمباشر. تجاهل تماماً أي معلومات قديمة أو متعارضة في القاعدة المعرفية أو الملفات المرفقة (مثل التي تدعي أن مجموعات السنتر/سيدي جابر مكتملة تماماً، أو تدعي أن المجموعات الأونلاين مكتملة، أو تطلب تسجيل العملاء في 'قائمة الانتظار'، أو تحدد سعة معينة للمجموعات الأونلاين أو الأوفلاين مثل 12 إلى 20 أو 21). اعتمد فقط وحصرياً على أرقام المشتركين والسعة الموضحة في القائمة بالأسفل (مثلاً إذا كان عدد المشتركين الحالي 41 من أصل 60، فهذا يعني أن هناك 19 مكاناً شاغراً، وبالتالي المجموعة ليست كاملة بل مفتوحة للحجز الفوري). يُمنع منعاً باتاً ذكر 'قائمة الانتظار' للعميل أو الادعاء بأن المجموعات مكتملة طالما أن المجموعة تظهر في القائمة بالأسفل؛ بل احجز للعميل فيها مباشرة وبشكل طبيعي إذا رغب في ذلك، مع الالتزام التام بعدم ذكر العدد أو السعة أو أي أرقام أو إحصائيات للحجز للعميل إطلاقاً (مثل لا تقل له 'متبقي 19 مكان' أو 'العدد الحالي 41/60'، بل قل له فقط 'سجلتك في المجموعة' أو 'المجموعة متاحة للحجز').\n" +
+                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه المجموعات المتاحة المناسبة له مع توضيح نوع كل مجموعة (سواء كانت أونلاين أو في السنتر)، وأيام الكورس، وميعاد السيشن المجانية، وميعادي سيشني الكورس الأسبوعيين، واسم الإنستراكتور المسؤول. السيشن المجانية سيشن واحدة مع دكتور مصطفى، والكورس عبارة عن سيشنين في الأسبوع مع إنستراكتور المجموعة. لا تذكر تفاصيل السيشن المجانية وسيشني الكورس في كل رد عادي؛ اذكرها فقط عند الحديث عن المواعيد أو الحجز أو قبل تأكيد الحجز أو إذا سأل العميل عنها. قبل تأكيد الحجز ذكّر العميل يتأكد أن ميعاد السيشن المجانية مناسب له وأن ميعادي الكورس الأسبوعيين مناسبين له. لا تذكر عدد الأماكن المتبقية قبل إتمام الحجز. إذا أراد الحجز في مجموعة محددة، ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً، وبعد نجاح التسجيل سيضيف النظام عدد الأماكن المحدود ودعوة حجز صديق أو قريب ورابط تجربة الموقع إلى الرد. لا تكتب أنت أي رابط تجربة أو عدد أماكن أو دعوة مرافق من عندك. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
+                                            "تنبيه هام جداً وصارم بشأن توافر المجموعات وسعتها: إذا كانت المجموعة مدرجة في 'قائمة المجموعات المتاحة حالياً' بالأسفل، فهذا يعني بشكل قاطع وبقوة النظام أنها متاحة وبها أماكن شاغرة ومفتوحة للحجز الفعلي والمباشر. تجاهل تماماً أي معلومات قديمة أو متعارضة في القاعدة المعرفية أو الملفات المرفقة (مثل التي تدعي أن مجموعات السنتر/سيدي جابر مكتملة تماماً، أو تدعي أن المجموعات الأونلاين مكتملة، أو تطلب تسجيل العملاء في 'قائمة الانتظار'، أو تحدد سعة معينة للمجموعات الأونلاين أو الأوفلاين مثل 12 إلى 20 أو 21). اعتمد فقط وحصرياً على أرقام المشتركين والسعة الموضحة في القائمة بالأسفل لتحديد إمكانية الحجز. يُمنع منعاً باتاً ذكر 'قائمة الانتظار' للعميل أو الادعاء بأن المجموعات مكتملة طالما أن المجموعة تظهر في القائمة بالأسفل؛ بل احجز للعميل فيها مباشرة وبشكل طبيعي إذا رغب في ذلك. النظام وحده يضيف رسالة الأماكن المحدودة بعد نجاح الحجز.\n" +
                                             bookingPhoneInstruction +
                                             cityInstruction + "\n" +
                                             alreadyBookedNote + "\n\n" +
@@ -577,33 +703,26 @@ namespace Modules.AI.Workers
                 }
             }
 
-            // 1. WhatsApp session number fetching and direct redirect instructions
+            // WhatsApp session number and direct redirect instructions
             string whatsappLinkContext = "";
-            try
+            if (whatsAppSession is null)
             {
-                gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
-                using var httpClientObj = new System.Net.Http.HttpClient();
-                var gatewayResponse = await httpClientObj.GetAsync($"{gatewayUrl}/api/whatsapp/session/status?projectId={@event.ProjectId}");
-                if (gatewayResponse.IsSuccessStatusCode)
-                {
-                    var responseBody = await gatewayResponse.Content.ReadAsStringAsync();
-                    using var doc = System.Text.Json.JsonDocument.Parse(responseBody);
-                    if (doc.RootElement.TryGetProperty("phoneNumber", out var phoneProp) && !string.IsNullOrEmpty(phoneProp.GetString()))
-                    {
-                        var phoneNum = phoneProp.GetString();
-                        whatsappLinkContext = $"\n[معلومات رقم التواصل وواتساب المشروع]:\n" +
-                                              $"- رقم الواتساب الخاص بالصفحة/المشروع هو: {phoneNum}\n" +
-                                              $"- رابط الواتساب المباشر للتواصل هو: https://wa.me/{phoneNum}\n" +
-                                              $"توجيه صارم للـ AI: إذا طلب العميل رقم الهاتف للتواصل، أو سألك عن كيفية التواصل عبر الواتساب أو طلب رقم الواتساب، فيُمنع تماماً تخمين أو كتابة أي رقم آخر. يجب عليك قاطعاً إرسال هذا الرقم المذكور أعلاه ({phoneNum}) وإرسال رابط الواتساب المباشر المذكور (https://wa.me/{phoneNum}) لكي ينقر عليه ويتواصل معنا مباشرة.\n";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[AIReplyWorker] Failed to fetch WhatsApp status for project: {ex.Message}");
+                whatsAppSession = await GetWhatsAppSessionAsync(
+                    scope.ServiceProvider,
+                    @event.ProjectId,
+                    @event.WhatsAppAccountId);
             }
 
-            // 2. Channel awareness context
+            if (!string.IsNullOrWhiteSpace(whatsAppSession?.PhoneNumber))
+            {
+                var phoneNumber = whatsAppSession.PhoneNumber;
+                whatsappLinkContext = $"\n[معلومات رقم التواصل وواتساب المشروع]:\n" +
+                                      $"- رقم الواتساب الخاص بالصفحة/المشروع هو: {phoneNumber}\n" +
+                                      $"- رابط الواتساب المباشر للتواصل هو: https://wa.me/{phoneNumber}\n" +
+                                      $"توجيه صارم للـ AI: إذا طلب العميل رقم الهاتف للتواصل، أو سألك عن كيفية التواصل عبر الواتساب أو طلب رقم الواتساب، فيُمنع تماماً تخمين أو كتابة أي رقم آخر. يجب عليك قاطعاً إرسال هذا الرقم المذكور أعلاه ({phoneNumber}) وإرسال رابط الواتساب المباشر المذكور (https://wa.me/{phoneNumber}) لكي ينقر عليه ويتواصل معنا مباشرة.\n";
+            }
+
+            // Channel awareness context
             string channelAwarenessContext = $"\n[قناة التواصل الحالية]: {(channel == "WhatsApp" ? "واتساب (WhatsApp)" : channel == "Messenger" ? "فيسبوك ماسنجر (Facebook Messenger)" : "تعليقات فيسبوك (Facebook Comment)")}\n" +
                                              $"توجيه هام وصارم للـ AI: أنت تقوم حالياً بالرد على العميل عبر قناة [{channel}]. يرجى صياغة وتنسيق ردك بما يتناسب مع هذه القناة تحديداً (على سبيل المثال: إذا كانت القناة تعليقاً على منشور، يرجى كتابة رد عام وموجز جداً يناسب التعليقات العامة، أما إذا كانت ماسنجر أو واتساب فيمكنك الرد بتفاصيل أوفى والترحيب بالعميل).\n";
 
@@ -636,8 +755,17 @@ namespace Modules.AI.Workers
             {
                 try
                 {
-                    conversation = await dbContext.Conversations
-                        .FirstOrDefaultAsync(c => c.CustomerId == customerId && c.Channel == channel && c.Status != "Closed");
+                    conversation = @event.ConversationId.HasValue
+                        ? await dbContext.Conversations.FirstOrDefaultAsync(c =>
+                            c.Id == @event.ConversationId.Value
+                            && c.CustomerId == customerId
+                            && c.Channel == channel
+                            && c.Status != "Closed")
+                        : await dbContext.Conversations.FirstOrDefaultAsync(c =>
+                            c.CustomerId == customerId
+                            && c.Channel == channel
+                            && (channel != "WhatsApp" || c.WhatsAppAccountId == @event.WhatsAppAccountId)
+                            && c.Status != "Closed");
 
                     if (conversation != null)
                     {
@@ -754,7 +882,8 @@ namespace Modules.AI.Workers
                 }
             }
 
-            Console.WriteLine($"[AIReplyWorker] Generating AI response using AIMarketingBrain...");
+            Console.WriteLine(
+                $"[AIReplyWorker] Generating customer reply with {customerReplyProvider}/{customerReplyModel}...");
             var analysisResult = await _aiMarketingBrain.AnalyzeAndGenerateReplyAsync(
                 @event.Content, 
                 apiKeyOverride, 
@@ -767,8 +896,7 @@ namespace Modules.AI.Workers
                 mimeType,
                 tonePref,
                 targetAud,
-                settings.GeminiModel,
-                cachedContentId,
+                new CustomerReplyRuntime(customerReplyProvider, customerReplyModel, cachedContentId),
                 systemPromptForReply,
                 aiBehaviorSettings,
                 channel);
@@ -777,6 +905,11 @@ namespace Modules.AI.Workers
             EnforceRequesterBookingPhoneRequirement(channel, customer, analysisResult);
             ApplyFollowUpPolicy(aiBehaviorSettings, analysisResult);
             await ApplyKnowledgePricingGuardAsync(dbContext, @event.ProjectId, @event.Content, analysisResult);
+            SchedulePreferenceReplyPolicy.Apply(
+                @event.Content,
+                analysisResult,
+                channel,
+                aiBehaviorSettingsService.GetAgentName(aiBehaviorSettings));
             if (!aiBehaviorSettingsService.IsReactionAllowed(aiBehaviorSettings, analysisResult.SuggestedReaction))
             {
                 analysisResult.SuggestedReaction = null;
@@ -790,6 +923,55 @@ namespace Modules.AI.Workers
                 Console.WriteLine($"[AIReplyWorker] Saved voice note transcription: {latestMediaMsg.Transcription}");
             }
 
+            // Publishing second prevents a failed database booking from leaking a false confirmation or trial link.
+            AiGroupBookingResult? autoBookingResult = null;
+            if (!string.IsNullOrEmpty(analysisResult.SuggestedGroupBookingId))
+            {
+                try
+                {
+                    if (Guid.TryParse(analysisResult.SuggestedGroupBookingId, out var groupId))
+                    {
+                        using var bookingScope = _serviceProvider.CreateScope();
+                        var bookingTenantContext = bookingScope.ServiceProvider.GetRequiredService<ITenantContext>();
+                        bookingTenantContext.SetProjectId(@event.ProjectId);
+                        var bookingOrchestrator = bookingScope.ServiceProvider.GetRequiredService<AiGroupBookingOrchestrator>();
+                        autoBookingResult = await bookingOrchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
+                        {
+                            ProjectId = @event.ProjectId,
+                            GroupId = groupId,
+                            RequesterCustomerId = customer?.Id,
+                            SuggestedPeople = analysisResult.SuggestedGroupBookingPeople,
+                            Timezone = settings?.Timezone
+                        });
+                        if (autoBookingResult.Succeeded && customer != null)
+                        {
+                            await dbContext.Entry(customer).ReloadAsync();
+                        }
+                    }
+                    else
+                    {
+                        autoBookingResult = new(
+                            false,
+                            0,
+                            AiGroupBookingFailure.InvalidSuggestion);
+                        Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Invalid GUID '{analysisResult.SuggestedGroupBookingId}'.");
+                    }
+                }
+                catch (Exception bookingEx) when (bookingEx is not System.Data.Common.DbException && !bookingEx.ToString().Contains("EntityFrameworkCore"))
+                {
+                    autoBookingResult = new(
+                        false,
+                        0,
+                        AiGroupBookingFailure.TemporaryFailure);
+                    _logger.LogWarning(bookingEx, "Auto-booking error");
+                }
+            }
+
+            analysisResult.ReplyContent = AiGroupBookingReplyPolicy.Apply(
+                analysisResult.ReplyContent,
+                shouldOfferTrialAfterBooking,
+                autoBookingResult);
+
             Console.WriteLine($"[AIReplyWorker] AI Response: {analysisResult.ReplyContent}");
 
             // 1. Publish CRM Update suggestion
@@ -797,6 +979,9 @@ namespace Modules.AI.Workers
             {
                 ProjectId = @event.ProjectId,
                 CustomerId = customerId,
+                ConversationId = conversation?.Id ?? @event.ConversationId,
+                WhatsAppAccountId = @event.WhatsAppAccountId,
+                Channel = channel,
                 Sender = @event.Sender,
                 City = analysisResult.Entities?.City,
                 Budget = analysisResult.Entities?.Budget,
@@ -820,13 +1005,19 @@ namespace Modules.AI.Workers
             var replyGeneratedEvent = new AIReplyGeneratedEvent
             {
                 ProjectId = @event.ProjectId,
+                ConversationId = conversation?.Id ?? @event.ConversationId,
+                WhatsAppAccountId = @event.WhatsAppAccountId,
                 Sender = @event.Sender,
                 Content = analysisResult.ReplyContent,
                 Buttons = analysisResult.SuggestedButtons ?? Array.Empty<string>(),
                 Channel = @event.Channel ?? "WhatsApp",
                 ChannelMetadata = @event.ChannelMetadata,
                 Reaction = analysisResult.SuggestedReaction,
-                PublicCommentReply = analysisResult.PublicCommentReply
+                PublicCommentReply = analysisResult.PublicCommentReply,
+                RequiredWhatsAppConnectedAt = whatsAppSession?.ConnectedAt,
+                WhatsAppDeliveryIdempotencyKey = string.Equals(channel, "WhatsApp", StringComparison.OrdinalIgnoreCase)
+                    ? @event.WhatsAppDeliveryIdempotencyKey ?? $"message_{@event.Id:N}"
+                    : null
             };
 
             await _eventBus.PublishAsync(replyGeneratedEvent);
@@ -852,15 +1043,35 @@ namespace Modules.AI.Workers
                     });
                     await dbContext.SaveChangesAsync();
 
-                    await SendWhatsAppTransitionMessageAsync(
-                        gatewayUrl,
-                        @event.ProjectId,
-                        managerPhone,
-                        "المدير",
-                        "النظام",
-                        managerMsg
-                    );
-                    Console.WriteLine($"[AIReplyWorker] Sent human request notification to manager: {managerPhone}");
+                    var notificationAccountId = @event.WhatsAppAccountId
+                        ?? (await scope.ServiceProvider
+                            .GetRequiredService<WhatsAppAccountService>()
+                            .GetDefaultAsync(@event.ProjectId)).Id;
+
+                    var deliveryOutcome = await SendWhatsAppTransitionMessageAsync(
+                        scope.ServiceProvider,
+                        new WhatsAppTransitionMessage(
+                            @event.ProjectId,
+                            notificationAccountId,
+                            managerPhone,
+                            managerMsg,
+                            $"human-transfer:{@event.Id:N}"));
+                    if (deliveryOutcome == WhatsAppTransitionDeliveryOutcome.Sent)
+                    {
+                        Console.WriteLine($"[AIReplyWorker] Sent human request notification to manager: {managerPhone}");
+                    }
+                    else if (deliveryOutcome == WhatsAppTransitionDeliveryOutcome.DeliveryUnknown)
+                    {
+                        _logger.LogWarning(
+                            "WhatsApp delivery outcome is unknown for human-transfer notification {EventId}.",
+                            @event.Id);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "WhatsApp human-transfer notification {EventId} was definitely not sent.",
+                            @event.Id);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -868,7 +1079,6 @@ namespace Modules.AI.Workers
                 }
             }
 
-            // Intercept Blacklist Customer (attended & subscribed)
             if (analysisResult.BlacklistCustomer && customer != null)
             {
                 try
@@ -881,36 +1091,6 @@ namespace Modules.AI.Workers
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[AIReplyWorker] Failed to auto-blacklist customer: {ex.Message}");
-                }
-            }
-
-            // 2.5. Process AI Auto-Booking if suggestedGroupBookingId is set
-            if (!string.IsNullOrEmpty(analysisResult.SuggestedGroupBookingId))
-            {
-                try
-                {
-                    if (Guid.TryParse(analysisResult.SuggestedGroupBookingId, out var groupId))
-                    {
-                        var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
-                        await BookSuggestedPeopleAsync(new AutoBookingRequest
-                        {
-                            DbContext = dbContext,
-                            HubContext = hubContext,
-                            ProjectId = @event.ProjectId,
-                            GroupId = groupId,
-                            Requester = customer,
-                            SuggestedPeople = analysisResult.SuggestedGroupBookingPeople,
-                            Timezone = settings?.Timezone
-                        });
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[AIReplyWorker] Auto-booking failed: Invalid GUID '{analysisResult.SuggestedGroupBookingId}'.");
-                    }
-                }
-                catch (Exception bookingEx) when (bookingEx is not System.Data.Common.DbException && !bookingEx.ToString().Contains("EntityFrameworkCore"))
-                {
-                    _logger.LogWarning(bookingEx, "Auto-booking error");
                 }
             }
 
@@ -985,28 +1165,19 @@ namespace Modules.AI.Workers
 
                         if (targetMessage != null)
                         {
-                            var reactionMessage = new Message
-                            {
-                                ConversationId = conversation.Id,
-                                ExternalMessageId = $"msg_ai_react_{Guid.NewGuid().ToString("N")}",
-                                Direction = "Outgoing",
-                                Content = $"[تفاعل] {analysisResult.SuggestedReaction}",
-                                MessageType = "Reaction",
-                                Timestamp = DateTime.UtcNow
-                            };
-
-                            dbContext.Messages.Add(reactionMessage);
-                            await dbContext.SaveChangesAsync();
-
                             gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+                            var deliveryKey = @event.WhatsAppDeliveryIdempotencyKey ?? $"message_{@event.Id:N}";
 
                             var gatewayPayload = new
                             {
                                 projectId = conversation.ProjectId,
+                                whatsappAccountId = @event.WhatsAppAccountId,
                                 to = @event.Sender,
                                 reactionText = analysisResult.SuggestedReaction,
                                 targetMessageId = targetMessage.ExternalMessageId,
-                                targetFromMe = false
+                                targetFromMe = false,
+                                idempotencyKey = $"{deliveryKey}:reaction",
+                                expectedConnectedAt = whatsAppSession?.ConnectedAt
                             };
 
                             var jsonPayload = System.Text.Json.JsonSerializer.Serialize(gatewayPayload, new System.Text.Json.JsonSerializerOptions 
@@ -1014,34 +1185,49 @@ namespace Modules.AI.Workers
                                 PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase 
                             });
 
-                            var httpClient = new System.Net.Http.HttpClient();
-                            var gatewayResponse = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(httpClient, $"{gatewayUrl}/api/whatsapp/react", jsonPayload);
+                            using var httpClient = new System.Net.Http.HttpClient();
+                            using var gatewayResponse = await Shared.Infrastructure.GatewayRetryHelper.PostOnceAsync(
+                                httpClient,
+                                $"{gatewayUrl}/api/whatsapp/react",
+                                jsonPayload);
+                            var gatewayResponseBody = await gatewayResponse.Content.ReadAsStringAsync();
                             if (gatewayResponse.IsSuccessStatusCode)
                             {
                                 Console.WriteLine($"[AIReplyWorker] Sent reaction {analysisResult.SuggestedReaction} to message {targetMessage.ExternalMessageId}");
+
+                                string? providerMessageId = null;
+                                try
+                                {
+                                    using var responseDocument = JsonDocument.Parse(gatewayResponseBody);
+                                    providerMessageId = responseDocument.RootElement.TryGetProperty("messageId", out var messageId)
+                                        ? messageId.GetString()
+                                        : null;
+                                }
+                                catch (JsonException)
+                                {
+                                }
+                                if (string.IsNullOrWhiteSpace(providerMessageId))
+                                {
+                                    Console.WriteLine("[AIReplyWorker] Gateway reported a successful reaction without a provider message id; persistence was skipped because delivery is ambiguous.");
+                                }
+                                else
+                                {
+                                    var externalMessageId = providerMessageId.Trim();
+                                    var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                                    await PersistWhatsAppReactionAsync(
+                                        dbContext,
+                                        hubContext,
+                                        new WhatsAppReactionPersistence(
+                                            conversation,
+                                            @event.WhatsAppAccountId!.Value,
+                                            externalMessageId,
+                                            analysisResult.SuggestedReaction!));
+                                }
                             }
                             else
                             {
-                                var body = await gatewayResponse.Content.ReadAsStringAsync();
-                                Console.WriteLine($"[AIReplyWorker] Gateway reaction returned {gatewayResponse.StatusCode}: {body}");
+                                Console.WriteLine($"[AIReplyWorker] Gateway reaction returned {gatewayResponse.StatusCode}: {gatewayResponseBody}");
                             }
-
-                            // Broadcast via SignalR to project group
-                            var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
-                            var signalrPayload = new
-                            {
-                                id = reactionMessage.Id,
-                                conversationId = reactionMessage.ConversationId,
-                                senderType = "AI",
-                                content = reactionMessage.Content,
-                                createdAt = reactionMessage.Timestamp.ToString("o"),
-                                status = "Sent",
-                                mediaUrl = (string)null,
-                                mediaType = (string)null,
-                                messageType = "Reaction"
-                            };
-
-                            await hubContext.Clients.Group($"project_{conversation.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
                         }
                     }
                 }
@@ -1099,236 +1285,20 @@ namespace Modules.AI.Workers
             }
         }
 
-        private sealed class AutoBookingRequest
+        private static async Task<WhatsAppGatewaySessionStatus> GetWhatsAppSessionAsync(
+            IServiceProvider scopedServices,
+            Guid projectId,
+            Guid? whatsAppAccountId)
         {
-            public required AppDbContext DbContext { get; init; }
-            public required IHubContext<Modules.Conversations.Hubs.NotificationHub> HubContext { get; init; }
-            public Guid ProjectId { get; init; }
-            public Guid GroupId { get; init; }
-            public Customer? Requester { get; init; }
-            public SuggestedGroupBookingPerson[] SuggestedPeople { get; init; } = Array.Empty<SuggestedGroupBookingPerson>();
-            public string? Timezone { get; init; }
+            var client = scopedServices.GetRequiredService<WhatsAppGatewaySessionClient>();
+            var resolvedAccountId = whatsAppAccountId
+                ?? (await scopedServices.GetRequiredService<WhatsAppAccountService>()
+                    .GetDefaultAsync(projectId)).Id;
+            return await client.GetAsync(projectId, resolvedAccountId);
         }
 
-        private sealed class AutoBookingSession
-        {
-            public required AutoBookingRequest Request { get; init; }
-            public required GroupAppointment Group { get; init; }
-            public required DateTime LocalNow { get; init; }
-            public int BookedCount { get; set; }
-        }
-
-        private sealed record BookingCandidate(string Name, string Phone, Customer? Customer);
-
-        private async Task BookSuggestedPeopleAsync(AutoBookingRequest request)
-        {
-            var group = await FindActiveBookingGroupAsync(request);
-            if (group == null) return;
-
-            var projectZone = TimezoneHelper.GetTimeZone(request.Timezone);
-            if (GroupIsExpired(group, projectZone))
-            {
-                await DeactivateGroupAsync(request, group);
-                return;
-            }
-            var session = new AutoBookingSession
-            {
-                Request = request,
-                Group = group,
-                LocalNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone),
-                BookedCount = group.Bookings.Count
-            };
-
-            foreach (var candidate in GetBookingCandidates(request))
-            {
-                await BookCandidateAsync(session, candidate);
-            }
-        }
-
-        private async Task<GroupAppointment?> FindActiveBookingGroupAsync(AutoBookingRequest request)
-        {
-            var group = await request.DbContext.GroupAppointments
-                .Include(groupAppointment => groupAppointment.Bookings)
-                .FirstOrDefaultAsync(groupAppointment => groupAppointment.Id == request.GroupId && groupAppointment.ProjectId == request.ProjectId && groupAppointment.IsActive);
-            if (group == null)
-            {
-                _logger.LogWarning("Auto-booking failed: active group {GroupId} was not found in project {ProjectId}.", request.GroupId, request.ProjectId);
-            }
-            return group;
-        }
-
-        private static bool GroupIsExpired(GroupAppointment group, TimeZoneInfo projectZone)
-        {
-            var localGroupTime = TimeZoneInfo.ConvertTimeFromUtc(group.DateTime, projectZone);
-            var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
-            return (localNow - localGroupTime).TotalHours >= 24;
-        }
-
-        private async Task DeactivateGroupAsync(AutoBookingRequest request, GroupAppointment group)
-        {
-            group.IsActive = false;
-            await request.DbContext.SaveChangesAsync();
-            _logger.LogInformation("Deactivated expired group {GroupId} before AI auto-booking.", group.Id);
-        }
-
-        private IEnumerable<BookingCandidate> GetBookingCandidates(AutoBookingRequest request)
-        {
-            var people = request.SuggestedPeople.Length > 0
-                ? request.SuggestedPeople
-                : new[] { new SuggestedGroupBookingPerson { IsRequester = true } };
-            var uniquePhones = new HashSet<string>(StringComparer.Ordinal);
-            var requesterPhone = NormalizeBookingPhone(request.Requester?.PhoneNumber);
-
-            foreach (var person in people)
-            {
-                var customer = person.IsRequester ? request.Requester : null;
-                var phone = person.IsRequester
-                    ? requesterPhone ?? NormalizeBookingPhone(person.PhoneNumber)
-                    : NormalizeBookingPhone(person.PhoneNumber);
-                var name = (person.IsRequester
-                    ? person.Name?.Trim() ?? customer?.Name
-                    : person.Name)?.Trim();
-                var usesRequesterPhoneForOtherPerson = !person.IsRequester && phone == requesterPhone;
-                if (phone != null && !usesRequesterPhoneForOtherPerson && !string.IsNullOrWhiteSpace(name) && uniquePhones.Add(phone))
-                {
-                    yield return new BookingCandidate(name, phone, customer);
-                }
-                else
-                {
-                    _logger.LogWarning("Skipped invalid or duplicate AI booking person in project {ProjectId}.", request.ProjectId);
-                }
-            }
-        }
-
-        private async Task BookCandidateAsync(AutoBookingSession session, BookingCandidate candidate)
-        {
-            var customer = candidate.Customer ?? await FindBookingCustomerAsync(session, candidate.Phone);
-            var existingBooking = await FindExistingBookingAsync(session, candidate.Phone, customer?.Id);
-            if (existingBooking?.GroupAppointmentId == session.Group.Id)
-            {
-                await RefreshExistingBookingAsync(session, candidate, existingBooking);
-                return;
-            }
-            if (session.BookedCount >= session.Group.Capacity)
-            {
-                _logger.LogWarning("AI auto-booking stopped because group {GroupId} reached capacity.", session.Group.Id);
-                return;
-            }
-
-            customer ??= await CreateBookingCustomerAsync(session, candidate);
-            UpdateBookingCustomer(customer, session, candidate);
-            var booking = BuildBooking(session, candidate, customer, existingBooking);
-            if (existingBooking == null)
-            {
-                session.Request.DbContext.GroupAppointmentBookings.Add(booking);
-                IntegrationOutbox.Enqueue(session.Request.DbContext, new AdvertisingBookingOutcomeChanged
-                {
-                    ProjectId = session.Request.ProjectId,
-                    BookingId = booking.Id,
-                    CustomerId = customer.Id,
-                    IsPaid = booking.IsPaid,
-                    IsAttended = booking.IsAttended,
-                    Value = 0m,
-                    Currency = "EGP"
-                });
-            }
-            await session.Request.DbContext.SaveChangesAsync();
-            session.BookedCount++;
-            await BroadcastBookingAsync(session, candidate, booking);
-        }
-
-        private Task<Customer?> FindBookingCustomerAsync(AutoBookingSession session, string phone) =>
-            session.Request.DbContext.Customers.FirstOrDefaultAsync(customer => customer.ProjectId == session.Request.ProjectId && customer.PhoneNumber == phone);
-
-        private Task<GroupAppointmentBooking?> FindExistingBookingAsync(AutoBookingSession session, string phone, Guid? customerId) =>
-            session.Request.DbContext.GroupAppointmentBookings.FirstOrDefaultAsync(booking =>
-                booking.ProjectId == session.Request.ProjectId &&
-                (booking.CustomerPhone == phone || (customerId.HasValue && booking.CustomerId == customerId.Value)));
-
-        private async Task RefreshExistingBookingAsync(AutoBookingSession session, BookingCandidate candidate, GroupAppointmentBooking booking)
-        {
-            booking.CustomerName = candidate.Name;
-            booking.CustomerPhone = candidate.Phone;
-            await session.Request.DbContext.SaveChangesAsync();
-            _logger.LogInformation("AI auto-booking skipped because {Phone} is already registered in group {GroupId}.", candidate.Phone, session.Group.Id);
-        }
-
-        private async Task<Customer> CreateBookingCustomerAsync(AutoBookingSession session, BookingCandidate candidate)
-        {
-            var customer = new Customer
-            {
-                ProjectId = session.Request.ProjectId,
-                PhoneNumber = candidate.Phone,
-                Name = candidate.Name,
-                City = string.Empty,
-                LeadScore = 10,
-                Tags = new[] { "حجز مجموعة" },
-                Notes = $"تم الحجز تلقائياً بواسطة عميل آخر في مجموعة: {session.Group.Name}"
-            };
-            session.Request.DbContext.Customers.Add(customer);
-            await session.Request.DbContext.SaveChangesAsync();
-            return customer;
-        }
-
-        private static void UpdateBookingCustomer(Customer customer, AutoBookingSession session, BookingCandidate candidate)
-        {
-            var tags = customer.Tags?.ToList() ?? new List<string>();
-            if (!tags.Contains("حجز مجموعة")) tags.Add("حجز مجموعة");
-            customer.Tags = tags.ToArray();
-            customer.Name = candidate.Name;
-            customer.Notes = (customer.Notes ?? string.Empty) +
-                $"\nتم حجز موعد في مجموعة: {session.Group.Name} (تلقائياً بالـ AI) بتاريخ {session.LocalNow:yyyy-MM-dd HH:mm}";
-        }
-
-        private static GroupAppointmentBooking BuildBooking(
-            AutoBookingSession session,
-            BookingCandidate candidate,
-            Customer customer,
-            GroupAppointmentBooking? existingBooking)
-        {
-            var booking = existingBooking ?? new GroupAppointmentBooking { Id = Guid.NewGuid(), ProjectId = session.Request.ProjectId };
-            booking.GroupAppointmentId = session.Group.Id;
-            booking.CustomerId = customer.Id;
-            booking.CustomerName = candidate.Name;
-            booking.CustomerPhone = candidate.Phone;
-            booking.IsAttended = false;
-            booking.CreatedAt = DateTime.UtcNow;
-            return booking;
-        }
-
-        private async Task BroadcastBookingAsync(AutoBookingSession session, BookingCandidate candidate, GroupAppointmentBooking booking)
-        {
-            try
-            {
-                await session.Request.HubContext.Clients.Group($"project_{session.Request.ProjectId}").SendAsync("GroupBookingUpdated", new
-                {
-                    groupId = session.Group.Id,
-                    groupName = session.Group.Name,
-                    customerPhone = candidate.Phone,
-                    customerName = candidate.Name,
-                    newBookedCount = session.BookedCount,
-                    capacity = session.Group.Capacity,
-                    isFull = session.BookedCount >= session.Group.Capacity,
-                    bookingId = booking.Id,
-                    isAttended = booking.IsAttended,
-                    isPaid = booking.IsPaid
-                });
-            }
-            catch (Exception signalRException)
-            {
-                _logger.LogWarning(signalRException, "SignalR broadcast failed after AI group booking {BookingId}.", booking.Id);
-            }
-        }
-
-        private static string? NormalizeBookingPhone(string? phone)
-        {
-            if (string.IsNullOrWhiteSpace(phone) || phone.EndsWith("@lid", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-
-            return EgyptianPhoneNumber.Extract(phone);
-        }
+        private static string? NormalizeBookingPhone(string? phone) =>
+            GroupBookingPhone.Normalize(phone);
 
         private static void ApplyFollowUpPolicy(AIBehaviorSettings settings, MarketingAnalysisResult analysisResult)
         {
@@ -1414,6 +1384,37 @@ namespace Modules.AI.Workers
             }
         }
 
+        private async Task CompletePendingFollowUpsForSourceAsync(
+            AppDbContext dbContext,
+            MessageAggregatedEvent source,
+            Guid customerId)
+        {
+            try
+            {
+                var pending = await dbContext.FollowUps
+                    .IgnoreQueryFilters()
+                    .Where(followUp => followUp.ProjectId == source.ProjectId
+                        && followUp.CustomerId == customerId
+                        && followUp.Status == "Pending"
+                        && (source.ConversationId.HasValue
+                            ? followUp.ConversationId == source.ConversationId
+                            : !followUp.ConversationId.HasValue
+                                && followUp.Channel == source.Channel
+                                && (source.Channel != "WhatsApp"
+                                    || (followUp.WhatsAppAccountId ?? followUp.ProjectId)
+                                        == (source.WhatsAppAccountId ?? source.ProjectId))))
+                    .ToListAsync();
+
+                dbContext.FollowUps.RemoveRange(pending);
+                await dbContext.SaveChangesAsync();
+                Console.WriteLine($"[AIReplyWorker] Deleted {pending.Count} source-scoped pending follow-ups for skipped customer {customerId}.");
+            }
+            catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
+            {
+                _logger.LogWarning(ex, "Error completing/deleting source-scoped follow-ups");
+            }
+        }
+
         private static async Task<bool> HasReachedDailyAiReplyLimitAsync(AppDbContext dbContext, Modules.Projects.Domain.ProjectSettings settings, string channel)
         {
             if (settings.MaxDailyMessages <= 0)
@@ -1445,61 +1446,196 @@ namespace Modules.AI.Workers
             return sentToday >= settings.MaxDailyMessages;
         }
 
-        private async Task<bool> SendWhatsAppTransitionMessageAsync(
-            string gatewayUrl,
+        internal static Guid CreateWhatsAppReactionMessageId(
             Guid projectId,
-            string toPhone,
-            string customerName,
-            string agentName,
-            string waMessage)
+            Guid whatsAppAccountId,
+            string providerMessageId)
         {
-            var payload = new
-            {
-                projectId = projectId,
-                to = toPhone,
-                message = waMessage
-            };
-
-            using var httpClient = new HttpClient();
-            var jsonPayload = JsonSerializer.Serialize(payload);
-            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            
-            var response = await httpClient.PostAsync($"{gatewayUrl}/api/whatsapp/send", content);
-            return response.IsSuccessStatusCode;
+            var identity = $"whatsapp-reaction:{projectId:N}:{whatsAppAccountId:N}:{providerMessageId.Trim()}";
+            var hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity));
+            hash[6] = (byte)((hash[6] & 0x0f) | 0x50);
+            hash[8] = (byte)((hash[8] & 0x3f) | 0x80);
+            return new Guid(hash.AsSpan(0, 16));
         }
 
-        private static async Task SaveCustomerAndBookingPhoneAsync(
+        internal async Task<bool> PersistWhatsAppReactionAsync(
             AppDbContext dbContext,
-            Guid projectId,
-            Customer customer,
-            string phoneNumber)
+            IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext,
+            WhatsAppReactionPersistence reaction)
         {
-            customer.PhoneNumber = phoneNumber;
-            dbContext.Entry(customer).State = EntityState.Modified;
-
-            var bookings = await dbContext.GroupAppointmentBookings
-                .Where(booking => booking.ProjectId == projectId && booking.CustomerId == customer.Id)
-                .ToListAsync();
-            foreach (var booking in bookings)
+            var externalMessageId = reaction.ProviderMessageId.Trim();
+            var existing = await dbContext.Messages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(message =>
+                    message.ConversationId == reaction.Conversation.Id
+                    && message.ExternalMessageId == externalMessageId);
+            if (existing is not null)
             {
-                booking.CustomerPhone = phoneNumber;
+                _logger.LogInformation(
+                    "Skipping already recorded reaction {ExternalMessageId} in conversation {ConversationId}.",
+                    externalMessageId,
+                    reaction.Conversation.Id);
+                return false;
             }
 
-            await dbContext.SaveChangesAsync();
+            var reactionMessage = new Message
+            {
+                Id = CreateWhatsAppReactionMessageId(
+                    reaction.Conversation.ProjectId,
+                    reaction.WhatsAppAccountId,
+                    externalMessageId),
+                ConversationId = reaction.Conversation.Id,
+                ExternalMessageId = externalMessageId,
+                Direction = "Outgoing",
+                Content = $"[تفاعل] {reaction.Reaction}",
+                MessageType = "Reaction",
+                Timestamp = DateTime.UtcNow
+            };
+            dbContext.Messages.Add(reactionMessage);
+            try
+            {
+                await dbContext.SaveChangesAsync();
+            }
+            catch (DbUpdateException exception)
+            {
+                dbContext.Entry(reactionMessage).State = EntityState.Detached;
+                var raceWinner = await dbContext.Messages
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(message =>
+                        message.Id == reactionMessage.Id
+                        && message.ConversationId == reaction.Conversation.Id
+                        && message.ExternalMessageId == externalMessageId);
+                if (raceWinner is null)
+                {
+                    throw;
+                }
+
+                _logger.LogInformation(
+                    exception,
+                    "A concurrent worker already recorded reaction {ExternalMessageId} in conversation {ConversationId}.",
+                    externalMessageId,
+                    reaction.Conversation.Id);
+                return false;
+            }
+
+            var signalrPayload = new
+            {
+                id = reactionMessage.Id,
+                conversationId = reactionMessage.ConversationId,
+                senderType = "AI",
+                content = reactionMessage.Content,
+                createdAt = reactionMessage.Timestamp.ToString("o"),
+                status = "Sent",
+                mediaUrl = (string?)null,
+                mediaType = (string?)null,
+                messageType = "Reaction"
+            };
+
+            try
+            {
+                await hubContext.Clients
+                    .Group($"project_{reaction.Conversation.ProjectId}")
+                    .SendAsync("ReceiveMessage", signalrPayload);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Reaction {ExternalMessageId} was persisted but its SignalR broadcast failed.",
+                    externalMessageId);
+            }
+
+            return true;
         }
 
-        private async Task HandleMessengerToWhatsAppTransitionAsync(
-            AppDbContext dbContext,
-            Microsoft.Extensions.Configuration.IConfiguration configuration,
-            Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext,
+        internal static async Task<WhatsAppTransitionDeliveryOutcome> SendWhatsAppTransitionMessageAsync(
             IServiceProvider serviceProvider,
-            Customer customer,
-            string extractedPhone,
-            Modules.Projects.Domain.ProjectSettings settings,
-            string pageId,
-            string senderPSID)
+            WhatsAppTransitionMessage transition)
         {
-            var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
+            var liveSession = await serviceProvider
+                .GetRequiredService<WhatsAppGatewaySessionClient>()
+                .GetAsync(transition.ProjectId, transition.WhatsAppAccountId);
+            if (!liveSession.Connected || !liveSession.ConnectedAt.HasValue)
+            {
+                return WhatsAppTransitionDeliveryOutcome.DefinitelyNotSent;
+            }
+
+            var payload = new
+            {
+                projectId = transition.ProjectId,
+                whatsappAccountId = transition.WhatsAppAccountId,
+                to = transition.ToPhone,
+                message = transition.Message,
+                idempotencyKey = transition.IdempotencyKey,
+                expectedConnectedAt = liveSession.ConnectedAt.Value
+            };
+
+            var jsonPayload = JsonSerializer.Serialize(payload);
+            var configuration = serviceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            var gatewayUrl = (configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000").TrimEnd('/');
+            var httpClientFactory = serviceProvider.GetService<IHttpClientFactory>();
+            using var httpClient = httpClientFactory?.CreateClient(nameof(AIReplyWorker)) ?? new HttpClient();
+
+            try
+            {
+                using var response = await GatewayRetryHelper.PostOnceAsync(
+                    httpClient,
+                    $"{gatewayUrl}/api/whatsapp/send",
+                    jsonPayload);
+                if (response.IsSuccessStatusCode)
+                {
+                    var responseBody = await response.Content.ReadAsStringAsync();
+                    transition.ProviderMessageId = TryGetProviderMessageId(responseBody);
+                    if (string.IsNullOrWhiteSpace(transition.ProviderMessageId))
+                    {
+                        return WhatsAppTransitionDeliveryOutcome.DeliveryUnknown;
+                    }
+                    return WhatsAppTransitionDeliveryOutcome.Sent;
+                }
+
+                var statusCode = (int)response.StatusCode;
+                if (statusCode is 412 or 503)
+                {
+                    return WhatsAppTransitionDeliveryOutcome.DefinitelyNotSent;
+                }
+
+                return statusCode == 409 || statusCode >= 500
+                    ? WhatsAppTransitionDeliveryOutcome.DeliveryUnknown
+                    : WhatsAppTransitionDeliveryOutcome.DefinitelyNotSent;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+            {
+                return WhatsAppTransitionDeliveryOutcome.DeliveryUnknown;
+            }
+        }
+
+        private static string? TryGetProviderMessageId(string responseBody)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(responseBody);
+                return document.RootElement.TryGetProperty("messageId", out var messageId)
+                    && messageId.ValueKind == JsonValueKind.String
+                    ? messageId.GetString()?.Trim()
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        internal async Task HandleMessengerToWhatsAppTransitionAsync(
+            AppDbContext dbContext,
+            IServiceProvider serviceProvider,
+            MessengerWhatsAppTransition transition)
+        {
+            var customer = transition.Customer;
+            var extractedPhone = transition.ExtractedPhone;
+            var settings = transition.Settings;
+            var pageId = transition.PageId;
+            var senderPSID = transition.SenderPsid;
+            var hubContext = serviceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
             
             var project = await dbContext.Projects.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == settings.ProjectId);
             var projectName = project?.Name ?? "المشروع";
@@ -1519,7 +1655,11 @@ namespace Modules.AI.Workers
                 return;
             }
 
-            bool waSent = false;
+            var deliveryOutcome = WhatsAppTransitionDeliveryOutcome.DefinitelyNotSent;
+            var whatsAppAccountId = (await serviceProvider
+                .GetRequiredService<WhatsAppAccountService>()
+                .GetDefaultAsync(settings.ProjectId)).Id;
+            WhatsAppTransitionMessage? whatsAppTransition = null;
             try
             {
                 var agentName = behaviorService.GetAgentName(whatsAppBehavior);
@@ -1531,28 +1671,69 @@ namespace Modules.AI.Workers
                     PhoneNumber = extractedPhone,
                     Channel = "WhatsApp"
                 });
-                waSent = await SendWhatsAppTransitionMessageAsync(
-                    gatewayUrl,
+                whatsAppTransition = new WhatsAppTransitionMessage(
                     settings.ProjectId,
+                    whatsAppAccountId,
                     extractedPhone,
-                    customer.Name,
-                    agentName,
-                    transitionMessage);
+                    transitionMessage,
+                    transition.DeliveryIdempotencyKey);
+                deliveryOutcome = await SendWhatsAppTransitionMessageAsync(
+                    serviceProvider,
+                    whatsAppTransition);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[AIReplyWorker] Failed sending WhatsApp message to {extractedPhone}: {ex.Message}");
             }
 
-            if (waSent)
+            if (deliveryOutcome == WhatsAppTransitionDeliveryOutcome.Sent)
             {
                 Console.WriteLine($"[AIReplyWorker] WhatsApp message successfully sent to {extractedPhone}. Proceeding with transition.");
 
-                await SaveCustomerAndBookingPhoneAsync(
-                    dbContext,
+                customer = await serviceProvider
+                    .GetRequiredService<WhatsAppCustomerMergeService>()
+                    .BindPhoneAsync(
+                        settings.ProjectId,
+                        customer.Id,
+                        extractedPhone);
+
+                var sentAt = DateTime.UtcNow;
+                var whatsAppConversation = await serviceProvider
+                    .GetRequiredService<WhatsAppConversationService>()
+                    .ResolveOrCreateAsync(
+                        settings.ProjectId,
+                        customer.Id,
+                        whatsAppAccountId,
+                        sentAt);
+                var providerMessageId = whatsAppTransition?.ProviderMessageId
+                    ?? throw new InvalidOperationException("A confirmed WhatsApp transition must include its provider message id.");
+                var outgoingMessageId = DeterministicWhatsAppOutgoingMessageId(
                     settings.ProjectId,
-                    customer,
-                    extractedPhone);
+                    whatsAppAccountId,
+                    providerMessageId);
+                if (!await dbContext.Messages.IgnoreQueryFilters()
+                    .AnyAsync(message => message.Id == outgoingMessageId))
+                {
+                    dbContext.Messages.Add(new Message
+                    {
+                        Id = outgoingMessageId,
+                        ConversationId = whatsAppConversation.Id,
+                        ExternalMessageId = providerMessageId,
+                        Direction = "Outgoing",
+                        Content = whatsAppTransition.Message,
+                        MessageType = "Text",
+                        Timestamp = sentAt
+                    });
+                }
+                if (string.Equals(
+                        whatsAppConversation.WhatsAppDeliveryUnknownKey,
+                        transition.DeliveryIdempotencyKey,
+                        StringComparison.Ordinal))
+                {
+                    whatsAppConversation.WhatsAppDeliveryUnknownAt = null;
+                    whatsAppConversation.WhatsAppDeliveryUnknownKey = null;
+                }
+                await dbContext.SaveChangesAsync();
 
                 var successMsg = behaviorService.RenderTemplate(messengerBehavior.Fallbacks.WhatsAppTransitionSuccess, new Modules.AI.Services.AIBehaviorTemplateContext
                 {
@@ -1596,7 +1777,11 @@ namespace Modules.AI.Workers
 
                 var pendingMessengerFollowUps = await dbContext.FollowUps
                     .IgnoreQueryFilters()
-                    .Where(f => f.CustomerId == customer.Id && f.Status == "Pending")
+                    .Where(f => f.ProjectId == settings.ProjectId
+                        && f.CustomerId == customer.Id
+                        && f.Status == "Pending"
+                        && ((messengerConvo != null && f.ConversationId == messengerConvo.Id)
+                            || (!f.ConversationId.HasValue && f.Channel == "Messenger")))
                     .ToListAsync();
 
                 foreach (var fu in pendingMessengerFollowUps)
@@ -1607,28 +1792,30 @@ namespace Modules.AI.Workers
                 await dbContext.SaveChangesAsync();
                 Console.WriteLine($"[AIReplyWorker] Cancelled {pendingMessengerFollowUps.Count} pending follow-ups for customer {customer.Id} due to WhatsApp transition.");
 
-                var newFollowUp = new FollowUp
-                {
-                    Id = Guid.NewGuid(),
-                    ProjectId = settings.ProjectId,
-                    CustomerId = customer.Id,
-                    Type = "Nurturing",
-                    DueDate = DateTime.UtcNow.AddHours(24),
-                    Notes = behaviorService.RenderTemplate(whatsAppBehavior.Fallbacks.FollowUpDefault, new Modules.AI.Services.AIBehaviorTemplateContext
-                    {
-                        CustomerName = customer.Name ?? "يا فندم",
-                        AgentName = behaviorService.GetAgentName(whatsAppBehavior),
-                        ProjectName = projectName,
-                        PhoneNumber = extractedPhone,
-                        Channel = "WhatsApp"
-                    }),
-                    Status = "Pending"
-                };
-                dbContext.FollowUps.Add(newFollowUp);
-                await dbContext.SaveChangesAsync();
+                var newFollowUp = await serviceProvider
+                    .GetRequiredService<AutomationFollowUpService>()
+                    .UpsertPendingAutomationFollowUpAsync(
+                        new PendingAutomationFollowUpRequest(
+                            settings.ProjectId,
+                            customer.Id,
+                            $"whatsapp-ai-nurture:{whatsAppAccountId:N}:{whatsAppConversation.Id:N}",
+                            DateTime.UtcNow.AddHours(24),
+                            behaviorService.RenderTemplate(
+                                whatsAppBehavior.Fallbacks.FollowUpDefault,
+                                new Modules.AI.Services.AIBehaviorTemplateContext
+                                {
+                                    CustomerName = customer.Name ?? "يا فندم",
+                                    AgentName = behaviorService.GetAgentName(whatsAppBehavior),
+                                    ProjectName = projectName,
+                                    PhoneNumber = extractedPhone,
+                                    Channel = "WhatsApp"
+                                }),
+                            ConversationId: whatsAppConversation.Id,
+                            WhatsAppAccountId: whatsAppAccountId,
+                            Channel: "WhatsApp"));
                 Console.WriteLine($"[AIReplyWorker] Scheduled new WhatsApp follow-up {newFollowUp.Id} for transitioned customer {customer.Id}.");
             }
-            else
+            else if (deliveryOutcome == WhatsAppTransitionDeliveryOutcome.DefinitelyNotSent)
             {
                 Console.WriteLine($"[AIReplyWorker] WhatsApp message delivery failed for {extractedPhone}. Falling back to Messenger.");
 
@@ -1672,6 +1859,13 @@ namespace Modules.AI.Workers
                     });
                 }
             }
+            else
+            {
+                _logger.LogWarning(
+                    "WhatsApp transition delivery outcome is unknown for project {ProjectId}, account {WhatsAppAccountId}; no transition success or failure was recorded.",
+                    settings.ProjectId,
+                    whatsAppAccountId);
+            }
             
             var activeConvo = await dbContext.Conversations
                 .IgnoreQueryFilters()
@@ -1693,6 +1887,16 @@ namespace Modules.AI.Workers
                     isTyping = false
                 });
             }
+        }
+
+        private static Guid DeterministicWhatsAppOutgoingMessageId(
+            Guid projectId,
+            Guid whatsAppAccountId,
+            string providerMessageId)
+        {
+            var identity = $"whatsapp-outgoing:{projectId:N}:{whatsAppAccountId:N}:{providerMessageId}";
+            var hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity));
+            return new Guid(hash.AsSpan(0, 16));
         }
     }
 }

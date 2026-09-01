@@ -1,6 +1,9 @@
-using Modules.AI.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Advertising.Domain;
 using Modules.Advertising.Services;
+using Shared.Infrastructure;
+using Shared.Security;
 using Xunit;
 
 namespace Advertising.UnitTests;
@@ -8,49 +11,40 @@ namespace Advertising.UnitTests;
 public sealed class AdvertisingDecisionAiTests
 {
     [Fact]
-    public async Task Independent_approval_returns_approved_canary_review()
+    public async Task Review_is_queued_without_crossing_the_ai_credential_boundary()
     {
-        var model = new ModelBoundaryStub(
-            "{\"action\":\"ActivateCanary\",\"confidence\":0.8,\"reasons\":[\"envelope_ready\"]}",
-            "{\"verdict\":\"APPROVE\",\"reasons\":[\"evidence_sufficient\"]}");
+        await using var context = Context();
+        var projectId = Guid.NewGuid();
 
-        var review = await new AdvertisingDecisionAi(model, new ProjectAiStub()).ReviewCanaryAsync(Guid.NewGuid(), "{\"tracking\":\"healthy\"}", CancellationToken.None);
-
-        Assert.Equal(DecisionVerdict.Approve, review.StrategistVerdict);
-        Assert.Equal(DecisionVerdict.Approve, review.AuditorVerdict);
-        Assert.All(model.Calls, call => Assert.Equal(("project-api-key", "gemini-3.1-flash-lite"), call));
-    }
-
-    [Theory]
-    [InlineData("not json", "{}")]
-    [InlineData("{\"action\":\"Wait\",\"confidence\":0.2,\"reasons\":[]}", "{}")]
-    public async Task Invalid_or_waiting_strategy_fails_closed(string strategistResponse, string auditorResponse)
-    {
-        var review = await new AdvertisingDecisionAi(new ModelBoundaryStub(strategistResponse, auditorResponse), new ProjectAiStub())
-            .ReviewCanaryAsync(Guid.NewGuid(), "{}", CancellationToken.None);
+        var review = await new AdvertisingDecisionAi(context)
+            .ReviewCanaryAsync(projectId, "{\"tracking\":\"healthy\"}", CancellationToken.None);
 
         Assert.Equal(DecisionVerdict.Wait, review.StrategistVerdict);
-        Assert.Equal(DecisionVerdict.Wait, review.AuditorVerdict);
+        Assert.Equal("AI_STRATEGIST_PENDING", review.Reason);
+        var work = Assert.Single(await context.AdvertisingAiWorkItems.IgnoreQueryFilters().ToListAsync());
+        Assert.Equal(projectId, work.ProjectId);
+        var outbox = Assert.Single(await context.IntegrationOutboxMessages.ToListAsync());
+        Assert.DoesNotContain("apiKey", outbox.PayloadJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", outbox.PayloadJson, StringComparison.OrdinalIgnoreCase);
     }
 
-    private sealed class ModelBoundaryStub(params string[] responses) : IGeminiClient
+    [Fact]
+    public async Task Repeated_identical_review_reuses_the_pending_work_item()
     {
-        private readonly Queue<string> _responses = new(responses);
-        public List<(string? ApiKey, string? Model)> Calls { get; } = [];
-        public Task<string> GenerateReplyAsync(string messageContent, string apiKeyOverride = null!, string modelOverride = null!, string cachedContentId = null!)
-        {
-            Calls.Add((apiKeyOverride, modelOverride));
-            return Task.FromResult(_responses.Dequeue());
-        }
-        public Task<string> GenerateReplyAsync(string messageContent, byte[] fileBytes, string mimeType, string apiKeyOverride = null!, string modelOverride = null!, string cachedContentId = null!) => throw new NotSupportedException();
-        public Task<float[]> GenerateEmbeddingAsync(string text, string apiKeyOverride = null!) => throw new NotSupportedException();
-        public Task<int> CountTokensAsync(string messageContent, string apiKeyOverride = null!, string modelOverride = null!) => throw new NotSupportedException();
-        public Task<string> CreateContextCacheAsync(string staticContent, string model, int ttlSeconds, string apiKeyOverride = null!) => throw new NotSupportedException();
+        await using var context = Context();
+        var service = new AdvertisingDecisionAi(context);
+        var projectId = Guid.NewGuid();
+
+        await service.ReviewActionAsync(projectId, "PauseAd", "{}", CancellationToken.None);
+        await service.ReviewActionAsync(projectId, "PauseAd", "{}", CancellationToken.None);
+
+        Assert.Equal(1, await context.AdvertisingAiWorkItems.IgnoreQueryFilters().CountAsync());
     }
 
-    private sealed class ProjectAiStub : IProjectAiConfigurationProvider
+    private static AppDbContext Context()
     {
-        public Task<ProjectAiConfiguration> GetAsync(Guid projectId, CancellationToken cancellationToken) =>
-            Task.FromResult(new ProjectAiConfiguration("project-api-key", "gemini-3.1-flash-lite"));
+        var tenant = new TenantContext();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        return new AppDbContext(options, tenant, new ServiceCollection().BuildServiceProvider());
     }
 }

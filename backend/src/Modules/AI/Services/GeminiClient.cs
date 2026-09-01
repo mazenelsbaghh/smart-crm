@@ -50,7 +50,7 @@ namespace Modules.AI.Services
         {
             var apiKey = apiKeyOverride ?? _defaultApiKey;
 
-            if (string.IsNullOrEmpty(apiKey) || apiKey == "your_gemini_api_key_here" || apiKey.StartsWith("mock_"))
+            if (_mockHandler.IsMockKey(apiKey))
             {
                 var mockEmbedding = new float[768];
                 for (int i = 0; i < mockEmbedding.Length; i++)
@@ -123,6 +123,7 @@ namespace Modules.AI.Services
                 requestBody = new
                 {
                     cachedContent = cachedContentId,
+                    generationConfig = new { responseMimeType = "application/json" },
                     contents = new[]
                     {
                         new
@@ -139,6 +140,7 @@ namespace Modules.AI.Services
             {
                 requestBody = new
                 {
+                    generationConfig = new { responseMimeType = "application/json" },
                     contents = new[]
                     {
                         new
@@ -196,6 +198,7 @@ namespace Modules.AI.Services
                 requestBody = new
                 {
                     cachedContent = cachedContentId,
+                    generationConfig = new { responseMimeType = "application/json" },
                     contents = new[]
                     {
                         new
@@ -220,6 +223,7 @@ namespace Modules.AI.Services
             {
                 requestBody = new
                 {
+                    generationConfig = new { responseMimeType = "application/json" },
                     contents = new[]
                     {
                         new
@@ -271,7 +275,7 @@ namespace Modules.AI.Services
             var apiKey = apiKeyOverride ?? _defaultApiKey;
             var model = NormalizeModel(modelOverride ?? _defaultModel);
 
-            if (string.IsNullOrEmpty(apiKey) || apiKey == "your_gemini_api_key_here" || apiKey.StartsWith("mock_"))
+            if (_mockHandler.IsMockKey(apiKey))
             {
                 // Simple approximation for mock key: 1 token ≈ 4 characters in mixed text
                 return messageContent.Length / 4;
@@ -320,7 +324,7 @@ namespace Modules.AI.Services
             var apiKey = apiKeyOverride ?? _defaultApiKey;
             var normalizedModel = NormalizeModel(model);
 
-            if (string.IsNullOrEmpty(apiKey) || apiKey == "your_gemini_api_key_here" || apiKey.StartsWith("mock_"))
+            if (_mockHandler.IsMockKey(apiKey))
             {
                 // Return a deterministic mock cache ID
                 return $"cachedContents/mock_cache_{Guid.NewGuid():N}";

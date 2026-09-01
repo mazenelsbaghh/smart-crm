@@ -1,6 +1,9 @@
-using Modules.AI.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Advertising.Domain;
 using Modules.Advertising.Services;
+using Shared.Infrastructure;
+using Shared.Security;
 using Xunit;
 
 namespace Advertising.UnitTests;
@@ -8,33 +11,80 @@ namespace Advertising.UnitTests;
 public sealed class DecisionPipelineTests
 {
     [Fact]
-    public async Task Generic_financial_action_requires_independent_auditor_approval()
+    public async Task Unsupported_financial_action_is_rejected_before_ai_work_is_created()
     {
-        var ai = new AdvertisingDecisionAi(new Stub("{\"action\":\"IncreaseBudget\",\"confidence\":0.9,\"reasons\":[\"winner\"]}", "{\"verdict\":\"APPROVE\",\"reasons\":[\"cap_ok\"]}"), new ProjectAiStub());
-        var result = await ai.ReviewActionAsync(Guid.NewGuid(), "IncreaseBudget", "{\"roas\":2.4}", CancellationToken.None);
-        Assert.Equal(DecisionVerdict.Approve, result.StrategistVerdict); Assert.Equal(DecisionVerdict.Approve, result.AuditorVerdict);
+        await using var context = Context();
+        var result = await new AdvertisingDecisionAi(context)
+            .ReviewActionAsync(Guid.NewGuid(), "DeleteCampaign", "{}", CancellationToken.None);
+
+        Assert.Equal(DecisionVerdict.Reject, result.AuditorVerdict);
+        Assert.Empty(context.AdvertisingAiWorkItems);
     }
 
     [Fact]
-    public async Task Invalid_auditor_schema_waits_instead_of_spending()
+    public async Task Pending_independent_review_waits_instead_of_spending()
     {
-        var ai = new AdvertisingDecisionAi(new Stub("{\"action\":\"PauseAd\",\"confidence\":0.8,\"reasons\":[]}", "bad"), new ProjectAiStub());
-        Assert.Equal(DecisionVerdict.Wait, (await ai.ReviewActionAsync(Guid.NewGuid(), "PauseAd", "{}", CancellationToken.None)).AuditorVerdict);
+        await using var context = Context();
+        var result = await new AdvertisingDecisionAi(context)
+            .ReviewActionAsync(Guid.NewGuid(), "IncreaseBudget", "{\"roas\":2.4}", CancellationToken.None);
+
+        Assert.Equal(DecisionVerdict.Wait, result.StrategistVerdict);
+        Assert.Equal(DecisionVerdict.Wait, result.AuditorVerdict);
+        Assert.Single(await context.AdvertisingAiWorkItems.IgnoreQueryFilters().ToListAsync());
     }
 
-    private sealed class Stub(params string[] output) : IGeminiClient
+    [Fact]
+    public void Closed_catalog_contains_every_declared_autonomous_action_and_rejects_hallucinated_actions()
     {
-        private readonly Queue<string> _output = new(output);
-        public Task<string> GenerateReplyAsync(string messageContent, string apiKeyOverride = null!, string modelOverride = null!, string cachedContentId = null!) => Task.FromResult(_output.Dequeue());
-        public Task<string> GenerateReplyAsync(string messageContent, byte[] fileBytes, string mimeType, string apiKeyOverride = null!, string modelOverride = null!, string cachedContentId = null!) => throw new NotSupportedException();
-        public Task<float[]> GenerateEmbeddingAsync(string text, string apiKeyOverride = null!) => throw new NotSupportedException();
-        public Task<int> CountTokensAsync(string messageContent, string apiKeyOverride = null!, string modelOverride = null!) => throw new NotSupportedException();
-        public Task<string> CreateContextCacheAsync(string staticContent, string model, int ttlSeconds, string apiKeyOverride = null!) => throw new NotSupportedException();
+        Assert.All(Enum.GetNames<AutonomousActionType>(), action => Assert.True(AdvertisingDecisionPolicy.IsSupported(action)));
+        Assert.False(AdvertisingDecisionPolicy.IsSupported("DeleteEverythingAndDoubleSpend"));
     }
 
-    private sealed class ProjectAiStub : IProjectAiConfigurationProvider
+    [Fact]
+    public void Sparse_evidence_returns_exact_wait_reasons_before_any_ai_review()
     {
-        public Task<ProjectAiConfiguration> GetAsync(Guid projectId, CancellationToken cancellationToken) =>
-            Task.FromResult(new ProjectAiConfiguration(null, null));
+        var result = new AdvertisingEvidenceService().Evaluate([], [], 50m, DateTime.UtcNow,
+            attributionDelayHours: 24, trackingHealthy: false);
+
+        Assert.Equal(EvidenceVerdict.Wait, result.Verdict);
+        Assert.Equal(new[] { "ADS_WAIT_INSUFFICIENT_SNAPSHOTS", "ADS_WAIT_INSUFFICIENT_VOLUME", "ADS_WAIT_TRACKING_UNSAFE" },
+            result.WaitReasons);
     }
+
+    [Fact]
+    public async Task Manual_unowned_ad_cannot_enter_the_activation_review_pipeline()
+    {
+        await using var context = Context();
+        var projectId = Guid.NewGuid();
+        context.AdvertisingManagedOwnership.Add(new ManagedOwnershipRecord
+        {
+            ProjectId = projectId,
+            OwnershipKind = ManagedOwnershipKind.ManualUnowned,
+            ProviderCampaignExternalId = "campaign-manual"
+        });
+        await context.SaveChangesAsync();
+        var ownershipId = await context.AdvertisingManagedOwnership.IgnoreQueryFilters().Select(item => item.Id).SingleAsync();
+        context.ManagedAdvertisements.Add(new ManagedAdvertisement
+        {
+            ProjectId = projectId,
+            OwnershipRecordId = ownershipId,
+            AdExternalId = "ad-manual",
+            ConfiguredStatus = ManagedDeliveryState.Paused,
+            DestinationType = "WHATSAPP"
+        });
+        await context.SaveChangesAsync();
+        var service = new AdvertisingDecisionService(context, new AdvertisingDecisionAi(context),
+            new AdvertisingSafetyEngine(context), new AdvertisingOwnershipPolicy(context));
+
+        var commands = await service.ProposeCanaryActivationAsync(projectId, CancellationToken.None);
+
+        Assert.Empty(commands);
+        Assert.Empty(await context.AdvertisingDecisions.IgnoreQueryFilters().ToListAsync());
+        Assert.Empty(await context.AdvertisingAiWorkItems.IgnoreQueryFilters().ToListAsync());
+    }
+
+    private static AppDbContext Context() => new(
+        new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options,
+        new TenantContext(),
+        new ServiceCollection().BuildServiceProvider());
 }

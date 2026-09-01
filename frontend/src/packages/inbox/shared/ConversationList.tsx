@@ -27,6 +27,9 @@ interface ConversationListProps {
   loading?: boolean;
   loadError?: string | null;
   onRetry?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 export default function ConversationList({
@@ -42,11 +45,11 @@ export default function ConversationList({
   statusLabels,
   loading = false,
   loadError,
-  onRetry
+  onRetry,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: ConversationListProps) {
-
-  // Fix React 19 render purity check: capture current timestamp once on mount
-  const [now] = React.useState(() => Date.now());
 
   const formatEgyptTime = (dateStr: string) => {
     try {
@@ -62,24 +65,11 @@ export default function ConversationList({
     }
   };
 
-  const isWithin24hWindow = (lastMessageAt: string): boolean => {
-    const diff = now - new Date(lastMessageAt).getTime();
-    return diff < 24 * 60 * 60 * 1000;
-  };
-
-  // Helper to determine customer tags dynamically
-  const getCustomerTag = (conv: Conversation) => {
-    // Simulate label tagging based on status and conversation properties
-    if (conv.status === 'Open') return 'مؤهل للشراء';
-    if (conv.status === 'Pending') return 'عميل حالي';
-    return 'تم التواصل';
-  };
-
-  const getTagColorClass = (tag: string) => {
-    if (tag === 'مؤهل للشراء' || tag === 'VIP Lead') return styles.tagQualified;
-    if (tag === 'عميل حالي') return styles.tagCurrent;
-    return styles.tagCommunicated;
-  };
+  const searchPlaceholder = channel === 'WhatsApp'
+    ? 'بحث بالاسم أو رقم واتساب...'
+    : channel === 'Messenger'
+      ? 'بحث بالاسم أو حساب ماسنجر...'
+      : 'بحث في أصحاب التعليقات...';
 
   return (
     <div className={styles.conversationPanel}>
@@ -87,7 +77,13 @@ export default function ConversationList({
       <div className={styles.chatListHeader}>
         <div className={styles.chatListTitleRow}>
           <h2 className={styles.chatListTitle}>المحادثات</h2>
-          <button type="button" className={styles.newChatBtn} title="محادثة جديدة">
+          <button
+            type="button"
+            className={styles.newChatBtn}
+            disabled
+            aria-label="محادثة جديدة، غير متاحة حاليًا"
+            title="إنشاء محادثة جديدة غير مدعوم من هذه الشاشة"
+          >
             <SquarePen size={18} />
           </button>
         </div>
@@ -98,7 +94,8 @@ export default function ConversationList({
           <input
             ref={searchInputRef}
             type="text"
-            placeholder="بحث بالاسم أو رقم واتساب..."
+            aria-label={`بحث في محادثات ${channel === 'WhatsApp' ? 'واتساب' : channel === 'Messenger' ? 'ماسنجر' : 'التعليقات'}`}
+            placeholder={searchPlaceholder}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className={styles.searchBarInput}
@@ -108,11 +105,6 @@ export default function ConversationList({
         {/* Filters/Tabs Scroll */}
         <div className={styles.tabsFilterScroll}>
           {Object.keys(statusLabels).map((key) => {
-            let label = 'الكل';
-            if (key === 'Open') label = 'غير مقروء';
-            else if (key === 'Pending') label = 'مؤهل للشراء';
-            else if (key === 'Resolved') label = 'متابعة';
-
             const isActive = filterStatus === key;
             return (
               <button
@@ -120,8 +112,9 @@ export default function ConversationList({
                 type="button"
                 className={`${styles.tabFilterBtn} ${isActive ? styles.tabFilterBtnActive : ''}`}
                 onClick={() => setFilterStatus(key)}
+                aria-pressed={isActive}
               >
-                {label}
+                {statusLabels[key] || key}
               </button>
             );
           })}
@@ -178,12 +171,7 @@ export default function ConversationList({
           conversations.map(conv => {
             const isActive = activeConv?.id === conv.id;
             const customerName = conv.customer.facebookName || conv.customer.name || 'عميل غير معروف';
-            const customerTag = getCustomerTag(conv);
-            const tagClass = getTagColorClass(customerTag);
             const avatarInitial = (customerName || 'ع')[0].toUpperCase();
-
-            // Simulate online state based on time
-            const isOnline = isWithin24hWindow(conv.lastMessageAt);
 
             return (
               <button
@@ -191,13 +179,14 @@ export default function ConversationList({
                 type="button"
                 className={`${styles.chatListItem} ${isActive ? styles.chatListItemActive : ''}`}
                 onClick={() => setActiveConv(conv)}
+                aria-pressed={isActive}
+                aria-label={`${customerName}، ${statusLabels[conv.status] || conv.status}${channel === 'WhatsApp' && conv.whatsAppAccountName ? `، عبر ${conv.whatsAppAccountName}` : ''}، آخر نشاط ${formatEgyptTime(conv.lastMessageAt)}`}
               >
                 {/* Avatar with status indicator */}
                 <div className={styles.avatarContainer}>
                   <div className={styles.avatarCircle}>
                     {avatarInitial}
                   </div>
-                  {isOnline && <span className={styles.statusDotOnline}></span>}
                 </div>
 
                 {/* Content details */}
@@ -209,26 +198,28 @@ export default function ConversationList({
 
                   <div className={styles.itemSnippetRow}>
                     <p className={styles.chatSnippet}>
-                      {conv.status === 'Open' ? 'نعم، من فضلك قم بإنشاء مسودة...' : 'شكراً لك، سأقوم بمراجعة الملف غداً.'}
+                      {conv.customer.label ? `تصنيف CRM: ${conv.customer.label}` : 'لا يتوفر ملخص للرسالة في هذا المصدر'}
                     </p>
                     
                     {/* Unread count badge if active/unread */}
-                    {conv.status === 'Open' && (
-                      <span className={styles.unreadBadge}>٢</span>
+                    {conv.unreadCount > 0 && (
+                      <span className={styles.unreadBadge} aria-label={`${conv.unreadCount} رسائل غير مقروءة`}>
+                        {conv.unreadCount.toLocaleString('ar-EG')}
+                      </span>
                     )}
                   </div>
 
                   {/* Metadata & Tag row */}
                   <div className={styles.itemFooterRow}>
-                    <span className={`${styles.tagPill} ${tagClass}`}>
-                      {customerTag}
+                    <span className={`${styles.tagPill} ${styles.tagCommunicated}`}>
+                      {statusLabels[conv.status] || conv.status}
                     </span>
                     
                     <span className={styles.chatChannelIcon} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: 500 }}>
                       {channel === 'WhatsApp' && (
                         <>
                           <MessageSquare size={12} style={{ color: '#25D366' }} />
-                          <span>واتساب</span>
+                          <span>واتساب{conv.whatsAppAccountName ? ` · ${conv.whatsAppAccountName}` : ''}</span>
                         </>
                       )}
                       {channel === 'Messenger' && (
@@ -249,6 +240,16 @@ export default function ConversationList({
               </button>
             );
           })
+        )}
+        {!loading && !loadError && conversations.length > 0 && hasMore && onLoadMore && (
+          <button
+            type="button"
+            className={styles.retryConversationsBtn}
+            onClick={onLoadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore ? 'جاري تحميل الأقدم...' : 'تحميل محادثات أقدم'}
+          </button>
         )}
       </div>
     </div>

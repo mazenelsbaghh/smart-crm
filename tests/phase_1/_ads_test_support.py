@@ -35,7 +35,10 @@ async def create_admin(client: httpx.AsyncClient, prefix: str):
 
 
 async def connect_mock_facebook(client: httpx.AsyncClient, project_id: str, headers: dict):
-    started = await client.post(f"{BASE_URL}/projects/{project_id}/ad-manager/facebook/oauth/start", headers=headers)
+    started = await client.post(
+        f"{BASE_URL}/projects/{project_id}/ad-manager/facebook/oauth/start",
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
     assert started.status_code == 200
     resources = await client.get(f"{BASE_URL}/projects/{project_id}/ad-manager/facebook/resources", headers=headers)
     resources.raise_for_status()
@@ -45,8 +48,11 @@ async def connect_mock_facebook(client: httpx.AsyncClient, project_id: str, head
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
         json={
             "adAccountId": catalog["adAccounts"][0]["id"], "pageId": catalog["pages"][0]["id"],
-            "datasetId": catalog["datasets"][0]["id"], "currency": "EGP", "timezone": "Africa/Cairo",
+            "datasetId": catalog["datasets"][0]["id"],
+            "wabaId": catalog["wabas"][0]["id"],
+            "phoneNumberId": catalog["wabas"][0]["phones"][0]["id"],
+            "integrationMode": "CloudApiCoexistence",
         },
     )
-    selected.raise_for_status()
+    assert selected.is_success, f"connection selection failed ({selected.status_code}): {selected.text}"
     return catalog

@@ -1,19 +1,19 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { useToast } from '../../context/toast-context';
 import { api } from '../../services/api';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { handleDialogKeyDown } from './dialog-accessibility';
 import { 
   Megaphone, 
   Plus, 
   Calendar, 
   Send, 
   BarChart3, 
-  FileText, 
   Users,
   CheckCircle2,
-  AlertCircle,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
@@ -58,6 +58,15 @@ const statusNamesAr: Record<string, string> = {
   'Unknown': 'غير معروف'
 };
 
+const formatMetric = (value: number) => Number.isFinite(value) ? value.toLocaleString('ar-EG') : 'غير متاح';
+
+function formatCairoDate(value?: string): string {
+  if (!value) return 'موعد الجدولة غير متاح من المصدر';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'موعد غير صالح في المصدر';
+  return `${date.toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', dateStyle: 'medium', timeStyle: 'short' })} بتوقيت القاهرة`;
+}
+
 export default function Campaigns() {
   const { activeProject } = useAuth();
   const { showToast } = useToast();
@@ -65,6 +74,7 @@ export default function Campaigns() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -80,54 +90,74 @@ export default function Campaigns() {
   const [formTemplateA, setFormTemplateA] = useState('');
   const [formTemplateB, setFormTemplateB] = useState('');
   const [formScheduleDate, setFormScheduleDate] = useState('');
+  const [campaignToLaunch, setCampaignToLaunch] = useState<Campaign | null>(null);
+  const [confirmScheduledCreation, setConfirmScheduledCreation] = useState(false);
+  const loadRequestIdRef = React.useRef(0);
 
-  const fetchData = async () => {
-    if (!activeProject) return;
+  const fetchData = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
+    if (!activeProject) {
+      setCampaigns([]);
+      setSegments([]);
+      setLoading(false);
+      setLoadError('تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.');
+      return;
+    }
     try {
       setLoading(true);
-      const campRes = await api.get<Campaign[]>(`/api/projects/${activeProject.id}/campaigns`);
-      const segRes = await api.get<Segment[]>(`/api/projects/${activeProject.id}/segments`);
+      setLoadError(null);
+      setCampaigns([]);
+      setSegments([]);
+      const [campRes, segRes] = await Promise.all([
+        api.get<Campaign[]>(`/api/projects/${activeProject.id}/campaigns`),
+        api.get<Segment[]>(`/api/projects/${activeProject.id}/segments`),
+      ]);
+      if (requestId !== loadRequestIdRef.current) return;
       
       setCampaigns(campRes.data);
       setSegments(segRes.data);
     } catch (e) {
+      if (requestId !== loadRequestIdRef.current) return;
       console.error('Failed to load campaigns data', e);
-      setMessage({ type: 'error', text: 'فشل تحميل بيانات الحملات.' });
+      setLoadError('فشل تحميل بيانات الحملات. لم يتم عرض قائمة فارغة بديلًا عنها.');
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchData();
-    setCurrentPage(1);
   }, [activeProject]);
 
-  const handleCreateCampaign = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    const loadTimer = window.setTimeout(() => {
+      setCurrentPage(1);
+      void fetchData();
+    }, 0);
+    return () => window.clearTimeout(loadTimer);
+  }, [fetchData]);
+
+  const createCampaign = async () => {
     if (!activeProject) return;
     if (!formName || !formSegmentId || !formTemplateA) {
       showToast('الاسم والمجموعة والقالب (أ) حقول مطلوبة.', 'error');
       return;
     }
 
+    let createdCampaignId: string | null = null;
     try {
       setActionLoading(true);
       setMessage(null);
       
       // 1. Create campaign as Draft
-      const res = await api.post(`/api/projects/${activeProject.id}/campaigns`, {
+      const res = await api.post<{ id: string }>(`/api/projects/${activeProject.id}/campaigns`, {
         name: formName,
         segmentId: formSegmentId,
         messageTemplateA: formTemplateA,
         messageTemplateB: formTemplateB || '',
       });
 
-      const campaignId = res.data.id;
+      createdCampaignId = res.data.id;
 
       // 2. If scheduled date is provided, schedule it
       if (formScheduleDate) {
-        await api.post(`/api/campaigns/${campaignId}/schedule`, JSON.stringify(new Date(formScheduleDate).toISOString()), {
+        await api.post(`/api/campaigns/${createdCampaignId}/schedule`, JSON.stringify(new Date(formScheduleDate).toISOString()), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -142,26 +172,54 @@ export default function Campaigns() {
       setFormTemplateB('');
       setFormScheduleDate('');
       
-      fetchData();
-    } catch (e: any) {
+      void fetchData();
+    } catch (e) {
       console.error('Failed to create campaign', e);
-      setMessage({ type: 'error', text: e.response?.data || 'فشل إنشاء الحملة.' });
+      if (createdCampaignId) {
+        setMessage({ type: 'error', text: 'تم حفظ الحملة كمسودة، لكن تعذرت جدولتها. افتح المسودة الحالية لإعادة المحاولة ولا تنشئ نسخة جديدة.' });
+        setIsModalOpen(false);
+        setFormName('');
+        setFormSegmentId('');
+        setFormTemplateA('');
+        setFormTemplateB('');
+        setFormScheduleDate('');
+        void fetchData();
+      } else {
+        setMessage({ type: 'error', text: 'فشل إنشاء الحملة.' });
+      }
     } finally {
       setActionLoading(false);
     }
   };
 
+  const submitCampaign = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (formScheduleDate) {
+      const scheduledAt = new Date(formScheduleDate);
+      if (Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) {
+        showToast('اختر موعدًا صحيحًا في المستقبل، أو اترك الموعد فارغًا لحفظ مسودة.', 'error');
+        return;
+      }
+      setConfirmScheduledCreation(true);
+      return;
+    }
+    void createCampaign();
+  };
+
   const handleScheduleNow = async (campaignId: string) => {
     try {
+      setActionLoading(true);
       setMessage(null);
       await api.post(`/api/campaigns/${campaignId}/schedule`, JSON.stringify(new Date().toISOString()), {
         headers: { 'Content-Type': 'application/json' }
       });
       setMessage({ type: 'success', text: 'تم جدولة الحملة للإرسال الفوري.' });
-      fetchData();
+      void fetchData();
     } catch (e) {
       console.error('Failed to schedule campaign', e);
       setMessage({ type: 'error', text: 'فشل جدولة الحملة.' });
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -182,17 +240,20 @@ export default function Campaigns() {
           <h1 className={styles.pageTitle}>الحملات الصادرة</h1>
           <p className={styles.pageSubtitle}>جدولة البث التسويقي وتشغيل قوالب اختبار A/B على مجموعات العملاء</p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className={`${styles.btn} ${styles.btnPrimary}`}
-        >
-          <Plus size={16} />
-          إنشاء حملة
-        </button>
+        {activeProject && (
+          <button
+            type="button"
+            onClick={() => setIsModalOpen(true)}
+            className={`${styles.btn} ${styles.btnPrimary}`}
+          >
+            <Plus size={16} />
+            إنشاء حملة
+          </button>
+        )}
       </div>
 
       {message && (
-        <div className={`glass-panel`} style={{ 
+        <div className={`glass-panel`} role={message.type === 'error' ? 'alert' : 'status'} style={{
           padding: 'var(--space-md)', 
           borderRight: `4px solid ${message.type === 'success' ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))'}`,
           display: 'flex',
@@ -211,10 +272,16 @@ export default function Campaigns() {
             <div className={styles.spinner}></div>
             <p style={{ marginTop: 'var(--space-md)' }}>جاري تحميل الحملات...</p>
           </div>
+        ) : loadError ? (
+          <div className={styles.emptyState} role="alert">
+            <h3 className={styles.emptyStateTitle}>تعذر تحميل الحملات</h3>
+            <p className={styles.emptyStateDesc}>{loadError}</p>
+            {activeProject && <button type="button" onClick={() => void fetchData()} className={`${styles.btn} ${styles.btnPrimary}`}>إعادة المحاولة</button>}
+          </div>
         ) : campaigns.length === 0 ? (
           <div className={styles.emptyState}>
             <Megaphone size={48} style={{ color: 'hsl(var(--text-muted))' }} />
-            <h3 className={styles.emptyStateTitle}>لا توجد حملات مجدولة</h3>
+            <h3 className={styles.emptyStateTitle}>لا توجد حملات</h3>
             <p className={styles.emptyStateDesc}>أنشئ أول حملة تسويقية أو إعلامية للوصول إلى عملائك المستهدفين عبر واتساب.</p>
             <button onClick={() => setIsModalOpen(true)} className={`${styles.btn} ${styles.btnPrimary}`}>
               إنشاء حملة
@@ -223,6 +290,7 @@ export default function Campaigns() {
         ) : (
           <div className={styles.tableWrapper}>
             <table className={styles.table}>
+              <caption className="sr-only">الحملات الصادرة وحالتها ومؤشرات التسليم</caption>
               <thead>
                 <tr>
                   <th className={styles.th}>الحملة</th>
@@ -240,10 +308,10 @@ export default function Campaigns() {
                       <td className={styles.td}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                           <span style={{ fontWeight: 600, color: 'var(--text-strong)' }}>{camp.name}</span>
-                          {camp.scheduledAt && (
+                          {(camp.scheduledAt || camp.status === 1) && (
                             <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <Calendar size={12} />
-                              {new Date(camp.scheduledAt).toLocaleString('ar-EG')}
+                              {formatCairoDate(camp.scheduledAt)}
                             </span>
                           )}
                         </div>
@@ -263,14 +331,15 @@ export default function Campaigns() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <BarChart3 size={14} style={{ color: 'hsl(var(--accent-primary))' }} />
                           <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-strong)' }}>
-                            {camp.sentCount} / {camp.deliveredCount} / {camp.readCount} / {camp.responseCount}
+                            {formatMetric(camp.sentCount)} / {formatMetric(camp.deliveredCount)} / {formatMetric(camp.readCount)} / {formatMetric(camp.responseCount)}
                           </span>
                         </div>
                       </td>
                       <td className={styles.td} style={{ textAlign: 'center' }}>
                         {camp.status === 0 ? ( // Draft
                           <button
-                            onClick={() => handleScheduleNow(camp.id)}
+                            onClick={() => setCampaignToLaunch(camp)}
+                            disabled={actionLoading}
                             className={`${styles.btn} ${styles.btnPrimary}`}
                             style={{ padding: '4px 10px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                           >
@@ -278,7 +347,7 @@ export default function Campaigns() {
                             إطلاق الآن
                           </button>
                         ) : (
-                          <span style={{ color: 'hsl(var(--text-muted))', fontSize: '0.8rem' }}>مغلقة</span>
+                          <span style={{ color: 'hsl(var(--text-muted))', fontSize: '0.8rem' }}>لا توجد إجراءات من هذه الشاشة</span>
                         )}
                       </td>
                     </tr>
@@ -293,6 +362,7 @@ export default function Campaigns() {
                 <div className={styles.paginationInfo}>
                   <span>عرض السطور:</span>
                   <select
+                    aria-label="عدد الحملات في الصفحة"
                     value={pageSize}
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
@@ -317,6 +387,7 @@ export default function Campaigns() {
                     disabled={currentPage === totalPages}
                     className={styles.paginationBtn}
                     title="الصفحة التالية"
+                    aria-label="الصفحة التالية"
                   >
                     <ChevronLeft size={16} />
                   </button>
@@ -333,6 +404,8 @@ export default function Campaigns() {
                           key={page}
                           onClick={() => setCurrentPage(page)}
                           className={`${styles.paginationBtn} ${currentPage === page ? styles.paginationBtnActive : ''}`}
+                          aria-label={`الصفحة ${page}`}
+                          aria-current={currentPage === page ? 'page' : undefined}
                         >
                           {page}
                         </button>
@@ -345,6 +418,7 @@ export default function Campaigns() {
                     disabled={currentPage === 1}
                     className={styles.paginationBtn}
                     title="الصفحة السابقة"
+                    aria-label="الصفحة السابقة"
                   >
                     <ChevronRight size={16} />
                   </button>
@@ -358,9 +432,9 @@ export default function Campaigns() {
       {/* Creation Modal Overlay */}
       {isModalOpen && (
         <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`}>
+          <div className={`glass-panel ${styles.modal}`} role="dialog" aria-modal="true" aria-labelledby="campaign-dialog-title" onKeyDown={(event) => handleDialogKeyDown(event, () => setIsModalOpen(false))}>
             <div className={styles.modalHeader}>
-              <h3 className={styles.modalTitle}>جدولة حملة جديدة</h3>
+              <h3 id="campaign-dialog-title" className={styles.modalTitle}>إنشاء حملة جديدة</h3>
               <button 
                 type="button"
                 onClick={() => setIsModalOpen(false)} 
@@ -372,10 +446,12 @@ export default function Campaigns() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateCampaign} className={styles.form}>
+            <form onSubmit={submitCampaign} className={styles.form}>
               <div className={styles.formGroup}>
-                <label className={styles.label}>اسم الحملة</label>
+                <label htmlFor="campaign-name" className={styles.label}>اسم الحملة</label>
                 <input 
+                  id="campaign-name"
+                  autoFocus
                   type="text" 
                   value={formName} 
                   onChange={(e) => setFormName(e.target.value)} 
@@ -386,8 +462,9 @@ export default function Campaigns() {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>المجموعة المستهدفة</label>
+                <label htmlFor="campaign-segment" className={styles.label}>المجموعة المستهدفة</label>
                 <select 
+                  id="campaign-segment"
                   value={formSegmentId} 
                   onChange={(e) => setFormSegmentId(e.target.value)} 
                   className={styles.select} 
@@ -401,8 +478,9 @@ export default function Campaigns() {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>قالب الرسالة أ</label>
+                <label htmlFor="campaign-template-a" className={styles.label}>قالب الرسالة أ</label>
                 <textarea 
+                  id="campaign-template-a"
                   value={formTemplateA} 
                   onChange={(e) => setFormTemplateA(e.target.value)} 
                   placeholder="مرحباً {{name}}، إليك الخصم الخاص بك..." 
@@ -412,8 +490,9 @@ export default function Campaigns() {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>قالب الرسالة ب (اختياري لاختبار A/B)</label>
+                <label htmlFor="campaign-template-b" className={styles.label}>قالب الرسالة ب (اختياري لاختبار A/B)</label>
                 <textarea 
+                  id="campaign-template-b"
                   value={formTemplateB} 
                   onChange={(e) => setFormTemplateB(e.target.value)} 
                   placeholder="أهلاً {{name}}، احصل على كود الخصم اليوم!" 
@@ -422,8 +501,9 @@ export default function Campaigns() {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>تاريخ ووقت الجدولة (اتركه فارغاً للحفظ كمسودة)</label>
+                <label htmlFor="campaign-schedule-at" className={styles.label}>تاريخ ووقت الجدولة بتوقيت جهازك (اتركه فارغًا للحفظ كمسودة)</label>
                 <input 
+                  id="campaign-schedule-at"
                   type="datetime-local" 
                   value={formScheduleDate} 
                   onChange={(e) => setFormScheduleDate(e.target.value)} 
@@ -445,13 +525,36 @@ export default function Campaigns() {
                   className={`${styles.btn} ${styles.btnPrimary}`}
                   disabled={actionLoading}
                 >
-                  {actionLoading ? 'جاري الإنشاء...' : 'حفظ وجدولة'}
+                  {actionLoading ? 'جاري الإنشاء...' : formScheduleDate ? 'حفظ وجدولة' : 'حفظ كمسودة'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+      <ConfirmDialog
+        isOpen={campaignToLaunch !== null}
+        title="إطلاق الحملة الآن"
+        message={campaignToLaunch ? `سيتم جدولة الحملة «${campaignToLaunch.name}» فورًا للمجموعة «${getSegmentName(campaignToLaunch.segmentId)}».` : ''}
+        confirmLabel="إطلاق الآن"
+        onConfirm={() => {
+          const campaign = campaignToLaunch;
+          setCampaignToLaunch(null);
+          if (campaign) void handleScheduleNow(campaign.id);
+        }}
+        onCancel={() => setCampaignToLaunch(null)}
+      />
+      <ConfirmDialog
+        isOpen={confirmScheduledCreation}
+        title="إنشاء وجدولة الحملة"
+        message={`سيتم إنشاء الحملة «${formName}» وجدولتها للمجموعة «${getSegmentName(formSegmentId)}» في الموعد المحدد بتوقيت جهازك.`}
+        confirmLabel="إنشاء وجدولة"
+        onConfirm={() => {
+          setConfirmScheduledCreation(false);
+          void createCampaign();
+        }}
+        onCancel={() => setConfirmScheduledCreation(false)}
+      />
     </div>
   );
 }

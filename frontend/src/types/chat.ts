@@ -17,6 +17,8 @@ export interface Conversation {
   customer: CustomerSummary;
   status: ConversationStatus;
   channel: Channel;
+  whatsAppAccountId?: string | null;
+  whatsAppAccountName?: string | null;
   lastMessageAt: string;
   unreadCount: number;
   assignedAgentId: string | null;
@@ -57,4 +59,3 @@ export interface ConnectedPage {
   tokenExpiresAt: string | null;
   createdAt: string;
 }
-

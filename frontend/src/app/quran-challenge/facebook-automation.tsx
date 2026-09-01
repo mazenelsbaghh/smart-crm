@@ -1,15 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Clock3, Link2, RefreshCw, Send } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { automationDateTime } from './automation-time';
 import styles from './quran-challenge.module.css';
 
 type VerseSelection = { surahNumber: number; ayahNumber: number; hiddenWordIndex: number };
 type PageOption = { pageId: string; pageName: string };
 type OAuthPage = { pageId: string; pageName: string; accessToken: string };
+type FacebookOAuthMessage = { type?: unknown; projectId?: unknown; error?: unknown; pages?: unknown; userAccessToken?: unknown };
 type FacebookSettings = {
   appConfigured: boolean;
   connectedPages: PageOption[];
@@ -24,7 +27,7 @@ type FacebookSettings = {
   lastError: string | null;
 };
 
-export function FacebookAutomationPanel({ selection }: { selection: VerseSelection }) {
+export function FacebookAutomationPanel({ selection, timezone }: { selection: VerseSelection; timezone: string | null }) {
   const { user, activeProject, loading: authLoading } = useAuth();
   const [settings, setSettings] = useState<FacebookSettings | null>(null);
   const [oauthPages, setOauthPages] = useState<OAuthPage[]>([]);
@@ -34,8 +37,10 @@ export function FacebookAutomationPanel({ selection }: { selection: VerseSelecti
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [confirmPublish, setConfirmPublish] = useState(false);
+  const oauthPopupRef = useRef<Window | null>(null);
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     setLoading(true);
     try {
       const response = await api.get<FacebookSettings>('/api/quran/facebook');
@@ -45,39 +50,55 @@ export function FacebookAutomationPanel({ selection }: { selection: VerseSelecti
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (user && activeProject) void loadSettings();
-  }, [user, activeProject]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!user || !activeProject) return;
+    const timer = window.setTimeout(() => void loadSettings(), 0);
+    return () => window.clearTimeout(timer);
+  }, [user, activeProject, loadSettings]);
 
   useEffect(() => {
     const receiveOAuth = (event: MessageEvent) => {
-      if (!trustedOAuthOrigins().includes(event.origin) || !activeProject || !event.data) return;
-      if (event.data.type === 'facebook-oauth-error') {
-        setError(event.data.error || 'لم يكتمل ربط Facebook.');
+      if (!trustedOAuthOrigins().includes(event.origin) || event.source !== oauthPopupRef.current || !activeProject || !event.data) return;
+      const payload = event.data as FacebookOAuthMessage;
+      if (payload.type === 'facebook-oauth-error') {
+        setError(typeof payload.error === 'string' ? payload.error : 'لم يكتمل ربط Facebook.');
+        oauthPopupRef.current = null;
         return;
       }
-      if (event.data.type !== 'facebook-oauth-success' || event.data.projectId !== activeProject.id) return;
-      setOauthPages(Array.isArray(event.data.pages) ? event.data.pages : []);
-      setUserAccessToken(event.data.userAccessToken || '');
+      if (payload.type !== 'facebook-oauth-success' || payload.projectId !== activeProject.id) return;
+      const pages = (Array.isArray(payload.pages) ? payload.pages : []).flatMap((candidate) => {
+        const page = candidate as Partial<OAuthPage>;
+        return typeof page.pageId === 'string' && typeof page.pageName === 'string' && typeof page.accessToken === 'string'
+          ? [{ pageId: page.pageId, pageName: page.pageName, accessToken: page.accessToken }]
+          : [];
+      });
+      setOauthPages(pages);
+      setUserAccessToken(typeof payload.userAccessToken === 'string' ? payload.userAccessToken : '');
       setMessage('تم تسجيل الدخول. اختر الصفحة التي ستُنشر عليها الفيديوهات.');
+      oauthPopupRef.current = null;
     };
     window.addEventListener('message', receiveOAuth);
     return () => window.removeEventListener('message', receiveOAuth);
   }, [activeProject]);
 
   const connect = () => {
-    if (!activeProject) return;
+    if (!activeProject || busy || publishing) return;
+    if (oauthPopupRef.current && !oauthPopupRef.current.closed) {
+      oauthPopupRef.current.focus();
+      return;
+    }
     resetFeedback(setError, setMessage);
     const baseUrl = api.defaults.baseURL?.startsWith('http') ? api.defaults.baseURL : `${window.location.origin}${api.defaults.baseURL || ''}`;
     const oauthUrl = `${baseUrl.replace(/\/$/, '')}/api/facebook/oauth/login?projectId=${activeProject.id}`;
     const popup = window.open(oauthUrl, 'facebook-oauth-login', popupFeatures());
     if (!popup) setError('اسمح بالنوافذ المنبثقة ثم حاول الربط مرة أخرى.');
+    else oauthPopupRef.current = popup;
   };
 
   const confirmPage = async (page: OAuthPage) => {
-    if (!activeProject || !settings) return;
+    if (!activeProject || !settings || busy || publishing) return;
     setBusy(true);
     resetFeedback(setError, setMessage);
     try {
@@ -106,7 +127,7 @@ export function FacebookAutomationPanel({ selection }: { selection: VerseSelecti
   };
 
   const save = async () => {
-    if (!settings) return;
+    if (!settings || busy || publishing) return;
     setBusy(true);
     resetFeedback(setError, setMessage);
     try {
@@ -121,6 +142,7 @@ export function FacebookAutomationPanel({ selection }: { selection: VerseSelecti
   };
 
   const publishNow = async () => {
+    if (busy || publishing) return;
     setPublishing(true);
     resetFeedback(setError, setMessage);
     try {
@@ -133,7 +155,7 @@ export function FacebookAutomationPanel({ selection }: { selection: VerseSelecti
     }
   };
 
-  return <section className={`${styles.youtubeStudio} ${styles.facebookStudio}`} aria-labelledby="facebook-heading">
+  return <><section className={`${styles.youtubeStudio} ${styles.facebookStudio}`} aria-labelledby="facebook-heading">
     <div className={`${styles.youtubeIntro} ${styles.facebookIntro}`}>
       <div className={`${styles.youtubeMark} ${styles.facebookMark}`}><FacebookGlyph /></div>
       <p className={styles.eyebrow}>Facebook Reels</p>
@@ -147,39 +169,50 @@ export function FacebookAutomationPanel({ selection }: { selection: VerseSelecti
           <EmptyState title="تعذّر تحميل إعدادات Facebook" detail={error || 'أعد تحميل الصفحة وحاول مرة أخرى.'} /> : <>
             <div className={styles.channelRow}>
               <div><span className={`${styles.connectionDot} ${settings.facebookPageId ? styles.connected : ''}`} /><div><small>صفحة النشر</small><strong>{settings.pageName ?? 'غير محددة'}</strong></div></div>
-              <button type="button" className={`${styles.connectButton} ${styles.facebookConnect}`} onClick={connect} disabled={!settings.appConfigured || busy}><RefreshCw size={17} />{settings.facebookPageId ? 'تحديث الصلاحيات' : 'ربط Facebook'}</button>
+              <button type="button" className={`${styles.connectButton} ${styles.facebookConnect}`} onClick={connect} disabled={!settings.appConfigured || busy || publishing}><RefreshCw size={17} />{settings.facebookPageId ? 'تحديث الصلاحيات' : 'ربط Facebook'}</button>
             </div>
             {!settings.appConfigured && <p className={styles.youtubeWarning}>بيانات Meta App غير مضبوطة على الخادم.</p>}
             <p className={styles.facebookPermissionNote}>عند الربط وافق على صلاحية إدارة منشورات الصفحة حتى يتمكن النظام من نشر Reels.</p>
             {oauthPages.length > 0 && <div className={styles.facebookPageChoices} aria-label="اختر صفحة Facebook">
               <strong>اختر صفحة النشر</strong>
-              {oauthPages.map((page) => <button type="button" key={page.pageId} onClick={() => confirmPage(page)} disabled={busy}><FacebookGlyph small /><span>{page.pageName}</span><small>اختيار</small></button>)}
+              {oauthPages.map((page) => <button type="button" key={page.pageId} onClick={() => confirmPage(page)} disabled={busy || publishing}><FacebookGlyph small /><span>{page.pageName}</span><small>اختيار</small></button>)}
             </div>}
             {settings.connectedPages.length > 0 && <label className={styles.facebookPageSelect}><span>صفحة متصلة مسبقاً</span><select value={settings.facebookPageId ?? ''} onChange={(event) => { const page = settings.connectedPages.find((item) => item.pageId === event.target.value); setSettings({ ...settings, facebookPageId: event.target.value || null, pageName: page?.pageName ?? null, isEnabled: false }); }}><option value="">اختر الصفحة</option>{settings.connectedPages.map((page) => <option value={page.pageId} key={page.pageId}>{page.pageName}</option>)}</select></label>}
-            <FacebookCountdown settings={settings} />
+            <FacebookCountdown settings={settings} timezone={timezone} />
             <div className={styles.scheduleGrid}><label><span><Clock3 size={15} /> ينشر كل</span><div className={styles.intervalInput}><input type="number" min="1" max="168" value={settings.intervalHours} onChange={(event) => setSettings({ ...settings, intervalHours: Number(event.target.value) })} /><b>ساعة</b></div></label></div>
             <label className={styles.captionTemplate}><span>الوصف التلقائي</span><textarea rows={6} maxLength={5000} value={settings.captionTemplate} onChange={(event) => setSettings({ ...settings, captionTemplate: event.target.value })} /><small>المتغيرات: {'{surah}'}، {'{ayah}'}، {'{word}'}</small></label>
-            <label className={styles.automationSwitch}><input type="checkbox" checked={settings.isEnabled} disabled={!settings.facebookPageId} onChange={(event) => setSettings({ ...settings, isEnabled: event.target.checked })} /><span /><div><strong>تشغيل النشر التلقائي على Facebook</strong><small>{settings.nextPublishAtUtc ? `الموعد القادم: ${cairoDateTime(settings.nextPublishAtUtc)}` : 'لن يبدأ قبل اختيار الصفحة وحفظ الجدولة'}</small></div></label>
-            <div className={styles.youtubeActions}><button type="button" className={styles.saveSchedule} onClick={save} disabled={busy}>{busy ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button><button type="button" className={styles.publishNow} onClick={publishNow} disabled={!settings.facebookPageId || publishing}><Send size={17} />{publishing ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button></div>
-            {settings.lastPublishedAtUtc && <p className={styles.lastPublish}>آخر نشر: {cairoDateTime(settings.lastPublishedAtUtc)}</p>}
-            {(error || settings.lastError) && <p className={styles.youtubeError}>{error || settings.lastError}</p>}
-            {message && <p className={styles.youtubeSuccess}>{message}</p>}
+            <label className={styles.automationSwitch}><input type="checkbox" checked={settings.isEnabled} disabled={!settings.facebookPageId} onChange={(event) => setSettings({ ...settings, isEnabled: event.target.checked })} /><span /><div><strong>تشغيل النشر التلقائي على Facebook</strong><small>{settings.nextPublishAtUtc ? `الموعد القادم: ${automationDateTime(settings.nextPublishAtUtc, timezone)}` : 'لن يبدأ قبل اختيار الصفحة وحفظ الجدولة'}</small></div></label>
+            <div className={styles.youtubeActions}><button type="button" className={styles.saveSchedule} onClick={save} disabled={busy || publishing}>{busy ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button><button type="button" className={styles.publishNow} onClick={() => setConfirmPublish(true)} disabled={!settings.facebookPageId || busy || publishing}><Send size={17} />{publishing ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button></div>
+            {settings.lastPublishedAtUtc && <p className={styles.lastPublish}>آخر نشر: {automationDateTime(settings.lastPublishedAtUtc, timezone)}</p>}
+            {(error || settings.lastError) && <p className={styles.youtubeError} role="alert">{error || settings.lastError}</p>}
+            {message && <p className={styles.youtubeSuccess} role="status">{message}</p>}
           </>}
     </div>
-  </section>;
+  </section><ConfirmDialog
+    isOpen={confirmPublish}
+    title="نشر الآية على Facebook الآن؟"
+    message={`ستُضاف الآية ${selection.ayahNumber} إلى طابور صفحة «${settings?.pageName ?? 'Facebook'}» فورًا.`}
+    confirmLabel="إضافة للطابور"
+    onCancel={() => setConfirmPublish(false)}
+    onConfirm={() => { setConfirmPublish(false); void publishNow(); }}
+  /></>;
 }
 
-function FacebookCountdown({ settings }: { settings: FacebookSettings }) {
-  const [now, setNow] = useState(Date.now());
+function FacebookCountdown({ settings, timezone }: { settings: FacebookSettings; timezone: string | null }) {
+  const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
     if (!settings.isEnabled || !settings.nextPublishAtUtc) return;
+    const initialTimer = window.setTimeout(() => setNow(Date.now()), 0);
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
   }, [settings.isEnabled, settings.nextPublishAtUtc]);
-  const remaining = settings.nextPublishAtUtc ? new Date(settings.nextPublishAtUtc).getTime() - now : null;
+  const remaining = settings.nextPublishAtUtc && now !== null ? new Date(settings.nextPublishAtUtc).getTime() - now : null;
   const active = Boolean(settings.facebookPageId && settings.isEnabled && remaining !== null);
   const label = !settings.facebookPageId ? 'اربط الصفحة لبدء الجدولة' : !settings.isEnabled ? 'النشر التلقائي متوقف' : remaining === null ? 'احفظ الجدولة لتحديد الموعد' : remaining <= 0 ? 'جارٍ تجهيز Reel التالي…' : `بعد ${formatCountdown(remaining)}`;
-  return <div className={`${styles.nextPublish} ${active ? styles.nextPublishActive : ''}`}><div className={styles.nextPublishIcon}><Clock3 size={20} /></div><div className={styles.nextPublishCopy}><span>الـReel القادم</span><strong aria-live="polite">{label}</strong>{active && settings.nextPublishAtUtc && <time dateTime={settings.nextPublishAtUtc}>{cairoDateTime(settings.nextPublishAtUtc)}</time>}</div></div>;
+  return <div className={`${styles.nextPublish} ${active ? styles.nextPublishActive : ''}`}><div className={styles.nextPublishIcon}><Clock3 size={20} aria-hidden="true" /></div><div className={styles.nextPublishCopy}><span>الـReel القادم</span><strong>{label}</strong>{active && settings.nextPublishAtUtc && <time dateTime={settings.nextPublishAtUtc}>{automationDateTime(settings.nextPublishAtUtc, timezone)}</time>}</div></div>;
 }
 
 function EmptyState({ title, detail }: { title: string; detail: string }) {
@@ -204,5 +237,4 @@ function popupFeatures() {
 
 function resetFeedback(setError: (value: string) => void, setMessage: (value: string) => void) { setError(''); setMessage(''); }
 function apiErrorMessage(error: unknown) { if (axios.isAxiosError<{ error?: string }>(error)) return error.response?.data?.error ?? 'تعذّر الاتصال بالخادم.'; return error instanceof Error ? error.message : 'حدث خطأ غير متوقع.'; }
-function cairoDateTime(date: string) { return new Intl.DateTimeFormat('ar-EG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Cairo' }).format(new Date(date)); }
 function formatCountdown(milliseconds: number) { const seconds = Math.max(0, Math.floor(milliseconds / 1000)); const days = Math.floor(seconds / 86400); const time = [Math.floor((seconds % 86400) / 3600), Math.floor((seconds % 3600) / 60), seconds % 60].map((value) => String(value).padStart(2, '0')).join(':'); return days ? `${days} يوم و ${time}` : time; }

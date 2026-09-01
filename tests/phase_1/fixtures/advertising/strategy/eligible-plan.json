@@ -1,0 +1,15 @@
+{
+  "destinationType": "WHATSAPP",
+  "objective": "OUTCOME_ENGAGEMENT",
+  "optimizationGoal": "CONVERSATIONS",
+  "optimizationFallbackOrder": ["CONVERSATIONS"],
+  "bidStrategy": "LOWEST_COST_WITHOUT_CAP",
+  "placementMode": "AdvantagePlusAutomatic",
+  "hardAudienceControls": {
+    "includedCountries": ["EG"],
+    "minimumAge": 21,
+    "requiredLanguages": ["ar"],
+    "customAudienceExclusions": ["existing_customers"]
+  },
+  "state": "ReadyForPausedProvisioning"
+}

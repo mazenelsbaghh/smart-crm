@@ -20,12 +20,16 @@ public sealed class QuranTikTokPublisher
 
     public async Task<string> PublishAsync(
         QuranTikTokSettings settings,
-        QuranVerseSelection selection,
-        TikTokPostRequest post,
+        QuranVerseSelection? selection,
         CancellationToken cancellationToken)
     {
-        var accessToken = await _connectionService.AccessTokenAsync(settings, cancellationToken);
-        var creator = await _apiClient.CreatorInfoAsync(accessToken, cancellationToken);
+        var post = new TikTokPostRequest(
+            settings.CaptionTemplate,
+            settings.PrivacyLevel,
+            settings.AllowComment,
+            settings.AllowDuet,
+            settings.AllowStitch);
+        var creator = await _apiClient.CreatorInfoAsync(_connectionService.AccountId, cancellationToken);
         ValidateCreatorOptions(creator, post);
         var video = await _videoGenerator.GenerateAsync(selection, cancellationToken);
         if (video.DurationSeconds > creator.MaxVideoPostDurationSeconds)
@@ -33,16 +37,11 @@ public sealed class QuranTikTokPublisher
             throw new InvalidOperationException(
                 $"مدة الفيديو {Math.Ceiling(video.DurationSeconds)} ثانية، بينما حساب TikTok يسمح بحد أقصى {creator.MaxVideoPostDurationSeconds} ثانية.");
         }
-        var initialization = await _apiClient.InitializePostAsync(
-            accessToken,
-            post,
-            video.VideoBytes.LongLength,
-            cancellationToken);
-        await _apiClient.UploadAsync(
-            initialization.UploadUrl,
+        return await _apiClient.PublishVideoAsync(
+            _connectionService.AccountId,
+            post with { Title = video.Caption(settings.CaptionTemplate) },
             video.VideoBytes,
             cancellationToken);
-        return initialization.PublishId;
     }
 
     private static void ValidateCreatorOptions(TikTokCreatorInfo creator, TikTokPostRequest post)

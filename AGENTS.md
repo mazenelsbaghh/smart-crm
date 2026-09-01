@@ -1,6 +1,6 @@
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+For the current architecture, delivery sequence, project structure,
+verification commands, and other implementation constraints, read the current plan
 at specs/033-facebook-ads-manager/plan.md
 <!-- SPECKIT END -->
 

@@ -31,8 +31,12 @@ services:
       Logging__LogLevel__Microsoft: Warning
       Logging__LogLevel__Microsoft.AspNetCore: Warning
       Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command: Warning
+      Advertising__Enabled: "${ADVERTISING_ENABLED:-true}"
+      Advertising__AllowRealActivation: "${ADVERTISING_ALLOW_REAL_ACTIVATION:-false}"
       YOUTUBE_OAUTH_REDIRECT_URI: "${YOUTUBE_OAUTH_REDIRECT_URI:-https://n8n-mazen.online/api/quran/youtube/callback}"
-      TIKTOK_OAUTH_REDIRECT_URI: "${TIKTOK_OAUTH_REDIRECT_URI:-https://n8n-mazen.online/api/quran/tiktok/callback}"
+      ZERNIO_API_KEY: "${ZERNIO_API_KEY:-}"
+      ZERNIO_PROFILE_ID: "${ZERNIO_PROFILE_ID:-}"
+      ZERNIO_TIKTOK_ACCOUNT_ID: "${ZERNIO_TIKTOK_ACCOUNT_ID:-}"
 
   postgres:
     logging: *log-rotation

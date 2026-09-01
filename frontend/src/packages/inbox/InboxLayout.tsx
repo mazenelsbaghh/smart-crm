@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { Conversation, Message } from '../../types/chat';
 import ThinSidebar from './shared/ThinSidebar';
 import InboxMobileToolbar from './shared/InboxMobileToolbar';
@@ -23,8 +24,8 @@ interface InboxLayoutProps {
   handleSend: () => void;
   sending: boolean;
   isAiTyping: boolean;
-  aiTypingStage: 'generating' | 'typing';
-  aiTypingCountdown: number;
+  aiTypingStage: 'generating' | 'typing' | null;
+  aiTypingCountdown: number | null;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   filterStatus: string;
@@ -38,6 +39,15 @@ interface InboxLayoutProps {
   loading?: boolean;
   loadError?: string | null;
   onRetryConversations?: () => void;
+  hasMoreConversations?: boolean;
+  loadingMoreConversations?: boolean;
+  onLoadMoreConversations?: () => void;
+  hasOlderMessages?: boolean;
+  loadingOlderMessages?: boolean;
+  onLoadOlderMessages?: () => void;
+  messageLoadError?: string | null;
+  onRetryMessages?: () => void;
+  messagesLoading?: boolean;
   // For Comments Channel
   publicComment?: string;
   setPublicComment?: (val: string) => void;
@@ -74,6 +84,15 @@ export default function InboxLayout({
   loading = false,
   loadError,
   onRetryConversations,
+  hasMoreConversations,
+  loadingMoreConversations,
+  onLoadMoreConversations,
+  hasOlderMessages,
+  loadingOlderMessages,
+  onLoadOlderMessages,
+  messageLoadError,
+  onRetryMessages,
+  messagesLoading,
   publicComment,
   setPublicComment,
   privateDM,
@@ -83,12 +102,58 @@ export default function InboxLayout({
 }: InboxLayoutProps) {
   
   const containerRef = useRef<HTMLDivElement>(null);
+  const detailsReturnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const detailsCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previousConversationIdRef = useRef<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  const closeDetails = () => {
+    setDetailsOpen(false);
+    window.setTimeout(() => detailsReturnFocusRef.current?.focus(), 0);
+  };
+
+  useEffect(() => {
+    if (previousConversationIdRef.current === activeConv?.id) return;
+    previousConversationIdRef.current = activeConv?.id ?? null;
+    const closeTimer = window.setTimeout(() => setDetailsOpen(false), 0);
+    return () => window.clearTimeout(closeTimer);
+  }, [activeConv?.id]);
+
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const focusTimer = window.setTimeout(() => detailsCloseButtonRef.current?.focus(), 0);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setDetailsOpen(false);
+      window.setTimeout(() => detailsReturnFocusRef.current?.focus(), 0);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [detailsOpen]);
+
+  const keepDetailsFocusInside = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [href]'));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
 
 
   return (
     <div ref={containerRef} className={`${styles.inboxContainer} ${activeConv ? styles.hasActiveConv : ''}`}>
-      <InboxMobileToolbar onProjectSwitch={() => setActiveConv(null)} />
+      <InboxMobileToolbar />
 
       {/* 1. Thin vertical Sidebar navigation */}
       <ThinSidebar />
@@ -108,6 +173,9 @@ export default function InboxLayout({
         loading={loading}
         loadError={loadError}
         onRetry={onRetryConversations}
+        hasMore={hasMoreConversations}
+        loadingMore={loadingMoreConversations}
+        onLoadMore={onLoadMoreConversations}
       />
 
       {/* 3. Central chat workspace view */}
@@ -135,17 +203,44 @@ export default function InboxLayout({
         setActiveConv={setActiveConv}
         onUpdateCustomer={onUpdateCustomer}
         updating={updating}
+        hasOlderMessages={hasOlderMessages}
+        loadingOlderMessages={loadingOlderMessages}
+        onLoadOlderMessages={onLoadOlderMessages}
+        messageLoadError={messageLoadError}
+        onRetryMessages={onRetryMessages}
+        messagesLoading={messagesLoading}
+        onOpenDetails={(trigger) => {
+          detailsReturnFocusRef.current = trigger;
+          setDetailsOpen(true);
+        }}
       />
 
       {/* 4. Right CRM details and metrics side-panel */}
       {activeConv && (
-        <ContextSidebar
-          key={customer?.id || 'empty-context'}
-          activeConv={activeConv}
-          customer={customer}
-          onUpdateCustomer={onUpdateCustomer}
-          updating={updating}
-        />
+        <div
+          className={`${styles.contextPane} ${detailsOpen ? styles.contextPaneOpen : ''}`}
+          role={detailsOpen ? 'dialog' : undefined}
+          aria-modal={detailsOpen ? 'true' : undefined}
+          aria-labelledby={detailsOpen ? 'responsive-customer-details-title' : undefined}
+          onClick={detailsOpen ? closeDetails : undefined}
+          onKeyDown={detailsOpen ? keepDetailsFocusInside : undefined}
+        >
+          <div className={styles.contextPaneSurface} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.contextPaneHeader}>
+              <h2 id="responsive-customer-details-title">بيانات العميل</h2>
+              <button ref={detailsCloseButtonRef} type="button" onClick={closeDetails} aria-label="إغلاق بيانات العميل">
+                <X size={20} aria-hidden="true" />
+              </button>
+            </div>
+            <ContextSidebar
+              key={customer?.id || 'empty-context'}
+              activeConv={activeConv}
+              customer={customer}
+              onUpdateCustomer={onUpdateCustomer}
+              updating={updating}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

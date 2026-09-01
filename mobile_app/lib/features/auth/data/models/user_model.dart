@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 class User {
   final String id;
   final String email;
@@ -13,21 +11,34 @@ class User {
     required this.role,
   });
 
-  factory User.fromJson(Map<String, dynamic> json) {
+  factory User.fromJson(Object? response) {
+    if (response is! Map<String, dynamic>) {
+      throw const FormatException('Invalid user response');
+    }
     return User(
-      id: json['id'] ?? '',
-      email: json['email'] ?? '',
-      fullName: json['fullName'] ?? '',
-      role: json['role'] ?? 'Agent',
+      id: _requiredString(response, 'id'),
+      email: _requiredString(response, 'email'),
+      fullName: response['fullName'] is String
+          ? response['fullName'] as String
+          : '',
+      role: _requiredString(response, 'role'),
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'email': email,
-        'fullName': fullName,
-        'role': role,
-      };
+    'id': id,
+    'email': email,
+    'fullName': fullName,
+    'role': role,
+  };
+
+  bool get canManageProject {
+    final normalized = role.trim().toLowerCase();
+    return normalized == 'owner' ||
+        normalized == 'projectowner' ||
+        normalized == 'admin' ||
+        normalized == 'superadmin';
+  }
 }
 
 class AuthSession {
@@ -41,13 +52,24 @@ class AuthSession {
     required this.user,
   });
 
-  factory AuthSession.fromJson(Map<String, dynamic> json) {
+  factory AuthSession.fromJson(Object? response) {
+    if (response is! Map<String, dynamic>) {
+      throw const FormatException('Invalid login response');
+    }
     return AuthSession(
-      accessToken: json['accessToken'] ?? '',
-      refreshToken: json['refreshToken'] ?? '',
-      user: User.fromJson(json['user'] ?? {}),
+      accessToken: _requiredString(response, 'accessToken'),
+      refreshToken: _requiredString(response, 'refreshToken'),
+      user: User.fromJson(response['user']),
     );
   }
+}
+
+String _requiredString(Map<String, dynamic> response, String key) {
+  final field = response[key];
+  if (field is! String || field.trim().isEmpty) {
+    throw FormatException('Missing required field: $key');
+  }
+  return field;
 }
 
 class ProjectSettings {
@@ -60,6 +82,19 @@ class ProjectSettings {
   final int replyDelay;
   final int maxDailyMessages;
   final bool isGroupAppointmentsEnabled;
+  final bool geminiApiKeyConfigured;
+  final bool isWhatsAppGroupAutomationEnabled;
+  final String groupAutomationManagerPhone;
+  final String activeInstructors;
+  final bool humanTransferEnabled;
+  final String? humanTransferPhone;
+  final bool isTalkTipsTrialGateEnabled;
+  final bool messengerAiAutoReplyEnabled;
+  final int messengerReplyDelay;
+  final bool commentsAiAutoReplyEnabled;
+  final int commentsReplyDelay;
+  final String? systemPrompt;
+  final Map<String, dynamic>? aiBehavior;
 
   ProjectSettings({
     required this.aiAutoReplyEnabled,
@@ -71,33 +106,81 @@ class ProjectSettings {
     required this.replyDelay,
     required this.maxDailyMessages,
     required this.isGroupAppointmentsEnabled,
+    this.geminiApiKeyConfigured = false,
+    this.isWhatsAppGroupAutomationEnabled = false,
+    this.groupAutomationManagerPhone = '',
+    this.activeInstructors = '',
+    this.humanTransferEnabled = false,
+    this.humanTransferPhone,
+    this.isTalkTipsTrialGateEnabled = false,
+    this.messengerAiAutoReplyEnabled = false,
+    this.messengerReplyDelay = 5,
+    this.commentsAiAutoReplyEnabled = false,
+    this.commentsReplyDelay = 10,
+    this.systemPrompt,
+    this.aiBehavior,
   });
 
   factory ProjectSettings.fromJson(Map<String, dynamic> json) {
     return ProjectSettings(
       aiAutoReplyEnabled: json['aiAutoReplyEnabled'] ?? false,
-      timezone: json['timezone'] ?? 'Africa/Cairo',
-      geminiApiKey: json['geminiApiKey'] ?? '',
+      timezone: json['timezone'] ?? 'UTC',
+      // API secrets must never be retained in app state or persisted locally.
+      geminiApiKey: '',
       geminiModel: json['geminiModel'] ?? 'gemini-3.5-flash',
-      aiTonePreference: json['aiTonePreference'] ?? 'العامية المصرية الروشة والصايعة',
-      aiTargetAudience: json['aiTargetAudience'] ?? 'طلاب كورس كول سنتر يبحثون عن عمل',
+      aiTonePreference:
+          json['aiTonePreference'] ?? 'العامية المصرية المهذبة والمحترمة',
+      aiTargetAudience: json['aiTargetAudience'] ?? '',
       replyDelay: json['replyDelay'] ?? 3,
       maxDailyMessages: json['maxDailyMessages'] ?? 500,
       isGroupAppointmentsEnabled: json['isGroupAppointmentsEnabled'] ?? false,
+      geminiApiKeyConfigured: json['geminiApiKeyConfigured'] ?? false,
+      isWhatsAppGroupAutomationEnabled:
+          json['isWhatsAppGroupAutomationEnabled'] ?? false,
+      groupAutomationManagerPhone: json['groupAutomationManagerPhone'] ?? '',
+      activeInstructors: json['activeInstructors'] ?? '',
+      humanTransferEnabled: json['humanTransferEnabled'] ?? false,
+      humanTransferPhone: json['humanTransferPhone'],
+      isTalkTipsTrialGateEnabled: json['isTalkTipsTrialGateEnabled'] ?? false,
+      messengerAiAutoReplyEnabled: json['messengerAiAutoReplyEnabled'] ?? false,
+      messengerReplyDelay: json['messengerReplyDelay'] ?? 5,
+      commentsAiAutoReplyEnabled: json['commentsAiAutoReplyEnabled'] ?? false,
+      commentsReplyDelay: json['commentsReplyDelay'] ?? 10,
+      systemPrompt: json['systemPrompt'],
+      aiBehavior: json['aiBehavior'] is Map
+          ? Map<String, dynamic>.from(json['aiBehavior'])
+          : null,
     );
   }
 
+  Map<String, dynamic> toUpdateJson() => {
+    'aiAutoReplyEnabled': aiAutoReplyEnabled,
+    'timezone': timezone,
+    'geminiModel': geminiModel,
+    'aiTonePreference': aiTonePreference,
+    'aiTargetAudience': aiTargetAudience,
+    'replyDelay': replyDelay,
+    'maxDailyMessages': maxDailyMessages,
+    'isGroupAppointmentsEnabled': isGroupAppointmentsEnabled,
+    'isWhatsAppGroupAutomationEnabled': isWhatsAppGroupAutomationEnabled,
+    'groupAutomationManagerPhone': groupAutomationManagerPhone,
+    'activeInstructors': activeInstructors,
+    'humanTransferEnabled': humanTransferEnabled,
+    'humanTransferPhone': humanTransferPhone,
+    'isTalkTipsTrialGateEnabled': isTalkTipsTrialGateEnabled,
+    'messengerAiAutoReplyEnabled': messengerAiAutoReplyEnabled,
+    'messengerReplyDelay': messengerReplyDelay,
+    'commentsAiAutoReplyEnabled': commentsAiAutoReplyEnabled,
+    'commentsReplyDelay': commentsReplyDelay,
+    'systemPrompt': systemPrompt,
+    if (aiBehavior != null) 'aiBehavior': aiBehavior,
+  };
+
   Map<String, dynamic> toJson() => {
-        'aiAutoReplyEnabled': aiAutoReplyEnabled,
-        'timezone': timezone,
-        'geminiApiKey': geminiApiKey,
-        'geminiModel': geminiModel,
-        'aiTonePreference': aiTonePreference,
-        'aiTargetAudience': aiTargetAudience,
-        'replyDelay': replyDelay,
-        'maxDailyMessages': maxDailyMessages,
-        'isGroupAppointmentsEnabled': isGroupAppointmentsEnabled,
-      };
+    ...toUpdateJson(),
+    'geminiApiKey': '',
+    'geminiApiKeyConfigured': geminiApiKeyConfigured,
+  };
 }
 
 class Project {
@@ -126,10 +209,10 @@ class Project {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'whatsappConnected': whatsappConnected,
-        'whatsappNumber': whatsappNumber,
-        'settings': settings.toJson(),
-      };
+    'id': id,
+    'name': name,
+    'whatsappConnected': whatsappConnected,
+    'whatsappNumber': whatsappNumber,
+    'settings': settings.toJson(),
+  };
 }

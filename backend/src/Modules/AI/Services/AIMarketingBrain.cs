@@ -2,6 +2,7 @@ using System;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Modules.Projects.Domain;
 
 namespace Modules.AI.Services
 {
@@ -34,6 +35,9 @@ namespace Modules.AI.Services
         public bool RequestHuman { get; set; } = false;
         public bool BlacklistCustomer { get; set; } = false;
         public string[] AIInsights { get; set; } = Array.Empty<string>();
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool IsFallbackResponse { get; internal set; }
     }
 
     public class SuggestedGroupBookingPerson
@@ -52,6 +56,11 @@ namespace Modules.AI.Services
         public string? Notes { get; set; }
     }
 
+    public sealed record CustomerReplyRuntime(
+        string Provider,
+        string Model,
+        string? CachedContentId = null);
+
     public interface IAIMarketingBrain
     {
         Task<MarketingAnalysisResult> AnalyzeAndGenerateReplyAsync(
@@ -66,8 +75,7 @@ namespace Modules.AI.Services
             string mimeType = null,
             string aiTonePreference = null,
             string aiTargetAudience = null,
-            string geminiModel = null,
-            string cachedContentId = null,
+            CustomerReplyRuntime? customerReply = null,
             string? systemPromptOverride = null,
             AIBehaviorSettings? aiBehaviorSettings = null,
             string channel = "WhatsApp");
@@ -94,6 +102,8 @@ namespace Modules.AI.Services
     public class AIMarketingBrain : IAIMarketingBrain
     {
         private readonly IGeminiClient _geminiClient;
+        private readonly OpenAiResponsesClient _openAiResponsesClient;
+        private readonly XaiResponsesClient _xaiResponsesClient;
         private readonly IAIBehaviorSettingsService _aiBehaviorSettingsService;
 
         private const string SystemPromptTemplate = @"You are a high-performing AI Marketing Brain and CRM assistant communicating with customers through WhatsApp messaging.
@@ -117,6 +127,11 @@ Your default agent name is [AGENT_NAME]. If the project-specific instructions de
   5. Set suggestedFollowUp.needed to false (because complaints/angry customers require immediate human resolution and manual follow-up, never send them automated messages).
 
 Analyze the customer's message and generate a response.
+SALES INTENT RULES:
+- Use intent=""purchase"" only when the customer explicitly says they want to buy, book, register, subscribe, pay, or asks you to complete one of those actions now.
+- A greeting, price question, availability question, general inquiry, support request, complaint, or vague interest is NOT purchase intent; use inquiry/support as appropriate.
+- Give purchase intent confidence >= 0.85 only when the explicit commitment is present in the customer's own message or confirmed conversation history. Never raise confidence to make a lead look qualified.
+- REQUIRED SCHEDULE-PREFERENCE RULE: If the customer says the offered/current appointments do not suit them and they have not stated an alternative, do not repeat the same options and do not end the conversation. Ask clearly in Arabic for the days and times that suit them so the request can be recorded. If they already stated an alternative day/time, acknowledge it without asking the same question again.
 You MUST respond strictly in the following JSON format, and nothing else (no markdown blocks like ```json):
 {
   ""intent"": ""inquiry | complaint | purchase | follow-up | greeting"",
@@ -232,9 +247,15 @@ Guidelines for replyContent formatting and unity:
 Ensure the replyContent is always written in Arabic unless the customer explicitly asks for English. Don't use placeholders.
 Be concise, natural, and friendly. Do not repeat greetings or duplicate questions. Keep your replyContent focused on answering the customer's direct query without unnecessary fluff.";
 
-        public AIMarketingBrain(IGeminiClient geminiClient, IAIBehaviorSettingsService aiBehaviorSettingsService)
+        public AIMarketingBrain(
+            IGeminiClient geminiClient,
+            OpenAiResponsesClient openAiResponsesClient,
+            XaiResponsesClient xaiResponsesClient,
+            IAIBehaviorSettingsService aiBehaviorSettingsService)
         {
             _geminiClient = geminiClient;
+            _openAiResponsesClient = openAiResponsesClient;
+            _xaiResponsesClient = xaiResponsesClient;
             _aiBehaviorSettingsService = aiBehaviorSettingsService;
         }
 
@@ -300,40 +321,6 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             return names[cairoTime.Hour % names.Length];
         }
 
-        private static string GetDefaultShiftAgentName()
-        {
-            var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
-            var cairoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
-            int hour = cairoTime.Hour;
-
-            // Shifts (Cairo Local Time) using the 5 names:
-            // 00:00 - 05:00 -> ساجي
-            // 05:00 - 10:00 -> لارا
-            // 10:00 - 15:00 -> مادلين
-            // 15:00 - 19:00 -> شاهي
-            // 19:00 - 24:00 -> ساندي
-            if (hour >= 0 && hour < 5)
-            {
-                return "ساجي";
-            }
-            else if (hour >= 5 && hour < 10)
-            {
-                return "لارا";
-            }
-            else if (hour >= 10 && hour < 15)
-            {
-                return "مادلين";
-            }
-            else if (hour >= 15 && hour < 19)
-            {
-                return "شاهي";
-            }
-            else
-            {
-                return "ساندي";
-            }
-        }
-
         public async Task<MarketingAnalysisResult> AnalyzeAndGenerateReplyAsync(
             string messageContent, 
             string apiKeyOverride = null, 
@@ -346,12 +333,15 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             string mimeType = null,
             string aiTonePreference = null,
             string aiTargetAudience = null,
-            string geminiModel = null,
-            string cachedContentId = null,
+            CustomerReplyRuntime? customerReply = null,
             string? systemPromptOverride = null,
             AIBehaviorSettings? aiBehaviorSettings = null,
             string channel = "WhatsApp")
         {
+            var customerReplyRuntime = customerReply
+                ?? new CustomerReplyRuntime(CustomerReplyProviders.Gemini, "gemini-3.5-flash");
+            var replyModel = customerReplyRuntime.Model;
+            var cachedContentId = customerReplyRuntime.CachedContentId;
             var resolvedBehaviorSettings = aiBehaviorSettings ?? _aiBehaviorSettingsService.Resolve(null, channel);
             var agentName = _aiBehaviorSettingsService.GetAgentName(resolvedBehaviorSettings);
             Console.WriteLine($"[AIMarketingBrain] Active shift agent resolved: {agentName} (UTC hour: {DateTime.UtcNow.Hour})");
@@ -403,8 +393,8 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             {
                 var systemPrompt = ResolveSystemPrompt(systemPromptOverride, resolvedBehaviorSettings, channel, agentName);
 
-            var tonePref = !string.IsNullOrEmpty(aiTonePreference) ? aiTonePreference : "العامية المصرية الروشة والصايعة";
-            var targetAud = !string.IsNullOrEmpty(aiTargetAudience) ? aiTargetAudience : "طلاب كورس كول سنتر يبحثون عن عمل";
+            var tonePref = !string.IsNullOrEmpty(aiTonePreference) ? aiTonePreference : "العامية المصرية المهذبة والمحترمة";
+            var targetAud = !string.IsNullOrEmpty(aiTargetAudience) ? aiTargetAudience : "الجمهور الذي يحدده المشروع";
 
             systemPrompt = systemPrompt.Replace("[AGENT_NAME]", agentName);
             systemPrompt = systemPrompt.Replace("[TONE_PREFERENCE]", tonePref);
@@ -480,16 +470,38 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             }
 
             string rawResponse;
-            if (fileBytes != null && mimeType != null)
+            if (customerReplyRuntime.Provider == CustomerReplyProviders.OpenAI)
             {
-                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, fileBytes, mimeType, apiKeyOverride, geminiModel, cachedContentId);
+                var attachment = fileBytes is null || string.IsNullOrWhiteSpace(mimeType)
+                    ? null
+                    : new CustomerReplyAttachment(fileBytes, mimeType);
+                rawResponse = await _openAiResponsesClient.GenerateReplyAsync(new OpenAiCustomerReplyRequest(
+                    fullPrompt,
+                    apiKeyOverride,
+                    replyModel,
+                    attachment));
+            }
+            else if (customerReplyRuntime.Provider == CustomerReplyProviders.Xai)
+            {
+                var attachment = fileBytes is null || string.IsNullOrWhiteSpace(mimeType)
+                    ? null
+                    : new CustomerReplyAttachment(fileBytes, mimeType);
+                rawResponse = await _xaiResponsesClient.GenerateReplyAsync(new XaiCustomerReplyRequest(
+                    fullPrompt,
+                    apiKeyOverride,
+                    replyModel,
+                    attachment));
+            }
+            else if (fileBytes != null && mimeType != null)
+            {
+                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, fileBytes, mimeType, apiKeyOverride, replyModel, cachedContentId);
             }
             else
             {
-                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, apiKeyOverride, geminiModel, cachedContentId);
+                rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, apiKeyOverride, replyModel, cachedContentId);
             }
 
-            if (string.IsNullOrEmpty(rawResponse))
+            if (string.IsNullOrWhiteSpace(rawResponse))
             {
                 return new MarketingAnalysisResult
                 {
@@ -499,7 +511,8 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     ReplyContent = resolvedBehaviorSettings.Fallbacks.AiError,
                     Confidence = 0.5,
                     Label = "استفسار عام",
-                    PipelineStage = "New"
+                    PipelineStage = "New",
+                    IsFallbackResponse = true
                 };
             }
 
@@ -538,34 +551,44 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     {
                         result.PipelineStage = "New";
                     }
-                    if (PricingGuard.IsPricingQuestion(messageContent))
+                    if (string.IsNullOrWhiteSpace(result.ReplyContent))
                     {
-                        var pricingReply = PricingGuard.BuildPricingReplyFromKnowledge(brainContext);
-                        if (!string.IsNullOrWhiteSpace(pricingReply))
+                        result.ReplyContent = resolvedBehaviorSettings.Fallbacks.InvalidAiOutput;
+                        result.IsFallbackResponse = true;
+                    }
+                    if (LooksLikeSerializedJson(result.ReplyContent))
+                    {
+                        var extractedReply = ExtractReplyContent(rawResponse);
+                        if (string.IsNullOrWhiteSpace(extractedReply) || LooksLikeSerializedJson(extractedReply))
                         {
-                            result.Intent = "inquiry";
-                            result.Label = "استفسار عن السعر";
-                            result.ReplyStyle = "Sales";
-                            result.ReplyContent = pricingReply;
-                            result.Confidence = Math.Max(result.Confidence, 0.99);
+                            result.ReplyContent = resolvedBehaviorSettings.Fallbacks.InvalidAiOutput;
+                            result.IsFallbackResponse = true;
                         }
+                        else
+                        {
+                            result.ReplyContent = extractedReply;
+                        }
+                    }
+                    if (IsAiErrorResponse(result.ReplyContent))
+                    {
+                        result.ReplyContent = resolvedBehaviorSettings.Fallbacks.AiError;
+                        result.IsFallbackResponse = true;
                     }
                     NormalizeReaction(result);
                     return result;
                 }
             }
-            catch (Exception ex)
+            catch (JsonException)
             {
-                Console.WriteLine($"[AIMarketingBrain] Failed to parse JSON response: {ex.Message}. Raw: {rawResponse}");
+                Console.WriteLine("[AIMarketingBrain] Failed to parse the AI JSON response.");
             }
 
             // Fallback if not valid JSON
-            string fallbackReply = rawResponse?.Trim();
-            if (string.IsNullOrEmpty(fallbackReply) ||
-                fallbackReply.StartsWith("[AI_ERROR]") ||
-                fallbackReply.StartsWith("[AI Error Recovery]"))
+            string fallbackReply = ExtractReplyContent(rawResponse) ?? rawResponse?.Trim();
+            var isAiErrorResponse = IsAiErrorResponse(fallbackReply);
+            if (string.IsNullOrWhiteSpace(fallbackReply) || isAiErrorResponse || LooksLikeSerializedJson(fallbackReply))
             {
-                fallbackReply = fallbackReply != null && fallbackReply.StartsWith("[AI_ERROR]")
+                fallbackReply = isAiErrorResponse
                     ? resolvedBehaviorSettings.Fallbacks.AiError
                     : resolvedBehaviorSettings.Fallbacks.InvalidAiOutput;
             }
@@ -580,21 +603,45 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 Label = "استفسار عام",
                 PipelineStage = "New",
                 SuggestedButtons = Array.Empty<string>(),
-                AIInsights = Array.Empty<string>()
+                AIInsights = Array.Empty<string>(),
+                IsFallbackResponse = true
             };
-            if (PricingGuard.IsPricingQuestion(messageContent))
-            {
-                var pricingReply = PricingGuard.BuildPricingReplyFromKnowledge(brainContext);
-                if (!string.IsNullOrWhiteSpace(pricingReply))
-                {
-                    fallbackResult.Label = "استفسار عن السعر";
-                    fallbackResult.ReplyStyle = "Sales";
-                    fallbackResult.ReplyContent = pricingReply;
-                    fallbackResult.Confidence = 0.99;
-                }
-            }
             NormalizeReaction(fallbackResult);
             return fallbackResult;
+        }
+
+        private static bool IsAiErrorResponse(string? response)
+        {
+            var trimmedResponse = response?.TrimStart();
+            return trimmedResponse?.StartsWith("[AI_ERROR]", StringComparison.Ordinal) == true
+                || trimmedResponse?.StartsWith("[AI Error Recovery]", StringComparison.Ordinal) == true;
+        }
+
+        private static string? ExtractReplyContent(string? rawResponse)
+        {
+            if (string.IsNullOrWhiteSpace(rawResponse)) return null;
+
+            var match = Regex.Match(
+                rawResponse,
+                "\\\"replyContent\\\"\\s*:\\s*(?<value>\\\"(?:\\\\.|[^\\\"\\\\])*\\\")",
+                RegexOptions.Singleline);
+            if (!match.Success) return null;
+
+            try
+            {
+                return JsonSerializer.Deserialize<string>(match.Groups["value"].Value)?.Trim();
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static bool LooksLikeSerializedJson(string? value)
+        {
+            var trimmed = value?.TrimStart();
+            return !string.IsNullOrEmpty(trimmed)
+                && (trimmed.StartsWith("{") || trimmed.StartsWith("["));
         }
 
         public string BuildStaticPrompt(
@@ -609,8 +656,8 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             var resolvedBehaviorSettings = aiBehaviorSettings ?? _aiBehaviorSettingsService.Resolve(null, channel);
             var systemPrompt = ResolveSystemPrompt(systemPromptOverride, resolvedBehaviorSettings, channel, agentName);
 
-            var resolvedTonePref = !string.IsNullOrEmpty(tonePref) ? tonePref : "العامية المصرية الروشة والصايعة";
-            var resolvedTargetAud = !string.IsNullOrEmpty(targetAud) ? targetAud : "طلاب كورس كول سنتر يبحثون عن عمل";
+            var resolvedTonePref = !string.IsNullOrEmpty(tonePref) ? tonePref : "العامية المصرية المهذبة والمحترمة";
+            var resolvedTargetAud = !string.IsNullOrEmpty(targetAud) ? targetAud : "الجمهور الذي يحدده المشروع";
 
             systemPrompt = systemPrompt.Replace("[AGENT_NAME]", agentName);
             systemPrompt = systemPrompt.Replace("[TONE_PREFERENCE]", resolvedTonePref);

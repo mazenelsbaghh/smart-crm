@@ -14,6 +14,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Modules.WhatsApp.Services;
+using Modules.CRM.Domain;
 
 namespace Modules.WhatsApp.Workers
 {
@@ -25,8 +26,17 @@ namespace Modules.WhatsApp.Workers
         private readonly IServiceProvider _serviceProvider;
 
         public ReplySender(IConfiguration configuration, IHumanMessagingEngine messagingEngine, IServiceProvider serviceProvider)
+            : this(new HttpClient(), configuration, messagingEngine, serviceProvider)
         {
-            _httpClient = new HttpClient();
+        }
+
+        internal ReplySender(
+            HttpClient httpClient,
+            IConfiguration configuration,
+            IHumanMessagingEngine messagingEngine,
+            IServiceProvider serviceProvider)
+        {
+            _httpClient = httpClient;
             _gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
             _messagingEngine = messagingEngine;
             _serviceProvider = serviceProvider;
@@ -42,11 +52,22 @@ namespace Modules.WhatsApp.Workers
                 return;
             }
 
+            @event.WhatsAppAccountId ??= @event.ProjectId;
+            if (!@event.RequiredWhatsAppConnectedAt.HasValue)
+            {
+                Console.WriteLine($"[ReplySender] Dropping unfenced WhatsApp event {@event.Id}; a connection epoch is required.");
+                return;
+            }
+
             Console.WriteLine($"[ReplySender] Received AIReplyGeneratedEvent for Project: {@event.ProjectId}, Sender: {@event.Sender}");
             var queuedTooLong = DateTime.UtcNow - @event.OccurredOn > TimeSpan.FromSeconds(10);
-            var chunks = @event.Content.Length <= 4_000
-                ? new System.Collections.Generic.List<string> { @event.Content.Trim() }
-                : System.Linq.Enumerable.ToList(_messagingEngine.SplitIntoChunks(@event.Content));
+            var replyContent = OutgoingMessageText.Normalize(@event.Content);
+            var chunks = System.Linq.Enumerable.ToList(_messagingEngine.SplitIntoChunks(replyContent));
+            var deliveryKey = @event.WhatsAppDeliveryIdempotencyKey ?? $"reply_{@event.Id:N}";
+            if (chunks.Count == 0)
+            {
+                return;
+            }
 
             try
             {
@@ -75,9 +96,7 @@ namespace Modules.WhatsApp.Workers
 
                     if (customer != null)
                     {
-                        var conversation = await dbContext.Conversations
-                            .IgnoreQueryFilters()
-                            .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+                        var conversation = await FindConversationAsync(dbContext, @event, customer.Id);
 
                         if (conversation != null)
                         {
@@ -159,9 +178,7 @@ namespace Modules.WhatsApp.Workers
 
                         if (customer != null)
                         {
-                            var conversation = await dbContext.Conversations
-                                .IgnoreQueryFilters()
-                                .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+                            var conversation = await FindConversationAsync(dbContext, @event, customer.Id);
 
                             if (conversation != null)
                             {
@@ -202,23 +219,64 @@ namespace Modules.WhatsApp.Workers
 
                     await Task.Delay(delayMs);
 
+                    string recipient;
+                    using (var targetScope = _serviceProvider.CreateScope())
+                    {
+                        var tenantContext = targetScope.ServiceProvider.GetRequiredService<ITenantContext>();
+                        tenantContext.SetProjectId(@event.ProjectId);
+                        var targetDbContext = targetScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var currentTarget = await ResolveCurrentDeliveryTargetAsync(
+                            targetScope.ServiceProvider,
+                            targetDbContext,
+                            @event);
+                        if (currentTarget is null)
+                        {
+                            Console.WriteLine($"[ReplySender] Originating WhatsApp conversation for {@event.Id} no longer has a live account-scoped target. Delivery stopped.");
+                            return;
+                        }
+                        if (currentTarget.Value.Customer.IsBlacklisted
+                            || await HasPaidBookingAsync(targetDbContext, currentTarget.Value.Customer.Id))
+                        {
+                            Console.WriteLine($"[ReplySender] Delivery target {currentTarget.Value.Customer.Id} is no longer eligible. Delivery stopped.");
+                            return;
+                        }
+
+                        @event.ConversationId = currentTarget.Value.Conversation.Id;
+                        recipient = currentTarget.Value.Customer.PhoneNumber;
+                        if (string.IsNullOrWhiteSpace(recipient))
+                        {
+                            Console.WriteLine($"[ReplySender] Delivery target {currentTarget.Value.Customer.Id} has no WhatsApp recipient. Delivery stopped.");
+                            return;
+                        }
+                    }
+
                     var payload = new
                     {
                         projectId = @event.ProjectId,
-                        to = @event.Sender,
-                        message = chunk
+                        whatsappAccountId = @event.WhatsAppAccountId,
+                        to = recipient,
+                        message = chunk,
+                        idempotencyKey = $"{deliveryKey}:{i}",
+                        expectedConnectedAt = @event.RequiredWhatsAppConnectedAt
                     };
 
                     var jsonPayload = JsonSerializer.Serialize(payload);
 
                     try
                     {
-                        var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{_gatewayUrl}/api/whatsapp/send", jsonPayload);
+                        var response = await Shared.Infrastructure.GatewayRetryHelper.PostOnceAsync(_httpClient, $"{_gatewayUrl}/api/whatsapp/send", jsonPayload);
                         var responseBody = await response.Content.ReadAsStringAsync();
                         
                         if (response.IsSuccessStatusCode)
                         {
                             Console.WriteLine($"[ReplySender] Successfully sent AI reply chunk to {@event.Sender} via Gateway.");
+                            var externalMessageId = ProviderMessageId(responseBody);
+                            if (string.IsNullOrWhiteSpace(externalMessageId))
+                            {
+                                Console.WriteLine("[ReplySender] Gateway reported success without a provider message id; delivery is ambiguous.");
+                                await MarkDeliveryUnknownAsync(@event, deliveryKey);
+                                break;
+                            }
 
                             // Save message to database and broadcast via SignalR
                             using (var scope = _serviceProvider.CreateScope())
@@ -229,24 +287,46 @@ namespace Modules.WhatsApp.Workers
                                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                                 var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<NotificationHub>>();
 
-                                // Find customer
-                                var customer = await dbContext.Customers
-                                    .IgnoreQueryFilters()
-                                    .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.PhoneNumber == @event.Sender);
-
-                                if (customer != null)
+                                var currentTarget = await ResolveCurrentDeliveryTargetAsync(
+                                    scope.ServiceProvider,
+                                    dbContext,
+                                    @event);
+                                if (currentTarget is not null)
                                 {
-                                    // Find open/pending conversation
-                                    var conversation = await dbContext.Conversations
-                                        .IgnoreQueryFilters()
-                                        .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
-
+                                    var conversation = currentTarget.Value.Conversation;
+                                    @event.ConversationId = conversation.Id;
                                     if (conversation != null)
                                     {
+                                        if (string.Equals(
+                                                conversation.WhatsAppDeliveryUnknownKey,
+                                                deliveryKey,
+                                                StringComparison.Ordinal))
+                                        {
+                                            conversation.WhatsAppDeliveryUnknownAt = null;
+                                            conversation.WhatsAppDeliveryUnknownKey = null;
+                                        }
+                                        var alreadyRecorded = await dbContext.Messages
+                                            .IgnoreQueryFilters()
+                                            .AnyAsync(message => message.ConversationId == conversation.Id
+                                                && message.ExternalMessageId == externalMessageId);
+                                        if (alreadyRecorded)
+                                        {
+                                            if (dbContext.ChangeTracker.HasChanges())
+                                            {
+                                                await dbContext.SaveChangesAsync();
+                                            }
+                                            Console.WriteLine($"[ReplySender] Skipping already recorded AI reply chunk {externalMessageId}.");
+                                            continue;
+                                        }
+
                                         var message = new Message
                                         {
+                                            Id = DeterministicMessageId(
+                                                @event.ProjectId,
+                                                @event.WhatsAppAccountId ?? @event.ProjectId,
+                                                externalMessageId),
                                             ConversationId = conversation.Id,
-                                            ExternalMessageId = $"msg_ai_{Guid.NewGuid().ToString("N")}",
+                                            ExternalMessageId = externalMessageId,
                                             Direction = "Outgoing",
                                             Content = chunk,
                                             MessageType = "Text",
@@ -258,7 +338,20 @@ namespace Modules.WhatsApp.Workers
                                         conversation.LastMessageTimestamp = DateTime.UtcNow;
                                         dbContext.Entry(conversation).State = EntityState.Modified;
 
-                                        await dbContext.SaveChangesAsync();
+                                        try
+                                        {
+                                            await dbContext.SaveChangesAsync();
+                                        }
+                                        catch (DbUpdateException)
+                                        {
+                                            dbContext.Entry(message).State = EntityState.Detached;
+                                            var duplicatePersisted = await dbContext.Messages
+                                                .IgnoreQueryFilters()
+                                                .AnyAsync(existing => existing.Id == message.Id);
+                                            if (!duplicatePersisted) throw;
+                                            Console.WriteLine($"[ReplySender] Another consumer already recorded AI reply chunk {externalMessageId}.");
+                                            continue;
+                                        }
 
                                         // Broadcast message via SignalR
                                         var signalrPayload = new
@@ -273,7 +366,16 @@ namespace Modules.WhatsApp.Workers
                                             mediaType = (string)null
                                         };
 
-                                        await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("ReceiveMessage", signalrPayload);
+                                        try
+                                        {
+                                            await hubContext.Clients.Group($"project_{@event.ProjectId}")
+                                                .SendAsync("ReceiveMessage", signalrPayload);
+                                        }
+                                        catch (Exception notificationError)
+                                        {
+                                            Console.WriteLine(
+                                                $"[ReplySender] Chunk {externalMessageId} was persisted, but SignalR notification failed: {notificationError.Message}");
+                                        }
                                     }
                                 }
                             }
@@ -281,11 +383,33 @@ namespace Modules.WhatsApp.Workers
                         else
                         {
                             Console.WriteLine($"[ReplySender] Gateway returned error code {response.StatusCode}: {responseBody}");
+                            if ((int)response.StatusCode == 412
+                                || response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+                            {
+                                await ScheduleRemainingChunksAsync(
+                                    @event,
+                                    chunks,
+                                    i,
+                                    deliveryKey);
+                                Console.WriteLine("[ReplySender] Deferred the unsent reply remainder to its next daily delivery slot.");
+                            }
+                            else if ((int)response.StatusCode == 409
+                                || ((int)response.StatusCode >= 500
+                                    && (int)response.StatusCode != 503))
+                            {
+                                await MarkDeliveryUnknownAsync(@event, deliveryKey);
+                            }
+
+                            // A reply is one ordered operation. Continuing after any failed
+                            // chunk could deliver later chunks out of order or mix retries.
+                            break;
                         }
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine($"[ReplySender] Exception while calling WhatsApp Gateway: {ex.Message}");
+                        await MarkDeliveryUnknownAsync(@event, deliveryKey);
+                        break;
                     }
 
                     // Stagger delay between consecutive message chunks to feel human-like
@@ -336,9 +460,7 @@ namespace Modules.WhatsApp.Workers
 
                      if (customer != null)
                      {
-                         var conversation = await dbContext.Conversations
-                             .IgnoreQueryFilters()
-                             .FirstOrDefaultAsync(c => c.ProjectId == @event.ProjectId && c.CustomerId == customer.Id && c.Status != "Closed");
+                         var conversation = await FindConversationAsync(dbContext, @event, customer.Id);
 
                          if (conversation != null)
                          {
@@ -373,5 +495,259 @@ namespace Modules.WhatsApp.Workers
             dbContext.GroupAppointmentBookings
                 .IgnoreQueryFilters()
                 .AnyAsync(booking => booking.CustomerId == customerId && booking.IsPaid);
+
+        private async Task MarkDeliveryUnknownAsync(
+            AIReplyGeneratedEvent @event,
+            string deliveryKey)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var tenantContext = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+                tenantContext.SetProjectId(@event.ProjectId);
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var currentTarget = await ResolveCurrentDeliveryTargetAsync(
+                    scope.ServiceProvider,
+                    dbContext,
+                    @event);
+                var conversation = currentTarget?.Conversation;
+                if (conversation is null) return;
+                conversation.WhatsAppDeliveryUnknownAt = DateTime.UtcNow;
+                conversation.WhatsAppDeliveryUnknownKey = deliveryKey;
+                await dbContext.SaveChangesAsync();
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine($"[ReplySender] Failed to persist DeliveryUnknown fence for {@event.Id}: {exception.Message}");
+                throw;
+            }
+        }
+
+        private async Task ScheduleRemainingChunksAsync(
+            AIReplyGeneratedEvent @event,
+            IReadOnlyList<string> chunks,
+            int firstUnsentChunk,
+            string deliveryKey)
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var tenantContext = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+            tenantContext.SetProjectId(@event.ProjectId);
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var currentTarget = await ResolveCurrentDeliveryTargetAsync(
+                scope.ServiceProvider,
+                dbContext,
+                @event);
+            if (currentTarget is null)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot defer WhatsApp reply {@event.Id}: the target customer no longer exists.");
+            }
+            var customer = currentTarget.Value.Customer;
+            var conversation = currentTarget.Value.Conversation;
+            @event.ConversationId = conversation.Id;
+
+            var projectSettings = await dbContext.ProjectSettings.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(settings => settings.ProjectId == @event.ProjectId);
+            var timezone = ResolveTimeZone(projectSettings?.Timezone);
+            var nowUtc = DateTime.UtcNow;
+            var firstDueUtc = WhatsAppDailyDeliverySchedule.NextOccurrenceAfter(
+                nowUtc,
+                nowUtc,
+                timezone);
+            var added = new List<FollowUp>();
+            Guid? predecessorId = null;
+
+            for (var index = firstUnsentChunk; index < chunks.Count; index++)
+            {
+                var followUpId = DeterministicDeferredChunkId(
+                    @event.ProjectId,
+                    @event.WhatsAppAccountId ?? @event.ProjectId,
+                    conversation.Id,
+                    deliveryKey,
+                    index);
+                if (await dbContext.FollowUps.IgnoreQueryFilters()
+                    .AnyAsync(candidate => candidate.Id == followUpId))
+                {
+                    continue;
+                }
+
+                var followUp = new FollowUp
+                {
+                    Id = followUpId,
+                    ProjectId = @event.ProjectId,
+                    CustomerId = customer.Id,
+                    ConversationId = conversation.Id,
+                    DependsOnFollowUpId = predecessorId,
+                    WhatsAppAccountId = @event.WhatsAppAccountId ?? @event.ProjectId,
+                    Channel = "WhatsApp",
+                    DueDate = firstDueUtc.AddSeconds(index - firstUnsentChunk),
+                    Status = "Pending",
+                    Notes = chunks[index],
+                    Type = "DeferredReplyChunk",
+                    Tone = "Exact"
+                };
+                dbContext.FollowUps.Add(followUp);
+                added.Add(followUp);
+                predecessorId = followUp.Id;
+            }
+
+            if (added.Count == 0) return;
+            try
+            {
+                await dbContext.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                foreach (var followUp in added)
+                {
+                    dbContext.Entry(followUp).State = EntityState.Detached;
+                }
+                var ids = added.Select(followUp => followUp.Id).ToArray();
+                var persistedCount = await dbContext.FollowUps.IgnoreQueryFilters()
+                    .CountAsync(candidate => ids.Contains(candidate.Id));
+                if (persistedCount != ids.Length) throw;
+            }
+        }
+
+        private static TimeZoneInfo ResolveTimeZone(string? timezoneId)
+        {
+            if (string.IsNullOrWhiteSpace(timezoneId)) return TimeZoneInfo.Utc;
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return TimeZoneInfo.Utc;
+            }
+            catch (InvalidTimeZoneException)
+            {
+                return TimeZoneInfo.Utc;
+            }
+        }
+
+        private static Guid DeterministicDeferredChunkId(
+            Guid projectId,
+            Guid whatsAppAccountId,
+            Guid conversationId,
+            string deliveryKey,
+            int chunkIndex)
+        {
+            var value = $"whatsapp-deferred-chunk:{projectId:N}:{whatsAppAccountId:N}:{conversationId:N}:{deliveryKey}:{chunkIndex}";
+            var bytes = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value));
+            return new Guid(bytes.AsSpan(0, 16));
+        }
+
+        private static Task<Conversation?> FindConversationAsync(
+            AppDbContext dbContext,
+            AIReplyGeneratedEvent @event,
+            Guid customerId)
+        {
+            var conversations = dbContext.Conversations
+                .IgnoreQueryFilters()
+                .Where(conversation => conversation.ProjectId == @event.ProjectId
+                    && conversation.CustomerId == customerId
+                    && conversation.Channel == "WhatsApp"
+                    && conversation.Status != "Closed");
+            return @event.ConversationId.HasValue
+                ? conversations.FirstOrDefaultAsync(conversation =>
+                    conversation.Id == @event.ConversationId.Value
+                    && conversation.WhatsAppAccountId == @event.WhatsAppAccountId)
+                : conversations.FirstOrDefaultAsync(conversation =>
+                    conversation.WhatsAppAccountId == @event.WhatsAppAccountId);
+        }
+
+        private static async Task<(Customer Customer, Conversation Conversation)?> ResolveCurrentDeliveryTargetAsync(
+            IServiceProvider scopedServices,
+            AppDbContext dbContext,
+            AIReplyGeneratedEvent @event)
+        {
+            var effectiveAccountId = @event.WhatsAppAccountId ?? @event.ProjectId;
+            Customer? customer = null;
+
+            if (@event.ConversationId.HasValue)
+            {
+                var referencedConversation = await dbContext.Conversations.IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(candidate => candidate.ProjectId == @event.ProjectId
+                        && candidate.Id == @event.ConversationId.Value
+                        && candidate.Channel == "WhatsApp"
+                        && candidate.WhatsAppDestinationId == null
+                        && (candidate.WhatsAppAccountId ?? candidate.ProjectId) == effectiveAccountId);
+                if (referencedConversation is not null)
+                {
+                    customer = await dbContext.Customers.IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(candidate => candidate.ProjectId == @event.ProjectId
+                            && candidate.Id == referencedConversation.CustomerId);
+                    if (customer is not null && referencedConversation.Status != "Closed")
+                        return (customer, referencedConversation);
+                }
+            }
+
+            var sender = (@event.Sender ?? string.Empty).Trim();
+            var accountIdentity = await dbContext.WhatsAppCustomerIdentities.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(identity => identity.ProjectId == @event.ProjectId
+                    && identity.WhatsAppAccountId == effectiveAccountId
+                    && identity.ExternalId == sender);
+            if (accountIdentity is not null)
+            {
+                customer = await dbContext.Customers.IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(candidate => candidate.ProjectId == @event.ProjectId
+                        && candidate.Id == accountIdentity.CustomerId);
+            }
+
+            if (customer is null && !sender.EndsWith("@lid", StringComparison.OrdinalIgnoreCase))
+            {
+                var normalizedSender = sender.EndsWith("@s.whatsapp.net", StringComparison.OrdinalIgnoreCase)
+                    ? sender[..sender.IndexOf('@')]
+                    : sender;
+                if (!string.IsNullOrWhiteSpace(normalizedSender))
+                {
+                    customer = await scopedServices
+                        .GetRequiredService<WhatsAppCustomerMergeService>()
+                        .ResolveByPhoneAsync(@event.ProjectId, normalizedSender);
+                }
+            }
+
+            customer ??= await dbContext.Customers.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(candidate => candidate.ProjectId == @event.ProjectId
+                    && candidate.PhoneNumber == sender);
+            if (customer is null) return null;
+
+            var conversation = await dbContext.Conversations.IgnoreQueryFilters()
+                .Where(candidate => candidate.ProjectId == @event.ProjectId
+                    && candidate.CustomerId == customer.Id
+                    && candidate.Channel == "WhatsApp"
+                    && candidate.WhatsAppDestinationId == null
+                    && candidate.Status != "Closed"
+                    && (candidate.WhatsAppAccountId ?? candidate.ProjectId) == effectiveAccountId)
+                .OrderByDescending(candidate => candidate.LastMessageTimestamp)
+                .FirstOrDefaultAsync();
+            return conversation is null ? null : (customer, conversation);
+        }
+
+        private static string? ProviderMessageId(string responseBody)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(responseBody);
+                return document.RootElement.TryGetProperty("messageId", out var messageId)
+                    ? messageId.GetString()
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static Guid DeterministicMessageId(
+            Guid projectId,
+            Guid whatsAppAccountId,
+            string providerMessageId)
+        {
+            var value = $"whatsapp-outgoing:{projectId:N}:{whatsAppAccountId:N}:{providerMessageId}";
+            var bytes = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value));
+            return new Guid(bytes.AsSpan(0, 16));
+        }
     }
 }

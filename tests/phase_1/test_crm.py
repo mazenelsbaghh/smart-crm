@@ -115,15 +115,16 @@ async def test_crm_and_follow_ups_flow():
         pending_list = list_resp.json()
         assert len(pending_list) >= 1
 
-        # 9. Wait for the background scheduler to run (Hangfire checks every 15 seconds)
-        print("Waiting 18 seconds for FollowUpScheduler to mark past due follow-up as Missed...")
-        await pytest.importorskip("asyncio").sleep(18.0)
+        # 9. The scheduler is registered on a one-minute cadence. Poll across one full window.
+        pendings = pending_list
+        started = time.time()
+        while time.time() - started < 75.0 and any(f["id"] == overdue_followup["id"] for f in pendings):
+            await pytest.importorskip("asyncio").sleep(2.0)
+            list_pending = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Pending", headers=headers)
+            assert list_pending.status_code == 200
+            pendings = list_pending.json()
 
-        # 10. List follow-ups again
-        # The future one should still be Pending
-        list_pending = await client.get(f"{BASE_URL}/projects/{proj_id}/follow-ups?status=Pending", headers=headers)
-        assert list_pending.status_code == 200
-        pendings = list_pending.json()
+        # 10. The future one stays pending and the overdue one is processed.
         # Find if our future followup is still in the pending list
         assert any(f["id"] == future_followup["id"] for f in pendings)
         # Verify the overdue one is no longer Pending

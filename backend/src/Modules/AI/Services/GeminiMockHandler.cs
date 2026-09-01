@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 
 namespace Modules.AI.Services
 {
@@ -12,9 +13,18 @@ namespace Modules.AI.Services
 
     public class GeminiMockHandler : IGeminiMockHandler
     {
+        private readonly bool _enabled;
+
+        public GeminiMockHandler(IHostEnvironment environment)
+        {
+            _enabled = environment.IsDevelopment() || environment.IsEnvironment("Test");
+        }
+
         public bool IsMockKey(string? apiKey)
         {
-            return string.IsNullOrEmpty(apiKey) || apiKey == "your_gemini_api_key_here" || apiKey.StartsWith("mock_");
+            return _enabled && (string.IsNullOrEmpty(apiKey)
+                || apiKey == "your_gemini_api_key_here"
+                || apiKey.StartsWith("mock_", StringComparison.Ordinal));
         }
 
         public string GenerateMockReply(string messageContent, string? apiKey)
@@ -22,6 +32,49 @@ namespace Modules.AI.Services
             if (apiKey != null && apiKey.StartsWith("mock_json_"))
             {
                 return apiKey.Substring("mock_json_".Length);
+            }
+
+            if (messageContent.Contains("أنت محلل مبيعات عربي دقيق", StringComparison.Ordinal))
+            {
+                return """
+                    {
+                      "stage": "Engaged",
+                      "outcome": "Dormant",
+                      "primaryReason": "Unknown",
+                      "secondaryReasons": [],
+                      "summary": "العميل تفاعل مع المحادثة، ولا يوجد في البيانات سبب صريح يثبت سبب عدم الحجز.",
+                      "recommendation": "راجع آخر سؤال للعميل ثم أرسل متابعة قصيرة تعرض خطوة واحدة واضحة.",
+                      "evidence": [],
+                      "lastCustomerIntent": "استكمال الاستفسار",
+                      "confidence": 0.72,
+                      "replyQualityScore": 70,
+                      "followUpPriority": 65,
+                      "needsFollowUp": true,
+                      "missedOpportunity": false
+                    }
+                    """;
+            }
+
+            if (messageContent.Contains("أنت مدير تحليلات مبيعات", StringComparison.Ordinal))
+            {
+                return """
+                    {
+                      "executiveSummary": "تم تجهيز قراءة تجريبية من المؤشرات الفعلية. راجع تغطية التحليل قبل اتخاذ قرار واسع.",
+                      "findings": ["توجد محادثات غير محولة تحتاج مراجعة أسبابها."],
+                      "recommendations": ["ابدأ بفرص المتابعة الأعلى أولوية وراجع النتيجة يوميًا."],
+                      "risks": ["هذه استجابة بيئة تطوير وليست تحليل نموذج إنتاجي."]
+                    }
+                    """;
+            }
+
+            if (messageContent.Contains("أنت محلل مبيعات إداري", StringComparison.Ordinal))
+            {
+                return """
+                    {
+                      "answer": "هذه إجابة تجريبية مبنية على المؤشرات المرفقة. فعّل مفتاح Gemini للمشروع للحصول على تحليل إنتاجي كامل.",
+                      "conversationIds": []
+                    }
+                    """;
             }
 
             if (messageContent.Contains("أنت خبير محترف في تحليل المعلومات وتجهيز قواعد المعرفة للشركات"))

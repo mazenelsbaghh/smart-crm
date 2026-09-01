@@ -1,9 +1,15 @@
+import 'dart:async';
+import 'dart:collection';
+
 import 'package:flutter/material.dart';
+
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
 class NotificationBanner {
   static OverlayEntry? _currentEntry;
+  static Timer? _dismissTimer;
+  static final Queue<_BannerRequest> _pending = Queue<_BannerRequest>();
 
   static void show({
     required NavigatorState navigatorState,
@@ -12,63 +18,126 @@ class NotificationBanner {
     required String type,
     VoidCallback? onTap,
   }) {
-    // Dismiss any active banner first
-    dismiss();
-
-    final overlay = navigatorState.overlay;
-    if (overlay == null) return;
-
-    _currentEntry = OverlayEntry(
-      builder: (context) => NotificationBannerWidget(
+    _pending.add(
+      _BannerRequest(
+        navigatorState: navigatorState,
         title: title,
         message: message,
         type: type,
-        onTap: () {
-          dismiss();
-          if (onTap != null) onTap();
-        },
+        onTap: onTap,
+      ),
+    );
+    _showNext();
+  }
+
+  static void _showNext() {
+    if (_currentEntry != null || _pending.isEmpty) return;
+    final request = _pending.first;
+    if (!request.navigatorState.mounted) {
+      _pending.removeFirst();
+      scheduleMicrotask(_showNext);
+      return;
+    }
+
+    final overlay = request.navigatorState.overlay;
+    if (overlay == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showNext());
+      return;
+    }
+    _pending.removeFirst();
+
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (context) => NotificationBannerWidget(
+        title: request.title,
+        message: request.message,
+        type: request.type,
+        onTap: request.onTap == null
+            ? null
+            : () {
+                dismiss();
+                request.onTap!();
+              },
         onDismiss: () => dismiss(),
       ),
     );
+    _currentEntry = entry;
+    overlay.insert(entry);
 
-    overlay.insert(_currentEntry!);
-
-    // Automatically dismiss after 4 seconds
-    Future.delayed(const Duration(seconds: 4), () {
-      dismiss();
-    });
+    final mediaQuery = MediaQuery.maybeOf(request.navigatorState.context);
+    if (mediaQuery?.accessibleNavigation != true) {
+      _dismissTimer = Timer(const Duration(seconds: 8), () {
+        if (identical(_currentEntry, entry)) dismiss();
+      });
+    }
   }
 
   static void dismiss() {
-    if (_currentEntry != null) {
+    _dismissTimer?.cancel();
+    _dismissTimer = null;
+    final entry = _currentEntry;
+    _currentEntry = null;
+    if (entry != null) {
       try {
-        _currentEntry!.remove();
+        entry.remove();
       } catch (_) {
-        // Prevent crashes if the entry is already removed
+        // The overlay may already have been disposed during navigation.
       }
-      _currentEntry = null;
+    }
+    scheduleMicrotask(_showNext);
+  }
+
+  static void clear() {
+    _dismissTimer?.cancel();
+    _dismissTimer = null;
+    _pending.clear();
+    final entry = _currentEntry;
+    _currentEntry = null;
+    if (entry != null) {
+      try {
+        entry.remove();
+      } catch (_) {
+        // Navigation may already have disposed the owning overlay.
+      }
     }
   }
 }
 
-class NotificationBannerWidget extends StatefulWidget {
+class _BannerRequest {
+  const _BannerRequest({
+    required this.navigatorState,
+    required this.title,
+    required this.message,
+    required this.type,
+    this.onTap,
+  });
+
+  final NavigatorState navigatorState;
   final String title;
   final String message;
   final String type;
-  final VoidCallback onTap;
-  final VoidCallback onDismiss;
+  final VoidCallback? onTap;
+}
 
+class NotificationBannerWidget extends StatefulWidget {
   const NotificationBannerWidget({
-    Key? key,
+    super.key,
     required this.title,
     required this.message,
     required this.type,
     required this.onTap,
     required this.onDismiss,
-  }) : super(key: key);
+  });
+
+  final String title;
+  final String message;
+  final String type;
+  final VoidCallback? onTap;
+  final VoidCallback onDismiss;
 
   @override
-  State<NotificationBannerWidget> createState() => _NotificationBannerWidgetState();
+  State<NotificationBannerWidget> createState() =>
+      _NotificationBannerWidgetState();
 }
 
 class _NotificationBannerWidgetState extends State<NotificationBannerWidget>
@@ -76,32 +145,35 @@ class _NotificationBannerWidgetState extends State<NotificationBannerWidget>
   late final AnimationController _controller;
   late final Animation<Offset> _offsetAnimation;
   late final Animation<double> _fadeAnimation;
+  final _dismissibleKey = UniqueKey();
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 350),
+      duration: const Duration(milliseconds: 220),
     );
 
     _offsetAnimation = Tween<Offset>(
       begin: const Offset(0, -1.2),
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutBack,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     _fadeAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeIn,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+  }
 
-    _controller.forward();
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = 1;
+    } else if (!_controller.isCompleted && !_controller.isAnimating) {
+      _controller.forward();
+    }
   }
 
   @override
@@ -111,140 +183,129 @@ class _NotificationBannerWidgetState extends State<NotificationBannerWidget>
   }
 
   void _dismissWithAnimation() async {
-    if (_controller.isAnimating || !_controller.isCompleted) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      widget.onDismiss();
+      return;
+    }
+    if (!_controller.isCompleted) {
+      widget.onDismiss();
+      return;
+    }
     await _controller.reverse();
+    if (!mounted) return;
     widget.onDismiss();
   }
 
   @override
   Widget build(BuildContext context) {
-    final Color sideColor;
+    final Color stateColor;
     final IconData icon;
-    final Color iconColor;
 
     switch (widget.type) {
       case 'Booking':
-        sideColor = AppColors.primary;
+        stateColor = AppColors.primary;
         icon = Icons.calendar_today_rounded;
-        iconColor = AppColors.primary;
         break;
       case 'Complaint':
-        sideColor = AppColors.error;
+        stateColor = AppColors.error;
         icon = Icons.warning_amber_rounded;
-        iconColor = AppColors.error;
         break;
       case 'VIP':
-        sideColor = AppColors.warning;
+        stateColor = AppColors.warning;
         icon = Icons.star_rounded;
-        iconColor = AppColors.warning;
         break;
       default:
-        sideColor = AppColors.secondary;
+        stateColor = AppColors.secondary;
         icon = Icons.notifications_none_rounded;
-        iconColor = AppColors.secondary;
     }
 
-    final topPadding = MediaQuery.of(context).padding.top + 12;
+    final banner = Semantics(
+      container: true,
+      liveRegion: true,
+      explicitChildNodes: true,
+      child: Dismissible(
+        key: _dismissibleKey,
+        direction: DismissDirection.up,
+        onDismissed: (_) => widget.onDismiss(),
+        child: Material(
+          color: AppColors.surface,
+          shape: RoundedRectangleBorder(
+            side: const BorderSide(color: AppColors.border),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: widget.onTap,
+            child: Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 8, 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: stateColor.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(icon, color: stateColor, size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: AppTypography.body.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.text,
+                          ),
+                        ),
+                        if (widget.message.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.message,
+                            style: AppTypography.bodyMuted,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: 'إغلاق التنبيه',
+                    icon: const Icon(Icons.close_rounded),
+                    color: AppColors.textMuted,
+                    onPressed: _dismissWithAnimation,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final animatedBanner = MediaQuery.disableAnimationsOf(context)
+        ? banner
+        : SlideTransition(
+            position: _offsetAnimation,
+            child: FadeTransition(opacity: _fadeAnimation, child: banner),
+          );
 
     return SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
-        child: FractionallySizedBox(
-          widthFactor: 0.92,
-          child: SlideTransition(
-            position: _offsetAnimation,
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: GestureDetector(
-                onTap: widget.onTap,
-                onVerticalDragUpdate: (details) {
-                  if (details.primaryDelta! < -5) {
-                    _dismissWithAnimation();
-                  }
-                },
-                child: Container(
-                  margin: EdgeInsets.only(top: topPadding),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.border),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        blurRadius: 16,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        // Left accent bar
-                        Container(
-                          width: 4,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: sideColor,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        // Circular icon container
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: sideColor.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(icon, color: iconColor, size: 24),
-                        ),
-                        const SizedBox(width: 12),
-                        // Title & Body info
-                        Expanded(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                widget.title,
-                                style: AppTypography.body.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                  color: AppColors.text,
-                                ),
-                                textDirection: TextDirection.rtl,
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                widget.message,
-                                style: AppTypography.bodyMuted.copyWith(
-                                  fontSize: 12,
-                                  color: AppColors.textMuted,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                textDirection: TextDirection.rtl,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        // Close action
-                        IconButton(
-                          icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.textMuted),
-                          onPressed: _dismissWithAnimation,
-                          constraints: const BoxConstraints(),
-                          padding: EdgeInsets.zero,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(8, 12, 8, 0),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: SizedBox(width: double.infinity, child: animatedBanner),
           ),
         ),
       ),

@@ -1,572 +1,270 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '../../context/auth-context';
-import { crmService, Customer, Deal } from '../../services/crm';
-import { api } from '../../services/api';
-import { 
-  Users, 
-  TrendingUp, 
-  RefreshCw, 
-  Sparkles, 
-  MessageSquare, 
-  ArrowRight, 
-  Activity, 
-  Star, 
-  Landmark, 
-  Zap, 
-  ChevronRight, 
-  ChevronLeft, 
-  Filter, 
-  Download, 
-  Send,
-  MoreVertical
+import {
+  Activity,
+  ArrowLeft,
+  MessageSquare,
+  RefreshCw,
+  Sparkles,
+  Star,
+  Users,
+  Zap,
 } from 'lucide-react';
+import { useAuth } from '../../context/auth-context';
+import { api } from '../../services/api';
+import { crmService, Customer, Deal } from '../../services/crm';
 import styles from './dashboard.module.css';
+
+const CAIRO_TIME_ZONE = 'Africa/Cairo';
+
+function DashboardSkeleton() {
+  return (
+    <div className={styles.container} aria-busy="true" aria-label="جاري تحميل لوحة التحكم">
+      <div className={styles.dashboardHeader}>
+        <div>
+          <div className={`${styles.skeleton} ${styles.skeletonTitle}`} style={{ width: '220px', height: '28px' }} />
+          <div className={styles.skeleton} style={{ width: '300px', height: '14px', marginTop: '10px' }} />
+        </div>
+      </div>
+      <div className={styles.statsGrid}>
+        {[1, 2, 3, 4].map((metric) => (
+          <div key={metric} className={`glass-panel ${styles.statCard} ${styles.skeletonCard}`}>
+            <div className={styles.skeleton} style={{ width: '42px', height: '42px', borderRadius: 'var(--radius-md)' }} />
+            <div className={styles.skeleton} style={{ width: '90px', height: '14px', marginTop: '16px' }} />
+            <div className={styles.skeleton} style={{ width: '70px', height: '24px', marginTop: '8px' }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { activeProject } = useAuth();
   const router = useRouter();
-  const containerRef = useRef<HTMLDivElement>(null);
-  
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
-  const [totalChats, setTotalChats] = useState<number>(0);
+  const [totalChats, setTotalChats] = useState(0);
   const [loading, setLoading] = useState(true);
   const [recalculating, setRecalculating] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [lastLoadedProjectId, setLastLoadedProjectId] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState('الكل');
+  const loadRequestIdRef = React.useRef(0);
 
-  // Chatbot state
-  const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState([
-    {
-      sender: 'ai',
-      text: 'أهلاً بك مروان! قمت بتحليل آخر المحادثات مع العملاء. لقد وجدت أن ٨٠٪ منهم يسألون عن خطط التقسيط والأسعار. هل تود أن أقوم بتجهيز رد آلي لهذه النقطة؟',
-      time: '١٠:٢٤ ص'
+  const fetchDashboardData = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
+    if (!activeProject) {
+      setLoading(false);
+      setLoadError('تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.');
+      return;
     }
-  ]);
 
-  const fetchDashboardData = async () => {
-    if (!activeProject) return;
+    setLoading(true);
+    setLoadError(null);
     try {
-      setLoading(true);
-      const [custData, dealData, convsData] = await Promise.all([
+      const [customerList, dealList, conversationsResponse] = await Promise.all([
         crmService.getCustomers(activeProject.id),
         crmService.getDeals(activeProject.id),
-        api.get<any[]>(`/api/projects/${activeProject.id}/conversations`)
+        api.get<unknown[]>(`/api/projects/${activeProject.id}/conversations`, {
+          params: { channel: 'All', limit: 1000 },
+        }),
       ]);
-      setCustomers(custData);
-      setDeals(dealData);
-      setTotalChats(convsData.data?.length || 0);
-    } catch (err) {
-      console.error('Failed to load dashboard data', err);
+      if (requestId !== loadRequestIdRef.current) return;
+      setCustomers(customerList);
+      setDeals(dealList);
+      setTotalChats(conversationsResponse.data.length);
+      setLastUpdatedAt(new Date());
+      setLastLoadedProjectId(activeProject.id);
+    } catch (error) {
+      if (requestId !== loadRequestIdRef.current) return;
+      console.error('Failed to load dashboard data', error);
+      setLoadError('تعذر تحميل بيانات لوحة التحكم. لم يتم استبدالها بأرقام تقديرية.');
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchDashboardData();
   }, [activeProject]);
 
-  const handleRecalculate = async () => {
+  useEffect(() => {
+    const requestTimer = window.setTimeout(() => void fetchDashboardData(), 0);
+    return () => window.clearTimeout(requestTimer);
+  }, [fetchDashboardData]);
+
+  const recalculateMetrics = async () => {
     if (!activeProject || recalculating) return;
     setRecalculating(true);
     try {
       await crmService.recalculateAnalytics(activeProject.id);
       await fetchDashboardData();
-    } catch (err) {
-      console.error('Failed to recalculate metrics', err);
+    } catch (error) {
+      console.error('Failed to recalculate metrics', error);
+      setLoadError('تعذر إعادة حساب المؤشرات. البيانات المعروضة هي آخر بيانات تم تحميلها بنجاح.');
     } finally {
       setRecalculating(false);
     }
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    
-    const userMsg = {
-      sender: 'user',
-      text: chatInput.trim(),
-      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+  const metrics = useMemo(() => {
+    const wonDeals = deals.filter((deal) => deal.status === 1).length;
+    return {
+      customers: customers.length,
+      chats: totalChats,
+      conversionRate: deals.length > 0 ? Math.round((wonDeals / deals.length) * 1000) / 10 : null,
     };
-    
-    setChatMessages(prev => [...prev, userMsg]);
-    setChatInput('');
-    
-    setTimeout(() => {
-      setChatMessages(prev => [...prev, {
-        sender: 'ai',
-        text: 'جاري تحليل طلبك وضبط تفضيلات الرد الآلي للعملاء... سأعلمك فور التحديث.',
-        time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
-      }]);
-    }, 1000);
-  };
+  }, [customers.length, deals, totalChats]);
 
-  if (loading) {
-    return (
-      <div className={styles.container}>
-        {/* Title Header Skeleton */}
-        <div className={styles.dashboardHeader}>
-          <div>
-            <div className={styles.breadcrumbs}>
-              <div className={styles.skeleton} style={{ width: '40px', height: '10px' }}></div>
-              <span className={styles.chevron}>&gt;</span>
-              <div className={styles.skeleton} style={{ width: '60px', height: '10px' }}></div>
-            </div>
-            <div className={`${styles.skeleton} ${styles.skeletonTitle}`} style={{ width: '220px', height: '28px', marginTop: '6px', marginBottom: '8px' }}></div>
-            <div className={styles.skeleton} style={{ width: '320px', height: '14px' }}></div>
-          </div>
-          <div className={styles.headerActions}>
-            <div className={styles.skeleton} style={{ width: '90px', height: '36px', borderRadius: 'var(--radius-md)' }}></div>
-            <div className={styles.skeleton} style={{ width: '130px', height: '36px', borderRadius: 'var(--radius-md)' }}></div>
-          </div>
-        </div>
+  const stages = useMemo(
+    () => ['الكل', ...Array.from(new Set(customers.map((customer) => customer.pipelineStage).filter(Boolean)))],
+    [customers],
+  );
 
-        {/* KPI Stats Cards Skeleton */}
-        <div className={styles.statsGrid}>
-          {[1, 2, 3, 4].map(idx => (
-            <div key={idx} className={`glass-panel ${styles.statCard} ${styles.skeletonCard}`}>
-              <div className={styles.statTop}>
-                <div className={`${styles.skeleton} ${styles.skeletonCircle}`} style={{ width: '42px', height: '42px', borderRadius: 'var(--radius-md)' }}></div>
-                {idx !== 4 && <div className={styles.skeleton} style={{ width: '50px', height: '18px', borderRadius: 'var(--radius-full)' }}></div>}
-                {idx === 4 && <div className={styles.skeleton} style={{ width: '70px', height: '18px', borderRadius: 'var(--radius-sm)' }}></div>}
-              </div>
-              <div className={styles.statContent} style={{ gap: '8px' }}>
-                <div className={styles.skeleton} style={{ width: '90px', height: '12px' }}></div>
-                <div className={styles.valueRow}>
-                  {idx !== 4 && <div className={styles.skeleton} style={{ width: '70px', height: '24px' }}></div>}
-                  {idx === 4 && <div className={styles.skeleton} style={{ width: '100%', height: '20px' }}></div>}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+  const visibleLeads = useMemo(
+    () => customers
+      .filter((customer) => stageFilter === 'الكل' || customer.pipelineStage === stageFilter)
+      .sort((first, second) => second.leadScore - first.leadScore)
+      .slice(0, 10),
+    [customers, stageFilter],
+  );
 
-        {/* Content Grid Skeleton */}
-        <div className={styles.contentGrid}>
-          {/* Left Column: Recent Hot Leads Table Skeleton */}
-          <div className={`glass-panel ${styles.leadsPanel} ${styles.skeletonCard}`}>
-            <div className={styles.panelHeader} style={{ marginBottom: '24px' }}>
-              <div>
-                <div className={styles.skeleton} style={{ width: '150px', height: '18px', marginBottom: '6px' }}></div>
-                <div className={styles.skeleton} style={{ width: '180px', height: '12px' }}></div>
-              </div>
-              <div className={styles.skeleton} style={{ width: '100px', height: '28px', borderRadius: 'var(--radius-md)' }}></div>
-            </div>
+  if (loading && !lastUpdatedAt) return <DashboardSkeleton />;
 
-            <div className={styles.tableContainer}>
-              <table className={styles.leadsTable}>
-                <thead>
-                  <tr>
-                    <th>العميل</th>
-                    <th>نقاط الاهتمام</th>
-                    <th>الحالة</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[1, 2, 3, 4, 5].map((idx) => (
-                    <tr key={idx} style={{ pointerEvents: 'none' }}>
-                      <td>
-                        <div className={styles.customerProfileCell}>
-                          <div className={`${styles.skeleton} ${styles.skeletonCircle}`} style={{ width: '36px', height: '36px' }}></div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            <div className={styles.skeleton} style={{ width: '110px', height: '12px' }}></div>
-                            <div className={styles.skeleton} style={{ width: '80px', height: '9px' }}></div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className={styles.scoreCell}>
-                          <div className={styles.skeleton} style={{ width: '45px', height: '14px' }}></div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className={styles.skeleton} style={{ width: '65px', height: '18px', borderRadius: '9999px' }}></div>
-                      </td>
-                      <td>
-                        <div className={styles.skeleton} style={{ width: '16px', height: '16px' }}></div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className={styles.tableFooter}>
-              <div className={styles.pagination}>
-                <div className={styles.skeleton} style={{ width: '28px', height: '28px', borderRadius: '4px' }}></div>
-                <div className={styles.skeleton} style={{ width: '80px', height: '12px' }}></div>
-                <div className={styles.skeleton} style={{ width: '28px', height: '28px', borderRadius: '4px' }}></div>
-              </div>
-              <div className={styles.skeleton} style={{ width: '120px', height: '12px' }}></div>
-            </div>
-          </div>
-
-          {/* Right Column: Actions / Chatbot Skeleton */}
-          <div className={styles.actionsColumn}>
-            {/* AI Assistant Skeleton */}
-            <div className={`glass-panel ${styles.aiAssistantPanel} ${styles.skeletonCard}`}>
-              <div className={styles.aiAssistantHeader}>
-                <div className={styles.aiBotProfile}>
-                  <div className={`${styles.skeleton} ${styles.skeletonCircle}`} style={{ width: '36px', height: '36px', borderRadius: 'var(--radius-md)' }}></div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <div className={styles.skeleton} style={{ width: '90px', height: '12px' }}></div>
-                    <div className={styles.skeleton} style={{ width: '50px', height: '8px' }}></div>
-                  </div>
-                </div>
-              </div>
-
-              <div className={styles.aiChatTimeline} style={{ gap: '16px' }}>
-                <div className={`${styles.chatBubble} ${styles.bubbleAi}`} style={{ width: '75%', border: 'none' }}>
-                  <div className={styles.skeleton} style={{ width: '100%', height: '10px', marginBottom: '6px' }}></div>
-                  <div className={styles.skeleton} style={{ width: '90%', height: '10px', marginBottom: '6px' }}></div>
-                  <div className={styles.skeleton} style={{ width: '40%', height: '8px' }}></div>
-                </div>
-                <div className={`${styles.chatBubble} ${styles.bubbleUser}`} style={{ width: '60%', border: 'none', alignSelf: 'flex-end' }}>
-                  <div className={styles.skeleton} style={{ width: '100%', height: '10px', marginBottom: '6px' }}></div>
-                  <div className={styles.skeleton} style={{ width: '30%', height: '8px' }}></div>
-                </div>
-              </div>
-
-              <div className={styles.aiChatInputArea}>
-                <div className={styles.skeleton} style={{ width: '100%', height: '38px', borderRadius: 'var(--radius-md)' }}></div>
-              </div>
-            </div>
-
-            {/* Operations Health Skeleton */}
-            <div className={`glass-panel ${styles.healthPanel} ${styles.skeletonCard}`}>
-              <div className={styles.skeleton} style={{ width: '140px', height: '16px', marginBottom: '20px' }}></div>
-              <div className={styles.healthStatsList} style={{ gap: '16px' }}>
-                {[1, 2].map(idx => (
-                  <div key={idx} className={styles.healthStatItem}>
-                    <div className={styles.healthStatLabels} style={{ marginBottom: '4px' }}>
-                      <div className={styles.skeleton} style={{ width: '80px', height: '12px' }}></div>
-                      <div className={styles.skeleton} style={{ width: '30px', height: '12px' }}></div>
-                    </div>
-                    <div className={styles.progressBar}>
-                      <div className={styles.skeleton} style={{ width: idx === 1 ? '42%' : '89%', height: '100%' }}></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Calculate Metrics dynamically
-  const totalCustomers = customers.length;
-  
-  // KPI 1: Total Chats
-  const totalChatsCount = totalChats;
-  
-  // KPI 2: New Leads / Total Customers
-  const totalLeadsCount = totalCustomers;
-
-  // KPI 3: Conversion Rate
-  const wonDeals = deals.filter(d => d.status === 1);
-  const totalDealsCount = deals.length;
-  const conversionRate = totalDealsCount > 0 
-    ? Math.round((wonDeals.length / totalDealsCount) * 1000) / 10 
-    : 0;
-
-  // Filtered Leads
-  const filteredCustomers = customers.filter(c => {
-    if (stageFilter === 'الكل') return true;
-    return c.pipelineStage === stageFilter;
+  const formattedUpdatedAt = lastUpdatedAt?.toLocaleString('ar-EG', {
+    timeZone: CAIRO_TIME_ZONE,
+    dateStyle: 'medium',
+    timeStyle: 'short',
   });
-
-  // Top leads by LeadScore
-  const sortedLeads = [...filteredCustomers]
-    .sort((a, b) => (b.leadScore || 0) - (a.leadScore || 0))
-    .slice(0, 10);
-
-  // Available unique pipeline stages for filtering
-  const stages = ['الكل', ...Array.from(new Set(customers.map(c => c.pipelineStage).filter(Boolean)))];
-
-  // Dynamic AI Insight description
-  let aiInsightDesc = "مساعد الذكاء الاصطناعي يحلل الآن محادثات عملائك الواردة لاستخلاص نقاط الاهتمام وتصنيفهم.";
-  if (activeProject) {
-    if (activeProject.settings?.aiAutoReplyEnabled) {
-      aiInsightDesc = "الرد التلقائي بالذكاء الاصطناعي نشط حالياً للمشروع. يقوم المساعد بالرد الفوري التلقائي على استفسارات عملائك وتحديث تفاصيلهم.";
-    } else {
-      aiInsightDesc = "الرد التلقائي بالذكاء الاصطناعي غير مفعّل حالياً. يمكنك تفعيله من الإعدادات لمضاعفة سرعة الاستجابة للعملاء الجدد.";
-    }
-  }
+  const hasLoadedData = lastUpdatedAt !== null && lastLoadedProjectId === activeProject?.id;
+  const displayedLeads = hasLoadedData ? visibleLeads : [];
 
   return (
-    <div ref={containerRef} className={styles.container}>
-      {/* Title Header */}
+    <section className={styles.container} aria-labelledby="dashboard-title">
       <div className={styles.dashboardHeader}>
         <div>
-          <div className={styles.breadcrumbs}>
+          <div className={styles.breadcrumbs} aria-label="مسار الصفحة">
             <span>الرئيسية</span>
-            <span className={styles.chevron}>&gt;</span>
+            <span className={styles.chevron} aria-hidden="true">/</span>
             <span className={styles.activeBreadcrumb}>لوحة التحكم</span>
           </div>
-          <h1 className={styles.pageTitle}>نظرة عامة على الأداء</h1>
-          <p className={styles.pageSubtitle}>تتبع مؤشرات النمو والعملاء في الوقت الفعلي للمشروع {activeProject?.name}</p>
+          <h1 id="dashboard-title" className={styles.pageTitle}>نظرة عامة على الأداء</h1>
+          <p className={styles.pageSubtitle}>
+            بيانات المشروع {activeProject?.name ?? 'غير محدد'}، دون تقديرات أو قيم تجريبية
+          </p>
+          <p className={styles.panelSubtitle} role="status">
+            {hasLoadedData && formattedUpdatedAt ? `آخر تحميل ناجح: ${formattedUpdatedAt} بتوقيت القاهرة` : 'لم يتم تحميل مصدر بيانات لهذا المشروع بعد'}
+          </p>
         </div>
         <div className={styles.headerActions}>
-          <button className={styles.rangeButton}>
-            <span>آخر ٣٠ يوم</span>
-          </button>
-          <button 
-            onClick={handleRecalculate} 
-            disabled={recalculating} 
+          <span className={styles.rangeButton}>كل البيانات المتاحة من المصدر</span>
+          <button
+            type="button"
+            onClick={recalculateMetrics}
+            disabled={!activeProject || recalculating}
+            title={!activeProject ? 'مساحة العمل غير متاحة' : undefined}
             className={styles.refreshButton}
           >
-            <RefreshCw size={16} className={recalculating ? styles.spinIcon : ''} />
-            <span>{recalculating ? 'جاري التحديث...' : 'تحديث المؤشرات'}</span>
+            <RefreshCw size={16} aria-hidden="true" className={recalculating ? styles.spinIcon : ''} />
+            {recalculating ? 'جاري التحديث...' : 'تحديث المؤشرات'}
           </button>
         </div>
       </div>
 
-      {/* KPI Stats Cards */}
-      <div className={styles.statsGrid}>
-        {/* KPI 1: Total Chats */}
-        <div className={`glass-panel ${styles.statCard}`}>
-          <div className={styles.statTop}>
-            <div className={styles.statIconBox} style={{ color: 'var(--accent)', backgroundColor: 'var(--accent-soft)' }}>
-              <MessageSquare size={22} />
-            </div>
-            <span className={styles.trendBadge} style={{ color: 'var(--accent)', backgroundColor: 'var(--accent-soft)' }}>
-              ١٢.٥٪ +
-            </span>
-          </div>
-          <div className={styles.statContent}>
-            <span className={styles.statLabel}>إجمالي الشاتات</span>
-            <div className={styles.valueRow}>
-              <span className={styles.statValue}>{totalChatsCount.toLocaleString('ar-EG')}</span>
-            </div>
-          </div>
+      {loadError && (
+        <div className="glass-panel" role="alert" style={{ padding: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+          <p>{loadError}</p>
+          {activeProject && (
+            <button type="button" className={styles.refreshButton} onClick={() => void fetchDashboardData()}>
+              إعادة المحاولة
+            </button>
+          )}
         </div>
+      )}
 
-        {/* KPI 2: Customers */}
-        <div className={`glass-panel ${styles.statCard}`}>
-          <div className={styles.statTop}>
-            <div className={styles.statIconBox} style={{ color: 'var(--accent)', backgroundColor: 'var(--accent-soft)' }}>
-              <Users size={22} />
-            </div>
-            <span className={styles.trendBadge} style={{ color: 'var(--accent)', backgroundColor: 'var(--accent-soft)' }}>
-              ٨.٢٪ +
-            </span>
-          </div>
-          <div className={styles.statContent}>
-            <span className={styles.statLabel}>العملاء الجدد</span>
-            <div className={styles.valueRow}>
-              <span className={styles.statValue}>{totalLeadsCount.toLocaleString('ar-EG')}</span>
-            </div>
-          </div>
-        </div>
+      <section className={styles.statsGrid} aria-label="مؤشرات المشروع">
+        <article className={`glass-panel ${styles.statCard}`}>
+          <div className={styles.statIconBox}><MessageSquare size={22} aria-hidden="true" /></div>
+          <span className={styles.statLabel}>المحادثات المحمّلة</span>
+          <strong className={styles.statValue}>{hasLoadedData ? metrics.chats.toLocaleString('ar-EG') : 'غير متاح'}</strong>
+        </article>
+        <article className={`glass-panel ${styles.statCard}`}>
+          <div className={styles.statIconBox}><Users size={22} aria-hidden="true" /></div>
+          <span className={styles.statLabel}>إجمالي العملاء</span>
+          <strong className={styles.statValue}>{hasLoadedData ? metrics.customers.toLocaleString('ar-EG') : 'غير متاح'}</strong>
+        </article>
+        <article className={`glass-panel ${styles.statCard}`}>
+          <div className={styles.statIconBox}><Star size={22} aria-hidden="true" /></div>
+          <span className={styles.statLabel}>نسبة الصفقات المسجلة كرابحة</span>
+          <strong className={styles.statValue}>
+            {!hasLoadedData || metrics.conversionRate === null ? 'غير متاح' : `${metrics.conversionRate.toLocaleString('ar-EG')}٪`}
+          </strong>
+        </article>
+        <article className={`glass-panel ${styles.statCard} ${styles.aiKpiCard}`}>
+          <div className={styles.statIconBox}><Sparkles size={20} aria-hidden="true" /></div>
+          <span className={styles.statLabel}>الرد الآلي</span>
+          <strong className={styles.aiKpiTitle}>
+            {!activeProject ? 'غير متاح' : activeProject.settings?.aiAutoReplyEnabled ? 'مفعّل في إعدادات المشروع' : 'غير مفعّل'}
+          </strong>
+          <p className={styles.aiKpiDesc}>هذه حالة إعداد فقط، وليست إثباتًا على اتصال مزود الذكاء الاصطناعي.</p>
+        </article>
+      </section>
 
-        {/* KPI 3: Conversion Rate */}
-        <div className={`glass-panel ${styles.statCard}`}>
-          <div className={styles.statTop}>
-            <div className={styles.statIconBox} style={{ color: 'var(--accent)', backgroundColor: 'var(--accent-soft)' }}>
-              <Star size={22} />
-            </div>
-            <span className={styles.trendBadge} style={{ color: 'hsl(var(--accent-danger))', backgroundColor: 'var(--danger-soft)' }}>
-              ٢.١٪ -
-            </span>
-          </div>
-          <div className={styles.statContent}>
-            <span className={styles.statLabel}>معدل التحويل</span>
-            <div className={styles.valueRow}>
-              <span className={styles.statValue}>{conversionRate}٪</span>
-            </div>
-          </div>
-        </div>
-
-        {/* KPI 4: AI Insights */}
-        <div className={`glass-panel ${styles.statCard} ${styles.aiKpiCard}`}>
-          <div className={styles.statTop}>
-            <div className={styles.statIconBox} style={{ color: 'var(--accent-ink)', backgroundColor: 'var(--accent)' }}>
-              <Sparkles size={20} />
-            </div>
-            <span className={styles.aiBadge}>AI Insights</span>
-          </div>
-          <div className={styles.statContent}>
-            <span className={styles.aiKpiTitle}>توصية الذكاء الاصطناعي</span>
-            <p className={styles.aiKpiDesc}>
-              {aiInsightDesc}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Grid Section */}
       <div className={styles.contentGrid}>
-        {/* Left Column: Leads Table Panel */}
-        <div className={`glass-panel ${styles.leadsPanel}`}>
+        <section className={`glass-panel ${styles.leadsPanel}`} aria-labelledby="top-leads-heading">
           <div className={styles.panelHeader}>
             <div>
-              <h2 className={styles.panelTitle}>أهم العملاء المحتملين</h2>
-              <p className={styles.panelSubtitle}>متابعة حالة العملاء الأعلى تقييماً</p>
+              <h2 id="top-leads-heading" className={styles.panelTitle}>أعلى العملاء تقييمًا</h2>
+              <p className={styles.panelSubtitle}>أول 10 نتائج من بيانات CRM الحالية</p>
             </div>
-            
-            <div className={styles.filterActions}>
-              <div className={styles.selectWrapper}>
-                <Filter size={14} className={styles.filterIcon} />
-                <select 
-                  value={stageFilter} 
-                  onChange={(e) => setStageFilter(e.target.value)}
-                  className={styles.stageSelect}
-                >
-                  {stages.map(stg => (
-                    <option key={stg} value={stg}>{stg}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            <label className={styles.selectWrapper}>
+              <span className="sr-only">تصفية حسب المرحلة</span>
+              <select value={hasLoadedData ? stageFilter : 'الكل'} onChange={(event) => setStageFilter(event.target.value)} className={styles.stageSelect} disabled={!hasLoadedData || loading}>
+                {(hasLoadedData ? stages : ['الكل']).map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+              </select>
+            </label>
           </div>
-
           <div className={styles.tableContainer}>
             <table className={styles.leadsTable}>
-              <thead>
-                <tr>
-                  <th>العميل</th>
-                  <th>نقاط الاهتمام</th>
-                  <th>الحالة</th>
-                  <th></th>
-                </tr>
-              </thead>
+              <caption className="sr-only">العملاء الأعلى تقييمًا في CRM</caption>
+              <thead><tr><th>العميل</th><th>التقييم</th><th>المرحلة</th><th>الإجراء</th></tr></thead>
               <tbody>
-                {sortedLeads.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className={styles.emptyTable}>لا توجد بيانات مطابقة للعملاء</td>
+                {displayedLeads.length === 0 ? (
+                  <tr><td colSpan={4} className={styles.emptyTable}>{hasLoadedData ? 'لا توجد نتائج. غيّر المرحلة أو أضف بيانات CRM.' : 'بيانات CRM غير متاحة قبل أول تحميل ناجح.'}</td></tr>
+                ) : displayedLeads.map((customer) => (
+                  <tr key={customer.id}>
+                    <td>
+                      <div className={styles.customerProfileCell}>
+                        <div className={styles.avatarLetter}>{(customer.name || '؟')[0]}</div>
+                        <div><div className={styles.customerName}>{customer.name || 'اسم غير مسجل'}</div><div className={styles.customerPhone}>{customer.phoneNumber || 'هاتف غير مسجل'}</div></div>
+                      </div>
+                    </td>
+                    <td><div className={styles.scoreCell}><Zap size={14} aria-hidden="true" /><span>{Number.isFinite(customer.leadScore) ? customer.leadScore : 'غير متاح'}</span></div></td>
+                    <td><span className={styles.stageBadge}>{customer.pipelineStage || 'غير محددة'}</span></td>
+                    <td><button type="button" className={styles.actionBtn} onClick={() => router.push('/crm')} aria-label={`فتح سجل العميل ${customer.name || customer.phoneNumber}`}><ArrowLeft size={16} aria-hidden="true" /></button></td>
                   </tr>
-                ) : (
-                  sortedLeads.map((c, index) => (
-                    <tr key={c.id}>
-                      <td>
-                        <div className={styles.customerProfileCell}>
-                          <div className={styles.avatarLetter}>
-                            {(c.name || 'ع')[0].toUpperCase()}
-                          </div>
-                          <div>
-                            <div className={styles.customerName}>{c.name || 'عميل بدون اسم'}</div>
-                            <div className={styles.customerPhone}>{c.phoneNumber}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className={styles.scoreCell}>
-                          <Zap size={14} fill="currentColor" className={styles.boltIcon} />
-                          <span className={styles.scoreVal}>{c.leadScore || 50}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <span className={styles.stageBadge}>{c.pipelineStage || 'جديد'}</span>
-                      </td>
-                      <td>
-                        <button type="button" className={styles.actionBtn}>
-                          <MoreVertical size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
+                ))}
               </tbody>
             </table>
           </div>
+        </section>
 
-          <div className={styles.tableFooter}>
-            <div className={styles.pagination}>
-              <button type="button" className={styles.pageBtn} disabled>
-                <ChevronRight size={16} />
-              </button>
-              <span className={styles.pageText}>الصفحة ١ من ١</span>
-              <button type="button" className={styles.pageBtn} disabled>
-                <ChevronLeft size={16} />
-              </button>
-            </div>
-            <span className={styles.totalRowsText}>عرض {sortedLeads.length} من إجمالي {filteredCustomers.length} عميل</span>
-          </div>
-        </div>
-
-        {/* Right Column: AI Assistant & Quick Health */}
-        <div className={styles.actionsColumn}>
-          {/* Gemini chatbot assistant */}
-          <div className={`glass-panel ${styles.aiAssistantPanel}`}>
-            <div className={styles.aiAssistantHeader}>
-              <div className={styles.aiBotProfile}>
-                <div className={styles.aiBotIcon}>
-                  <MessageSquare size={20} />
-                </div>
-                <div>
-                  <h3 className={styles.aiBotTitle}>مساعد Gemini</h3>
-                  <div className={styles.aiStatusIndicator}>
-                    <span className={styles.aiPulseDot}></span>
-                    <span className={styles.aiStatusText}>متصل الآن</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className={styles.aiChatTimeline}>
-              {chatMessages.map((msg, index) => (
-                <div 
-                  key={index} 
-                  className={`${styles.chatBubble} ${msg.sender === 'ai' ? styles.bubbleAi : styles.bubbleUser}`}
-                >
-                  <p className={styles.bubbleText}>{msg.text}</p>
-                  <span className={styles.bubbleTime}>{msg.time}</span>
-                </div>
-              ))}
-            </div>
-
-            <form onSubmit={handleSendMessage} className={styles.aiChatInputArea}>
-              <input 
-                type="text" 
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="اسأل المساعد عن أي شيء..."
-                className={styles.aiChatInput}
-              />
-              <button type="submit" className={styles.aiSendButton}>
-                <Send size={16} fill="currentColor" />
-              </button>
-            </form>
-          </div>
-
-          {/* Daily health stats */}
-          <div className={`glass-panel ${styles.healthPanel}`}>
-            <h3 className={styles.healthTitle}>
-              <Activity size={18} className={styles.healthTitleIcon} />
-              <span>إحصائيات التشغيل اليومية</span>
-            </h3>
-            
-            <div className={styles.healthStatsList}>
-              <div className={styles.healthStatItem}>
-                <div className={styles.healthStatLabels}>
-                  <span className={styles.healthStatName}>استهلاك الخادم</span>
-                  <span className={styles.healthStatVal}>٤٢٪</span>
-                </div>
-                <div className={styles.progressBar}>
-                  <div className={styles.progressFill} style={{ width: '42%', backgroundColor: 'var(--accent)' }}></div>
-                </div>
-              </div>
-
-              <div className={styles.healthStatItem}>
-                <div className={styles.healthStatLabels}>
-                  <span className={styles.healthStatName}>طلبات API</span>
-                  <span className={styles.healthStatVal}>٨٩٪</span>
-                </div>
-                <div className={styles.progressBar}>
-                  <div className={styles.progressFill} style={{ width: '89%', backgroundColor: 'var(--accent)', boxShadow: '0 0 10px rgba(182, 246, 41, 0.4)' }}></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <aside className={styles.actionsColumn} aria-label="حالة المصادر">
+          <section className={`glass-panel ${styles.healthPanel}`}>
+            <h2 className={styles.healthTitle}><Activity size={18} aria-hidden="true" /> حالة البيانات</h2>
+            <p className={styles.aiKpiDesc}>تُعرض الأرقام فقط بعد نجاح تحميل CRM والمحادثات. صحة الخادم واستهلاك API غير متاحين من هذه الواجهة.</p>
+            <button
+              type="button"
+              className={styles.refreshButton}
+              onClick={() => void fetchDashboardData()}
+              disabled={!activeProject || loading}
+              title={!activeProject ? 'مساحة العمل غير متاحة' : undefined}
+            >
+              <RefreshCw size={16} aria-hidden="true" /> {loading ? 'جاري التحميل...' : 'إعادة تحميل المصادر'}
+            </button>
+          </section>
+        </aside>
       </div>
-    </div>
+    </section>
   );
 }

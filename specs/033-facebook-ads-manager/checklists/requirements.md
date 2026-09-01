@@ -1,8 +1,8 @@
-# Specification Quality Checklist: Autonomous Facebook Ads Manager
+# Specification Quality Checklist: Autonomous WhatsApp AI Media Buyer
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 
-**Created**: 2026-08-17
+**Created**: 2026-08-18
 
 **Feature**: [spec.md](../spec.md)
 
@@ -33,4 +33,8 @@
 
 ## Notes
 
-- Media creation scope resolved: v1 uses existing Page/project media and generates copy plus format-preserving variants, not new source images or videos from scratch.
+- Revalidated on 2026-08-18 after expanding the existing feature into an end-to-end click-to-WhatsApp media buyer and replacing the broken creation and targeting assumptions.
+- WhatsApp is now an invariant customer destination; the accepted clarification allows Advantage+ to use every placement that the live Meta account validates as eligible for WhatsApp instead of relying on a fixed placement allowlist.
+- Creation success now requires complete paused hierarchy reconciliation, including objective, optimization, audience, exclusions, placement, budget, Page, WhatsApp identity and creative fields.
+- Outcome ranking, WhatsApp referral continuity, attribution-health evidence, experiment maturity and coherent reporting windows are testable requirements rather than dashboard claims.
+- Media creation scope remains bounded to existing Page/project media plus copy and format-preserving variants; finished new source images or videos are outside this release.

@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Activity, Calendar, CheckCircle2, ExternalLink, RefreshCw, Settings, Sparkles, Users, Zap, User } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Activity, Calendar, CheckCircle2, ExternalLink, RefreshCw, Settings, Users, Zap, User, ShieldCheck } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/auth-context';
 import styles from './settings.module.css';
+import ScheduleDemandAddon from './ScheduleDemandAddon';
 
 interface WhatsAppGroupAutomationRow {
   id: string;
@@ -63,7 +64,22 @@ interface AddonsProps {
   onToggleHumanTransfer: (enabled: boolean) => Promise<void>;
   humanTransferPhone: string;
   onUpdateHumanTransferPhone: (phone: string) => Promise<void>;
+  isTalkTipsTrialGateEnabled: boolean;
+  onToggleTalkTipsTrialGate: (enabled: boolean) => Promise<void>;
+  timezone: string;
+  onDirtyChange: (dirty: boolean) => void;
 }
+
+const isValidTimezone = (timezone: string) => {
+  try { new Intl.DateTimeFormat('en', { timeZone: timezone }).format(); return true; }
+  catch { return false; }
+};
+
+const isValidOperationalPhone = (phone: string, allowEmpty: boolean) => {
+  if (!phone) return allowEmpty;
+  const normalized = phone.replace(/[\s()-]/g, '');
+  return /^(?:\+?[1-9]\d{7,14}|01\d{9})$/.test(normalized);
+};
 
 export default function Addons({
   onManageGroups,
@@ -76,25 +92,28 @@ export default function Addons({
   humanTransferEnabled,
   onToggleHumanTransfer,
   humanTransferPhone,
-  onUpdateHumanTransferPhone
+  onUpdateHumanTransferPhone,
+  isTalkTipsTrialGateEnabled,
+  onToggleTalkTipsTrialGate,
+  timezone,
+  onDirtyChange,
 }: AddonsProps) {
   const { activeProject } = useAuth();
+  const managerPhoneInputRef = useRef<HTMLInputElement>(null);
+  const humanPhoneInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
-  const [managerPhone, setManagerPhone] = useState(groupAutomationManagerPhone);
-  const [phoneInput, setPhoneInput] = useState(humanTransferPhone);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [automationOverview, setAutomationOverview] = useState<WhatsAppGroupAutomationOverview | null>(null);
-  const [automationOverviewLoading, setAutomationOverviewLoading] = useState(false);
+  const [automationOverviewLoading, setAutomationOverviewLoading] = useState(true);
   const [humanTransferOverview, setHumanTransferOverview] = useState<HumanTransferOverview | null>(null);
-  const [humanTransferOverviewLoading, setHumanTransferOverviewLoading] = useState(false);
+  const [humanTransferOverviewLoading, setHumanTransferOverviewLoading] = useState(true);
+  const [managerPhoneDraft, setManagerPhoneDraft] = useState(groupAutomationManagerPhone);
+  const [humanPhoneDraft, setHumanPhoneDraft] = useState(humanTransferPhone);
+  const hasUnsavedPhoneChanges = managerPhoneDraft.trim() !== groupAutomationManagerPhone.trim()
+    || humanPhoneDraft.trim() !== humanTransferPhone.trim();
 
-  useEffect(() => {
-    setManagerPhone(groupAutomationManagerPhone);
-  }, [groupAutomationManagerPhone]);
-
-  useEffect(() => {
-    setPhoneInput(humanTransferPhone);
-  }, [humanTransferPhone]);
+  useEffect(() => onDirtyChange(hasUnsavedPhoneChanges), [hasUnsavedPhoneChanges, onDirtyChange]);
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   const fetchAutomationOverview = useCallback(async () => {
     if (!activeProject) return;
@@ -104,13 +123,15 @@ export default function Addons({
       setAutomationOverview(response.data);
     } catch (e) {
       console.error('Failed to load WhatsApp group automation overview', e);
+      setMessage({ type: 'error', text: 'تعذّر تحديث حالة أتمتة مجموعات واتساب. قد تكون الأرقام المعروضة قديمة.' });
     } finally {
       setAutomationOverviewLoading(false);
     }
   }, [activeProject]);
 
   useEffect(() => {
-    void fetchAutomationOverview();
+    const timer = window.setTimeout(() => void fetchAutomationOverview(), 0);
+    return () => window.clearTimeout(timer);
   }, [fetchAutomationOverview, isWhatsAppGroupAutomationEnabled]);
 
   const fetchHumanTransferOverview = useCallback(async () => {
@@ -121,13 +142,15 @@ export default function Addons({
       setHumanTransferOverview(response.data);
     } catch (e) {
       console.error('Failed to load human transfer overview', e);
+      setMessage({ type: 'error', text: 'تعذّر تحديث حالة التحويل لمشرف. قد تكون البيانات المعروضة قديمة.' });
     } finally {
       setHumanTransferOverviewLoading(false);
     }
   }, [activeProject]);
 
   useEffect(() => {
-    void fetchHumanTransferOverview();
+    const timer = window.setTimeout(() => void fetchHumanTransferOverview(), 0);
+    return () => window.clearTimeout(timer);
   }, [fetchHumanTransferOverview, humanTransferEnabled]);
 
   const handleToggle = async (checked: boolean) => {
@@ -147,6 +170,17 @@ export default function Addons({
   };
 
   const handleToggleGroupAutomation = async (checked: boolean) => {
+    const hasUnsavedManagerPhone = managerPhoneDraft.trim() !== groupAutomationManagerPhone.trim();
+    if (checked && hasUnsavedManagerPhone) {
+      setMessage({ type: 'error', text: 'احفظ رقم المدير المعدّل أولًا، ثم فعّل أتمتة مجموعات واتساب.' });
+      managerPhoneInputRef.current?.focus();
+      return;
+    }
+    if (checked && !isValidOperationalPhone(groupAutomationManagerPhone.trim(), false)) {
+      setMessage({ type: 'error', text: 'احفظ رقم مدير صالحًا أولًا، ثم فعّل أتمتة مجموعات واتساب.' });
+      managerPhoneInputRef.current?.focus();
+      return;
+    }
     try {
       setLoading(true);
       setMessage(null);
@@ -180,12 +214,14 @@ export default function Addons({
     }
   };
 
+  const displayTimezone = isValidTimezone(timezone) ? timezone : 'UTC';
   const formatAppointmentDate = (isoString: string) => {
     return new Date(isoString).toLocaleString('ar-EG', {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
+      timeZone: displayTimezone,
     });
   };
 
@@ -213,11 +249,23 @@ export default function Addons({
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
+      timeZone: displayTimezone,
     });
   };
 
   const handleToggleHumanTransfer = async (checked: boolean) => {
+    const hasUnsavedHumanPhone = humanPhoneDraft.trim() !== humanTransferPhone.trim();
+    if (checked && hasUnsavedHumanPhone) {
+      setMessage({ type: 'error', text: 'احفظ رقم المشرف المعدّل أولًا، ثم فعّل التحويل لشخص حقيقي.' });
+      humanPhoneInputRef.current?.focus();
+      return;
+    }
+    if (checked && !isValidOperationalPhone(humanTransferPhone.trim(), false)) {
+      setMessage({ type: 'error', text: 'احفظ رقم مشرف صالحًا أولًا، ثم فعّل التحويل لشخص حقيقي.' });
+      humanPhoneInputRef.current?.focus();
+      return;
+    }
     try {
       setLoading(true);
       setMessage(null);
@@ -251,10 +299,57 @@ export default function Addons({
     }
   };
 
+  const saveManagerPhone = () => {
+    const phone = managerPhoneDraft.trim();
+    if (!isValidOperationalPhone(phone, !isWhatsAppGroupAutomationEnabled)) {
+      setMessage({ type: 'error', text: 'اكتب رقم مدير صالحًا (رقم مصري 11 خانة أو صيغة دولية) قبل الحفظ.' });
+      managerPhoneInputRef.current?.focus();
+      return;
+    }
+    void handleUpdateManagerPhone(phone);
+  };
+
+  const saveHumanTransferPhone = () => {
+    const phone = humanPhoneDraft.trim();
+    if (!isValidOperationalPhone(phone, !humanTransferEnabled)) {
+      setMessage({ type: 'error', text: 'اكتب رقم مشرف صالحًا (رقم مصري 11 خانة أو صيغة دولية) قبل الحفظ.' });
+      humanPhoneInputRef.current?.focus();
+      return;
+    }
+    void handleUpdatePhone(phone);
+  };
+
+  const openGroupManagement = () => {
+    if (hasUnsavedPhoneChanges) {
+      setMessage({ type: 'error', text: 'احفظ أرقام المدير والمشرف المعدّلة قبل فتح إدارة المجموعات.' });
+      (managerPhoneDraft.trim() !== groupAutomationManagerPhone.trim()
+        ? managerPhoneInputRef.current
+        : humanPhoneInputRef.current)?.focus();
+      return;
+    }
+    onManageGroups();
+  };
+
+  const handleToggleTalkTipsTrialGate = async (checked: boolean) => {
+    try {
+      setLoading(true);
+      setMessage(null);
+      await onToggleTalkTipsTrialGate(checked);
+      setMessage({
+        type: 'success',
+        text: checked ? 'تم تفعيل بوابة تجربة TalkTips.' : 'تم إلغاء تفعيل بوابة تجربة TalkTips.'
+      });
+    } catch {
+      setMessage({ type: 'error', text: 'فشل تعديل بوابة تجربة TalkTips.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', width: '100%' }}>
       {message && (
-        <div className="glass-panel" style={{
+        <div role={message.type === 'error' ? 'alert' : 'status'} aria-live="polite" className="glass-panel" style={{
           padding: 'var(--space-md)',
           border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
           backgroundColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.04)' : 'rgba(239, 68, 68, 0.04)',
@@ -268,7 +363,7 @@ export default function Addons({
 
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))',
         gap: 'var(--space-lg)'
       }}>
         {/* Group Appointments Card */}
@@ -299,6 +394,8 @@ export default function Addons({
               <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
                 <input
                   type="checkbox"
+                  role="switch"
+                  aria-label="تفعيل مواعيد المجموعات"
                   checked={isGroupAppointmentsEnabled}
                   disabled={loading}
                   onChange={(e) => handleToggle(e.target.checked)}
@@ -317,7 +414,8 @@ export default function Addons({
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
             <button
-              onClick={onManageGroups}
+              type="button"
+              onClick={openGroupManagement}
               disabled={!isGroupAppointmentsEnabled}
               className={`${styles.btn} ${isGroupAppointmentsEnabled ? styles.btnPrimary : styles.btnSecondary}`}
               style={{ padding: '6px 16px', fontSize: '0.8rem', opacity: isGroupAppointmentsEnabled ? 1 : 0.5 }}
@@ -356,6 +454,8 @@ export default function Addons({
               <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
                 <input
                   type="checkbox"
+                  role="switch"
+                  aria-label="تفعيل أتمتة مجموعات واتساب"
                   checked={isWhatsAppGroupAutomationEnabled}
                   disabled={loading}
                   onChange={(e) => handleToggleGroupAutomation(e.target.checked)}
@@ -371,29 +471,38 @@ export default function Addons({
               إنشاء مجموعات واتساب مؤمنة آلياً قبل الجلسات وإرسال روابط الدعوة للطلاب ومتابعتهم بعد الحضور.
             </p>
 
-            {isWhatsAppGroupAutomationEnabled && (
+            {(isWhatsAppGroupAutomationEnabled || !groupAutomationManagerPhone) && (
               <div style={{ marginTop: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-soft)', marginBottom: '4px' }}>
+                  <label htmlFor="addon-group-manager-phone" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-soft)', marginBottom: '4px' }}>
                     رقم هاتف المدير للتنبيهات والمجموعات
                   </label>
                   <input
-                    type="text"
-                    value={managerPhone}
-                    onChange={(e) => setManagerPhone(e.target.value)}
-                    onBlur={() => handleUpdateManagerPhone(managerPhone)}
-                    placeholder="+201068690092"
+                    ref={managerPhoneInputRef}
+                    id="addon-group-manager-phone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    dir="ltr"
+                    value={managerPhoneDraft}
+                    onChange={(event) => setManagerPhoneDraft(event.target.value)}
+                    disabled={loading}
+                    placeholder="+20xxxxxxxxxx"
                     style={{
                       width: '100%',
+                      minHeight: '44px',
                       padding: '8px 12px',
                       fontSize: '0.8rem',
                       borderRadius: 'var(--radius-sm)',
                       border: '1px solid var(--border)',
                       backgroundColor: 'var(--bg-card)',
-                      color: 'var(--text-strong)',
-                      outline: 'none'
+                      color: 'var(--text-strong)'
                     }}
                   />
+                  <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={loading || managerPhoneDraft.trim() === groupAutomationManagerPhone.trim()} onClick={saveManagerPhone}>
+                    حفظ رقم المدير
+                  </button>
+                  {managerPhoneDraft.trim() !== groupAutomationManagerPhone.trim() && <small role="status">رقم المدير لم يُحفظ بعد.</small>}
                 </div>
 
                 <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 'var(--space-md)' }}>
@@ -421,10 +530,10 @@ export default function Addons({
                     marginBottom: 'var(--space-sm)'
                   }}>
                     {[
-                      ['جروبات واتساب', automationOverview?.whatsAppGroupsCreated ?? 0],
-                      ['طلاب داخلها', automationOverview?.totalBookingsInWhatsAppGroups ?? 0],
-                      ['متابعات معلقة', automationOverview?.pendingFollowUps ?? 0],
-                      ['كل الحجوزات', automationOverview?.totalBookings ?? 0]
+                      ['جروبات واتساب', automationOverview?.whatsAppGroupsCreated ?? '—'],
+                      ['طلاب داخلها', automationOverview?.totalBookingsInWhatsAppGroups ?? '—'],
+                      ['متابعات معلقة', automationOverview?.pendingFollowUps ?? '—'],
+                      ['كل الحجوزات', automationOverview?.totalBookings ?? '—']
                     ].map(([label, value]) => (
                       <div key={label} style={{ padding: '8px 0', borderTop: '1px solid var(--border-subtle)' }}>
                         <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-strong)', lineHeight: 1.1 }}>{value}</div>
@@ -436,6 +545,10 @@ export default function Addons({
                   {automationOverviewLoading ? (
                     <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
                       جاري تحميل حالة المجموعات...
+                    </div>
+                  ) : !automationOverview ? (
+                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
+                      بيانات الأتمتة غير متاحة الآن. استخدم «تحديث» لإعادة المحاولة.
                     </div>
                   ) : visibleAutomationGroups.length === 0 ? (
                     <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
@@ -538,6 +651,8 @@ export default function Addons({
               <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
                 <input
                   type="checkbox"
+                  role="switch"
+                  aria-label="تفعيل التواصل مع مشرف بشري"
                   checked={humanTransferEnabled}
                   disabled={loading}
                   onChange={(e) => handleToggleHumanTransfer(e.target.checked)}
@@ -566,12 +681,12 @@ export default function Addons({
                 <span style={{
                   fontSize: '0.76rem',
                   fontWeight: 800,
-                  color: humanTransferOverview?.isReady ? 'rgb(16, 185, 129)' : humanTransferEnabled ? 'rgb(245, 158, 11)' : 'hsl(var(--accent-danger))',
-                  background: humanTransferOverview?.isReady ? 'rgba(16, 185, 129, 0.1)' : humanTransferEnabled ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                  color: !humanTransferOverview ? 'hsl(var(--text-secondary))' : humanTransferOverview.isReady ? 'rgb(16, 185, 129)' : humanTransferEnabled ? 'rgb(245, 158, 11)' : 'hsl(var(--accent-danger))',
+                  background: !humanTransferOverview ? 'var(--surface-muted)' : humanTransferOverview.isReady ? 'rgba(16, 185, 129, 0.1)' : humanTransferEnabled ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
                   padding: '3px 8px',
                   borderRadius: '6px'
                 }}>
-                  {humanTransferOverview?.isReady ? 'شغالة بالرقم الحالي' : humanTransferEnabled ? 'مفعلة لكن الرقم ناقص' : 'متوقفة'}
+                  {!humanTransferOverview ? 'الحالة غير متاحة' : humanTransferOverview.isReady ? 'شغالة بالرقم الحالي' : humanTransferEnabled ? 'مفعلة لكن الرقم ناقص' : 'متوقفة'}
                 </span>
                 <button
                   type="button"
@@ -589,28 +704,37 @@ export default function Addons({
               </div>
             </div>
 
-            {humanTransferEnabled && (
+            {(humanTransferEnabled || !humanTransferPhone) && (
               <div style={{ marginTop: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-soft)', marginBottom: '4px' }}>
+                <label htmlFor="addon-human-transfer-phone" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-soft)', marginBottom: '4px' }}>
                   رقم هاتف المشرف للتواصل (مثال: 010xxxxxxxx)
                 </label>
                 <input
-                  type="text"
-                  value={phoneInput}
-                  onChange={(e) => setPhoneInput(e.target.value)}
-                  onBlur={() => handleUpdatePhone(phoneInput)}
+                  ref={humanPhoneInputRef}
+                  id="addon-human-transfer-phone"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  dir="ltr"
+                  value={humanPhoneDraft}
+                  onChange={(event) => setHumanPhoneDraft(event.target.value)}
+                  disabled={loading}
                   placeholder="010xxxxxxxx"
                   style={{
                     width: '100%',
+                    minHeight: '44px',
                     padding: '8px 12px',
                     fontSize: '0.8rem',
                     borderRadius: 'var(--radius-sm)',
                     border: '1px solid var(--border)',
                     backgroundColor: 'var(--bg-card)',
-                    color: 'var(--text-strong)',
-                    outline: 'none'
+                    color: 'var(--text-strong)'
                   }}
                 />
+                <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={loading || humanPhoneDraft.trim() === humanTransferPhone.trim()} onClick={saveHumanTransferPhone}>
+                  حفظ رقم المشرف
+                </button>
+                {humanPhoneDraft.trim() !== humanTransferPhone.trim() && <small role="status">رقم المشرف لم يُحفظ بعد.</small>}
 
                 <div>
                   <div style={{
@@ -620,9 +744,9 @@ export default function Addons({
                     marginBottom: 'var(--space-sm)'
                   }}>
                     {[
-                      ['كل الطلبات', humanTransferOverview?.totalRequests ?? 0],
-                      ['طلبات اليوم', humanTransferOverview?.todayRequests ?? 0],
-                      ['غير مقروءة', humanTransferOverview?.unreadRequests ?? 0]
+                      ['كل الطلبات', humanTransferOverview?.totalRequests ?? '—'],
+                      ['طلبات اليوم', humanTransferOverview?.todayRequests ?? '—'],
+                      ['غير مقروءة', humanTransferOverview?.unreadRequests ?? '—']
                     ].map(([label, value]) => (
                       <div key={label} style={{ padding: '8px 0', borderTop: '1px solid var(--border-subtle)' }}>
                         <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-strong)', lineHeight: 1.1 }}>{value}</div>
@@ -635,7 +759,11 @@ export default function Addons({
                     <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
                       جاري تحميل طلبات التواصل...
                     </div>
-                  ) : !humanTransferOverview?.recentRequests?.length ? (
+                  ) : !humanTransferOverview ? (
+                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
+                      بيانات طلبات المشرف غير متاحة الآن. استخدم «تحديث» لإعادة المحاولة.
+                    </div>
+                  ) : !humanTransferOverview.recentRequests.length ? (
                     <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
                       لا توجد طلبات تواصل بشخص حقيقي حتى الآن.
                     </div>
@@ -668,7 +796,8 @@ export default function Addons({
           </div>
         </div>
 
-        {/* Placeholder Addon 3 */}
+        <ScheduleDemandAddon timezone={displayTimezone} onMessage={setMessage} />
+
         <div className="glass-panel" style={{
           padding: 'var(--space-xl)',
           borderRadius: 'var(--radius-md)',
@@ -676,8 +805,7 @@ export default function Addons({
           flexDirection: 'column',
           justifyContent: 'space-between',
           minHeight: '220px',
-          gap: 'var(--space-md)',
-          opacity: 0.5
+          gap: 'var(--space-md)'
         }}>
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-md)' }}>
@@ -685,31 +813,45 @@ export default function Addons({
                 width: '40px',
                 height: '40px',
                 borderRadius: '8px',
-                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                backgroundColor: 'rgba(0, 243, 255, 0.1)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: 'hsl(var(--accent-warning))'
+                color: 'var(--accent)'
               }}>
-                <Sparkles size={22} />
+                <ShieldCheck size={22} />
               </div>
-              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-soft)' }}>قريباً</span>
+              <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="تفعيل دعوة تجربة TalkTips"
+                  checked={isTalkTipsTrialGateEnabled}
+                  disabled={loading}
+                  onChange={(event) => handleToggleTalkTipsTrialGate(event.target.checked)}
+                  className={styles.checkbox}
+                />
+              </label>
             </div>
-
             <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-strong)' }}>
-              حملات التسويق الذكية (AI Campaigns)
+              CTA تجربة TalkTips الذكي
             </h3>
             <p style={{ fontSize: '0.825rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
-              صناعة وإرسال حملات تسويق مخصصة بالذكاء الاصطناعي بناءً على تصنيفات واهتمامات العملاء ومتابعتها تلقائياً.
+              يفحص النظام حالة التجربة من موقع TalkTips. لو العميل لسه ما جرّبش، يرد الـAI على سؤاله طبيعي ويختم الرد بدعوة متغيرة تناسب السياق مع رابط التجربة.
             </p>
           </div>
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
-            <button disabled className={`${styles.btn} ${styles.btnSecondary}`} style={{ padding: '6px 16px', fontSize: '0.8rem' }}>
-              غير متوفر
-            </button>
-          </div>
+          <a
+            href="https://talktips-academy.com/ar/try"
+            target="_blank"
+            rel="noreferrer"
+            className={`${styles.btn} ${styles.btnSecondary}`}
+            style={{ alignSelf: 'flex-end', padding: '6px 16px', fontSize: '0.8rem' }}
+          >
+            <ExternalLink size={14} />
+            فتح صفحة التجربة
+          </a>
         </div>
+
       </div>
     </div>
   );

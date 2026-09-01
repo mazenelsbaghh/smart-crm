@@ -13,12 +13,10 @@ class BookingsRepository {
   }
 
   Future<GroupAppointment> createAppointment(Map<String, dynamic> data) async {
-    final response = await _apiClient.dio.post('/api/group-appointments', data: data);
-    return GroupAppointment.fromJson(response.data);
-  }
-
-  Future<GroupAppointment> updateAppointment(String id, Map<String, dynamic> data) async {
-    final response = await _apiClient.dio.put('/api/group-appointments/$id', data: data);
+    final response = await _apiClient.dio.post(
+      '/api/group-appointments',
+      data: data,
+    );
     return GroupAppointment.fromJson(response.data);
   }
 
@@ -28,10 +26,6 @@ class BookingsRepository {
 
   Future<void> toggleAppointment(String id) async {
     await _apiClient.dio.patch('/api/group-appointments/$id/toggle');
-  }
-
-  Future<void> bookAppointment(Map<String, dynamic> data) async {
-    await _apiClient.dio.post('/api/public/group-appointments/book', data: data);
   }
 
   Future<void> cancelBooking(String bookingId) async {

@@ -3,12 +3,16 @@ using Shared.Security;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 
 namespace Shared.Infrastructure
 {
     public static class DbSeeder
     {
-        public static async Task SeedAsync(AppDbContext context, IPasswordHasher passwordHasher)
+        public static async Task SeedAsync(
+            AppDbContext context,
+            IPasswordHasher passwordHasher,
+            IConfiguration configuration)
         {
             Console.WriteLine("🌱 Seeding database...");
 
@@ -36,9 +40,9 @@ namespace Shared.Infrastructure
                 var defaultSettings = new Modules.Projects.Domain.ProjectSettings
                 {
                     ProjectId = defaultProjectId,
-                    AiAutoReplyEnabled = true,
+                    AiAutoReplyEnabled = false,
                     Timezone = "Africa/Cairo",
-                    GeminiApiKey = "mock_test_key",
+                    GeminiApiKey = string.Empty,
                     UpdatedAt = DateTime.UtcNow
                 };
                 context.ProjectSettings.Add(defaultSettings);
@@ -47,24 +51,29 @@ namespace Shared.Infrastructure
             }
 
             // 3. Seed Default User
-            var userEmail = "admin@smartcore.com";
-            var userExists = await context.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == userEmail);
-            if (!userExists)
+            var userEmail = configuration["DevelopmentSeed:AdminEmail"];
+            var userPassword = configuration["DevelopmentSeed:AdminPassword"];
+            if (!string.IsNullOrWhiteSpace(userEmail) && !string.IsNullOrWhiteSpace(userPassword))
             {
-                var adminUser = new Modules.Auth.Domain.User
+                var userExists = await context.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == userEmail);
+                if (!userExists)
                 {
-                    Id = Guid.NewGuid(),
-                    Email = userEmail,
-                    PasswordHash = passwordHasher.HashPassword("Password123"),
-                    Role = "Owner",
-                    ProjectId = defaultProjectId,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                context.Users.Add(adminUser);
-                await context.SaveChangesAsync();
-                Console.WriteLine("✅ Default Admin User seeded (admin@smartcore.com / Password123).");
+                    var adminUser = new Modules.Auth.Domain.User
+                    {
+                        Id = Guid.NewGuid(),
+                        Email = userEmail.Trim(),
+                        PasswordHash = passwordHasher.HashPassword(userPassword),
+                        Role = "Owner",
+                        ProjectId = defaultProjectId,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    context.Users.Add(adminUser);
+                    await context.SaveChangesAsync();
+                    Console.WriteLine("✅ Development admin user seeded from configuration.");
+                }
             }
+            else Console.WriteLine("ℹ️ Development admin seed skipped; configure DevelopmentSeed credentials if needed.");
 
             Console.WriteLine("🌱 Seeding complete.");
         }

@@ -24,26 +24,12 @@ namespace Modules.Auth.API
         }
 
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] RegisterRequest request)
-        {
-            if (await _context.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == request.Email))
+        public IActionResult Register([FromBody] RegisterRequest _) =>
+            StatusCode(StatusCodes.Status403Forbidden, new
             {
-                return BadRequest(new { error = "Email already exists" });
-            }
-
-            var user = new User
-            {
-                Email = request.Email,
-                PasswordHash = _passwordHasher.HashPassword(request.Password),
-                Role = request.Role ?? "Agent",
-                ProjectId = request.ProjectId
-            };
-
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
-
-            return Ok(new { message = "User registered successfully", userId = user.Id });
-        }
+                code = "REGISTRATION_DISABLED",
+                error = "Public registration is disabled. Contact an administrator for access."
+            });
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginRequest request)
@@ -69,7 +55,13 @@ namespace Modules.Auth.API
             {
                 accessToken,
                 refreshToken = refreshToken.Token,
-                expiresInSeconds = 900
+                expiresInSeconds = 900,
+                user = new
+                {
+                    user.Id,
+                    user.Email,
+                    user.Role
+                }
             });
         }
 
@@ -127,8 +119,6 @@ namespace Modules.Auth.API
     {
         public string Email { get; set; }
         public string Password { get; set; }
-        public Guid ProjectId { get; set; }
-        public string Role { get; set; }
     }
 
     public class LoginRequest

@@ -16,6 +16,7 @@ namespace Modules.GroupAppointments.Domain
         public string InstructorName { get; set; } = string.Empty;
         public DateTime? FreeSessionDateTime { get; set; }
         public DateTime? CourseSecondDateTime { get; set; }
+        public Guid? WhatsAppAccountId { get; set; }
         public string? WhatsAppGroupJid { get; set; }
         public string? WhatsAppGroupInviteLink { get; set; }
 

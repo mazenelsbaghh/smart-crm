@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Configuration;
+using Shared.Storage;
 
 namespace Modules.Media.Services
 {
@@ -16,7 +17,7 @@ namespace Modules.Media.Services
         Task EnsureBucketExistsAsync();
     }
 
-    public class MinIoStorageService : IMinIoStorageService
+    public class MinIoStorageService : IMinIoStorageService, IObjectStorage
     {
         private readonly IAmazonS3 _s3Client;
         private readonly string _bucketName;
@@ -109,5 +110,16 @@ namespace Modules.Media.Services
 
             await _s3Client.DeleteObjectAsync(deleteRequest);
         }
+
+        public Task<string> UploadAsync(string objectKey, Stream content, string contentType, CancellationToken cancellationToken = default) =>
+            UploadFileAsync(objectKey, content, contentType);
+
+        public Task<Stream> DownloadAsync(string objectKey, CancellationToken cancellationToken = default) =>
+            DownloadFileAsync(objectKey);
+
+        Task<string> IObjectStorage.GetSignedUrlAsync(string objectKey, TimeSpan expiry, CancellationToken cancellationToken) =>
+            GetSignedUrlAsync(objectKey, expiry);
+
+        public Task DeleteAsync(string objectKey, CancellationToken cancellationToken = default) => DeleteFileAsync(objectKey);
     }
 }

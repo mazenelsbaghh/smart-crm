@@ -11,18 +11,23 @@ public static class IntegrationOutbox
 {
     public static void Enqueue<T>(AppDbContext db, T message, int schemaVersion = 1) where T : IntegrationEvent
     {
+        var contract = IntegrationEventTypeRegistry.Describe(typeof(T));
         db.IntegrationOutboxMessages.Add(new IntegrationOutboxMessage
         {
             EventId = message.Id,
-            EventType = typeof(T).Name,
-            SchemaVersion = schemaVersion,
+            EventType = contract.Name,
+            SchemaVersion = contract.SchemaVersion == 1 ? schemaVersion : contract.SchemaVersion,
             PayloadJson = JsonSerializer.Serialize(message),
             OccurredAtUtc = message.OccurredOn
         });
     }
 }
 
-public sealed class IntegrationOutboxDispatcher(AppDbContext db, IEventBus eventBus, ILogger<IntegrationOutboxDispatcher> logger)
+public sealed class IntegrationOutboxDispatcher(
+    AppDbContext db,
+    IEventBus eventBus,
+    IntegrationEventTypeRegistry eventTypes,
+    ILogger<IntegrationOutboxDispatcher> logger)
 {
     [DisableConcurrentExecution(timeoutInSeconds: 50)]
     public async Task DispatchAsync(CancellationToken cancellationToken = default)
@@ -36,7 +41,10 @@ public sealed class IntegrationOutboxDispatcher(AppDbContext db, IEventBus event
         {
             try
             {
-                await PublishAsync(message);
+                var integrationEvent = eventTypes.Deserialize(message.EventType, message.SchemaVersion, message.PayloadJson);
+                // Keep the deserialized runtime contract type. Calling the generic interface method
+                // directly here would infer IntegrationEvent and bypass all concrete subscriptions.
+                await IntegrationEventBusExtensions.PublishAsync(eventBus, integrationEvent);
                 message.PublishedAtUtc = DateTime.UtcNow;
                 message.LastErrorCode = null;
             }
@@ -51,16 +59,4 @@ public sealed class IntegrationOutboxDispatcher(AppDbContext db, IEventBus event
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private Task PublishAsync(IntegrationOutboxMessage message) => message.EventType switch
-    {
-        nameof(AdvertisingProjectAssetChanged) => Publish<AdvertisingProjectAssetChanged>(message),
-        nameof(AdvertisingDealOutcomeChanged) => Publish<AdvertisingDealOutcomeChanged>(message),
-        nameof(AdvertisingBookingOutcomeChanged) => Publish<AdvertisingBookingOutcomeChanged>(message),
-        nameof(AdvertisingQualifiedMessageChanged) => Publish<AdvertisingQualifiedMessageChanged>(message),
-        nameof(AdvertisingProjectLifecycleChanged) => Publish<AdvertisingProjectLifecycleChanged>(message),
-        _ => throw new InvalidOperationException($"Unsupported outbox event type '{message.EventType}'.")
-    };
-
-    private Task Publish<T>(IntegrationOutboxMessage message) where T : IntegrationEvent =>
-        eventBus.PublishAsync(JsonSerializer.Deserialize<T>(message.PayloadJson) ?? throw new InvalidOperationException("Invalid outbox payload."));
 }

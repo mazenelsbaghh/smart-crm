@@ -8,6 +8,10 @@ using System.Threading.Tasks;
 using Pgvector;
 using Shared.Queue;
 using Shared.Events;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Modules.Brain.Services
 {
@@ -25,13 +29,10 @@ namespace Modules.Brain.Services
     {
         private readonly AppDbContext _dbContext;
         private readonly IGeminiClient _geminiClient;
-        private readonly IEventBus _eventBus;
-
-        public KnowledgeBaseService(AppDbContext dbContext, IGeminiClient geminiClient, IEventBus eventBus)
+        public KnowledgeBaseService(AppDbContext dbContext, IGeminiClient geminiClient)
         {
             _dbContext = dbContext;
             _geminiClient = geminiClient;
-            _eventBus = eventBus;
         }
 
         public async Task<KnowledgeDocument> CreateDocumentAsync(Guid projectId, string title, string content, string? sourceUrl)
@@ -80,17 +81,39 @@ namespace Modules.Brain.Services
             if (doc == null) throw new ArgumentException("Document not found");
 
             doc.Status = "Approved";
-            await _dbContext.SaveChangesAsync();
-            await _eventBus.PublishAsync(new KnowledgePublishedChangedEvent
+            IntegrationOutbox.Enqueue(_dbContext, new AdvertisingKnowledgeChanged
             {
                 ProjectId = doc.ProjectId,
-                DocumentId = doc.Id,
-                Version = doc.Version,
-                Title = doc.Title,
-                Content = doc.Content,
-                Status = doc.Status
+                KnowledgeDocumentId = doc.Id,
+                State = doc.Status,
+                RevisionHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(doc.Content))).ToLowerInvariant(),
+                SafeFactsJson = BuildAdvertisingFacts(doc.Content),
+                AffectedOfferKeysJson = JsonSerializer.Serialize(new[] { doc.Title }),
+                SourceAggregateType = nameof(KnowledgeDocument),
+                SourceAggregateId = doc.Id,
+                SourceVersion = doc.Version
             });
+            await _dbContext.SaveChangesAsync();
             return doc;
+        }
+
+        private static string BuildAdvertisingFacts(string content)
+        {
+            var priceMatch = Regex.Match(content, @"(?<!\d)(\d+(?:[.,]\d+)?)\s*(جنيه|ج\.م|EGP|USD|\$)", RegexOptions.IgnoreCase);
+            var type = content.Contains("كورس", StringComparison.OrdinalIgnoreCase) || content.Contains("دورة", StringComparison.OrdinalIgnoreCase) ? "Course"
+                : content.Contains("منتج", StringComparison.OrdinalIgnoreCase) ? "Product"
+                : content.Contains("اشتراك", StringComparison.OrdinalIgnoreCase) ? "SaaS" : "Service";
+            var price = priceMatch.Success && decimal.TryParse(priceMatch.Groups[1].Value.Replace(',', '.'),
+                System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : (decimal?)null;
+            var currency = priceMatch.Groups[2].Value.Contains('$') || priceMatch.Groups[2].Value.Contains("USD", StringComparison.OrdinalIgnoreCase) ? "USD" : "EGP";
+            return JsonSerializer.Serialize(new
+            {
+                offerType = type,
+                price,
+                currency = price is null ? null : currency,
+                destinationIntent = content.Contains("واتساب", StringComparison.OrdinalIgnoreCase) || content.Contains("WhatsApp", StringComparison.OrdinalIgnoreCase) ? "WhatsApp" : null,
+                confidence = 0.95m
+            });
         }
 
         public async Task<KnowledgeDocument> RejectDocumentAsync(Guid id)

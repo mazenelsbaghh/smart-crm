@@ -23,4 +23,23 @@ public sealed class AdvertisingProfileTests
         var result = AdvertisingProfileExtractor.Extract(Guid.NewGuid(), 1, content);
         Assert.False(result.Eligible); Assert.Equal(reason, result.BlockReason);
     }
+
+    [Fact]
+    public void Proposed_commercial_value_must_match_a_cited_source()
+    {
+        var facts = AdvertisingProfileExtractor.ExtractFacts(Guid.NewGuid(), 3,
+            "كورس السعر 1500 جنيه والتسجيل واتساب 01000000000", DateTime.UtcNow);
+        Assert.True(AdvertisingFactValidator.ProposedValueMatchesSource("Price", "1500", facts));
+        Assert.False(AdvertisingFactValidator.ProposedValueMatchesSource("Price", "999", facts));
+        Assert.All(facts, fact => Assert.False(string.IsNullOrWhiteSpace(fact.Citation)));
+    }
+
+    [Fact]
+    public void Prohibited_guarantee_claim_blocks_copy_even_when_offer_facts_are_valid()
+    {
+        var facts = AdvertisingProfileExtractor.ExtractFacts(Guid.NewGuid(), 1,
+            "خدمة التسجيل واتساب 01000000000", DateTime.UtcNow);
+        var result = AdvertisingFactValidator.Validate(facts, "نتيجة مضمونة 100%");
+        Assert.Contains("ADS_PROHIBITED_CLAIM", result.BlockingReasons);
+    }
 }

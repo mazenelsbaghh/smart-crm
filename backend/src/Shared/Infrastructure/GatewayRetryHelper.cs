@@ -6,6 +6,12 @@ namespace Shared.Infrastructure
 {
     public static class GatewayRetryHelper
     {
+        public static Task<HttpResponseMessage> PostOnceAsync(HttpClient httpClient, string url, string jsonPayload)
+        {
+            var content = new StringContent(jsonPayload, System.Text.Encoding.UTF8, "application/json");
+            return httpClient.PostAsync(url, content);
+        }
+
         public static async Task<HttpResponseMessage> PostWithRetryAsync(HttpClient httpClient, string url, string jsonPayload, int maxRetries = 3, int delayMs = 2000)
         {
             HttpResponseMessage response = null;

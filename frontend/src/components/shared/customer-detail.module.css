@@ -5,7 +5,6 @@
   width: 100vw;
   height: 100vh;
   background-color: var(--overlay);
-  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -65,10 +64,13 @@
 
 .customerLoadingAction {
   width: 72px;
-  min-height: 34px;
+  min-height: 44px;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+  background: var(--surface-muted);
   color: var(--text-base);
   font-size: 0.85rem;
+  cursor: pointer;
 }
 
 .customerLoadingGrid {
@@ -137,11 +139,15 @@
 }
 
 .closeBtn {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: transparent;
   cursor: pointer;
   color: hsl(var(--text-secondary));
   padding: var(--space-xs);
   border-radius: var(--radius-full);
-  transition: var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -218,14 +224,14 @@
 }
 
 .input {
+  min-height: 44px;
   background-color: var(--surface-muted);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   color: hsl(var(--text-primary));
   padding: var(--space-sm) var(--space-md);
   font-size: 0.9rem;
-  outline: none;
-  transition: var(--transition-normal);
+  transition: border-color var(--transition-normal), background-color var(--transition-normal), box-shadow var(--transition-normal);
 }
 
 .input:focus {
@@ -235,13 +241,13 @@
 }
 
 .select {
+  min-height: 44px;
   background-color: var(--surface-muted);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   color: hsl(var(--text-primary));
   padding: var(--space-sm) var(--space-md);
   font-size: 0.9rem;
-  outline: none;
   cursor: pointer;
 }
 
@@ -257,7 +263,6 @@
   color: hsl(var(--text-primary));
   padding: var(--space-sm) var(--space-md);
   font-size: 0.9rem;
-  outline: none;
   resize: vertical;
 }
 
@@ -272,6 +277,8 @@
 }
 
 .addTagBtn {
+  min-width: 44px;
+  min-height: 44px;
   background-color: var(--accent-soft);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -281,7 +288,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: var(--transition-fast);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
 .addTagBtn:hover {
@@ -318,14 +325,24 @@
   font-weight: 600;
 }
 
-.removeTagIcon {
+.removeTagButton {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin-inline-start: 3px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
   cursor: pointer;
-  margin-left: 6px;
   color: hsl(var(--text-muted));
-  transition: var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.removeTagIcon:hover {
+.removeTagButton:hover {
+  background: var(--danger-soft);
   color: hsl(var(--accent-danger));
 }
 
@@ -340,12 +357,11 @@
   cursor: pointer;
   margin-top: var(--space-md);
   box-shadow: var(--shadow-neon);
-  transition: var(--transition-normal);
+  transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
 .saveBtn:hover:not(:disabled) {
   background-color: var(--accent-hover);
-  transform: translateY(-1px);
 }
 
 .saveBtn:disabled {
@@ -394,6 +410,7 @@
 }
 
 .scheduleBtn {
+  min-height: 44px;
   background-color: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -405,7 +422,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: var(--transition-fast);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
 .scheduleBtn:hover:not(:disabled) {
@@ -496,6 +513,7 @@
 }
 
 .backBtn {
+  min-height: 44px;
   display: flex;
   align-items: center;
   background: var(--surface-muted);
@@ -506,11 +524,62 @@
   font-size: 0.875rem;
   font-weight: 600;
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
 .backBtn:hover {
   background: var(--accent-soft);
   color: hsl(var(--text-primary));
   border-color: var(--border-strong);
+}
+
+.customerError {
+  width: min(460px, calc(100vw - 32px));
+  padding: var(--space-lg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-base);
+  text-align: center;
+}
+
+.customerError h2 {
+  margin: 0 0 8px;
+  color: var(--text-strong);
+}
+
+.customerError p {
+  margin: 0 0 var(--space-md);
+  line-height: 1.7;
+}
+
+.customerError > div {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 540px) {
+  .modal {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .header,
+  .bodyGrid {
+    padding: var(--space-md);
+  }
+
+  .formRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .inlineCard {
+    animation: none;
+  }
 }

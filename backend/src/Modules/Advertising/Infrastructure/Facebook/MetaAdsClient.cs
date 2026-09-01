@@ -7,14 +7,16 @@ using Modules.Advertising.Services;
 namespace Modules.Advertising.Infrastructure.Facebook;
 
 public sealed record MetaResource(string Id, string Name, string? Currency = null, string? Timezone = null, int? Status = null);
+public sealed record MetaCampaign(string Id, string Name);
 public sealed record MetaResourceCatalog(IReadOnlyList<MetaResource> AdAccounts, IReadOnlyList<MetaResource> Pages, IReadOnlyList<MetaResource> Datasets);
-public sealed record MetaPagePost(string Id, string? Message, string MediaType, string? MediaUrl, DateTime? CreatedAtUtc);
+public sealed record MetaPagePost(string Id, string? Message, string MediaType, string? MediaUrl, DateTime? CreatedAtUtc, string? MediaExternalId = null);
 public sealed record MetaExistingAd(string AdId, string AdName, string Status, string EffectiveStatus, string AdSetId,
     string AdSetName, string CampaignId, string CampaignName, string Objective, string? ObjectStoryId,
     decimal DailyBudget, string BudgetOwnerId, string BudgetOwnerType,
     IReadOnlyList<string> PublisherPlatforms, IReadOnlyList<string> FacebookPositions,
     IReadOnlyList<string> InstagramPositions, IReadOnlyList<string> MessengerPositions,
-    IReadOnlyList<string> AudienceNetworkPositions, string? Destination)
+    IReadOnlyList<string> AudienceNetworkPositions, string? Destination, string? OptimizationGoal,
+    string? PageId, string? WhatsAppPhoneNumber)
 {
     // Imported WhatsApp ads keep their existing Meta placements. This manager only changes delivery state or budget, never placements.
     public bool IsFacebookOnly => IsFacebookPlacementOnly || Destination == "WhatsApp";
@@ -23,12 +25,16 @@ public sealed record MetaExistingAd(string AdId, string AdName, string Status, s
         && PublisherPlatforms[0].Equals("facebook", StringComparison.OrdinalIgnoreCase)
         && FacebookPlacementPolicy.IsAllowed("facebook", FacebookPositions);
 }
-public sealed record MetaAdSetRequest(string AdAccountId, string CampaignId, string Name, decimal DailyBudget, string OptimizationGoal, IReadOnlyCollection<string> Countries, IReadOnlyCollection<string> Positions, string? DatasetId, string? CustomEventType);
+public sealed record MetaAdSetRequest(string AdAccountId, string CampaignId, string Name, decimal DailyBudget, string OptimizationGoal, IReadOnlyCollection<string> Countries, IReadOnlyCollection<string> Positions, string? DatasetId, string? CustomEventType, string? PageId = null, string? WhatsAppPhoneNumber = null);
 public sealed record MetaExistingPostAdRequest(string AdAccountId, string AdSetId, string ObjectStoryId, string Name);
+public sealed record MetaWhatsAppVideoAdRequest(string AdAccountId, string AdSetId, string PageId, string WhatsAppPhoneNumber, string VideoId, string ThumbnailUrl, string Name, string? Message);
+public sealed record MetaAdHierarchy(string CampaignId, string AdSetId, string AdId);
 public sealed record MetaConversionRequest(string DatasetId, CanonicalConversion Conversion, IReadOnlyDictionary<string, string>? MatchData);
+public sealed record MetaValidationResult(bool Accepted, string? ProviderTraceId, string EvidenceJson);
 
 public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOptions> options)
 {
+    private readonly AdvertisingOptions _advertisingOptions = options.Value;
     private readonly MetaOptions _options = options.Value.Meta;
 
     public async Task<string> ExchangeCodeAsync(string code, CancellationToken cancellationToken)
@@ -55,15 +61,96 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
 
     public async Task<string> CreateCampaignPausedAsync(string accessToken, string adAccountId, string name, string objective, CancellationToken cancellationToken)
     {
+        EnsureProvisioningEnabled();
         var fields = new Dictionary<string, string>
         {
-            ["name"] = name, ["objective"] = objective, ["status"] = "PAUSED", ["special_ad_categories"] = "[]", ["access_token"] = accessToken
+            ["name"] = name, ["objective"] = objective, ["status"] = "PAUSED", ["special_ad_categories"] = "[]",
+            ["is_adset_budget_sharing_enabled"] = "false", ["access_token"] = accessToken
         };
         using var response = await httpClient.PostAsync($"{adAccountId}/campaigns", new FormUrlEncodedContent(fields), cancellationToken);
         await EnsureSuccess(response, cancellationToken);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         return json.RootElement.GetProperty("id").GetString()!;
     }
+
+    public async Task<MetaValidationResult> ValidateAdSetAsync(string accessToken, string adAccountId, string campaignId,
+        MetaAdSetPayload payload, CancellationToken cancellationToken)
+    {
+        EnsureProvisioningEnabled();
+        var fields = AdSetFields(campaignId, payload);
+        fields["validate_only"] = "true";
+        fields["access_token"] = accessToken;
+        using var response = await httpClient.PostAsync($"{adAccountId}/adsets", new FormUrlEncodedContent(fields), cancellationToken);
+        await EnsureSuccess(response, cancellationToken);
+        var evidence = await response.Content.ReadAsStringAsync(cancellationToken);
+        var trace = response.Headers.TryGetValues("x-fb-trace-id", out var values) ? values.FirstOrDefault() : null;
+        return new(true, trace, evidence[..Math.Min(evidence.Length, 2000)]);
+    }
+
+    public async Task<string> CreateCampaignPausedAsync(string accessToken, string adAccountId, MetaCampaignPayload payload,
+        CancellationToken cancellationToken)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["name"] = payload.Name, ["objective"] = payload.Objective, ["buying_type"] = payload.BuyingType,
+            ["status"] = "PAUSED", ["special_ad_categories"] = payload.SpecialAdCategoriesJson,
+            ["daily_budget"] = ToMinorUnits(payload.DailyBudget).ToString(), ["bid_strategy"] = payload.BidStrategy
+        };
+        return await PostForId($"{adAccountId}/campaigns", accessToken, fields, cancellationToken);
+    }
+
+    public Task<string> CreateAdSetPausedAsync(string accessToken, string adAccountId, string campaignId,
+        MetaAdSetPayload payload, CancellationToken cancellationToken) =>
+        PostForId($"{adAccountId}/adsets", accessToken, AdSetFields(campaignId, payload), cancellationToken);
+
+    public async Task<string> CreateProviderCreativeAsync(string accessToken, string adAccountId, MetaCreativePayload payload,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(payload.SourceType, nameof(CreativeSourceType.ExistingPagePost), StringComparison.Ordinal))
+            return await PostForId($"{adAccountId}/adcreatives", accessToken,
+                new Dictionary<string, string> { ["name"] = payload.Name, ["object_story_id"] = payload.SourceExternalId }, cancellationToken);
+        var objectStorySpec = JsonSerializer.Serialize(new
+        {
+            page_id = payload.PageId,
+            link_data = new
+            {
+                link = $"https://wa.me/{new string(payload.WhatsAppPhoneNumber.Where(char.IsDigit).ToArray())}",
+                picture = payload.MediaUrl,
+                message = payload.PrimaryText,
+                name = payload.Headline,
+                description = payload.Description,
+                call_to_action = new { type = payload.CallToAction, value = new { app_destination = payload.AppDestination, whatsapp_number = payload.WhatsAppPhoneNumber } }
+            }
+        });
+        return await PostForId($"{adAccountId}/adcreatives", accessToken,
+            new Dictionary<string, string> { ["name"] = payload.Name, ["object_story_spec"] = objectStorySpec }, cancellationToken);
+    }
+
+    public Task<string> CreateAdPausedAsync(string accessToken, string adAccountId, string adSetId, string creativeId,
+        string name, CancellationToken cancellationToken) =>
+        PostForId($"{adAccountId}/ads", accessToken, new Dictionary<string, string>
+        {
+            ["name"] = name, ["adset_id"] = adSetId, ["creative"] = JsonSerializer.Serialize(new { creative_id = creativeId }), ["status"] = "PAUSED"
+        }, cancellationToken);
+
+    public async Task<IReadOnlyDictionary<string, string>> ReadObjectAsync(string accessToken, string externalId, string fields,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{externalId}?fields={Uri.EscapeDataString(fields)}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccess(response, cancellationToken);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return json.RootElement.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.ToString(), StringComparer.Ordinal);
+    }
+
+    public async Task<IReadOnlyList<MetaCampaign>> GetCampaignsAsync(string accessToken, string adAccountId, CancellationToken cancellationToken) =>
+        await GetList($"{adAccountId}/campaigns?fields=id,name&limit=200", accessToken, cancellationToken,
+            campaign => new MetaCampaign(campaign.GetProperty("id").GetString()!, GetString(campaign, "name") ?? string.Empty));
+
+    public Task ArchiveCampaignAsync(string accessToken, string campaignId, CancellationToken cancellationToken) =>
+        Task.FromException(new InvalidOperationException(
+            "ADS_PROVIDER_DELETE_FORBIDDEN: system-managed campaigns are paused, never archived automatically."));
 
     public async Task<string> CreateAdSetPausedAsync(string accessToken, MetaAdSetRequest request, CancellationToken cancellationToken)
     {
@@ -75,7 +162,12 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
             ["billing_event"] = "IMPRESSIONS", ["optimization_goal"] = request.OptimizationGoal, ["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP",
             ["targeting"] = targeting, ["status"] = "PAUSED"
         };
-        if (request.DatasetId is not null && request.CustomEventType is not null)
+        if (request.PageId is not null && request.WhatsAppPhoneNumber is not null)
+        {
+            fields["promoted_object"] = JsonSerializer.Serialize(new { page_id = request.PageId, whatsapp_phone_number = request.WhatsAppPhoneNumber });
+            fields["destination_type"] = "WHATSAPP";
+        }
+        else if (request.DatasetId is not null && request.CustomEventType is not null)
             fields["promoted_object"] = JsonSerializer.Serialize(new { pixel_id = request.DatasetId, custom_event_type = request.CustomEventType });
         return await PostForId(request.AdAccountId + "/adsets", accessToken, fields, cancellationToken);
     }
@@ -87,16 +179,60 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
         return (creativeId, adId);
     }
 
+    public async Task<(string CreativeId, string AdId)> CreateWhatsAppVideoAdPausedAsync(string accessToken, MetaWhatsAppVideoAdRequest request, CancellationToken cancellationToken)
+    {
+        var creative = new
+        {
+            page_id = request.PageId,
+            video_data = new
+            {
+                video_id = request.VideoId,
+                image_url = request.ThumbnailUrl,
+                message = request.Message,
+                call_to_action = new { type = "WHATSAPP_MESSAGE", value = new { app_destination = "WHATSAPP", whatsapp_number = request.WhatsAppPhoneNumber } }
+            }
+        };
+        var creativeId = await PostForId(request.AdAccountId + "/adcreatives", accessToken,
+            new Dictionary<string, string> { ["name"] = request.Name, ["object_story_spec"] = JsonSerializer.Serialize(creative) }, cancellationToken);
+        var adId = await PostForId(request.AdAccountId + "/ads", accessToken,
+            new Dictionary<string, string> { ["name"] = request.Name, ["adset_id"] = request.AdSetId, ["creative"] = JsonSerializer.Serialize(new { creative_id = creativeId }), ["status"] = "PAUSED" }, cancellationToken);
+        return (creativeId, adId);
+    }
+
     public async Task SetAdStatusAsync(string accessToken, string adId, string status, CancellationToken cancellationToken)
     {
-        if (status is not ("ACTIVE" or "PAUSED")) throw new InvalidOperationException("Unsupported ad status.");
+        await SetDeliveryStatusAsync(accessToken, adId, status, cancellationToken);
+    }
+
+    public async Task<string> GetDeliveryStatusAsync(string accessToken, string resourceId, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{resourceId}?fields=status,effective_status");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccess(response, cancellationToken);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return GetString(json.RootElement, "effective_status") ?? GetString(json.RootElement, "status") ?? "UNKNOWN";
+    }
+
+    public async Task ActivateManagedAdHierarchyAsync(string accessToken, MetaAdHierarchy hierarchy, CancellationToken cancellationToken)
+    {
+        await SetDeliveryStatusAsync(accessToken, hierarchy.CampaignId, "ACTIVE", cancellationToken);
+        await SetDeliveryStatusAsync(accessToken, hierarchy.AdSetId, "ACTIVE", cancellationToken);
+        await SetDeliveryStatusAsync(accessToken, hierarchy.AdId, "ACTIVE", cancellationToken);
+    }
+
+    private async Task SetDeliveryStatusAsync(string accessToken, string resourceId, string status, CancellationToken cancellationToken)
+    {
+        if (status is not ("ACTIVE" or "PAUSED")) throw new InvalidOperationException("Unsupported delivery status.");
+        if (status == "ACTIVE") EnsureActivationEnabled();
         var fields = new Dictionary<string, string> { ["status"] = status, ["access_token"] = accessToken };
-        using var response = await httpClient.PostAsync(adId, new FormUrlEncodedContent(fields), cancellationToken);
+        using var response = await httpClient.PostAsync(resourceId, new FormUrlEncodedContent(fields), cancellationToken);
         await EnsureSuccess(response, cancellationToken);
     }
 
     public async Task SetDailyBudgetAsync(string accessToken, string budgetOwnerId, decimal dailyBudget, CancellationToken cancellationToken)
     {
+        EnsureProvisioningEnabled();
         if (dailyBudget <= 0) throw new ArgumentOutOfRangeException(nameof(dailyBudget));
         var fields = new Dictionary<string, string> { ["daily_budget"] = ToMinorUnits(dailyBudget).ToString(), ["access_token"] = accessToken };
         using var response = await httpClient.PostAsync(budgetOwnerId, new FormUrlEncodedContent(fields), cancellationToken);
@@ -105,6 +241,7 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
 
     public async Task SendConversionAsync(string accessToken, MetaConversionRequest request, CancellationToken cancellationToken)
     {
+        EnsureProvisioningEnabled();
         var userData = new Dictionary<string, object?>();
         if (request.MatchData is not null)
         {
@@ -123,9 +260,56 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
         await EnsureSuccess(response, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<MetaPagePost>> GetPagePostsAsync(string accessToken, string pageId, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<MetaPagePost>> GetPageContentAsync(string accessToken, string pageId, CancellationToken cancellationToken)
     {
-        return await GetList($"{pageId}/feed?fields=id,message,created_time,attachments{{media_type,media,url}}&limit=100", accessToken, cancellationToken, ParsePagePost);
+        var feedPosts = await GetPageFeedAsync(accessToken, pageId, cancellationToken);
+        var videoPosts = await GetPageVideosAsync(accessToken, pageId, cancellationToken);
+        return feedPosts.Concat(videoPosts).DistinctBy(post => post.Id).ToList();
+    }
+
+    public async Task<string> GetPageAccessTokenAsync(string userAccessToken, string pageId, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{pageId}?fields=access_token");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", userAccessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccess(response, cancellationToken);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return GetString(json.RootElement, "access_token")
+            ?? throw new HttpRequestException("Meta did not return a Page access token.");
+    }
+
+    private async Task<List<MetaPagePost>> GetPageFeedAsync(string accessToken, string pageId, CancellationToken cancellationToken)
+    {
+        var posts = new List<MetaPagePost>();
+        string? next = $"{pageId}/feed?fields=id,message,created_time,attachments{{media_type,media,url}}&limit=100";
+        while (next is not null)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, next);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            await EnsureSuccess(response, cancellationToken);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            posts.AddRange(json.RootElement.GetProperty("data").EnumerateArray().Select(ParsePagePost));
+            next = json.RootElement.TryGetProperty("paging", out var paging) ? GetString(paging, "next") : null;
+        }
+        return posts;
+    }
+
+    private async Task<List<MetaPagePost>> GetPageVideosAsync(string accessToken, string pageId, CancellationToken cancellationToken)
+    {
+        var videos = new List<MetaPagePost>();
+        string? next = $"{pageId}/videos?fields=id,post_id,description,created_time,picture,permalink_url&limit=100";
+        while (next is not null)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, next);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            await EnsureSuccess(response, cancellationToken);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            videos.AddRange(json.RootElement.GetProperty("data").EnumerateArray().Select(ParsePageVideo).Where(video => video is not null)!);
+            next = json.RootElement.TryGetProperty("paging", out var paging) ? GetString(paging, "next") : null;
+        }
+        return videos;
     }
 
     private static MetaPagePost ParsePagePost(JsonElement x)
@@ -134,15 +318,25 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
         if (x.TryGetProperty("attachments", out var attachments) && attachments.TryGetProperty("data", out var data) && data.GetArrayLength() > 0)
         {
             var attachment = data[0]; type = GetString(attachment, "media_type")?.Contains("video", StringComparison.OrdinalIgnoreCase) == true ? "Video" : "Image";
-            url = GetString(attachment, "url");
+            url = attachment.TryGetProperty("media", out var media) && media.TryGetProperty("image", out var image)
+                ? GetString(image, "src")
+                : GetString(attachment, "url");
         }
         return new MetaPagePost(x.GetProperty("id").GetString()!, GetString(x, "message"), type, url,
             DateTime.TryParse(GetString(x, "created_time"), out var created) ? created.ToUniversalTime() : null);
     }
 
+    private static MetaPagePost? ParsePageVideo(JsonElement video)
+    {
+        var postId = GetString(video, "post_id");
+        if (string.IsNullOrWhiteSpace(postId)) return null;
+        return new MetaPagePost(postId, GetString(video, "description"), "Video", GetString(video, "picture") ?? GetString(video, "permalink_url"),
+            DateTime.TryParse(GetString(video, "created_time"), out var created) ? created.ToUniversalTime() : null, GetString(video, "id"));
+    }
+
     public async Task<IReadOnlyList<MetaExistingAd>> GetExistingAdsAsync(string accessToken, string adAccountId, CancellationToken cancellationToken)
     {
-        const string fields = "id,name,status,effective_status,adset{id,name,daily_budget,targeting,promoted_object,campaign{id,name,objective,daily_budget}},creative{id,object_story_id}";
+        const string fields = "id,name,status,effective_status,adset{id,name,daily_budget,optimization_goal,targeting,promoted_object,campaign{id,name,objective,daily_budget}},creative{id,object_story_id}";
         return await GetList($"{adAccountId}/ads?fields={fields}&limit=200", accessToken, cancellationToken, ParseExistingAd);
     }
 
@@ -167,7 +361,8 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
             storyId, adSetBudget > 0 ? adSetBudget : campaignBudget,
             adSetBudget > 0 ? adSet.GetProperty("id").GetString()! : campaign.GetProperty("id").GetString()!,
             adSetBudget > 0 ? "AdSet" : "Campaign", publishers, facebookPositions, instagramPositions, messengerPositions,
-            audienceNetworkPositions, GetDestination(adSet));
+            audienceNetworkPositions, GetDestination(adSet), GetString(adSet, "optimization_goal"),
+            GetPromotedObjectValue(adSet, "page_id"), GetPromotedObjectValue(adSet, "whatsapp_phone_number"));
     }
 
     private static IReadOnlyList<string> GetStringList(JsonElement element, string name) =>
@@ -182,6 +377,11 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
         if (promotedObject.TryGetProperty("page_id", out var page) && !string.IsNullOrWhiteSpace(page.ToString())) return "Facebook Page";
         return null;
     }
+
+    private static string? GetPromotedObjectValue(JsonElement adSet, string key) =>
+        adSet.TryGetProperty("promoted_object", out var promotedObject) && promotedObject.ValueKind == JsonValueKind.Object
+            ? GetString(promotedObject, key)
+            : null;
 
     private static decimal GetMoney(JsonElement element, string name) =>
         decimal.TryParse(GetString(element, name), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var minorUnits)
@@ -200,11 +400,26 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
 
     private async Task<string> PostForId(string path, string accessToken, Dictionary<string, string> fields, CancellationToken cancellationToken)
     {
+        EnsureProvisioningEnabled();
         fields["access_token"] = accessToken;
         using var response = await httpClient.PostAsync(path, new FormUrlEncodedContent(fields), cancellationToken);
         await EnsureSuccess(response, cancellationToken);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         return json.RootElement.GetProperty("id").GetString() ?? throw new InvalidOperationException("Meta did not return an ID.");
+    }
+
+    private static Dictionary<string, string> AdSetFields(string campaignId, MetaAdSetPayload payload)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["campaign_id"] = campaignId, ["name"] = payload.Name, ["billing_event"] = payload.BillingEvent,
+            ["optimization_goal"] = payload.OptimizationGoal, ["bid_strategy"] = payload.BidStrategy,
+            ["destination_type"] = payload.DestinationType, ["promoted_object"] = payload.PromotedObjectJson,
+            ["targeting"] = payload.TargetingJson, ["status"] = "PAUSED",
+            ["start_time"] = payload.StartsAtUtc.ToUniversalTime().ToString("O")
+        };
+        if (payload.EndsAtUtc is { } end) fields["end_time"] = end.ToUniversalTime().ToString("O");
+        return fields;
     }
 
     private static long ToMinorUnits(decimal amount) => checked((long)decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
@@ -223,6 +438,19 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
             throw new AdvertisingException("ADS_META_OAUTH_NOT_CONFIGURED", "Meta OAuth is not configured.", 503);
     }
 
+    private void EnsureProvisioningEnabled()
+    {
+        if (!_advertisingOptions.Enabled)
+            throw new InvalidOperationException("ADS_ADVERTISING_DISABLED: provider mutations are disabled by rollout configuration.");
+    }
+
+    private void EnsureActivationEnabled()
+    {
+        EnsureProvisioningEnabled();
+        if (!_advertisingOptions.AllowRealActivation)
+            throw new InvalidOperationException("ADS_REAL_ACTIVATION_DISABLED: real delivery remains blocked until rollout gates pass.");
+    }
+
     private static string? GetString(JsonElement element, string name) => element.TryGetProperty(name, out var value) ? value.ToString() : null;
     private static int? GetInt(JsonElement element, string name) => element.TryGetProperty(name, out var value) && value.TryGetInt32(out var parsed) ? parsed : null;
 
@@ -230,6 +458,6 @@ public sealed class MetaAdsClient(HttpClient httpClient, IOptions<AdvertisingOpt
     {
         if (response.IsSuccessStatusCode) return;
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        throw new HttpRequestException($"Meta API request failed with {(int)response.StatusCode}: {body[..Math.Min(body.Length, 500)]}", null, response.StatusCode);
+        throw new HttpRequestException($"Meta API request failed with {(int)response.StatusCode}: {body[..Math.Min(body.Length, 2_000)]}", null, response.StatusCode);
     }
 }

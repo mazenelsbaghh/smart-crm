@@ -18,17 +18,17 @@ namespace Modules.Workflows.Services
     public class WorkflowEngine : IWorkflowEngine
     {
         private readonly AppDbContext _dbContext;
-        private readonly Shared.Queue.IEventBus _eventBus;
         private readonly Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> _hubContext;
+        private readonly Modules.WhatsApp.Services.WhatsAppAccountService _whatsAppAccounts;
 
         public WorkflowEngine(
             AppDbContext dbContext,
-            Shared.Queue.IEventBus eventBus,
-            Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext)
+            Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub> hubContext,
+            Modules.WhatsApp.Services.WhatsAppAccountService whatsAppAccounts)
         {
             _dbContext = dbContext;
-            _eventBus = eventBus;
             _hubContext = hubContext;
+            _whatsAppAccounts = whatsAppAccounts;
         }
 
         public async Task ProcessEventAsync(Guid projectId, string triggerType, Guid customerId, object eventData)
@@ -55,7 +55,15 @@ namespace Modules.Workflows.Services
                 {
                     try
                     {
-                        var actionsExecuted = await ExecuteActionsAsync(projectId, workflow.ActionsJson, customerId);
+                        var invocationId = eventData is Shared.Events.IntegrationEvent integrationEvent
+                            ? integrationEvent.Id
+                            : Guid.NewGuid();
+                        var actionsExecuted = await ExecuteActionsAsync(
+                            projectId,
+                            workflow.Id,
+                            invocationId,
+                            workflow.ActionsJson,
+                            customerId);
                         await LogExecutionAsync(projectId, workflow.Id, customerId, triggerType, true, string.Empty, actionsExecuted);
                     }
                     catch (Exception ex)
@@ -93,7 +101,12 @@ namespace Modules.Workflows.Services
             return false;
         }
 
-        private async Task<string> ExecuteActionsAsync(Guid projectId, string actionsJson, Guid customerId)
+        private async Task<string> ExecuteActionsAsync(
+            Guid projectId,
+            Guid workflowId,
+            Guid invocationId,
+            string actionsJson,
+            Guid customerId)
         {
             if (string.IsNullOrWhiteSpace(actionsJson) || actionsJson == "[]")
             {
@@ -116,8 +129,9 @@ namespace Modules.Workflows.Services
                 throw new Exception($"Customer with ID {customerId} not found.");
             }
 
-            foreach (var action in actions)
+            for (var actionIndex = 0; actionIndex < actions.Count; actionIndex++)
             {
+                var action = actions[actionIndex];
                 if (string.Equals(action.Type, "UpdateCRM", StringComparison.OrdinalIgnoreCase))
                 {
                     if (action.Parameters != null)
@@ -165,13 +179,36 @@ namespace Modules.Workflows.Services
                         text = text.Replace("{{CustomerName}}", customer.Name ?? "عميلنا العزيز")
                                    .Replace("{{PhoneNumber}}", customer.PhoneNumber);
 
-                        await _eventBus.PublishAsync(new Shared.Events.AIReplyGeneratedEvent
+                        var sourceConversation = await _dbContext.Conversations
+                            .Where(conversation => conversation.ProjectId == projectId
+                                && conversation.CustomerId == customer.Id
+                                && conversation.Channel == "WhatsApp"
+                                && conversation.Status != "Closed")
+                            .OrderByDescending(conversation => conversation.LastMessageTimestamp)
+                            .FirstOrDefaultAsync();
+                        var whatsAppAccountId = sourceConversation?.WhatsAppAccountId
+                            ?? (await _whatsAppAccounts.GetDefaultAsync(projectId)).Id;
+                        var followUpId = DeterministicFollowUpId(
+                            workflowId,
+                            invocationId,
+                            actionIndex);
+                        if (!await _dbContext.FollowUps.IgnoreQueryFilters()
+                            .AnyAsync(followUp => followUp.Id == followUpId))
                         {
-                            ProjectId = projectId,
-                            Sender = customer.PhoneNumber,
-                            Content = text,
-                            Buttons = Array.Empty<string>()
-                        });
+                            _dbContext.FollowUps.Add(new Modules.CRM.Domain.FollowUp
+                            {
+                                Id = followUpId,
+                                ProjectId = projectId,
+                                CustomerId = customer.Id,
+                                ConversationId = sourceConversation?.Id,
+                                WhatsAppAccountId = whatsAppAccountId,
+                                Channel = "WhatsApp",
+                                DueDate = DateTime.UtcNow,
+                                Status = "Pending",
+                                Type = "Nurturing",
+                                Notes = text
+                            });
+                        }
                     }
                 }
                 else if (string.Equals(action.Type, "SendAlert", StringComparison.OrdinalIgnoreCase))
@@ -216,6 +253,17 @@ namespace Modules.Workflows.Services
 
             await _dbContext.SaveChangesAsync();
             return JsonSerializer.Serialize(actions);
+        }
+
+        private static Guid DeterministicFollowUpId(
+            Guid workflowId,
+            Guid invocationId,
+            int actionIndex)
+        {
+            var bytes = System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(
+                    $"workflow:{workflowId:N}:{invocationId:N}:{actionIndex}"));
+            return new Guid(bytes.AsSpan(0, 16));
         }
 
         private async Task LogExecutionAsync(Guid projectId, Guid workflowId, Guid customerId, string triggerType, bool success, string errorMessage, string actionsExecutedJson = "[]")

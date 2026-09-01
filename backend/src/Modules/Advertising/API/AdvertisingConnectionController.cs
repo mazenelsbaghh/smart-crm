@@ -14,13 +14,14 @@ public sealed class AdvertisingConnectionController(
     AppDbContext db,
     AdvertisingReadinessService readiness,
     FacebookAdsOAuthService oauth,
-    MetaAdsClient meta,
-    AdvertisingSecretVault vault) : AdvertisingControllerBase(authorization)
+    AutonomyEnvelopeService envelopes,
+    AdvertisingDisconnectService disconnects) : AdvertisingControllerBase(authorization)
 {
     [HttpPost("facebook/oauth/start")]
     public async Task<IActionResult> StartOAuth(Guid projectId)
     {
         if (!CanManage(projectId) || UserId is null) return Forbid();
+        _ = RequireIdempotencyKey();
         return Ok(await oauth.StartAsync(projectId, UserId.Value));
     }
 
@@ -28,10 +29,27 @@ public sealed class AdvertisingConnectionController(
     public async Task<IActionResult> Resources(Guid projectId, [FromQuery] string? adAccountId, CancellationToken cancellationToken)
     {
         if (!CanManage(projectId)) return Forbid();
-        var connection = await db.AdvertisingConnections.AsNoTracking().FirstOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken);
-        if (connection is null) return Conflict(new { code = "ADS_OAUTH_REQUIRED" });
-        var token = connection.ProtectedAccessToken is null ? "mock" : vault.Unprotect(connection.ProtectedAccessToken);
-        return Ok(await meta.DiscoverAsync(token, adAccountId, cancellationToken));
+        return Ok(await readiness.DiscoverAsync(projectId, adAccountId, cancellationToken));
+    }
+
+    [HttpGet("capabilities")]
+    public async Task<IActionResult> Capabilities(Guid projectId, CancellationToken cancellationToken)
+    {
+        if (!CanRead(projectId)) return Forbid();
+        return Ok(await db.AdvertisingCapabilitySnapshots.AsNoTracking().Where(x => x.ProjectId == projectId)
+            .OrderByDescending(x => x.CheckedAtUtc).Take(20)
+            .Select(x => new { x.Id, x.DestinationId, x.GraphApiVersion, state = x.State.ToString(), x.CheckedAtUtc, x.ExpiresAtUtc, x.ObjectivesJson, x.OptimizationGoalsJson, x.BidStrategiesJson, x.PlacementEligibilityJson, x.ValidationSupportJson, x.ProviderTraceId, x.FailureCode })
+            .ToListAsync(cancellationToken));
+    }
+
+    [HttpGet("destinations")]
+    public async Task<IActionResult> Destinations(Guid projectId, CancellationToken cancellationToken)
+    {
+        if (!CanRead(projectId)) return Forbid();
+        return Ok(await db.AdvertisingWhatsAppDestinations.AsNoTracking().Where(x => x.ProjectId == projectId)
+            .OrderByDescending(x => x.LastValidatedAtUtc)
+            .Select(x => new { x.Id, x.WhatsAppAccountId, x.WabaExternalId, x.PhoneNumberExternalId, x.DisplayPhoneE164, x.PageExternalId, x.DatasetExternalId, integrationMode = x.WhatsAppIntegrationMode.ToString(), state = x.State.ToString(), x.Version, x.LastValidatedAtUtc, x.LastErrorCode })
+            .ToListAsync(cancellationToken));
     }
     [HttpGet("readiness")]
     public async Task<IActionResult> GetReadiness(Guid projectId, CancellationToken cancellationToken)
@@ -45,40 +63,53 @@ public sealed class AdvertisingConnectionController(
     {
         if (!CanRead(projectId)) return Forbid();
         var connection = await db.AdvertisingConnections.AsNoTracking()
-            .Where(x => x.ProjectId == projectId)
-            .Select(x => new { x.Id, x.Provider, x.AdAccountExternalId, x.PageExternalId, x.DatasetExternalId, state = x.State.ToString(), x.AccountCurrency, x.AccountTimezone, x.ExpiresAtUtc, x.LastValidatedAtUtc, x.LastSyncAtUtc, x.LastErrorCode, x.LastErrorSummary })
+            .SingleOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken);
+        if (connection is null) return Ok(null);
+        var destination = await db.AdvertisingWhatsAppDestinations.AsNoTracking()
+            .Where(x => x.ProjectId == projectId && x.ConnectionId == connection.Id
+                && x.State != AuthorizedDestinationState.Revoked)
+            .OrderByDescending(x => x.LastValidatedAtUtc)
+            .Select(x => new { x.PhoneNumberExternalId, x.WhatsAppAccountId })
             .FirstOrDefaultAsync(cancellationToken);
-        return Ok(connection);
+        return Ok(new
+        {
+            connection.Id,
+            connection.Provider,
+            connection.AdAccountExternalId,
+            connection.PageExternalId,
+            connection.DatasetExternalId,
+            connection.WabaExternalId,
+            phoneNumberExternalId = destination?.PhoneNumberExternalId,
+            whatsAppAccountId = destination?.WhatsAppAccountId,
+            state = connection.State.ToString(),
+            connection.AccountCurrency,
+            connection.AccountTimezone,
+            connection.AccountTimezoneIana,
+            connection.ExpiresAtUtc,
+            connection.LastValidatedAtUtc,
+            connection.LastSyncAtUtc,
+            connection.LastErrorCode,
+            connection.LastErrorSummary,
+            integrationMode = connection.WhatsAppIntegrationMode.ToString(),
+            connection.Version
+        });
     }
 
     [HttpPut("connection")]
     public async Task<IActionResult> SelectConnection(Guid projectId, [FromBody] SelectConnectionRequest request, CancellationToken cancellationToken)
     {
         if (!CanManage(projectId)) return Forbid();
-        if (string.IsNullOrWhiteSpace(request.AdAccountId) || string.IsNullOrWhiteSpace(request.PageId))
-            return UnprocessableEntity(new { code = "ADS_RESOURCES_REQUIRED", message = "Ad Account and Page are required." });
-
-        var connection = await db.AdvertisingConnections.FirstOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken);
-        if (connection?.ProtectedAccessToken is null) return Conflict(new { code = "ADS_OAUTH_REQUIRED" });
-        var token = vault.Unprotect(connection.ProtectedAccessToken);
-        var catalog = await meta.DiscoverAsync(token, request.AdAccountId, cancellationToken);
-        var selectedAccount = catalog.AdAccounts.SingleOrDefault(x => x.Id == request.AdAccountId);
-        if (selectedAccount is null || !catalog.Pages.Any(x => x.Id == request.PageId) ||
-            (!string.IsNullOrWhiteSpace(request.DatasetId) && !catalog.Datasets.Any(x => x.Id == request.DatasetId)))
-            return UnprocessableEntity(new { code = "ADS_RESOURCES_NOT_ELIGIBLE", message = "Selected Facebook resources are not mutually accessible." });
-        if (selectedAccount.Status is not null and not 1)
-            return UnprocessableEntity(new { code = "ADS_ACCOUNT_INACTIVE", message = "Selected Ad Account is not active." });
-        connection.AdAccountExternalId = request.AdAccountId.Trim();
-        connection.PageExternalId = request.PageId.Trim();
-        connection.DatasetExternalId = string.IsNullOrWhiteSpace(request.DatasetId) ? null : request.DatasetId.Trim();
-        connection.AccountCurrency = selectedAccount.Currency ?? request.Currency.Trim().ToUpperInvariant();
-        connection.AccountTimezone = selectedAccount.Timezone ?? request.Timezone.Trim();
-        connection.State = AdvertisingConnectionState.Ready;
-        connection.LastValidatedAtUtc = DateTime.UtcNow;
-        connection.LastErrorCode = null;
-        connection.LastErrorSummary = null;
-        await db.SaveChangesAsync(cancellationToken);
-        return Ok(new { connection.Id, state = connection.State.ToString() });
+        _ = RequireIdempotencyKey();
+        var gatewayMode = request.IntegrationMode == WhatsAppIntegrationMode.BaileysObservedExperimental;
+        if (string.IsNullOrWhiteSpace(request.AdAccountId) || string.IsNullOrWhiteSpace(request.PageId)
+            || !gatewayMode && (string.IsNullOrWhiteSpace(request.WabaId)
+                || string.IsNullOrWhiteSpace(request.PhoneNumberId) || string.IsNullOrWhiteSpace(request.DatasetId)))
+            return UnprocessableEntity(new { code = "ADS_RESOURCES_REQUIRED", message = gatewayMode
+                ? "Ad Account and Page are required; the WhatsApp phone is verified from the live Gateway session."
+                : "Ad Account, Page, WABA, phone and Dataset are required." });
+        return Ok(await readiness.AuthorizeDestinationAsync(projectId,
+            new(request.AdAccountId, request.PageId, request.WabaId, request.PhoneNumberId, request.DatasetId,
+                request.IntegrationMode, request.WhatsAppAccountId), cancellationToken));
     }
 
     [HttpGet("envelope")]
@@ -86,34 +117,67 @@ public sealed class AdvertisingConnectionController(
     {
         if (!CanRead(projectId)) return Forbid();
         return Ok(await db.AutonomyEnvelopes.AsNoTracking().Where(x => x.ProjectId == projectId)
-            .OrderByDescending(x => x.CreatedAt).Select(x => new { x.Id, x.DailyCap, x.PeriodCap, x.PeriodCapKind, x.Currency, x.SafetyReservePercent, x.MaximumIncreasePercent, x.CooldownHours, x.AllowedCountriesJson, x.StartsAtUtc, x.EndsAtUtc, state = x.State.ToString(), x.Version }).FirstOrDefaultAsync(cancellationToken));
+            .OrderByDescending(x => x.State == EnvelopeState.Active).ThenByDescending(x => x.CreatedAt)
+            .Select(x => new { x.Id, x.DailyCap, x.PeriodCap, x.PeriodCapKind, x.Currency, x.SafetyReservePercent,
+                x.MaximumIncreasePercent, x.CooldownHours, x.AllowedCountriesJson, x.HardExcludedGeoJson,
+                x.HardMinimumAge, x.HardRequiredLanguagesJson, x.StartsAtUtc, x.EndsAtUtc,
+                state = x.State.ToString(), x.Version }).FirstOrDefaultAsync(cancellationToken));
     }
 
     [HttpPut("envelope")]
     public async Task<IActionResult> PutEnvelope(Guid projectId, [FromBody] PutEnvelopeRequest request, CancellationToken cancellationToken)
     {
-        if (!CanManage(projectId)) return Forbid();
-        if (request.DailyCap <= 0 || request.SafetyReservePercent is < 0 or > 50 || request.MaximumIncreasePercent is < 0 or > 50)
-            return UnprocessableEntity(new { code = "ADS_INVALID_ENVELOPE", message = "Budget and safety limits are invalid." });
-        var connection = await db.AdvertisingConnections.FirstOrDefaultAsync(x => x.ProjectId == projectId && x.State == AdvertisingConnectionState.Ready, cancellationToken);
-        if (connection is null) return Conflict(new { code = "ADS_CONNECTION_NOT_READY", message = "Connect Facebook resources first." });
+        if (!CanManage(projectId) || UserId is null) return Forbid();
+        _ = RequireIdempotencyKey();
+        var envelope = await envelopes.CreateAsync(projectId, UserId.Value,
+            new(request.OfferId, request.DestinationId, request.DailyCap, request.PeriodCap, request.PeriodCapKind,
+                request.Currency, request.SafetyReservePercent, request.MaximumIncreasePercent, request.CooldownHours,
+                request.AllowedCountries, request.ExcludedCountries, request.MinimumAge, request.RequiredLanguages,
+                request.CustomAudienceExclusions, request.ReportingTimezoneIana, request.StartsAtUtc, request.EndsAtUtc), cancellationToken);
+        return Ok(new { envelope.Id, state = envelope.State.ToString(), envelope.DailyCap, envelope.Currency, envelope.Version });
+    }
 
-        var active = await db.AutonomyEnvelopes.Where(x => x.ProjectId == projectId && x.State == EnvelopeState.Active).ToListAsync(cancellationToken);
-        foreach (var old in active) old.State = EnvelopeState.Revoked;
-        var envelope = new AutonomyEnvelope
-        {
-            ProjectId = projectId, ConnectionId = connection.Id, DailyCap = request.DailyCap, PeriodCap = request.PeriodCap,
-            Currency = connection.AccountCurrency ?? request.Currency.ToUpperInvariant(), SafetyReservePercent = request.SafetyReservePercent,
-            MaximumIncreasePercent = request.MaximumIncreasePercent, CooldownHours = Math.Max(1, request.CooldownHours),
-            AllowedCountriesJson = System.Text.Json.JsonSerializer.Serialize(request.AllowedCountries.Distinct(StringComparer.OrdinalIgnoreCase)),
-            StartsAtUtc = request.StartsAtUtc ?? DateTime.UtcNow, EndsAtUtc = request.EndsAtUtc,
-            AuthorizedByUserId = UserId ?? Guid.Empty, AuthorizedAtUtc = DateTime.UtcNow, State = EnvelopeState.Active
-        };
-        db.AutonomyEnvelopes.Add(envelope);
-        await db.SaveChangesAsync(cancellationToken);
-        return Ok(new { envelope.Id, state = envelope.State.ToString(), envelope.DailyCap, envelope.Currency });
+    [HttpPost("envelope/{envelopeId:guid}/activate")]
+    public async Task<IActionResult> ActivateEnvelope(Guid projectId, Guid envelopeId, CancellationToken cancellationToken)
+    {
+        if (!CanManage(projectId)) return Forbid();
+        _ = RequireIdempotencyKey();
+        var envelope = await envelopes.ActivateAsync(projectId, envelopeId, checked((uint)RequireIfMatch()), cancellationToken);
+        return Ok(new { envelope.Id, state = envelope.State.ToString(), envelope.Version });
+    }
+
+    [HttpDelete("connection/{connectionId:guid}")]
+    public async Task<IActionResult> Disconnect(Guid projectId, Guid connectionId, [FromBody] DisconnectConnectionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!CanManage(projectId) || UserId is null) return Forbid();
+        _ = RequireIdempotencyKey();
+        _ = RequireIfMatch();
+        var operation = await disconnects.RequestAsync(projectId, connectionId, UserId.Value, request.Mode,
+            request.ContinuingSpendAcknowledgedAtUtc, cancellationToken);
+        return AcceptedOperation(projectId, operation.Id, operation.Id, operation.Phase.ToString());
+    }
+
+    [HttpGet("disconnect-operations/{operationId:guid}")]
+    public async Task<IActionResult> DisconnectStatus(Guid projectId, Guid operationId, CancellationToken cancellationToken)
+    {
+        if (!CanRead(projectId)) return Forbid();
+        var operation = await db.AdvertisingDisconnectOperations.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.ProjectId == projectId && x.Id == operationId, cancellationToken);
+        if (operation is null) return NotFound(new { code = "ADS_DISCONNECT_OPERATION_NOT_FOUND" });
+        var targets = await db.AdvertisingDisconnectTargets.AsNoTracking()
+            .Where(x => x.ProjectId == projectId && x.DisconnectOperationId == operationId)
+            .Select(x => new { x.Id, x.TargetType, x.TargetId, x.DesiredState, x.ReadBackState, x.CompletedAtUtc, x.FailureCode })
+            .ToListAsync(cancellationToken);
+        return Ok(new { operation.Id, mode = operation.Mode.ToString(), phase = operation.Phase.ToString(), operation.RequestedAtUtc,
+            operation.CompletedAtUtc, operation.LastErrorCode, operation.RecoveryInstruction, targets });
     }
 }
 
-public sealed record SelectConnectionRequest(string AdAccountId, string PageId, string? DatasetId, string Currency = "EGP", string Timezone = "Africa/Cairo");
-public sealed record PutEnvelopeRequest(decimal DailyCap, decimal? PeriodCap, string Currency, decimal SafetyReservePercent, decimal MaximumIncreasePercent, int CooldownHours, string[] AllowedCountries, DateTime? StartsAtUtc, DateTime? EndsAtUtc);
+public sealed record SelectConnectionRequest(string AdAccountId, string PageId, string WabaId = "", string PhoneNumberId = "", string DatasetId = "",
+    WhatsAppIntegrationMode IntegrationMode = WhatsAppIntegrationMode.CloudApiCoexistence, Guid? WhatsAppAccountId = null);
+public sealed record PutEnvelopeRequest(Guid OfferId, Guid DestinationId, decimal DailyCap, decimal? PeriodCap, string PeriodCapKind,
+    string Currency, decimal SafetyReservePercent, decimal MaximumIncreasePercent, int CooldownHours, string[] AllowedCountries,
+    string[] ExcludedCountries, int MinimumAge, string[] RequiredLanguages, string[] CustomAudienceExclusions,
+    string ReportingTimezoneIana, DateTime? StartsAtUtc, DateTime? EndsAtUtc);
+public sealed record DisconnectConnectionRequest(DisconnectMode? Mode, DateTime? ContinuingSpendAcknowledgedAtUtc);

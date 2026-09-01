@@ -3,26 +3,28 @@ import 'package:flutter/material.dart';
 class AppColors {
   AppColors._();
 
-  // Primary Cyber Accents
-  static const Color primary = Color(0xFF00838F); // Professional Dark Teal/Cyan for Light Mode readability
-  static const Color secondary = Color(0xFFD81B60); // Vibrant Magenta/Pink for details
+  // Restrained "Neon Midnight" palette. Accents are reserved for focus,
+  // selection and semantic state, while the working canvas stays restful.
+  static const Color primary = Color(0xFF00D9E6);
+  static const Color primaryContainer = Color(0xFF073A42);
+  static const Color secondary = Color(0xFFFF5CA8);
+  static const Color secondaryContainer = Color(0xFF4A1633);
 
-  // Neutrals (Slate Light Theme)
-  static const Color background = Color(0xFFF8FAFC); // Clean Light Slate Background
-  static const Color surface = Color(0xFFFFFFFF); // Pure White Surface
-  static const Color border = Color(0xFFE2E8F0); // Slate 200 Border
-  static const Color text = Color(0xFF0F172A); // Slate 900 Text
-  static const Color textMuted = Color(0xFF64748B); // Slate 500 Muted Text
+  static const Color background = Color(0xFF0A0E17);
+  static const Color surface = Color(0xFF121824);
+  static const Color surfaceRaised = Color(0xFF182131);
+  static const Color border = Color(0xFF2A3850);
+  static const Color text = Color(0xFFF1F5F9);
+  static const Color textMuted = Color(0xFFB0BED0);
 
-  // Semantic Statuses
-  static const Color success = Color(0xFF059669); // Green Success
-  static const Color warning = Color(0xFFD97706); // Amber Warning
-  static const Color error = Color(0xFFDC2626); // Red Error
+  static const Color success = Color(0xFF34D399);
+  static const Color warning = Color(0xFFFBBF24);
+  static const Color error = Color(0xFFFF6B78);
 
   // Glow Helpers
   static BoxShadow neonGlow({Color color = primary}) {
     return BoxShadow(
-      color: color.withOpacity(0.25),
+      color: color.withValues(alpha: 0.22),
       blurRadius: 15,
       spreadRadius: 1,
     );

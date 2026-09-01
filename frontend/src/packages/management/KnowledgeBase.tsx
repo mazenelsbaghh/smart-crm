@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { handleDialogKeyDown } from './dialog-accessibility';
 import { 
   BookOpen, 
   Upload, 
@@ -11,7 +12,6 @@ import {
   FileText, 
   ExternalLink,
   CheckCircle2,
-  AlertCircle,
   Plus,
   ChevronLeft,
   ChevronRight
@@ -32,7 +32,7 @@ const statusMapAr: Record<string, string> = {
   'Draft': 'مسودة',
   'PendingApproval': 'قيد الاعتماد',
   'Approved': 'معتمد',
-  'Published': 'معتمد',
+  'Published': 'منشور',
   'Rejected': 'مرفوض'
 };
 
@@ -42,6 +42,7 @@ export default function KnowledgeBase() {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [activeTab, setActiveTab] = useState<'all' | 'approved' | 'pending'>('all');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -68,29 +69,43 @@ export default function KnowledgeBase() {
   const [customAnswer, setCustomAnswer] = useState('');
   const [generatedQas, setGeneratedQas] = useState<{ question: string; answer: string }[]>([]);
   const [wizardLoading, setWizardLoading] = useState(false);
+  const [wizardValidationError, setWizardValidationError] = useState<string | null>(null);
+  const [documentToPublish, setDocumentToPublish] = useState<KnowledgeDocument | null>(null);
+  const [documentToDraft, setDocumentToDraft] = useState<KnowledgeDocument | null>(null);
+  const loadRequestIdRef = React.useRef(0);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const fetchDocuments = async () => {
-    if (!activeProject) return;
+  const fetchDocuments = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
+    if (!activeProject) {
+      setDocuments([]);
+      setLoading(false);
+      setLoadError('تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.');
+      return;
+    }
     try {
       setLoading(true);
+      setLoadError(null);
+      setDocuments([]);
       const response = await api.get<KnowledgeDocument[]>(`/api/projects/${activeProject.id}/knowledge`);
+      if (requestId !== loadRequestIdRef.current) return;
       setDocuments(response.data);
     } catch (e) {
+      if (requestId !== loadRequestIdRef.current) return;
       console.error('Failed to load knowledge base documents', e);
-      setMessage({ type: 'error', text: 'فشل جلب مستندات قاعدة المعرفة.' });
+      setLoadError('فشل جلب مستندات قاعدة المعرفة. لم يتم عرض قائمة فارغة بديلًا عنها.');
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchDocuments();
-    setCurrentPage(1);
   }, [activeProject]);
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [activeTab]);
+    const loadTimer = window.setTimeout(() => {
+      setCurrentPage(1);
+      void fetchDocuments();
+    }, 0);
+    return () => window.clearTimeout(loadTimer);
+  }, [fetchDocuments]);
 
   const handleSyncBrain = async () => {
     if (!activeProject) return;
@@ -100,9 +115,9 @@ export default function KnowledgeBase() {
       await api.post(`/api/projects/${activeProject.id}/brain/sync`);
       setMessage({ type: 'success', text: 'تمت إعادة فهرسة دماغ الذكاء الاصطناعي بنجاح.' });
       fetchDocuments();
-    } catch (e: any) {
+    } catch (e) {
       console.error('Failed to sync brain', e);
-      setMessage({ type: 'error', text: e.response?.data?.message || 'فشلت عملية المزامنة.' });
+      setMessage({ type: 'error', text: 'فشلت عملية المزامنة.' });
     } finally {
       setActionLoading(false);
     }
@@ -119,6 +134,7 @@ export default function KnowledgeBase() {
     setWizardAnswers({});
     setCustomAnswer('');
     setGeneratedQas([]);
+    setWizardValidationError(null);
   };
 
   const handleStartWizardFromEdit = () => {
@@ -132,6 +148,7 @@ export default function KnowledgeBase() {
     setWizardAnswers({});
     setCustomAnswer('');
     setGeneratedQas([]);
+    setWizardValidationError(null);
   };
 
   const handleWizardAnalyze = async () => {
@@ -162,9 +179,10 @@ export default function KnowledgeBase() {
   const handleNextQuestion = () => {
     const answer = customAnswer.trim() || wizardAnswers[currentQuestionIndex] || '';
     if (!answer) {
-      alert('يرجى اختيار إجابة أو كتابة إجابة مخصصة');
+      setWizardValidationError('اختر إجابة أو اكتب إجابة مخصصة قبل المتابعة.');
       return;
     }
+    setWizardValidationError(null);
 
     const updatedAnswers = { ...wizardAnswers, [currentQuestionIndex]: answer };
     setWizardAnswers(updatedAnswers);
@@ -289,9 +307,9 @@ export default function KnowledgeBase() {
       setFormContent('');
       setFormSourceUrl('');
       fetchDocuments();
-    } catch (e: any) {
+    } catch (e) {
       console.error('Failed to save document', e);
-      setMessage({ type: 'error', text: e.response?.data || 'فشل حفظ المستند المعرفي.' });
+      setMessage({ type: 'error', text: 'فشل حفظ المستند المعرفي.' });
     } finally {
       setActionLoading(false);
     }
@@ -307,25 +325,31 @@ export default function KnowledgeBase() {
 
   const handleApproveDocument = async (id: string) => {
     try {
+      setActionLoading(true);
       setMessage(null);
       await api.put(`/api/knowledge/${id}/approve`);
       setMessage({ type: 'success', text: 'تم نشر المستند بنجاح.' });
-      fetchDocuments();
+      void fetchDocuments();
     } catch (e) {
       console.error('Failed to approve document', e);
       setMessage({ type: 'error', text: 'فشل نشر المستند.' });
+    } finally {
+      setActionLoading(false);
     }
   };
 
   const handleRejectDocument = async (id: string) => {
     try {
+      setActionLoading(true);
       setMessage(null);
       await api.put(`/api/knowledge/${id}/reject`);
       setMessage({ type: 'success', text: 'تم إرجاع المستند إلى حالة المسودة.' });
-      fetchDocuments();
+      void fetchDocuments();
     } catch (e) {
       console.error('Failed to reject document', e);
       setMessage({ type: 'error', text: 'فشل تعديل حالة المستند.' });
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -346,9 +370,9 @@ export default function KnowledgeBase() {
       await api.delete(`/api/knowledge/${docToDelete}`);
       setMessage({ type: 'success', text: 'تم حذف المستند بنجاح.' });
       fetchDocuments();
-    } catch (e: any) {
+    } catch (e) {
       console.error('Failed to delete document', e);
-      setMessage({ type: 'error', text: e.response?.data?.message || 'فشل حذف المستند.' });
+      setMessage({ type: 'error', text: 'فشل حذف المستند.' });
     } finally {
       setActionLoading(false);
       setDocToDelete(null);
@@ -356,6 +380,7 @@ export default function KnowledgeBase() {
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -365,12 +390,17 @@ export default function KnowledgeBase() {
       setFormTitle(file.name.replace(/\.[^/.]+$/, '')); // Remove file extension
       setFormContent(text);
       setIsModalOpen(true);
+      input.value = '';
+    };
+    reader.onerror = () => {
+      setMessage({ type: 'error', text: 'تعذرت قراءة الملف. تحقق من أنه ملف نصي صالح ثم حاول مجددًا.' });
+      input.value = '';
     };
     reader.readAsText(file);
   };
 
   const filteredDocuments = documents.filter(doc => {
-    if (activeTab === 'approved') return doc.status === 'Approved' || doc.status as string === 'Published';
+    if (activeTab === 'approved') return doc.status === 'Approved' || doc.status === 'Published';
     if (activeTab === 'pending') return doc.status === 'PendingApproval' || doc.status === 'Draft' || doc.status === 'Rejected';
     return true;
   });
@@ -389,31 +419,40 @@ export default function KnowledgeBase() {
           <p className={styles.pageSubtitle}>توفير مستندات المصدر، والتعليمات، وأدلة البحث لتدريب نموذج الذكاء الاصطناعي Gemini الخاص بك</p>
         </div>
         
-        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-          <label className={`${styles.btn} ${styles.btnSecondary}`} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-            <Upload size={16} />
-            رفع ملف (.txt)
-            <input 
-              type="file" 
-              accept=".txt" 
-              onChange={handleFileUpload} 
-              style={{ display: 'none' }} 
+        {activeProject && (
+          <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload size={16} />
+              رفع ملف (.txt)
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,text/plain"
+              onChange={handleFileUpload}
+              hidden
+              tabIndex={-1}
             />
-          </label>
 
-          <button 
-            onClick={handleSyncBrain} 
-            disabled={actionLoading}
-            className={`${styles.btn} ${styles.btnPrimary}`}
-          >
-            <RefreshCw size={16} className={actionLoading ? 'animate-spin' : ''} />
-            مزامنة ذكاء AI
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={handleSyncBrain}
+              disabled={actionLoading}
+              className={`${styles.btn} ${styles.btnPrimary}`}
+            >
+              <RefreshCw size={16} className={actionLoading ? 'animate-spin' : ''} />
+              مزامنة المعرفة
+            </button>
+          </div>
+        )}
       </div>
 
       {message && (
-        <div className={`glass-panel`} style={{ 
+        <div className={`glass-panel`} role={message.type === 'error' ? 'alert' : 'status'} style={{
           padding: 'var(--space-md)', 
           borderRight: `4px solid ${message.type === 'success' ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))'}`,
           display: 'flex',
@@ -429,8 +468,9 @@ export default function KnowledgeBase() {
       <div className={`glass-panel ${styles.panel}`}>
         <div className={styles.panelHeader}>
           <h3 className={styles.panelTitle}>المصادر والمستندات المدخلة</h3>
-          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-            <button 
+          {activeProject && <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+            <button
+              type="button"
               onClick={() => {
                 setEditingDocumentId(null);
                 setFormTitle('');
@@ -444,7 +484,8 @@ export default function KnowledgeBase() {
               <Plus size={12} />
               إضافة نص يدوياً
             </button>
-            <button 
+            <button
+              type="button"
               onClick={handleStartWizard}
               className={`${styles.btn} ${styles.btnSecondary}`}
               style={{ padding: '4px 10px', fontSize: '0.8rem', backgroundColor: 'rgba(59, 130, 246, 0.15)', color: 'hsl(210, 100%, 75%)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
@@ -452,28 +493,43 @@ export default function KnowledgeBase() {
               <Plus size={12} />
               معالج الذكاء الاصطناعي
             </button>
-          </div>
+          </div>}
         </div>
 
         {/* Tab selection */}
-        <div style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
-          <button 
-            onClick={() => setActiveTab('all')}
+        <div role="group" aria-label="تصفية مستندات المعرفة حسب الحالة" style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('all');
+              setCurrentPage(1);
+            }}
             className={`${styles.btn} ${activeTab === 'all' ? styles.btnPrimary : styles.btnSecondary}`}
+            aria-pressed={activeTab === 'all'}
             style={{ padding: '6px 12px', fontSize: '0.8rem' }}
           >
             كل المستندات ({documents.length})
           </button>
-          <button 
-            onClick={() => setActiveTab('approved')}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('approved');
+              setCurrentPage(1);
+            }}
             className={`${styles.btn} ${activeTab === 'approved' ? styles.btnPrimary : styles.btnSecondary}`}
+            aria-pressed={activeTab === 'approved'}
             style={{ padding: '6px 12px', fontSize: '0.8rem' }}
           >
             المعتمدة ({documents.filter(d => d.status === 'Approved' || d.status as string === 'Published').length})
           </button>
-          <button 
-            onClick={() => setActiveTab('pending')}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('pending');
+              setCurrentPage(1);
+            }}
             className={`${styles.btn} ${activeTab === 'pending' ? styles.btnPrimary : styles.btnSecondary}`}
+            aria-pressed={activeTab === 'pending'}
             style={{ padding: '6px 12px', fontSize: '0.8rem' }}
           >
             قيد الاعتماد ({documents.filter(d => d.status === 'PendingApproval' || d.status === 'Draft' || d.status === 'Rejected').length})
@@ -485,6 +541,12 @@ export default function KnowledgeBase() {
             <div className={styles.spinner}></div>
             <p style={{ marginTop: 'var(--space-md)' }}>جاري تحميل مستندات قاعدة المعرفة...</p>
           </div>
+        ) : loadError ? (
+          <div className={styles.emptyState} role="alert">
+            <h3 className={styles.emptyStateTitle}>تعذر تحميل قاعدة المعرفة</h3>
+            <p className={styles.emptyStateDesc}>{loadError}</p>
+            {activeProject && <button type="button" onClick={() => void fetchDocuments()} className={`${styles.btn} ${styles.btnPrimary}`}>إعادة المحاولة</button>}
+          </div>
         ) : filteredDocuments.length === 0 ? (
           <div className={styles.emptyState}>
             <BookOpen size={48} style={{ color: 'hsl(var(--text-muted))' }} />
@@ -494,6 +556,7 @@ export default function KnowledgeBase() {
         ) : (
           <div className={styles.tableWrapper}>
             <table className={styles.table}>
+              <caption className="sr-only">مستندات قاعدة المعرفة وحالة الاعتماد</caption>
               <thead>
                 <tr>
                   <th className={styles.th}>العنوان</th>
@@ -549,7 +612,7 @@ export default function KnowledgeBase() {
                       <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'center' }}>
                         {(doc.status !== 'Approved' && doc.status as string !== 'Published') ? (
                           <button
-                            onClick={() => handleApproveDocument(doc.id)}
+                            onClick={() => setDocumentToPublish(doc)}
                             className={`${styles.btn} ${styles.btnSuccess}`}
                             style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                             disabled={actionLoading}
@@ -558,7 +621,8 @@ export default function KnowledgeBase() {
                           </button>
                         ) : (
                           <button
-                            onClick={() => handleRejectDocument(doc.id)}
+                            type="button"
+                            onClick={() => setDocumentToDraft(doc)}
                             className={`${styles.btn} ${styles.btnSecondary}`}
                             style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                             disabled={actionLoading}
@@ -568,7 +632,8 @@ export default function KnowledgeBase() {
                         )}
                         {doc.status === 'PendingApproval' && (
                           <button
-                            onClick={() => handleRejectDocument(doc.id)}
+                            type="button"
+                            onClick={() => setDocumentToDraft(doc)}
                             className={`${styles.btn} ${styles.btnDanger}`}
                             style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                             disabled={actionLoading}
@@ -605,6 +670,7 @@ export default function KnowledgeBase() {
                 <div className={styles.paginationInfo}>
                   <span>عرض السطور:</span>
                   <select
+                    aria-label="عدد مستندات المعرفة في الصفحة"
                     value={pageSize}
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
@@ -625,10 +691,12 @@ export default function KnowledgeBase() {
 
                 <div className={styles.paginationControls}>
                   <button
+                    type="button"
                     onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                     disabled={currentPage === totalPages}
                     className={styles.paginationBtn}
                     title="الصفحة التالية"
+                    aria-label="الصفحة التالية"
                   >
                     <ChevronLeft size={16} />
                   </button>
@@ -642,9 +710,12 @@ export default function KnowledgeBase() {
                       }
                       elements.push(
                         <button
+                          type="button"
                           key={page}
                           onClick={() => setCurrentPage(page)}
                           className={`${styles.paginationBtn} ${currentPage === page ? styles.paginationBtnActive : ''}`}
+                          aria-label={`الصفحة ${page}`}
+                          aria-current={currentPage === page ? 'page' : undefined}
                         >
                           {page}
                         </button>
@@ -653,10 +724,12 @@ export default function KnowledgeBase() {
                     })}
 
                   <button
+                    type="button"
                     onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                     disabled={currentPage === 1}
                     className={styles.paginationBtn}
                     title="الصفحة السابقة"
+                    aria-label="الصفحة السابقة"
                   >
                     <ChevronRight size={16} />
                   </button>
@@ -670,9 +743,9 @@ export default function KnowledgeBase() {
       {/* Manual document creation modal */}
       {isModalOpen && (
         <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`}>
+          <div className={`glass-panel ${styles.modal}`} role="dialog" aria-modal="true" aria-labelledby="knowledge-document-dialog-title" onKeyDown={(event) => handleDialogKeyDown(event, () => { setIsModalOpen(false); setEditingDocumentId(null); })}>
             <div className={styles.modalHeader}>
-              <h3 className={styles.modalTitle}>
+              <h3 id="knowledge-document-dialog-title" className={styles.modalTitle}>
                 {editingDocumentId ? 'تعديل مستند معرفي' : 'إضافة مستند معرفي'}
               </h3>
               <button 
@@ -688,8 +761,10 @@ export default function KnowledgeBase() {
 
             <form onSubmit={handleSaveDocument} className={styles.form}>
               <div className={styles.formGroup}>
-                <label className={styles.label}>عنوان المستند</label>
+                <label htmlFor="knowledge-document-title" className={styles.label}>عنوان المستند</label>
                 <input 
+                  id="knowledge-document-title"
+                  autoFocus
                   type="text" 
                   value={formTitle} 
                   onChange={(e) => setFormTitle(e.target.value)} 
@@ -700,9 +775,10 @@ export default function KnowledgeBase() {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>رابط المصدر المرجعي (اختياري)</label>
+                <label htmlFor="knowledge-source-url" className={styles.label}>رابط المصدر المرجعي (اختياري)</label>
                 <input 
-                  type="text" 
+                  id="knowledge-source-url"
+                  type="url"
                   value={formSourceUrl} 
                   onChange={(e) => setFormSourceUrl(e.target.value)} 
                   placeholder="https://mysite.com/policy" 
@@ -711,8 +787,9 @@ export default function KnowledgeBase() {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>نص / محتوى المستند</label>
+                <label htmlFor="knowledge-document-content" className={styles.label}>نص أو محتوى المستند</label>
                 <textarea 
+                  id="knowledge-document-content"
                   value={formContent} 
                   onChange={(e) => setFormContent(e.target.value)} 
                   placeholder="الصق الأسئلة الشائعة أو تفاصيل السياسة والمحتوى التعليمي هنا..." 
@@ -757,9 +834,9 @@ export default function KnowledgeBase() {
       {/* AI Wizard Modal */}
       {isWizardOpen && (
         <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`} style={{ maxWidth: '640px', width: '90%' }}>
+          <div className={`glass-panel ${styles.modal}`} role="dialog" aria-modal="true" aria-labelledby="knowledge-wizard-title" onKeyDown={(event) => handleDialogKeyDown(event, () => { setIsWizardOpen(false); setEditingDocumentId(null); })} style={{ maxWidth: '640px', width: '90%' }}>
             <div className={styles.modalHeader}>
-              <h3 className={styles.modalTitle} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h3 id="knowledge-wizard-title" className={styles.modalTitle} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <BookOpen size={18} style={{ color: 'hsl(var(--accent-primary))' }} />
                 معالج قاعدة المعرفة بالذكاء الاصطناعي
               </h3>
@@ -777,7 +854,7 @@ export default function KnowledgeBase() {
             {/* Stepper Progress Bar */}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-md)' }}>
               {[1, 2, 3, 4].map((step) => (
-                <div key={step} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div key={step} aria-current={wizardStep === step ? 'step' : undefined} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{
                     width: '28px',
                     height: '28px',
@@ -798,18 +875,19 @@ export default function KnowledgeBase() {
                     fontWeight: wizardStep === step ? 700 : 500,
                     color: wizardStep === step ? 'var(--text-strong)' : 'var(--text-soft)'
                   }}>
-                    {step === 1 ? 'إدخال النص' : step === 2 ? 'أسئلة توضيحية' : step === 3 ? 'مراجعة الأسئلة' : 'حفظ ونشر'}
+                    {step === 1 ? 'إدخال النص' : step === 2 ? 'أسئلة توضيحية' : step === 3 ? 'مراجعة الأسئلة' : 'حفظ مسودة'}
                   </span>
                 </div>
               ))}
             </div>
 
-            {/* Step 1: Raw Text Input */}
             {wizardStep === 1 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>أدخل النص الخام لقاعدة المعرفة</label>
-                  <textarea 
+                  <label htmlFor="knowledge-wizard-source-text" className={styles.label}>أدخل النص الخام لقاعدة المعرفة</label>
+                  <textarea
+                    id="knowledge-wizard-source-text"
+                    autoFocus
                     value={wizardText} 
                     onChange={(e) => setWizardText(e.target.value)} 
                     placeholder="الصق هنا معلومات عن شركتك أو خدماتك أو سياساتك العامة..." 
@@ -842,7 +920,6 @@ export default function KnowledgeBase() {
               </div>
             )}
 
-            {/* Step 2: Clarifying Questions */}
             {wizardStep === 2 && wizardQuestions.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -865,7 +942,9 @@ export default function KnowledgeBase() {
                         onClick={() => {
                           setWizardAnswers({ ...wizardAnswers, [currentQuestionIndex]: option });
                           setCustomAnswer('');
+                          setWizardValidationError(null);
                         }}
+                        aria-pressed={wizardAnswers[currentQuestionIndex] === option && !customAnswer}
                         style={{
                           textAlign: 'right',
                           padding: '10px 14px',
@@ -876,7 +955,7 @@ export default function KnowledgeBase() {
                           fontSize: '0.85rem',
                           fontWeight: 500,
                           cursor: 'pointer',
-                          transition: 'all 0.2s'
+                          transition: 'background-color 0.2s, border-color 0.2s, color 0.2s'
                         }}
                       >
                         {option}
@@ -886,8 +965,9 @@ export default function KnowledgeBase() {
 
                   {/* Custom Answer Input */}
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>أو اكتب إجابة مخصصة:</label>
+                    <label htmlFor="knowledge-wizard-custom-answer" className={styles.label}>أو اكتب إجابة مخصصة:</label>
                     <textarea
+                      id="knowledge-wizard-custom-answer"
                       value={customAnswer}
                       onChange={(e) => {
                         setCustomAnswer(e.target.value);
@@ -897,6 +977,7 @@ export default function KnowledgeBase() {
                       style={{ minHeight: '60px' }}
                     />
                   </div>
+                  {wizardValidationError && <p role="alert" style={{ color: 'hsl(var(--accent-danger))' }}>{wizardValidationError}</p>}
                 </div>
 
                 <div className={styles.formActions}>
@@ -937,7 +1018,6 @@ export default function KnowledgeBase() {
               </div>
             )}
 
-            {/* Step 3: Review Q&A List */}
             {wizardStep === 3 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -961,13 +1041,15 @@ export default function KnowledgeBase() {
                         onClick={() => handleDeleteQa(index)}
                         style={{ position: 'absolute', top: '8px', left: '8px', background: 'none', border: 'none', color: 'hsl(var(--accent-danger))', cursor: 'pointer', fontSize: '1.25rem' }}
                         title="حذف"
+                        aria-label={`حذف السؤال ${index + 1}`}
                       >
                         &times;
                       </button>
 
                       <div className={styles.formGroup} style={{ marginBottom: '8px', marginTop: '12px' }}>
-                        <label className={styles.label}>السؤال</label>
+                        <label htmlFor={`knowledge-qa-question-${index}`} className={styles.label}>السؤال</label>
                         <input
+                          id={`knowledge-qa-question-${index}`}
                           type="text"
                           value={qa.question}
                           onChange={(e) => handleEditQa(index, 'question', e.target.value)}
@@ -977,8 +1059,9 @@ export default function KnowledgeBase() {
                       </div>
 
                       <div className={styles.formGroup}>
-                        <label className={styles.label}>الإجابة</label>
+                        <label htmlFor={`knowledge-qa-answer-${index}`} className={styles.label}>الإجابة</label>
                         <textarea
+                          id={`knowledge-qa-answer-${index}`}
                           value={qa.answer}
                           onChange={(e) => handleEditQa(index, 'answer', e.target.value)}
                           className={styles.textarea}
@@ -1016,12 +1099,13 @@ export default function KnowledgeBase() {
               </div>
             )}
 
-            {/* Step 4: Title & Save */}
             {wizardStep === 4 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>عنوان مستند قاعدة المعرفة</label>
-                  <input 
+                  <label htmlFor="knowledge-wizard-title-input" className={styles.label}>عنوان مستند قاعدة المعرفة</label>
+                  <input
+                    id="knowledge-wizard-title-input"
+                    autoFocus
                     type="text" 
                     value={wizardTitle} 
                     onChange={(e) => setWizardTitle(e.target.value)} 
@@ -1045,7 +1129,7 @@ export default function KnowledgeBase() {
                     className={`${styles.btn} ${styles.btnPrimary}`}
                     disabled={wizardLoading || !wizardTitle.trim()}
                   >
-                    {wizardLoading ? 'جاري الحفظ والتقسيم...' : 'حفظ ونشر'}
+                    {wizardLoading ? 'جاري الحفظ...' : 'حفظ كمسودة'}
                   </button>
                 </div>
               </div>
@@ -1062,6 +1146,34 @@ export default function KnowledgeBase() {
         cancelLabel="إلغاء"
         onConfirm={handleConfirmDelete}
         onCancel={() => { setConfirmOpen(false); setDocToDelete(null); }}
+      />
+      <ConfirmDialog
+        isOpen={documentToPublish !== null}
+        title="اعتماد ونشر المستند"
+        message={documentToPublish ? `سيصبح المستند «${documentToPublish.title}» مصدرًا معتمدًا لردود الذكاء الاصطناعي. راجع المحتوى والمصدر قبل النشر.` : ''}
+        confirmLabel="اعتماد ونشر"
+        onConfirm={() => {
+          const document = documentToPublish;
+          setDocumentToPublish(null);
+          if (document) void handleApproveDocument(document.id);
+        }}
+        onCancel={() => setDocumentToPublish(null)}
+      />
+      <ConfirmDialog
+        isOpen={documentToDraft !== null}
+        title={documentToDraft?.status === 'PendingApproval' ? 'رفض اعتماد المستند' : 'سحب المستند إلى مسودة'}
+        message={documentToDraft
+          ? documentToDraft.status === 'PendingApproval'
+            ? `سيتم رفض اعتماد المستند «${documentToDraft.title}» وإعادته إلى مسودة.`
+            : `سيتم سحب المستند «${documentToDraft.title}» من المصادر المعتمدة وإعادته إلى مسودة، وقد يؤثر ذلك في الردود اللاحقة.`
+          : ''}
+        confirmLabel={documentToDraft?.status === 'PendingApproval' ? 'رفض وإعادة لمسودة' : 'سحب لمسودة'}
+        onConfirm={() => {
+          const document = documentToDraft;
+          setDocumentToDraft(null);
+          if (document) void handleRejectDocument(document.id);
+        }}
+        onCancel={() => setDocumentToDraft(null)}
       />
     </div>
   );

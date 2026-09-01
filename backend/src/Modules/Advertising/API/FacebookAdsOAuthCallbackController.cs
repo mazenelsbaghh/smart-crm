@@ -6,7 +6,7 @@ namespace Modules.Advertising.API;
 
 [ApiController]
 [AllowAnonymous]
-[Route("api/ad-manager/facebook/oauth/callback")]
+[Route("api/ad-manager/meta/oauth/callback")]
 public sealed class FacebookAdsOAuthCallbackController(FacebookAdsOAuthService oauth, IConfiguration configuration) : ControllerBase
 {
     [HttpGet]
@@ -16,22 +16,22 @@ public sealed class FacebookAdsOAuthCallbackController(FacebookAdsOAuthService o
         {
             var result = await oauth.CompleteAsync(state, code, cancellationToken);
             var frontend = (configuration["FRONTEND_URL"] ?? "http://localhost:3000").TrimEnd('/');
-            return Redirect($"{frontend}/management/ad-manager?facebook=connected&project={result.ProjectId}");
+            return Redirect($"{frontend}/management/ad-manager?meta=connected&result={result.ConnectionId}");
         }
         catch (UnauthorizedAccessException)
         {
             var frontend = (configuration["FRONTEND_URL"] ?? "http://localhost:3000").TrimEnd('/');
-            return Redirect($"{frontend}/management/ad-manager?facebook=failed");
+            return Redirect($"{frontend}/management/ad-manager?meta=failed");
         }
         catch (HttpRequestException)
         {
             var frontend = (configuration["FRONTEND_URL"] ?? "http://localhost:3000").TrimEnd('/');
-            return Redirect($"{frontend}/management/ad-manager?facebook=failed");
+            return Redirect($"{frontend}/management/ad-manager?meta=failed");
         }
         catch (InvalidOperationException)
         {
             var frontend = (configuration["FRONTEND_URL"] ?? "http://localhost:3000").TrimEnd('/');
-            return Redirect($"{frontend}/management/ad-manager?facebook=failed");
+            return Redirect($"{frontend}/management/ad-manager?meta=failed");
         }
     }
 }

@@ -1,13 +1,19 @@
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
-import '../data/repositories/dashboard_repository.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../../core/services/user_facing_error.dart';
 import '../../crm/data/repositories/crm_repository.dart';
+import '../data/repositories/dashboard_repository.dart';
 
 // Events
 abstract class DashboardEvent extends Equatable {
   const DashboardEvent();
   @override
   List<Object?> get props => [];
+}
+
+class DashboardSessionCleared extends DashboardEvent {
+  const DashboardSessionCleared();
 }
 
 class DashboardLoadRequested extends DashboardEvent {
@@ -17,17 +23,13 @@ class DashboardLoadRequested extends DashboardEvent {
   List<Object?> get props => [projectId];
 }
 
-class DashboardRecalculateRequested extends DashboardEvent {
-  final String projectId;
-  const DashboardRecalculateRequested(this.projectId);
-  @override
-  List<Object?> get props => [projectId];
-}
-
 class DashboardSettingsUpdateRequested extends DashboardEvent {
   final String projectId;
   final Map<String, dynamic> settings;
-  const DashboardSettingsUpdateRequested({required this.projectId, required this.settings});
+  const DashboardSettingsUpdateRequested({
+    required this.projectId,
+    required this.settings,
+  });
   @override
   List<Object?> get props => [projectId, settings];
 }
@@ -42,8 +44,16 @@ class DashboardState extends Equatable {
   final int avgLeadScore;
   final bool loading;
   final String? error;
+  final bool settingsUpdating;
   final bool settingsUpdateSuccess;
-  final bool whatsappConnected;
+  final String? settingsUpdateError;
+  final bool? whatsappConnected;
+  final bool hasLoaded;
+  final bool salesAvailable;
+  final bool aiAccuracyAvailable;
+  final bool customersAvailable;
+  final bool dealsAvailable;
+  final DateTime? lastUpdatedAt;
 
   const DashboardState({
     this.salesData = const [],
@@ -54,8 +64,16 @@ class DashboardState extends Equatable {
     this.avgLeadScore = 0,
     this.loading = false,
     this.error,
+    this.settingsUpdating = false,
     this.settingsUpdateSuccess = false,
-    this.whatsappConnected = false,
+    this.settingsUpdateError,
+    this.whatsappConnected,
+    this.hasLoaded = false,
+    this.salesAvailable = false,
+    this.aiAccuracyAvailable = false,
+    this.customersAvailable = false,
+    this.dealsAvailable = false,
+    this.lastUpdatedAt,
   });
 
   DashboardState copyWith({
@@ -67,8 +85,16 @@ class DashboardState extends Equatable {
     int? avgLeadScore,
     bool? loading,
     String? Function()? error,
+    bool? settingsUpdating,
     bool? settingsUpdateSuccess,
-    bool? whatsappConnected,
+    String? Function()? settingsUpdateError,
+    bool? Function()? whatsappConnected,
+    bool? hasLoaded,
+    bool? salesAvailable,
+    bool? aiAccuracyAvailable,
+    bool? customersAvailable,
+    bool? dealsAvailable,
+    DateTime? lastUpdatedAt,
   }) {
     return DashboardState(
       salesData: salesData ?? this.salesData,
@@ -79,114 +105,229 @@ class DashboardState extends Equatable {
       avgLeadScore: avgLeadScore ?? this.avgLeadScore,
       loading: loading ?? this.loading,
       error: error != null ? error() : this.error,
-      settingsUpdateSuccess: settingsUpdateSuccess ?? this.settingsUpdateSuccess,
-      whatsappConnected: whatsappConnected ?? this.whatsappConnected,
+      settingsUpdating: settingsUpdating ?? this.settingsUpdating,
+      settingsUpdateSuccess:
+          settingsUpdateSuccess ?? this.settingsUpdateSuccess,
+      settingsUpdateError: settingsUpdateError != null
+          ? settingsUpdateError()
+          : this.settingsUpdateError,
+      whatsappConnected: whatsappConnected != null
+          ? whatsappConnected()
+          : this.whatsappConnected,
+      hasLoaded: hasLoaded ?? this.hasLoaded,
+      salesAvailable: salesAvailable ?? this.salesAvailable,
+      aiAccuracyAvailable: aiAccuracyAvailable ?? this.aiAccuracyAvailable,
+      customersAvailable: customersAvailable ?? this.customersAvailable,
+      dealsAvailable: dealsAvailable ?? this.dealsAvailable,
+      lastUpdatedAt: lastUpdatedAt ?? this.lastUpdatedAt,
     );
   }
 
   @override
   List<Object?> get props => [
-        salesData,
-        aiAccuracyData,
-        totalCustomers,
-        activeDeals,
-        closedWonRevenue,
-        avgLeadScore,
-        loading,
-        error,
-        settingsUpdateSuccess,
-        whatsappConnected,
-      ];
+    salesData,
+    aiAccuracyData,
+    totalCustomers,
+    activeDeals,
+    closedWonRevenue,
+    avgLeadScore,
+    loading,
+    error,
+    settingsUpdating,
+    settingsUpdateSuccess,
+    settingsUpdateError,
+    whatsappConnected,
+    hasLoaded,
+    salesAvailable,
+    aiAccuracyAvailable,
+    customersAvailable,
+    dealsAvailable,
+    lastUpdatedAt,
+  ];
 }
 
 // BLoC
 class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   final DashboardRepository _dashboardRepository;
   final CrmRepository _crmRepository;
+  int _sessionGeneration = 0;
+  int _loadGeneration = 0;
 
   DashboardBloc({
     required DashboardRepository dashboardRepository,
     required CrmRepository crmRepository,
-  })  : _dashboardRepository = dashboardRepository,
-        _crmRepository = crmRepository,
-        super(const DashboardState()) {
+  }) : _dashboardRepository = dashboardRepository,
+       _crmRepository = crmRepository,
+       super(const DashboardState()) {
+    on<DashboardSessionCleared>(_onSessionCleared);
     on<DashboardLoadRequested>(_onLoad);
-    on<DashboardRecalculateRequested>(_onRecalculate);
     on<DashboardSettingsUpdateRequested>(_onUpdateSettings);
   }
 
-  Future<void> _onLoad(DashboardLoadRequested event, Emitter<DashboardState> emit) async {
+  void _onSessionCleared(
+    DashboardSessionCleared event,
+    Emitter<DashboardState> emit,
+  ) {
+    _sessionGeneration++;
+    _loadGeneration++;
+    emit(const DashboardState());
+  }
+
+  Future<void> _onLoad(
+    DashboardLoadRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    final sessionGeneration = _sessionGeneration;
+    final loadGeneration = ++_loadGeneration;
     emit(state.copyWith(loading: true, error: () => null));
     try {
-      final sales = await _dashboardRepository.getAnalytics(event.projectId, 'Sales');
-      final accuracy = await _dashboardRepository.getAnalytics(event.projectId, 'AI_Accuracy');
-      
-      final customers = await _crmRepository.getCustomers(event.projectId);
-      final deals = await _crmRepository.getDeals(event.projectId);
-      final whatsappConnected = await _dashboardRepository.getWhatsAppStatus(event.projectId);
+      final salesFuture = _capture(
+        _dashboardRepository.getAnalytics(event.projectId, 'Sales'),
+      );
+      final accuracyFuture = _capture(
+        _dashboardRepository.getAnalytics(event.projectId, 'AI_Accuracy'),
+      );
+      final customersFuture = _capture(
+        _crmRepository.getCustomers(event.projectId),
+      );
+      final dealsFuture = _capture(_crmRepository.getDeals(event.projectId));
+      final whatsappFuture = _capture(
+        _dashboardRepository.getWhatsAppStatus(event.projectId),
+      );
 
-      final totalCustomers = customers.length;
-      final activeDeals = deals.where((d) => d.status == 0).length;
-      final closedWonRevenue = deals.where((d) => d.status == 1).fold<double>(0.0, (sum, d) => sum + d.amount);
-      final avgLeadScore = customers.isEmpty
+      final salesResult = await salesFuture;
+      final accuracyResult = await accuracyFuture;
+      final customersResult = await customersFuture;
+      final dealsResult = await dealsFuture;
+      final whatsappResult = await whatsappFuture;
+      if (sessionGeneration != _sessionGeneration ||
+          loadGeneration != _loadGeneration) {
+        return;
+      }
+
+      final customers = customersResult.value;
+      final deals = dealsResult.value;
+      final failures = <String>[
+        if (salesResult.error != null) 'المبيعات',
+        if (accuracyResult.error != null) 'دقة الرد الآلي',
+        if (customersResult.error != null) 'العملاء',
+        if (dealsResult.error != null) 'الصفقات',
+        if (whatsappResult.error != null) 'اتصال واتساب',
+      ];
+      final anySuccess = [
+        salesResult,
+        accuracyResult,
+        customersResult,
+        dealsResult,
+        whatsappResult,
+      ].any((result) => result.error == null);
+
+      final totalCustomers = customers?.length ?? state.totalCustomers;
+      final activeDeals = deals == null
+          ? state.activeDeals
+          : deals.where((deal) => deal.status == 0).length;
+      final closedWonRevenue = deals == null
+          ? state.closedWonRevenue
+          : deals
+                .where((deal) => deal.status == 1)
+                .fold<double>(0, (sum, deal) => sum + deal.amount);
+      final avgLeadScore = customers == null
+          ? state.avgLeadScore
+          : customers.isEmpty
           ? 0
-          : (customers.fold<int>(0, (sum, c) => sum + c.leadScore) / totalCustomers).round();
+          : (customers.fold<int>(0, (sum, c) => sum + c.leadScore) /
+                    customers.length)
+                .round();
 
-      emit(state.copyWith(
-        salesData: sales,
-        aiAccuracyData: accuracy,
-        totalCustomers: totalCustomers,
-        activeDeals: activeDeals,
-        closedWonRevenue: closedWonRevenue,
-        avgLeadScore: avgLeadScore,
-        whatsappConnected: whatsappConnected,
-        loading: false,
-      ));
+      emit(
+        state.copyWith(
+          salesData: salesResult.value ?? state.salesData,
+          aiAccuracyData: accuracyResult.value ?? state.aiAccuracyData,
+          totalCustomers: totalCustomers,
+          activeDeals: activeDeals,
+          closedWonRevenue: closedWonRevenue,
+          avgLeadScore: avgLeadScore,
+          whatsappConnected: () => whatsappResult.error == null
+              ? whatsappResult.value
+              : state.whatsappConnected,
+          loading: false,
+          hasLoaded: state.hasLoaded || anySuccess,
+          salesAvailable: salesResult.error == null || state.salesAvailable,
+          aiAccuracyAvailable:
+              accuracyResult.error == null || state.aiAccuracyAvailable,
+          customersAvailable:
+              customersResult.error == null || state.customersAvailable,
+          dealsAvailable: dealsResult.error == null || state.dealsAvailable,
+          lastUpdatedAt: anySuccess ? DateTime.now() : state.lastUpdatedAt,
+          error: () =>
+              failures.isEmpty ? null : 'تعذر تحديث: ${failures.join('، ')}.',
+          settingsUpdateSuccess: false,
+        ),
+      );
     } catch (e) {
-      emit(state.copyWith(loading: false, error: () => e.toString()));
+      if (sessionGeneration != _sessionGeneration ||
+          loadGeneration != _loadGeneration) {
+        return;
+      }
+      emit(
+        state.copyWith(
+          loading: false,
+          error: () => userFacingError(e),
+          settingsUpdateSuccess: false,
+        ),
+      );
     }
   }
 
-  Future<void> _onRecalculate(DashboardRecalculateRequested event, Emitter<DashboardState> emit) async {
-    emit(state.copyWith(loading: true, error: () => null));
+  Future<_LoadResult<T>> _capture<T>(Future<T> future) async {
     try {
-      await _dashboardRepository.recalculateAnalytics(event.projectId);
-      final sales = await _dashboardRepository.getAnalytics(event.projectId, 'Sales');
-      final accuracy = await _dashboardRepository.getAnalytics(event.projectId, 'AI_Accuracy');
-      
-      final customers = await _crmRepository.getCustomers(event.projectId);
-      final deals = await _crmRepository.getDeals(event.projectId);
-      final whatsappConnected = await _dashboardRepository.getWhatsAppStatus(event.projectId);
-
-      final totalCustomers = customers.length;
-      final activeDeals = deals.where((d) => d.status == 0).length;
-      final closedWonRevenue = deals.where((d) => d.status == 1).fold<double>(0.0, (sum, d) => sum + d.amount);
-      final avgLeadScore = customers.isEmpty
-          ? 0
-          : (customers.fold<int>(0, (sum, c) => sum + c.leadScore) / totalCustomers).round();
-
-      emit(state.copyWith(
-        salesData: sales,
-        aiAccuracyData: accuracy,
-        totalCustomers: totalCustomers,
-        activeDeals: activeDeals,
-        closedWonRevenue: closedWonRevenue,
-        avgLeadScore: avgLeadScore,
-        whatsappConnected: whatsappConnected,
-        loading: false,
-      ));
-    } catch (e) {
-      emit(state.copyWith(loading: false, error: () => e.toString()));
+      return _LoadResult(value: await future);
+    } catch (error) {
+      return _LoadResult(error: error);
     }
   }
 
-  Future<void> _onUpdateSettings(DashboardSettingsUpdateRequested event, Emitter<DashboardState> emit) async {
-    emit(state.copyWith(loading: true, error: () => null, settingsUpdateSuccess: false));
+  Future<void> _onUpdateSettings(
+    DashboardSettingsUpdateRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    final sessionGeneration = _sessionGeneration;
+    emit(
+      state.copyWith(
+        settingsUpdating: true,
+        settingsUpdateSuccess: false,
+        settingsUpdateError: () => null,
+      ),
+    );
     try {
-      await _dashboardRepository.updateProjectSettings(event.projectId, event.settings);
-      emit(state.copyWith(loading: false, settingsUpdateSuccess: true));
+      await _dashboardRepository.updateProjectSettings(
+        event.projectId,
+        event.settings,
+      );
+      if (sessionGeneration != _sessionGeneration) return;
+      emit(
+        state.copyWith(
+          settingsUpdating: false,
+          settingsUpdateSuccess: true,
+          settingsUpdateError: () => null,
+        ),
+      );
     } catch (e) {
-      emit(state.copyWith(loading: false, error: () => e.toString(), settingsUpdateSuccess: false));
+      if (sessionGeneration != _sessionGeneration) return;
+      emit(
+        state.copyWith(
+          settingsUpdating: false,
+          settingsUpdateSuccess: false,
+          settingsUpdateError: () => userFacingError(e),
+        ),
+      );
     }
   }
+}
+
+class _LoadResult<T> {
+  const _LoadResult({this.value, this.error});
+
+  final T? value;
+  final Object? error;
 }

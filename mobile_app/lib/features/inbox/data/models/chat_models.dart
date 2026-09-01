@@ -1,4 +1,13 @@
-enum ConversationStatus { Open, Pending, Resolved, Closed }
+enum ConversationStatus { open, pending, resolved, closed }
+
+extension ConversationStatusApi on ConversationStatus {
+  String get apiValue => switch (this) {
+    ConversationStatus.open => 'Open',
+    ConversationStatus.pending => 'Pending',
+    ConversationStatus.resolved => 'Resolved',
+    ConversationStatus.closed => 'Closed',
+  };
+}
 
 class CustomerSummary {
   final String id;
@@ -26,12 +35,27 @@ class CustomerSummary {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'phone': phone,
-        'avatarUrl': avatarUrl,
-        'label': label,
-      };
+    'id': id,
+    'name': name,
+    'phone': phone,
+    'avatarUrl': avatarUrl,
+    'label': label,
+  };
+
+  CustomerSummary copyWith({
+    String? name,
+    String? phone,
+    String? avatarUrl,
+    String? label,
+  }) {
+    return CustomerSummary(
+      id: id,
+      name: name ?? this.name,
+      phone: phone ?? this.phone,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      label: label ?? this.label,
+    );
+  }
 }
 
 class Conversation {
@@ -43,6 +67,8 @@ class Conversation {
   final int unreadCount;
   final String? assignedAgentId;
   final String? assignedAgentName;
+  final String? whatsAppAccountId;
+  final String? whatsAppAccountName;
   final bool isAiTyping;
   final int? aiTypingCountdown;
   final String? aiTypingStage;
@@ -56,6 +82,8 @@ class Conversation {
     required this.unreadCount,
     this.assignedAgentId,
     this.assignedAgentName,
+    this.whatsAppAccountId,
+    this.whatsAppAccountName,
     this.isAiTyping = false,
     this.aiTypingCountdown,
     this.aiTypingStage,
@@ -63,15 +91,15 @@ class Conversation {
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
     ConversationStatus parseStatus(String? statusStr) {
-      switch (statusStr) {
-        case 'Pending':
-          return ConversationStatus.Pending;
-        case 'Resolved':
-          return ConversationStatus.Resolved;
-        case 'Closed':
-          return ConversationStatus.Closed;
+      switch (statusStr?.trim().toLowerCase()) {
+        case 'pending':
+          return ConversationStatus.pending;
+        case 'resolved':
+          return ConversationStatus.resolved;
+        case 'closed':
+          return ConversationStatus.closed;
         default:
-          return ConversationStatus.Open;
+          return ConversationStatus.open;
       }
     }
 
@@ -80,10 +108,14 @@ class Conversation {
       projectId: json['projectId'] ?? '',
       customer: CustomerSummary.fromJson(json['customer'] ?? {}),
       status: parseStatus(json['status']),
-      lastMessageAt: DateTime.tryParse(json['lastMessageAt'] ?? '') ?? DateTime.now(),
+      lastMessageAt:
+          DateTime.tryParse(json['lastMessageAt'] ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       unreadCount: json['unreadCount'] ?? 0,
       assignedAgentId: json['assignedAgentId'],
       assignedAgentName: json['assignedAgentName'],
+      whatsAppAccountId: json['whatsAppAccountId'],
+      whatsAppAccountName: json['whatsAppAccountName'],
       isAiTyping: json['isAiTyping'] ?? false,
       aiTypingCountdown: json['aiTypingCountdown'],
       aiTypingStage: json['aiTypingStage'],
@@ -91,23 +123,29 @@ class Conversation {
   }
 
   Conversation copyWith({
+    CustomerSummary? customer,
     ConversationStatus? status,
+    DateTime? lastMessageAt,
     int? unreadCount,
     bool? isAiTyping,
     int? aiTypingCountdown,
     String? aiTypingStage,
     String? assignedAgentId,
     String? assignedAgentName,
+    String? whatsAppAccountId,
+    String? whatsAppAccountName,
   }) {
     return Conversation(
       id: id,
       projectId: projectId,
-      customer: customer,
+      customer: customer ?? this.customer,
       status: status ?? this.status,
-      lastMessageAt: lastMessageAt,
+      lastMessageAt: lastMessageAt ?? this.lastMessageAt,
       unreadCount: unreadCount ?? this.unreadCount,
       assignedAgentId: assignedAgentId ?? this.assignedAgentId,
       assignedAgentName: assignedAgentName ?? this.assignedAgentName,
+      whatsAppAccountId: whatsAppAccountId ?? this.whatsAppAccountId,
+      whatsAppAccountName: whatsAppAccountName ?? this.whatsAppAccountName,
       isAiTyping: isAiTyping ?? this.isAiTyping,
       aiTypingCountdown: aiTypingCountdown ?? this.aiTypingCountdown,
       aiTypingStage: aiTypingStage ?? this.aiTypingStage,
@@ -115,8 +153,9 @@ class Conversation {
   }
 }
 
-enum SenderType { Customer, Agent, System, AI }
-enum MediaType { Image, Voice, Document }
+enum SenderType { customer, agent, system, ai }
+
+enum MediaType { image, voice, document }
 
 class Message {
   final String id;
@@ -147,20 +186,20 @@ class Message {
     SenderType parseSender(String? senderStr) {
       switch (senderStr) {
         case 'Agent':
-          return SenderType.Agent;
+          return SenderType.agent;
         case 'System':
-          return SenderType.System;
+          return SenderType.system;
         case 'AI':
-          return SenderType.AI;
+          return SenderType.ai;
         default:
-          return SenderType.Customer;
+          return SenderType.customer;
       }
     }
 
     MediaType? parseMedia(String? mediaStr) {
-      if (mediaStr == 'Image') return MediaType.Image;
-      if (mediaStr == 'Voice') return MediaType.Voice;
-      if (mediaStr == 'Document') return MediaType.Document;
+      if (mediaStr == 'Image') return MediaType.image;
+      if (mediaStr == 'Voice') return MediaType.voice;
+      if (mediaStr == 'Document') return MediaType.document;
       return null;
     }
 
@@ -169,7 +208,9 @@ class Message {
       conversationId: json['conversationId'] ?? '',
       senderType: parseSender(json['senderType']),
       content: json['content'] ?? '',
-      createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
+      createdAt:
+          DateTime.tryParse(json['createdAt'] ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       status: json['status'] ?? 'Sent',
       mediaUrl: json['mediaUrl'],
       mediaType: parseMedia(json['mediaType']),

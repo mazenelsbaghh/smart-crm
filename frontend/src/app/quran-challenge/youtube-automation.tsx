@@ -5,6 +5,8 @@ import axios from 'axios';
 import { Clock3, Link2, PlaySquare, Send, Unlink } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { automationDateTime } from './automation-time';
 import styles from './quran-challenge.module.css';
 
 type YouTubeSettings = {
@@ -28,7 +30,7 @@ type VerseSelection = {
   hiddenWordIndex: number;
 };
 
-export function YouTubeAutomationPanel({ selection }: { selection: VerseSelection }) {
+export function YouTubeAutomationPanel({ selection, timezone }: { selection: VerseSelection; timezone: string | null }) {
   const { user, activeProject, loading: authLoading } = useAuth();
   const [settings, setSettings] = useState<YouTubeSettings | null>(null);
   const [loading, setLoading] = useState(false);
@@ -36,6 +38,7 @@ export function YouTubeAutomationPanel({ selection }: { selection: VerseSelectio
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [confirmAction, setConfirmAction] = useState<'publish' | 'disconnect' | null>(null);
 
   useEffect(() => {
     if (!user || !activeProject) return;
@@ -105,6 +108,7 @@ export function YouTubeAutomationPanel({ selection }: { selection: VerseSelectio
   };
 
   return (
+    <>
     <section className={styles.youtubeStudio} aria-labelledby="youtube-heading">
       <YouTubeIntroduction settings={settings} />
       <div className={styles.youtubeControls}>
@@ -114,27 +118,43 @@ export function YouTubeAutomationPanel({ selection }: { selection: VerseSelectio
           <EmptyYouTubeState title="تعذّر تحميل إعدادات YouTube" detail={error || 'أعد تحميل الصفحة وحاول مرة أخرى.'} />
         ) : (
           <>
-            <ChannelConnection settings={settings} connect={connect} disconnect={disconnect} />
+            <ChannelConnection settings={settings} connect={connect} disconnect={() => setConfirmAction('disconnect')} />
             {!settings.oauthConfigured && <p className={styles.youtubeWarning}>يلزم إضافة Client ID وClient Secret الخاصين بـ Google OAuth على الخادم لتفعيل زر الربط.</p>}
-            <NextPublishCountdown settings={settings} />
+            <NextPublishCountdown settings={settings} timezone={timezone} />
             <ScheduleFields settings={settings} setSettings={setSettings} />
             <label className={styles.captionTemplate}><span>الوصف التلقائي</span><textarea rows={6} maxLength={5000} value={settings.captionTemplate} onChange={(event) => setSettings({ ...settings, captionTemplate: event.target.value })} /><small>المتغيرات المتاحة: {'{surah}'}، {'{ayah}'}، {'{word}'}</small></label>
-            <AutomationSwitch settings={settings} setSettings={setSettings} />
+            <AutomationSwitch settings={settings} setSettings={setSettings} timezone={timezone} />
             <div className={styles.youtubeActions}>
               <button type="button" className={styles.saveSchedule} onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button>
-              <button type="button" className={styles.publishNow} onClick={publishNow} disabled={!settings.connected || publishing}><Send size={17} />{publishing ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button>
+              <button type="button" className={styles.publishNow} onClick={() => setConfirmAction('publish')} disabled={!settings.connected || publishing}><Send size={17} />{publishing ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button>
             </div>
-            {settings.lastPublishedAtUtc && <p className={styles.lastPublish}>آخر نشر: {cairoDateTime(settings.lastPublishedAtUtc)}</p>}
-            {(error || settings.lastError) && <p className={styles.youtubeError}>{error || settings.lastError}</p>}
-            {message && <p className={styles.youtubeSuccess}>{message}</p>}
+            {settings.lastPublishedAtUtc && <p className={styles.lastPublish}>آخر نشر: {automationDateTime(settings.lastPublishedAtUtc, timezone)}</p>}
+            {(error || settings.lastError) && <p className={styles.youtubeError} role="alert">{error || settings.lastError}</p>}
+            {message && <p className={styles.youtubeSuccess} role="status">{message}</p>}
           </>
         )}
       </div>
     </section>
+    <ConfirmDialog
+      isOpen={confirmAction !== null}
+      title={confirmAction === 'disconnect' ? 'فصل قناة YouTube؟' : 'نشر الآية الآن؟'}
+      message={confirmAction === 'disconnect'
+        ? `سيتم فصل «${settings?.channelTitle ?? 'القناة الحالية'}» وإيقاف الجدولة التلقائية.`
+        : `ستُضاف الآية ${selection.ayahNumber} إلى طابور قناة «${settings?.channelTitle ?? 'YouTube'}» فورًا.`}
+      confirmLabel={confirmAction === 'disconnect' ? 'فصل القناة' : 'إضافة للطابور'}
+      onCancel={() => setConfirmAction(null)}
+      onConfirm={() => {
+        const action = confirmAction;
+        setConfirmAction(null);
+        if (action === 'disconnect') void disconnect();
+        if (action === 'publish') void publishNow();
+      }}
+    />
+    </>
   );
 }
 
-function NextPublishCountdown({ settings }: { settings: YouTubeSettings }) {
+function NextPublishCountdown({ settings, timezone }: { settings: YouTubeSettings; timezone: string | null }) {
   const [now, setNow] = useState(() => Date.now());
   const nextPublishAtUtc = settings.nextPublishAtUtc;
 
@@ -152,8 +172,8 @@ function NextPublishCountdown({ settings }: { settings: YouTubeSettings }) {
     <div className={styles.nextPublishIcon}><Clock3 size={20} aria-hidden="true" /></div>
     <div className={styles.nextPublishCopy}>
       <span>الفيديو القادم</span>
-      <strong aria-live="polite">{nextPublishLabel(settings, remaining)}</strong>
-      {isActive && nextPublishAtUtc && <time dateTime={nextPublishAtUtc}>{cairoDateTime(nextPublishAtUtc)}</time>}
+      <strong>{nextPublishLabel(settings, remaining)}</strong>
+      {isActive && nextPublishAtUtc && <time dateTime={nextPublishAtUtc}>{automationDateTime(nextPublishAtUtc, timezone)}</time>}
     </div>
   </div>;
 }
@@ -195,8 +215,8 @@ function ScheduleFields({ settings, setSettings }: { settings: YouTubeSettings; 
   </>;
 }
 
-function AutomationSwitch({ settings, setSettings }: { settings: YouTubeSettings; setSettings: (settings: YouTubeSettings) => void }) {
-  return <label className={styles.automationSwitch}><input type="checkbox" checked={settings.isEnabled} disabled={!settings.connected} onChange={(event) => setSettings({ ...settings, isEnabled: event.target.checked })} /><span /><div><strong>تشغيل النشر التلقائي</strong><small>{settings.nextPublishAtUtc ? `الموعد القادم: ${cairoDateTime(settings.nextPublishAtUtc)}` : 'سيبدأ فور حفظ الجدولة'}</small></div></label>;
+function AutomationSwitch({ settings, setSettings, timezone }: { settings: YouTubeSettings; setSettings: (settings: YouTubeSettings) => void; timezone: string | null }) {
+  return <label className={styles.automationSwitch}><input type="checkbox" checked={settings.isEnabled} disabled={!settings.connected} onChange={(event) => setSettings({ ...settings, isEnabled: event.target.checked })} /><span /><div><strong>تشغيل النشر التلقائي</strong><small>{settings.nextPublishAtUtc ? `الموعد القادم: ${automationDateTime(settings.nextPublishAtUtc, timezone)}` : 'سيبدأ فور حفظ الجدولة'}</small></div></label>;
 }
 
 function EmptyYouTubeState({ title, detail }: { title: string; detail: string }) {
@@ -222,10 +242,6 @@ function applyOAuthFeedback(setError: (message: string) => void, setMessage: (me
 function apiErrorMessage(error: unknown) {
   if (axios.isAxiosError<{ error?: string }>(error)) return error.response?.data?.error ?? 'تعذّر الاتصال بالخادم.';
   return error instanceof Error ? error.message : 'حدث خطأ غير متوقع.';
-}
-
-function cairoDateTime(utcDate: string) {
-  return new Intl.DateTimeFormat('ar-EG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Cairo' }).format(new Date(utcDate));
 }
 
 function formatCountdown(milliseconds: number) {

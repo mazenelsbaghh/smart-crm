@@ -1,20 +1,66 @@
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys';
+import { randomUUID } from 'node:crypto';
 import path from 'path';
 import fs from 'fs';
-import axios from 'axios';
 import pino from 'pino';
+import { extractAdvertisingReferral } from './ad-referral.js';
+import { createBackendClient } from './backend-client.js';
+import {
+    createGroupResultJournal,
+    groupJournalDirectory
+} from './group-result-journal.js';
+import {
+    createInboundMessageOutbox,
+    inboundOutboxDirectory
+} from './inbound-message-outbox.js';
+import {
+    resolveSessionIdentity,
+    sessionAuthDirectory,
+    sessionMapKey
+} from './session-identity.js';
+import {
+    clearSessionDisabled,
+    isSessionDisabled,
+    markSessionDisabled,
+    removeSessionCredentials
+} from './session-lifecycle.js';
 
 export const sessions = new Map();
 export const qrCodes = new Map();
 export const statuses = new Map();
 export const sessionErrors = new Map();
+export const connectionOpenedAt = new Map();
 const reconnectAttempts = new Map();
 const reconnectTimers = new Map();
+const sessionInitializations = new Map();
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:5000';
+const backendClient = createBackendClient();
 const MAX_RECONNECT_ATTEMPTS = Number(process.env.MAX_RECONNECT_ATTEMPTS || 3);
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const ALLOW_MOCK_FALLBACK = process.env.ALLOW_MOCK_FALLBACK === 'true';
+const inboundMessageOutbox = createInboundMessageOutbox({
+    directory: inboundOutboxDirectory(getSessionsDir()),
+    forwardMessage: message => backendClient.forwardMessage(message)
+});
+const groupResultJournal = createGroupResultJournal(
+    groupJournalDirectory(getSessionsDir()));
+
+export class WhatsAppSessionUnavailableError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'WhatsAppSessionUnavailableError';
+        this.code = 'WHATSAPP_SESSION_UNAVAILABLE';
+        this.definitelyNotSent = true;
+    }
+}
+
+export class WhatsAppDeliveryAmbiguousError extends Error {
+    constructor(message, cause) {
+        super(message, { cause });
+        this.name = 'WhatsAppDeliveryAmbiguousError';
+        this.code = 'WHATSAPP_DELIVERY_AMBIGUOUS';
+    }
+}
 
 function getSessionsDir() {
     let sessionsDir = '/app/sessions';
@@ -24,15 +70,40 @@ function getSessionsDir() {
     return sessionsDir;
 }
 
-export function hasCredentials(projectId) {
-    const credsFile = path.join(getSessionsDir(), projectId, 'creds.json');
+function sessionLabel(identity) {
+    return `project ${identity.projectId}, WhatsApp account ${identity.whatsappAccountId}`;
+}
+
+function providerMessageId(sentMessage, socket, operation) {
+    const confirmedId = sentMessage?.key?.id;
+    if (typeof confirmedId === 'string' && confirmedId.trim()) return confirmedId;
+    if (socket.isMock) {
+        return `msg_${operation}_mock_${randomUUID()}`;
+    }
+    throw new WhatsAppDeliveryAmbiguousError(
+        `WhatsApp accepted the ${operation} request without returning a provider message ID`);
+}
+
+async function recordCreatedGroup(identity, idempotencyKey, groupResult) {
+    try {
+        await groupResultJournal.record(identity, idempotencyKey, groupResult);
+    } catch (error) {
+        throw new WhatsAppDeliveryAmbiguousError(
+            'WhatsApp group was created but its provider result could not be journaled',
+            error);
+    }
+}
+
+export function hasCredentials(projectId, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    const credsFile = path.join(sessionAuthDirectory(getSessionsDir(), identity), 'creds.json');
     if (!fs.existsSync(credsFile)) {
         return false;
     }
 
     const stats = fs.statSync(credsFile);
     if (stats.size === 0) {
-        console.warn(`[baileys-manager] Empty creds.json found for project ${projectId}. Removing corrupted credentials.`);
+        console.warn(`[baileys-manager] Empty creds.json found for ${sessionLabel(identity)}. Removing corrupted credentials.`);
         fs.rmSync(credsFile, { force: true });
         return false;
     }
@@ -62,8 +133,7 @@ async function downloadAndUploadMedia(projectId, messageKey, mInfo, type) {
         const fileBlob = new Blob([buffer], { type: contentType });
         form.append('file', fileBlob, fileName);
 
-        const uploadUrl = `${BACKEND_URL}/api/projects/${projectId}/assets/upload`;
-        const response = await axios.post(uploadUrl, form);
+        const response = await backendClient.uploadMedia(projectId, form);
 
         console.log(`[baileys-manager] Media uploaded successfully. AssetId: ${response.data.id}`);
         return response.data.id;
@@ -111,29 +181,62 @@ function resolveIncomingSender(key) {
     };
 }
 
-export async function startSession(projectId) {
-    if (sessions.has(projectId)) {
-        return { status: statuses.get(projectId) || 'Initializing', message: 'Session already active/initializing' };
+export async function startSession(projectId, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    await clearSessionDisabled(getSessionsDir(), identity);
+    return startResolvedSession(identity);
+}
+
+export async function restoreSession(projectId, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    if (isSessionDisabled(getSessionsDir(), identity)) {
+        return {
+            projectId: identity.projectId,
+            whatsappAccountId: identity.whatsappAccountId,
+            status: 'Disconnected',
+            message: 'Session is explicitly disabled'
+        };
+    }
+    return startResolvedSession(identity);
+}
+
+async function startResolvedSession(identity) {
+    const key = sessionMapKey(identity);
+    if (sessions.has(key)) {
+        return {
+            projectId: identity.projectId,
+            whatsappAccountId: identity.whatsappAccountId,
+            status: statuses.get(key) || 'Initializing',
+            message: 'Session already active/initializing'
+        };
     }
 
-    statuses.set(projectId, 'Initializing');
-    sessionErrors.delete(projectId);
-    reconnectAttempts.set(projectId, reconnectAttempts.get(projectId) || 0);
-    
-    let sessionsDir = '/app/sessions';
+    const activeInitialization = sessionInitializations.get(key);
+    if (activeInitialization) return activeInitialization;
+
+    const initialization = initializeSession(identity, key);
+    sessionInitializations.set(key, initialization);
     try {
-        if (!fs.existsSync(sessionsDir)) {
-            fs.mkdirSync(sessionsDir, { recursive: true });
-        }
-    } catch (e) {
-        sessionsDir = path.resolve('./sessions');
-        if (!fs.existsSync(sessionsDir)) {
-            fs.mkdirSync(sessionsDir, { recursive: true });
+        return await initialization;
+    } finally {
+        if (sessionInitializations.get(key) === initialization) {
+            sessionInitializations.delete(key);
         }
     }
-    
-    hasCredentials(projectId);
-    const authDir = path.join(sessionsDir, projectId);
+}
+
+async function initializeSession(identity, key) {
+
+    statuses.set(key, 'Initializing');
+    connectionOpenedAt.delete(key);
+    sessionErrors.delete(key);
+    reconnectAttempts.set(key, reconnectAttempts.get(key) || 0);
+
+    const sessionsDir = getSessionsDir();
+    fs.mkdirSync(sessionsDir, { recursive: true });
+
+    hasCredentials(identity.projectId, identity.whatsappAccountId);
+    const authDir = sessionAuthDirectory(sessionsDir, identity);
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
     let version = [2, 3000, 1017531287];
@@ -154,33 +257,44 @@ export async function startSession(projectId) {
         syncFullHistory: false
     });
 
-    sessions.set(projectId, sock);
+    sessions.set(key, sock);
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
         // If the session has been replaced by a mock session, don't overwrite its state
-        if (sessions.get(projectId)?.isMock) {
-            console.log(`[baileys-manager] Ignoring connection.update for project ${projectId} because it has a mock session.`);
+        if (sessions.get(key)?.isMock) {
+            console.log(`[baileys-manager] Ignoring connection.update for ${sessionLabel(identity)} because it has a mock session.`);
+            return;
+        }
+
+        if (sessions.get(key) !== sock) {
+            console.log(`[baileys-manager] Ignoring stale connection.update for ${sessionLabel(identity)}.`);
             return;
         }
         
         if (qr) {
-            console.log(`QR code updated for project ${projectId}`);
-            qrCodes.set(projectId, qr);
-            statuses.set(projectId, 'Initializing');
-            sessionErrors.delete(projectId);
-            reconnectAttempts.set(projectId, 0);
+            console.log(`QR code updated for ${sessionLabel(identity)}`);
+            qrCodes.set(key, qr);
+            statuses.set(key, 'Initializing');
+            connectionOpenedAt.delete(key);
+            sessionErrors.delete(key);
+            reconnectAttempts.set(key, 0);
         }
 
-        if (connection === 'close') {
+        if (connection === 'connecting') {
+            statuses.set(key, 'Initializing');
+            connectionOpenedAt.delete(key);
+        } else if (connection === 'close') {
             const disconnectStatusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = disconnectStatusCode !== DisconnectReason.loggedOut;
+            const explicitlyDisabled = isSessionDisabled(getSessionsDir(), identity);
+            const shouldReconnect = disconnectStatusCode !== DisconnectReason.loggedOut
+                && !explicitlyDisabled;
             const errorMessage = lastDisconnect?.error?.message || 'WhatsApp connection closed before pairing completed';
-            const attempts = (reconnectAttempts.get(projectId) || 0) + 1;
-            reconnectAttempts.set(projectId, attempts);
+            const attempts = (reconnectAttempts.get(key) || 0) + 1;
+            reconnectAttempts.set(key, attempts);
             
-            const isPaired = hasCredentials(projectId);
+            const isPaired = hasCredentials(identity.projectId, identity.whatsappAccountId);
             const maxAttempts = isPaired ? 1000 : MAX_RECONNECT_ATTEMPTS;
             
             // Check if this is a conflict (session replaced by another device/connection)
@@ -192,62 +306,79 @@ export async function startSession(projectId) {
             const baseDelay = isConflict ? 30000 : RECONNECT_DELAY_MS;
             const delay = Math.min(baseDelay * Math.pow(2, Math.min(attempts - 1, 3)), 120000);
             
-            console.log(`Connection closed for project ${projectId}. Reconnecting: ${shouldReconnect}. Attempt: ${attempts}/${maxAttempts}. Next retry in ${delay}ms. Reason: ${errorMessage}${isConflict ? ' [CONFLICT - using extended delay]' : ''}`);
+            console.log(`Connection closed for ${sessionLabel(identity)}. Reconnecting: ${shouldReconnect}. Attempt: ${attempts}/${maxAttempts}. Next retry in ${delay}ms. Reason: ${errorMessage}${isConflict ? ' [CONFLICT - using extended delay]' : ''}`);
             
-            sessionErrors.set(projectId, errorMessage);
+            sessionErrors.set(key, errorMessage);
+            connectionOpenedAt.delete(key);
 
-            // Properly close the old socket to prevent ghost connections
-            try { sock.end(); } catch (e) { /* ignore */ }
-            
             if (shouldReconnect && attempts < maxAttempts) {
-                sessions.delete(projectId);
-                statuses.set(projectId, isConflict ? 'Reconnecting' : 'Initializing');
+                sessions.delete(key);
+                statuses.set(key, isConflict ? 'Reconnecting' : 'Initializing');
                 
                 // Clear any existing reconnect timer
-                const existingTimer = reconnectTimers.get(projectId);
+                const existingTimer = reconnectTimers.get(key);
                 if (existingTimer) clearTimeout(existingTimer);
                 
                 const timer = setTimeout(() => {
-                    reconnectTimers.delete(projectId);
-                    startSession(projectId).catch((err) => {
-                        sessionErrors.set(projectId, err.message);
-                        statuses.set(projectId, 'Disconnected');
+                    reconnectTimers.delete(key);
+                    restoreSession(identity.projectId, identity.whatsappAccountId).catch((err) => {
+                        sessionErrors.set(key, err.message);
+                        statuses.set(key, 'Disconnected');
                     });
                 }, delay);
-                reconnectTimers.set(projectId, timer);
+                reconnectTimers.set(key, timer);
             } else {
-                sessions.delete(projectId);
-                qrCodes.delete(projectId);
-                statuses.set(projectId, 'Disconnected');
+                sessions.delete(key);
+                qrCodes.delete(key);
+                statuses.set(key, 'Disconnected');
                 sessionErrors.set(
-                    projectId,
+                    key,
                     shouldReconnect
                         ? `${errorMessage}. Unable to generate a WhatsApp QR code after ${attempts} attempts.`
                         : errorMessage
                 );
-                if (!shouldReconnect) {
+                if (disconnectStatusCode === DisconnectReason.loggedOut) {
                     try {
-                        fs.rmSync(authDir, { recursive: true, force: true });
-                        console.log(`Cleaned up credentials directory for project ${projectId} because the session was logged out.`);
+                        await markSessionDisabled(getSessionsDir(), identity);
+                        await removeSessionCredentials(getSessionsDir(), identity);
+                        console.log(`Cleaned up credentials directory for ${sessionLabel(identity)} because the session was logged out.`);
                     } catch (e) {
                         console.error('Failed to clean auth files', e);
                     }
+                } else if (explicitlyDisabled) {
+                    console.log(`Session remains disabled for ${sessionLabel(identity)}.`);
                 } else {
-                    console.log(`Retaining credentials directory for project ${projectId} to allow reconnection later.`);
+                    console.log(`Retaining credentials directory for ${sessionLabel(identity)} to allow reconnection later.`);
                 }
             }
         } else if (connection === 'open') {
-            console.log(`Connection opened successfully for project ${projectId}`);
-            statuses.set(projectId, 'Connected');
-            qrCodes.delete(projectId);
-            sessionErrors.delete(projectId);
-            reconnectAttempts.set(projectId, 0);
+            console.log(`Connection opened successfully for ${sessionLabel(identity)}`);
+            const previousStatus = statuses.get(key);
+            statuses.set(key, 'Connected');
+            if (previousStatus !== 'Connected' || !connectionOpenedAt.has(key)) {
+                connectionOpenedAt.set(key, new Date().toISOString());
+            }
+            qrCodes.delete(key);
+            sessionErrors.delete(key);
+            reconnectAttempts.set(key, 0);
         }
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', async () => {
+        if (sessions.get(key) !== sock) {
+            console.log(`[baileys-manager] Ignoring creds.update from a stale session for ${sessionLabel(identity)}.`);
+            return;
+        }
+        await saveCreds();
+    });
 
     sock.ev.on('messages.upsert', async (m) => {
+        if (sessions.get(key) !== sock) {
+            console.log(`[baileys-manager] Ignoring messages.upsert from a stale session for ${sessionLabel(identity)}.`);
+            return;
+        }
+        const socketConnectionOpenedAt = connectionOpenedAt.get(key) || null;
+
         if (m.type === 'notify') {
             for (const msg of m.messages) {
                 if (!msg.key.fromMe && msg.message) {
@@ -324,67 +455,114 @@ export async function startSession(projectId) {
                         content = mInfo.conversation || '';
                     }
 
-                    let assetId = null;
-                    if (messageType === 'Image') {
-                        assetId = await downloadAndUploadMedia(projectId, msg.key, mInfo, 'image');
-                    } else if (messageType === 'Voice') {
-                        assetId = await downloadAndUploadMedia(projectId, msg.key, mInfo, 'audio');
-                    }
-
                     const timestamp = msg.messageTimestamp;
+                    const advertisingContext = extractAdvertisingReferral(msg.message);
+                    const inboundMessage = {
+                        projectId: identity.projectId,
+                        whatsappAccountId: identity.whatsappAccountId,
+                        messageId: msg.key.id,
+                        sender,
+                        senderJid,
+                        senderLid,
+                        name: msg.pushName || '',
+                        content,
+                        messageType,
+                        timestamp,
+                        connectionOpenedAt: socketConnectionOpenedAt,
+                        assetId: null,
+                        advertisingContext
+                    };
+                    await inboundMessageOutbox.captureAndForward(inboundMessage, async () => {
+                        let assetId = null;
+                        if (messageType === 'Image') {
+                            assetId = await downloadAndUploadMedia(identity.projectId, msg.key, mInfo, 'image');
+                        } else if (messageType === 'Voice') {
+                            assetId = await downloadAndUploadMedia(identity.projectId, msg.key, mInfo, 'audio');
+                        }
 
-                    console.log(`Forwarding message from ${sender} (type=${messageType}) to backend webhook: "${content.substring(0, 50)}..."`);
-                    try {
-                        await axios.post(`${BACKEND_URL}/api/webhooks/whatsapp/message`, {
-                            projectId,
-                            messageId: msg.key.id,
-                            sender,
-                            senderJid,
-                            senderLid,
-                            name: msg.pushName || '',
-                            content,
-                            messageType,
-                            timestamp,
-                            assetId
-                        });
-                    } catch (err) {
-                        console.error(`Failed to forward message from ${sender}: ${err.message}`);
-                    }
+                        console.log(`Forwarding durable message from ${sender} (type=${messageType}) to backend webhook: "${content.substring(0, 50)}..."`);
+                        return { ...inboundMessage, assetId };
+                    });
                 }
             }
         }
     });
 
-    return { status: 'Initializing', message: 'Session started. Waiting for a scannable QR code.' };
+    return {
+        projectId: identity.projectId,
+        whatsappAccountId: identity.whatsappAccountId,
+        status: 'Initializing',
+        message: 'Session started. Waiting for a scannable QR code.'
+    };
 }
 
-export function getQR(projectId) {
-    return qrCodes.get(projectId) || null;
+export async function restorePendingInboundMessages() {
+    return inboundMessageOutbox.restore();
 }
 
-export function getStatus(projectId) {
-    const status = statuses.get(projectId) || 'Disconnected';
-    const sock = sessions.get(projectId);
+export async function getJournaledGroupResult(projectId, whatsappAccountId, idempotencyKey) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    return groupResultJournal.get(identity, idempotencyKey);
+}
+
+export function getQR(projectId, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    return qrCodes.get(sessionMapKey(identity)) || null;
+}
+
+export function getStatus(projectId, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    const key = sessionMapKey(identity);
+    const status = statuses.get(key) || 'Disconnected';
+    const sock = sessions.get(key);
     const phoneNumber = sock?.user?.id?.split(':')[0] || null;
-    const error = sessionErrors.get(projectId) || null;
-    return { status, phoneNumber, error };
+    const error = sessionErrors.get(key) || null;
+    return {
+        projectId: identity.projectId,
+        whatsappAccountId: identity.whatsappAccountId,
+        status,
+        phoneNumber,
+        error,
+        connectedAt: connectionOpenedAt.get(key) || null
+    };
 }
 
-export async function sendMessage(projectId, to, text, buttons) {
-    const sock = sessions.get(projectId);
-    console.log(`[baileys-manager] sendMessage request: projectId=${projectId}, to=${to}, text="${text}", buttons=${JSON.stringify(buttons || [])}, isMock=${sock ? !!sock.isMock : 'no sock'}`);
+function messageText(text) {
+    if (typeof text !== 'string' || !text.trimStart().startsWith('{')) return text;
+
+    try {
+        const payload = JSON.parse(text);
+        for (const field of ['whatsapp_message', 'message', 'text']) {
+            if (typeof payload[field] === 'string' && payload[field].trim()) return payload[field];
+        }
+    } catch {
+    }
+
+    return text;
+}
+
+export async function sendMessage(projectId, to, text, buttons, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    const key = sessionMapKey(identity);
+    text = messageText(text);
+    const sock = sessions.get(key);
+    console.log(`[baileys-manager] sendMessage request: ${sessionLabel(identity)}, to=${to}, text="${text}", buttons=${JSON.stringify(buttons || [])}, isMock=${sock ? !!sock.isMock : 'no sock'}`);
     
-    if (!sock || statuses.get(projectId) !== 'Connected') {
-        const currentStatus = statuses.get(projectId) || 'Disconnected';
+    if (!sock || statuses.get(key) !== 'Connected') {
+        const currentStatus = statuses.get(key) || 'Disconnected';
         console.warn(`[baileys-manager] Session not connected (status: ${currentStatus}).`);
         
         if (sock && sock.isMock) {
-            let messageContent = { text };
-            return await sock.sendMessage(to + '@s.whatsapp.net', messageContent);
+            const sent = await sock.sendMessage(to + '@s.whatsapp.net', { text });
+            return {
+                messageId: providerMessageId(sent, sock, 'send'),
+                status: 'Sent'
+            };
         }
 
         if (!ALLOW_MOCK_FALLBACK) {
-            throw new Error(`WhatsApp session ${projectId} is not connected. Current status: ${currentStatus}. Reconnect by scanning the QR code.`);
+            throw new WhatsAppSessionUnavailableError(
+                `WhatsApp session for ${sessionLabel(identity)} is not connected. Current status: ${currentStatus}. Reconnect by scanning the QR code.`);
         }
         
         const messageId = `msg_mock_${Math.random().toString(36).substring(7)}`;
@@ -407,27 +585,29 @@ export async function sendMessage(projectId, to, text, buttons) {
     }
     console.log(`[baileys-manager] Sanitized JID for sending: raw="${to}", sanitized="${jid}"`);
 
+    console.log(`[baileys-manager] Attempting sock.sendMessage to ${jid}...`);
+    let sent;
     try {
-        console.log(`[baileys-manager] Attempting sock.sendMessage to ${jid}...`);
-        
-        let messagePayload = { text };
-
-        const sent = await sock.sendMessage(jid, messagePayload);
-        const messageId = sent?.key?.id || `msg_${Math.random().toString(36).substring(7)}`;
-        console.log(`[baileys-manager] sock.sendMessage success. returned messageId=${messageId}`);
-        return { messageId, status: 'Sent' };
-    } catch (err) {
-        console.error(`[baileys-manager] sock.sendMessage failed to ${jid}. error=${err.message}`, err);
-        throw new Error(`Failed to send WhatsApp message to ${jid}: ${err.message}`);
+        sent = await sock.sendMessage(jid, { text });
+    } catch (error) {
+        console.error(`[baileys-manager] sock.sendMessage failed to ${jid}. error=${error.message}`, error);
+        throw new WhatsAppDeliveryAmbiguousError(
+            `WhatsApp message delivery to ${jid} could not be confirmed`,
+            error);
     }
+    const messageId = providerMessageId(sent, sock, 'send');
+    console.log(`[baileys-manager] sock.sendMessage success. returned messageId=${messageId}`);
+    return { messageId, status: 'Sent' };
 }
 
-export async function sendReaction(projectId, to, reactionText, targetMessageId, targetFromMe) {
-    const sock = sessions.get(projectId);
-    console.log(`[baileys-manager] sendReaction request: projectId=${projectId}, to=${to}, reactionText="${reactionText}", targetMessageId=${targetMessageId}, targetFromMe=${targetFromMe}, isMock=${sock ? !!sock.isMock : 'no sock'}`);
+export async function sendReaction(projectId, to, reactionText, targetMessageId, targetFromMe, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    const key = sessionMapKey(identity);
+    const sock = sessions.get(key);
+    console.log(`[baileys-manager] sendReaction request: ${sessionLabel(identity)}, to=${to}, reactionText="${reactionText}", targetMessageId=${targetMessageId}, targetFromMe=${targetFromMe}, isMock=${sock ? !!sock.isMock : 'no sock'}`);
     
-    if (!sock || statuses.get(projectId) !== 'Connected') {
-        const currentStatus = statuses.get(projectId) || 'Disconnected';
+    if (!sock || statuses.get(key) !== 'Connected') {
+        const currentStatus = statuses.get(key) || 'Disconnected';
         console.warn(`[baileys-manager] Session not connected (status: ${currentStatus}).`);
         
         if (sock && sock.isMock) {
@@ -442,11 +622,12 @@ export async function sendReaction(projectId, to, reactionText, targetMessageId,
                 }
             };
             const sent = await sock.sendMessage(to + '@s.whatsapp.net', reactionPayload);
-            return sent?.key?.id || null;
+            return providerMessageId(sent, sock, 'reaction');
         }
 
         if (!ALLOW_MOCK_FALLBACK) {
-            throw new Error(`WhatsApp session ${projectId} is not connected. Current status: ${currentStatus}. Reconnect by scanning the QR code.`);
+            throw new WhatsAppSessionUnavailableError(
+                `WhatsApp session for ${sessionLabel(identity)} is not connected. Current status: ${currentStatus}. Reconnect by scanning the QR code.`);
         }
         
         const messageId = `msg_react_mock_${Math.random().toString(36).substring(7)}`;
@@ -467,81 +648,99 @@ export async function sendReaction(projectId, to, reactionText, targetMessageId,
     }
     console.log(`[baileys-manager] Sanitized JID for reaction: raw="${to}", sanitized="${jid}"`);
 
-    try {
-        console.log(`[baileys-manager] Attempting sock.sendMessage (reaction) to ${jid}...`);
-        
-        const reactionPayload = {
-            react: {
-                text: reactionText,
-                key: {
-                    remoteJid: jid,
-                    fromMe: targetFromMe,
-                    id: targetMessageId
-                }
+    console.log(`[baileys-manager] Attempting sock.sendMessage (reaction) to ${jid}...`);
+    const reactionPayload = {
+        react: {
+            text: reactionText,
+            key: {
+                remoteJid: jid,
+                fromMe: targetFromMe,
+                id: targetMessageId
             }
-        };
-
-        const sent = await sock.sendMessage(jid, reactionPayload);
-        const messageId = sent?.key?.id || `msg_${Math.random().toString(36).substring(7)}`;
-        console.log(`[baileys-manager] sock.sendMessage (reaction) success. returned messageId=${messageId}`);
-        return messageId;
-    } catch (err) {
-        console.error(`[baileys-manager] sock.sendMessage (reaction) failed to ${jid}. error=${err.message}`, err);
-        throw new Error(`Failed to send WhatsApp reaction to ${jid}: ${err.message}`);
+        }
+    };
+    let sent;
+    try {
+        sent = await sock.sendMessage(jid, reactionPayload);
+    } catch (error) {
+        console.error(`[baileys-manager] sock.sendMessage (reaction) failed to ${jid}. error=${error.message}`, error);
+        throw new WhatsAppDeliveryAmbiguousError(
+            `WhatsApp reaction delivery to ${jid} could not be confirmed`,
+            error);
     }
+    const messageId = providerMessageId(sent, sock, 'reaction');
+    console.log(`[baileys-manager] sock.sendMessage (reaction) success. returned messageId=${messageId}`);
+    return messageId;
 }
 
-export async function disconnectSession(projectId) {
-    const sock = sessions.get(projectId);
-    const reconnectTimer = reconnectTimers.get(projectId);
+export async function disconnectSession(projectId, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    const key = sessionMapKey(identity);
+    const sessionsDirectory = getSessionsDir();
+    await markSessionDisabled(sessionsDirectory, identity);
+    const reconnectTimer = reconnectTimers.get(key);
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
-        reconnectTimers.delete(projectId);
+        reconnectTimers.delete(key);
     }
-    sessions.delete(projectId);
-    qrCodes.delete(projectId);
-    sessionErrors.delete(projectId);
-    reconnectAttempts.delete(projectId);
-    statuses.set(projectId, 'Disconnected');
-
-    if (sock) {
+    const initialization = sessionInitializations.get(key);
+    if (initialization) {
         try {
-            sock.end();
-        } catch (err) {
-            console.error(`Error ending socket for project ${projectId}:`, err.message);
+            await initialization;
+        } catch {
+            // A failed initialization has no live socket to close.
         }
     }
+    const sock = sessions.get(key);
+    sessions.delete(key);
+    qrCodes.delete(key);
+    sessionErrors.delete(key);
+    reconnectAttempts.delete(key);
+    connectionOpenedAt.delete(key);
+    statuses.set(key, 'Disconnected');
 
-    let sessionsDir = '/app/sessions';
     try {
-        if (!fs.existsSync(sessionsDir)) {
-            sessionsDir = path.resolve('./sessions');
+        if (typeof sock?.end === 'function') {
+            await sock.end(undefined);
         }
-    } catch (e) {
-        sessionsDir = path.resolve('./sessions');
+    } finally {
+        await removeSessionCredentials(sessionsDirectory, identity);
+        await markSessionDisabled(sessionsDirectory, identity);
     }
-    const authDir = path.join(sessionsDir, projectId);
-    if (fs.existsSync(authDir)) {
-        try {
-            fs.rmSync(authDir, { recursive: true, force: true });
-            console.log(`Cleaned up credentials directory for project ${projectId}`);
-        } catch (e) {
-            console.error(`Failed to clean auth files for project ${projectId}:`, e.message);
-        }
-    }
-    return { status: 'Disconnected', message: 'Session disconnected and cleaned up.' };
+    console.log(`Cleaned up credentials directory for ${sessionLabel(identity)}`);
+    return {
+        projectId: identity.projectId,
+        whatsappAccountId: identity.whatsappAccountId,
+        status: 'Disconnected',
+        message: 'Session disconnected and cleaned up.'
+    };
 }
 
-export async function createGroup(projectId, subject, participants) {
-    const sock = sessions.get(projectId);
-    if (!sock) {
-        throw new Error(`Active session not found for project ${projectId}`);
+export async function createGroup({
+    projectId,
+    subject,
+    participants,
+    whatsappAccountId,
+    idempotencyKey
+}) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    if (typeof idempotencyKey !== 'string' || !idempotencyKey) {
+        throw new TypeError('idempotencyKey is required for durable group creation');
+    }
+    const key = sessionMapKey(identity);
+    const sock = sessions.get(key);
+    if (!sock || statuses.get(key) !== 'Connected') {
+        throw new WhatsAppSessionUnavailableError(
+            `WhatsApp session for ${sessionLabel(identity)} is not connected.`);
     }
     if (sock.isMock) {
         console.log(`[MOCK GROUP] Creating mock group "${subject}" with participants: ${participants.join(', ')}`);
-        const groupJid = `mock_group_${Math.random().toString(36).substring(7)}@g.us`;
-        const inviteLink = `https://chat.whatsapp.com/mock_${Math.random().toString(36).substring(7)}`;
-        return { jid: groupJid, inviteLink };
+        const groupResult = {
+            jid: `mock_group_${randomUUID()}@g.us`,
+            inviteLink: `https://chat.whatsapp.com/mock_${randomUUID()}`
+        };
+        await recordCreatedGroup(identity, idempotencyKey, groupResult);
+        return groupResult;
     }
 
     try {
@@ -557,19 +756,33 @@ export async function createGroup(projectId, subject, participants) {
 
         console.log(`[baileys-manager] Creating group: ${subject} with participants: ${formattedParticipants.join(', ')}`);
         const group = await sock.groupCreate(subject, formattedParticipants);
-        const groupJid = group.id;
+        const groupJid = group?.id;
+        if (typeof groupJid !== 'string' || !groupJid.trim()) {
+            throw new WhatsAppDeliveryAmbiguousError(
+                'WhatsApp accepted the group creation request without returning a group ID');
+        }
+        await recordCreatedGroup(identity, idempotencyKey, {
+            jid: groupJid,
+            inviteLink: null,
+            enrichmentError: 'Invite link is pending and can be loaded separately.'
+        });
 
         // Try to get invite code/link
-        let inviteCode;
+        let inviteCode = null;
+        let enrichmentError = null;
         try {
             inviteCode = await sock.groupInviteCode(groupJid);
         } catch (e) {
             console.error(`[baileys-manager] Failed to get invite code: ${e.message}. Retrying...`);
-            // Wait 1 second and retry
-            await new Promise(r => setTimeout(r, 1000));
-            inviteCode = await sock.groupInviteCode(groupJid);
+            try {
+                await new Promise(r => setTimeout(r, 1000));
+                inviteCode = await sock.groupInviteCode(groupJid);
+            } catch (retryError) {
+                enrichmentError = `Invite link is pending: ${retryError.message}`;
+                console.error(`[baileys-manager] ${enrichmentError}`);
+            }
         }
-        const inviteLink = `https://chat.whatsapp.com/${inviteCode}`;
+        const inviteLink = inviteCode ? `https://chat.whatsapp.com/${inviteCode}` : null;
 
         // Lock group settings to admin only (announcement and locked)
         try {
@@ -581,9 +794,29 @@ export async function createGroup(projectId, subject, participants) {
             console.error(`[baileys-manager] Warning: failed to lock group settings: ${e.message}`);
         }
 
-        return { jid: groupJid, inviteLink };
+        const groupResult = { jid: groupJid, inviteLink, enrichmentError };
+        await recordCreatedGroup(identity, idempotencyKey, groupResult);
+        return groupResult;
     } catch (err) {
         console.error(`[baileys-manager] Failed to create group: ${err.message}`, err);
+        if (err instanceof WhatsAppDeliveryAmbiguousError) throw err;
         throw new Error(`Failed to create WhatsApp group: ${err.message}`);
     }
+}
+
+export async function getGroupInviteLink(projectId, groupJid, whatsappAccountId) {
+    const identity = resolveSessionIdentity(projectId, whatsappAccountId);
+    const key = sessionMapKey(identity);
+    const sock = sessions.get(key);
+    if (!sock || statuses.get(key) !== 'Connected') {
+        throw new WhatsAppSessionUnavailableError(
+            `WhatsApp session for ${sessionLabel(identity)} is not connected.`);
+    }
+    if (sock.isMock) return { jid: groupJid, inviteLink: `https://chat.whatsapp.com/mock_${groupJid.replace(/\W/g, '')}` };
+    const inviteCode = await sock.groupInviteCode(groupJid);
+    if (typeof inviteCode !== 'string' || !inviteCode.trim()) {
+        throw new WhatsAppSessionUnavailableError(
+            `WhatsApp did not return an invite code for group ${groupJid}. Retry after the session reconnects.`);
+    }
+    return { jid: groupJid, inviteLink: `https://chat.whatsapp.com/${inviteCode}` };
 }

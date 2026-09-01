@@ -6,6 +6,8 @@ namespace Shared.Events
     public class AIReplyGeneratedEvent : IntegrationEvent
     {
         public Guid ProjectId { get; set; }
+        public Guid? ConversationId { get; set; }
+        public Guid? WhatsAppAccountId { get; set; }
         public string Sender { get; set; }
         public string Content { get; set; }
         public string[] Buttons { get; set; } = Array.Empty<string>();
@@ -13,5 +15,7 @@ namespace Shared.Events
         public string? ChannelMetadata { get; set; } // JSON with channel-specific data
         public string? Reaction { get; set; }
         public string? PublicCommentReply { get; set; }
+        public DateTimeOffset? RequiredWhatsAppConnectedAt { get; set; }
+        public string? WhatsAppDeliveryIdempotencyKey { get; set; }
     }
 }

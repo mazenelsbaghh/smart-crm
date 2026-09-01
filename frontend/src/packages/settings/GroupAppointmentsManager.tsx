@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/auth-context';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
-import * as XLSX from 'xlsx';
 import { 
   Calendar, 
   Plus, 
@@ -31,6 +30,110 @@ interface Booking {
   isAttended: boolean;
   isPaid: boolean;
 }
+
+interface ManualBookingResponse {
+  message: string;
+  booking: Booking;
+  group: {
+    id: string;
+    name: string;
+    capacity: number;
+    bookedCount: number;
+    slotsLeft: number;
+    isFull: boolean;
+  };
+}
+
+interface ManualBookingForm {
+  customerName: string;
+  customerPhone: string;
+  notes: string;
+  isPaid: boolean;
+  isAttended: boolean;
+}
+
+type ManualBookingFieldErrors = Partial<Record<'customerName' | 'customerPhone', string>>;
+
+interface ManualBookingPayload {
+  customerName: string;
+  customerPhone: string;
+  notes?: string;
+  isPaid: boolean;
+  isAttended: boolean;
+}
+
+const EMPTY_MANUAL_BOOKING: ManualBookingForm = {
+  customerName: '',
+  customerPhone: '',
+  notes: '',
+  isPaid: false,
+  isAttended: false,
+};
+
+const normalizeManualBookingPhone = (rawPhone: string) => {
+  const latinDigits = rawPhone
+    .replace(/[٠-٩]/g, digit => String(digit.charCodeAt(0) - 1632))
+    .replace(/[۰-۹]/g, digit => String(digit.charCodeAt(0) - 1776));
+
+  if (/[^\d\s()+-]/.test(latinDigits)) return null;
+
+  let digits = latinDigits.replace(/[\s()-]/g, '');
+  if (digits.startsWith('+')) digits = digits.slice(1);
+  else if (digits.startsWith('00')) digits = digits.slice(2);
+  if (/^01\d{9}$/.test(digits)) digits = `2${digits}`;
+  else if (/^1\d{9}$/.test(digits)) digits = `20${digits}`;
+
+  return /^[1-9]\d{6,14}$/.test(digits) ? digits : null;
+};
+
+const validateManualBooking = (booking: ManualBookingForm) => {
+  const customerName = booking.customerName.trim();
+  const customerPhone = normalizeManualBookingPhone(booking.customerPhone);
+  const fieldErrors: ManualBookingFieldErrors = {};
+
+  if (!customerName) fieldErrors.customerName = 'اكتب اسم المشترك.';
+  else if (customerName.length > 120) fieldErrors.customerName = 'الاسم يجب ألا يزيد عن 120 حرفًا.';
+  if (!booking.customerPhone.trim()) fieldErrors.customerPhone = 'اكتب رقم الهاتف.';
+  else if (booking.customerPhone.length > 64 || !customerPhone) {
+    fieldErrors.customerPhone = 'اكتب رقمًا صحيحًا من 7 إلى 15 رقمًا، محليًا أو دوليًا.';
+  }
+
+  const payload: ManualBookingPayload | null = Object.keys(fieldErrors).length > 0 || !customerPhone
+    ? null
+    : { customerName, customerPhone, notes: booking.notes.trim() || undefined, isPaid: booking.isPaid, isAttended: booking.isAttended };
+  return { fieldErrors, payload };
+};
+
+const mergeManualBookingIntoGroup = (group: GroupAppointment, response: ManualBookingResponse): GroupAppointment => ({
+  ...group,
+  name: response.group.name || group.name,
+  capacity: response.group.capacity,
+  bookedCount: response.group.bookedCount,
+  bookings: [response.booking, ...group.bookings.filter(booking => booking.id !== response.booking.id)],
+});
+
+const manualBookingErrorMessage = (error: unknown) => {
+  const response = (error as { response?: { status?: number; data?: { error?: unknown; message?: unknown; code?: unknown } } })?.response;
+  const isExpectedClientError = response?.status !== undefined && response.status >= 400 && response.status < 500;
+  const errorMessage = typeof response?.data?.error === 'string' ? response.data.error.trim() : '';
+  const responseMessage = typeof response?.data?.message === 'string' ? response.data.message.trim() : '';
+  const serverMessage = errorMessage || responseMessage;
+  if (isExpectedClientError && serverMessage) return serverMessage;
+
+  const code = typeof response?.data?.code === 'string' ? response.data.code : '';
+  const codeMessages: Record<string, string> = {
+    PHONE_INVALID: 'رقم الهاتف غير صالح. اكتب رقمًا دوليًا من 7 إلى 15 رقمًا.',
+    MANUAL_BOOKING_INVALID: 'راجع الاسم ورقم الهاتف وحدود الملاحظة ثم حاول مرة أخرى.',
+    GROUP_NOT_FOUND: 'المجموعة لم تعد موجودة. حدّث الصفحة واختر مجموعة أخرى.',
+    GROUP_INACTIVE: 'لا يمكن إضافة مشترك إلى مجموعة غير نشطة.',
+    GROUP_FULL: 'المجموعة ممتلئة. زوّد السعة أو اختر مجموعة أخرى.',
+    BOOKING_ALREADY_EXISTS: 'رقم الهاتف مسجل بالفعل في إحدى المجموعات.',
+  };
+  if (isExpectedClientError && codeMessages[code]) return codeMessages[code];
+  if (response?.status === 403) return 'ليس لديك صلاحية لإضافة مشترك يدويًا.';
+
+  return 'تعذر إضافة المشترك الآن. احتفظنا بالبيانات لتجربة الحفظ مرة أخرى.';
+};
 
 interface InstructorsResponse {
   instructors: string[];
@@ -63,10 +166,56 @@ interface GroupAppointment {
 
 interface GroupAppointmentsManagerProps {
   onBack: () => void;
+  timezone: string;
 }
 
-export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsManagerProps) {
+const zonedParts = (date: Date, timezone: string) => Object.fromEntries(
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]),
+);
+
+const timezoneOffsetAt = (timestamp: number, timezone: string) => {
+  const parts = zonedParts(new Date(timestamp), timezone);
+  const representedAsUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+  return representedAsUtc - Math.floor(timestamp / 1000) * 1000;
+};
+
+const projectLocalToUtc = (value: string, timezone: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) throw new Error('INVALID_LOCAL_DATE');
+  const [, year, month, day, hour, minute] = match;
+  const wallClockUtc = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+  const offsetSamples = new Set([
+    timezoneOffsetAt(wallClockUtc - 12 * 60 * 60 * 1000, timezone),
+    timezoneOffsetAt(wallClockUtc, timezone),
+    timezoneOffsetAt(wallClockUtc + 12 * 60 * 60 * 1000, timezone),
+  ]);
+  const matchingInstants = [...offsetSamples]
+    .map((offset) => wallClockUtc - offset)
+    .filter((utc) => {
+      const resolved = zonedParts(new Date(utc), timezone);
+      return `${resolved.year}-${resolved.month}-${resolved.day}T${resolved.hour}:${resolved.minute}` === value;
+    });
+  if (matchingInstants.length === 0) throw new Error('INVALID_LOCAL_DATE');
+  if (new Set(matchingInstants).size > 1) throw new Error('AMBIGUOUS_LOCAL_DATE');
+  return new Date(matchingInstants[0]).toISOString();
+};
+
+const projectDateTimeInput = (isoString: string, timezone: string) => {
+  const parts = zonedParts(new Date(isoString), timezone);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+};
+
+const validTimezone = (timezone: string) => {
+  try { new Intl.DateTimeFormat('en', { timeZone: timezone }).format(); return timezone; }
+  catch { return 'Africa/Cairo'; }
+};
+
+export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppointmentsManagerProps) {
   const { activeProject } = useAuth();
+  const projectTimezone = validTimezone(timezone);
   const [groups, setGroups] = useState<GroupAppointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -98,12 +247,52 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   const [paidImportFileName, setPaidImportFileName] = useState('');
   const [paidImportPhones, setPaidImportPhones] = useState<string[]>([]);
   const [paidImporting, setPaidImporting] = useState(false);
+  const [paidImportConfirmOpen, setPaidImportConfirmOpen] = useState(false);
   const [paidImportResult, setPaidImportResult] = useState<PaidBlacklistImportResult | null>(null);
   
   const [searchQuery, setSearchQuery] = useState('');
+  const [manualBookingOpen, setManualBookingOpen] = useState(false);
+  const [manualBooking, setManualBooking] = useState<ManualBookingForm>(EMPTY_MANUAL_BOOKING);
+  const [manualBookingErrors, setManualBookingErrors] = useState<ManualBookingFieldErrors>({});
+  const [manualBookingSubmitError, setManualBookingSubmitError] = useState('');
+  const [manualBookingSubmitting, setManualBookingSubmitting] = useState(false);
+  const manualBookingToggleRef = useRef<HTMLButtonElement>(null);
+  const manualBookingNameRef = useRef<HTMLInputElement>(null);
+  const subscribersHeadingRef = useRef<HTMLHeadingElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const editorCloseRef = useRef<HTMLButtonElement>(null);
 
   const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
   const DAY_NAMES_SHORT = ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
+
+  const closeEditor = useCallback(() => setIsModalOpen(false), []);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusTimer = window.setTimeout(() => editorCloseRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeEditor(); return; }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(editorRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+      ) ?? []);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus();
+    };
+  }, [closeEditor, isModalOpen]);
 
   const fetchGroups = useCallback(async () => {
     if (!activeProject) return;
@@ -111,6 +300,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       setLoading(true);
       const response = await api.get<GroupAppointment[]>('/api/group-appointments');
       setGroups(response.data);
+      setSelectedGroup(current => current
+        ? response.data.find(group => group.id === current.id) ?? null
+        : null);
     } catch (e) {
       console.error(e);
       setMessage({ type: 'error', text: 'فشل تحميل مجموعات المواعيد.' });
@@ -138,11 +330,6 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     void fetchInstructors();
   }, [fetchGroups, fetchInstructors]);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSearchQuery('');
-  }, [selectedGroup?.id]);
-
   const handleSaveGroup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dateTime || !freeSessionDateTime || !courseSecondDateTime || capacity <= 0) return;
@@ -159,11 +346,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       setActionLoading(true);
       setMessage(null);
 
-      // Parse full local date-time value
-      const dateObj = new Date(dateTime);
-      const utcDate = dateObj.toISOString();
-      const freeSessionUtcDate = new Date(freeSessionDateTime).toISOString();
-      const courseSecondUtcDate = new Date(courseSecondDateTime).toISOString();
+      const utcDate = projectLocalToUtc(dateTime, projectTimezone);
+      const freeSessionUtcDate = projectLocalToUtc(freeSessionDateTime, projectTimezone);
+      const courseSecondUtcDate = projectLocalToUtc(courseSecondDateTime, projectTimezone);
 
       const payload = {
         dateTime: utcDate,
@@ -197,23 +382,47 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       void fetchGroups();
     } catch (e) {
       console.error(e);
-      setMessage({ type: 'error', text: 'حدث خطأ أثناء حفظ المجموعة.' });
+      setMessage({ type: 'error', text: e instanceof Error && e.message === 'INVALID_LOCAL_DATE'
+        ? `هذا الوقت غير موجود في المنطقة الزمنية ${projectTimezone} بسبب تغيير التوقيت. اختر وقتًا آخر.`
+        : e instanceof Error && e.message === 'AMBIGUOUS_LOCAL_DATE'
+          ? `هذا الوقت يتكرر مرتين في المنطقة الزمنية ${projectTimezone} بسبب تغيير التوقيت. اختر وقتًا أوضح قبله أو بعده.`
+          : 'حدث خطأ أثناء حفظ المجموعة.' });
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleStartEdit = (group: GroupAppointment) => {
+    if (manualBookingSubmitting) return;
     setEditingGroupId(group.id);
     setMode(group.mode || 'offline');
-    setDateTime(formatDateTimeLocal(group.dateTime));
-    setFreeSessionDateTime(group.freeSessionDateTime ? formatDateTimeLocal(group.freeSessionDateTime) : '');
-    setCourseSecondDateTime(group.courseSecondDateTime ? formatDateTimeLocal(group.courseSecondDateTime) : '');
+    setDateTime(projectDateTimeInput(group.dateTime, projectTimezone));
+    setFreeSessionDateTime(group.freeSessionDateTime ? projectDateTimeInput(group.freeSessionDateTime, projectTimezone) : '');
+    setCourseSecondDateTime(group.courseSecondDateTime ? projectDateTimeInput(group.courseSecondDateTime, projectTimezone) : '');
     setCapacity(group.capacity);
     setIsActive(group.isActive);
     setSelectedDays(group.days ? group.days.split(',').filter(Boolean).map(Number) : []);
     setSelectedInstructor(group.instructorName || '');
     setIsModalOpen(true);
+  };
+
+  const handleBack = () => {
+    if (manualBookingSubmitting) return;
+    onBack();
+  };
+
+  const openNewGroupEditor = () => {
+    if (manualBookingSubmitting) return;
+    setEditingGroupId(null);
+    setMode('offline');
+    setDateTime('');
+    setFreeSessionDateTime('');
+    setCourseSecondDateTime('');
+    setCapacity(5);
+    setIsActive(true);
+    setIsModalOpen(true);
+    setSelectedDays([]);
+    setSelectedInstructor(instructors[0] || '');
   };
 
   const handleSaveInstructors = async () => {
@@ -242,11 +451,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     }
   };
 
-  const handleDownloadPaidTemplate = () => {
+  const handleDownloadPaidTemplate = async () => {
+    const XLSX = await import('xlsx');
     const worksheet = XLSX.utils.aoa_to_sheet([
-      ['رقم الهاتف'],
-      ['01068690092'],
-      ['20122334455']
+      ['رقم الهاتف']
     ]);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'أرقام الطلاب المدفوعة');
@@ -263,6 +471,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   };
 
   const handlePaidImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (manualBookingSubmitting) {
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -270,6 +482,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       setPaidImportResult(null);
       setPaidImportFileName(file.name);
       const binaryContent = await readFileAsBinaryString(file);
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(binaryContent, { type: 'binary' });
       const worksheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet);
@@ -298,10 +511,16 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     }
   };
 
+  const openPaidImportConfirmation = () => {
+    if (manualBookingSubmitting || paidImporting || paidImportPhones.length === 0) return;
+    setPaidImportConfirmOpen(true);
+  };
+
   const handleConfirmPaidImport = async () => {
-    if (!activeProject || paidImportPhones.length === 0) return;
+    if (manualBookingSubmitting || paidImporting || !activeProject || paidImportPhones.length === 0) return;
 
     try {
+      setPaidImportConfirmOpen(false);
       setPaidImporting(true);
       setMessage(null);
       const response = await api.post<PaidBlacklistImportResult>(
@@ -326,6 +545,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   };
 
   const triggerDeleteGroup = (id: string) => {
+    if (manualBookingSubmitting) return;
     setGroupToDelete(id);
     setConfirmDeleteOpen(true);
   };
@@ -352,7 +572,111 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     }
   };
 
+  const resetManualBookingEditor = () => {
+    setManualBooking(EMPTY_MANUAL_BOOKING);
+    setManualBookingErrors({});
+    setManualBookingSubmitError('');
+  };
+
+  const handleSelectGroup = (group: GroupAppointment) => {
+    if (manualBookingSubmitting) return;
+    setSelectedGroup(group);
+    setSearchQuery('');
+    setManualBookingOpen(false);
+    resetManualBookingEditor();
+  };
+
+  const closeSelectedGroup = () => {
+    setSelectedGroup(null);
+    setSearchQuery('');
+    setManualBookingOpen(false);
+    resetManualBookingEditor();
+  };
+
+  const openManualBookingEditor = () => {
+    if (!selectedGroup || !selectedGroup.isActive || selectedGroup.bookedCount >= selectedGroup.capacity) return;
+    setManualBookingOpen(true);
+    setManualBookingErrors({});
+    setManualBookingSubmitError('');
+    setMessage(null);
+    window.setTimeout(() => manualBookingNameRef.current?.focus(), 0);
+  };
+
+  const closeManualBookingEditor = () => {
+    if (manualBookingSubmitting) return;
+    setManualBookingOpen(false);
+    resetManualBookingEditor();
+    window.setTimeout(() => manualBookingToggleRef.current?.focus(), 0);
+  };
+
+  const applyManualBookingCreation = (groupId: string, groupName: string, response: ManualBookingResponse) => {
+    const mergeCreatedBookingIntoGroup = (group: GroupAppointment) => mergeManualBookingIntoGroup(group, response);
+    setGroups(previous => previous.map(group => group.id === groupId ? mergeCreatedBookingIntoGroup(group) : group));
+    setSelectedGroup(previous => previous?.id === groupId ? mergeCreatedBookingIntoGroup(previous) : previous);
+    setSearchQuery('');
+    setManualBookingOpen(false);
+    resetManualBookingEditor();
+    setMessage({ type: 'success', text: `تمت إضافة ${response.booking.customerName} إلى مجموعة ${groupName} بنجاح.` });
+    window.setTimeout(() => {
+      const focusTarget = response.group.isFull ? subscribersHeadingRef.current : manualBookingToggleRef.current;
+      focusTarget?.focus();
+    }, 0);
+  };
+
+  const handleManualBookingSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedGroup || manualBookingSubmitting) return;
+    if (!selectedGroup.isActive || selectedGroup.bookedCount >= selectedGroup.capacity) {
+      setManualBookingSubmitError(selectedGroup.isActive
+        ? 'المجموعة ممتلئة. زوّد السعة أو اختر مجموعة أخرى.'
+        : 'لا يمكن إضافة مشترك إلى مجموعة غير نشطة.');
+      return;
+    }
+
+    const validation = validateManualBooking(manualBooking);
+    if (!validation.payload) {
+      setManualBookingErrors(validation.fieldErrors);
+      setManualBookingSubmitError('');
+      const firstInvalidField = validation.fieldErrors.customerName ? manualBookingNameRef.current : document.getElementById('manual-booking-phone');
+      firstInvalidField?.focus();
+      return;
+    }
+
+    try {
+      setManualBookingSubmitting(true);
+      setManualBookingErrors({});
+      setManualBookingSubmitError('');
+      setMessage(null);
+
+      const groupId = selectedGroup.id;
+      const groupName = selectedGroup.name || (selectedGroup.mode === 'online' ? 'أونلاين' : 'في السنتر');
+      const response = await api.post<ManualBookingResponse>(
+        `/api/group-appointments/${groupId}/bookings/manual`,
+        validation.payload,
+      );
+      applyManualBookingCreation(groupId, groupName, response.data);
+    } catch (error) {
+      console.error(error);
+      setManualBookingSubmitError(manualBookingErrorMessage(error));
+    } finally {
+      setManualBookingSubmitting(false);
+    }
+  };
+
+  const handleManualBookingKeyDown = (event: React.KeyboardEvent<HTMLFormElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeManualBookingEditor();
+      return;
+    }
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      event.currentTarget.requestSubmit();
+    }
+  };
+
   const handleDeleteBooking = async (booking: Booking) => {
+    if (manualBookingSubmitting) return;
     if (pendingDeleteBookingId !== booking.id) {
       setPendingDeleteBookingId(booking.id);
       return;
@@ -392,6 +716,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   };
 
   const handleToggleBookingStatus = async (bookingId: string, updates: { isAttended?: boolean; isPaid?: boolean }) => {
+    if (manualBookingSubmitting) return;
     try {
       await api.patch(`/api/group-appointments/bookings/${bookingId}`, updates);
       
@@ -418,6 +743,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
   };
 
   const handleToggleGroup = async (group: GroupAppointment) => {
+    if (manualBookingSubmitting) return;
     try {
       setActionLoading(true);
       await api.patch(`/api/group-appointments/${group.id}/toggle`);
@@ -430,14 +756,15 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     }
   };
 
-  const handleExportExcel = (group: GroupAppointment) => {
+  const handleExportExcel = async (group: GroupAppointment) => {
     if (!group || group.bookings.length === 0) return;
+    const XLSX = await import('xlsx');
     
     const sortedBookings = [...group.bookings].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const data = sortedBookings.map(b => ({
       'اسم الطالب': b.customerName,
       'رقم الهاتف': `+${b.customerPhone}`,
-      'تاريخ الحجز': new Date(b.createdAt).toLocaleString('ar-EG'),
+      'تاريخ الحجز': new Date(b.createdAt).toLocaleString('ar-EG', { timeZone: projectTimezone }),
       'حالة الحضور': b.isAttended ? 'حضر' : 'لم يحضر',
       'حالة الدفع': b.isPaid ? 'دفع' : 'لم يدفع'
     }));
@@ -452,17 +779,18 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
     const link = document.createElement('a');
     link.setAttribute('href', url);
     
-    const formattedDate = new Date(group.dateTime);
-    const timeStr = `${formattedDate.getHours()}_${formattedDate.getMinutes()}`;
+    const timeStr = new Intl.DateTimeFormat('en-GB', { timeZone: projectTimezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+      .format(new Date(group.dateTime)).replace(':', '_');
     const fileName = `bookings_${group.mode}_${timeStr}.xlsx`;
     
     link.setAttribute('download', fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
-  const handleExportInactiveGroupsExcel = () => {
+  const handleExportInactiveGroupsExcel = async () => {
     const inactiveGroups = groups.filter(group => !group.isActive && group.bookings.length > 0);
     const data = inactiveGroups.flatMap(group => {
       const groupMode = group.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)';
@@ -472,11 +800,11 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
         'اسم المجموعة': group.name || groupMode,
         'نوع المجموعة': groupMode,
         'إنستراكتور الكورس': group.instructorName || '',
-        'ميعاد السيشن المجانية': group.freeSessionDateTime ? new Date(group.freeSessionDateTime).toLocaleString('ar-EG') : '',
-        'ميعاد السيشن الأولى للكورس': new Date(group.dateTime).toLocaleString('ar-EG'),
-        'ميعاد السيشن الثانية للكورس': group.courseSecondDateTime ? new Date(group.courseSecondDateTime).toLocaleString('ar-EG') : '',
+        'ميعاد السيشن المجانية': group.freeSessionDateTime ? new Date(group.freeSessionDateTime).toLocaleString('ar-EG', { timeZone: projectTimezone }) : '',
+        'ميعاد السيشن الأولى للكورس': new Date(group.dateTime).toLocaleString('ar-EG', { timeZone: projectTimezone }),
+        'ميعاد السيشن الثانية للكورس': group.courseSecondDateTime ? new Date(group.courseSecondDateTime).toLocaleString('ar-EG', { timeZone: projectTimezone }) : '',
         'أيام الكورس': formatDays(group.days),
-        'تاريخ الحجز': new Date(booking.createdAt).toLocaleString('ar-EG'),
+        'تاريخ الحجز': new Date(booking.createdAt).toLocaleString('ar-EG', { timeZone: projectTimezone }),
         'حالة الحضور': booking.isAttended ? 'حضر' : 'لم يحضر',
         'حالة الدفع': booking.isPaid ? 'دفع' : 'لم يدفع'
       }));
@@ -487,6 +815,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       return;
     }
 
+    const XLSX = await import('xlsx');
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'المجموعات غير النشطة');
@@ -516,8 +845,8 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
 
   const formatTime = (isoString: string) => {
     const dateObj = new Date(isoString);
-    const dateStr = dateObj.toLocaleDateString('ar-EG', { month: 'long', day: 'numeric' });
-    const timeStr = dateObj.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const dateStr = dateObj.toLocaleDateString('ar-EG', { month: 'long', day: 'numeric', timeZone: projectTimezone });
+    const timeStr = dateObj.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', timeZone: projectTimezone });
     return `${dateStr} الساعة ${timeStr}`;
   };
 
@@ -528,16 +857,6 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       reader.onerror = () => reject(reader.error);
       reader.readAsBinaryString(file);
     });
-  };
-
-  const formatDateTimeLocal = (isoString: string) => {
-    const localDate = new Date(isoString);
-    const year = localDate.getFullYear();
-    const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
-    const date = localDate.getDate().toString().padStart(2, '0');
-    const hours = localDate.getHours().toString().padStart(2, '0');
-    const mins = localDate.getMinutes().toString().padStart(2, '0');
-    return `${year}-${month}-${date}T${hours}:${mins}`;
   };
 
   const formatDays = (days: string) => {
@@ -577,7 +896,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       {/* Top Header Controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
         <button 
-          onClick={onBack}
+          type="button"
+          onClick={handleBack}
+          disabled={manualBookingSubmitting}
           className={`${styles.btn} ${styles.btnSecondary}`}
           style={{ padding: '6px 12px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '4px' }}
         >
@@ -597,18 +918,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
           </button>
 
           <button
-            onClick={() => {
-              setEditingGroupId(null);
-              setMode('offline');
-              setDateTime('');
-              setFreeSessionDateTime('');
-              setCourseSecondDateTime('');
-              setCapacity(5);
-              setIsActive(true);
-              setIsModalOpen(true);
-              setSelectedDays([]);
-              setSelectedInstructor(instructors[0] || '');
-            }}
+            type="button"
+            onClick={openNewGroupEditor}
+            disabled={manualBookingSubmitting}
             className={`${styles.btn} ${styles.btnPrimary}`}
             style={{ padding: '8px 16px', fontSize: '0.85rem' }}
           >
@@ -619,7 +931,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       </div>
 
       {message && (
-        <div className="glass-panel" style={{ 
+        <div role={message.type === 'error' ? 'alert' : 'status'} aria-live="polite" className="glass-panel" style={{
           padding: 'var(--space-md)', 
           border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
           backgroundColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.04)' : 'rgba(239, 68, 68, 0.04)',
@@ -649,7 +961,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
             {savingInstructors ? 'جاري الحفظ...' : 'حفظ الأسماء'}
           </button>
         </div>
+        <label className={styles.label} htmlFor="group-instructors">أسماء المدرّبين، اسم واحد في كل سطر</label>
         <textarea
+          id="group-instructors"
           value={instructorsText}
           onChange={(e) => setInstructorsText(e.target.value)}
           className={styles.input}
@@ -658,6 +972,8 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
           style={{ resize: 'vertical', minHeight: '86px', lineHeight: 1.7 }}
         />
       </div>
+
+      <p role="note" className={styles.inlineMessage}>كل المواعيد معروضة وتُحفظ حسب المنطقة الزمنية: <b dir="ltr">{projectTimezone}</b>.</p>
 
       <div className="glass-panel" style={{ padding: 'var(--space-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
@@ -684,7 +1000,12 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
           <label
             className={`${styles.btn} ${styles.btnSecondary}`}
-            style={{ padding: '8px 14px', fontSize: '0.82rem', cursor: paidImporting ? 'not-allowed' : 'pointer' }}
+            style={{
+              padding: '8px 14px',
+              fontSize: '0.82rem',
+              cursor: paidImporting || manualBookingSubmitting ? 'not-allowed' : 'pointer',
+              opacity: paidImporting || manualBookingSubmitting ? 0.55 : 1,
+            }}
           >
             <Upload size={14} />
             اختيار ملف Excel
@@ -692,18 +1013,18 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               type="file"
               accept=".xlsx,.xls"
               onChange={handlePaidImportFileChange}
-              disabled={paidImporting}
+              disabled={paidImporting || manualBookingSubmitting}
               style={{ display: 'none' }}
             />
           </label>
           <button
             type="button"
-            onClick={handleConfirmPaidImport}
+            onClick={openPaidImportConfirmation}
             className={`${styles.btn} ${styles.btnPrimary}`}
-            disabled={paidImporting || paidImportPhones.length === 0}
-            style={{ padding: '8px 16px', fontSize: '0.82rem', opacity: paidImportPhones.length === 0 ? 0.55 : 1 }}
+            disabled={paidImporting || manualBookingSubmitting || paidImportPhones.length === 0}
+            style={{ padding: '8px 16px', fontSize: '0.82rem', opacity: paidImporting || manualBookingSubmitting || paidImportPhones.length === 0 ? 0.55 : 1 }}
           >
-            {paidImporting ? 'جاري التنفيذ...' : 'تأكيد الحظر'}
+            {paidImporting ? 'جاري التنفيذ...' : 'مراجعة وتنفيذ الحظر'}
           </button>
           <span style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))' }}>
             {paidImportFileName ? `${paidImportFileName} - ${paidImportPhones.length} رقم جاهز` : 'لم يتم اختيار ملف بعد'}
@@ -753,25 +1074,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
             display: 'flex', 
             alignItems: 'center', 
             gap: 'var(--space-md)',
-            background: 'linear-gradient(135deg, var(--accent-soft) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            background: 'var(--surface-muted)',
             border: '1px solid var(--accent-soft-strong)',
-            borderRadius: 'var(--radius-lg)',
-            boxShadow: 'var(--shadow-neon)',
-            position: 'relative',
-            overflow: 'hidden'
+            borderRadius: 'var(--radius-lg)'
           }}>
-            <div style={{
-              position: 'absolute',
-              top: '-20px',
-              right: '-20px',
-              width: '60px',
-              height: '60px',
-              background: 'hsl(var(--accent-primary))',
-              filter: 'blur(30px)',
-              opacity: 0.15,
-              pointerEvents: 'none'
-            }}></div>
-            
             <div style={{ 
               display: 'flex', 
               alignItems: 'center', 
@@ -782,7 +1088,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               background: 'hsla(var(--accent-primary-hsl), 0.15)',
               color: 'hsl(var(--accent-primary))'
             }}>
-              <Users size={24} />
+              <Users size={24} aria-hidden="true" />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>إجمالي الطلاب المحجوزين</span>
@@ -798,25 +1104,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
             display: 'flex', 
             alignItems: 'center', 
             gap: 'var(--space-md)',
-            background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            background: 'var(--surface-muted)',
             border: '1px solid rgba(34, 197, 94, 0.15)',
-            borderRadius: 'var(--radius-lg)',
-            boxShadow: '0 8px 32px 0 rgba(34, 197, 94, 0.03)',
-            position: 'relative',
-            overflow: 'hidden'
+            borderRadius: 'var(--radius-lg)'
           }}>
-            <div style={{
-              position: 'absolute',
-              top: '-20px',
-              right: '-20px',
-              width: '60px',
-              height: '60px',
-              background: 'rgb(34, 197, 94)',
-              filter: 'blur(30px)',
-              opacity: 0.12,
-              pointerEvents: 'none'
-            }}></div>
-
             <div style={{ 
               display: 'flex', 
               alignItems: 'center', 
@@ -827,7 +1118,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               background: 'rgba(34, 197, 94, 0.12)',
               color: 'rgb(34, 197, 94)'
             }}>
-              <Calendar size={24} />
+              <Calendar size={24} aria-hidden="true" />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>المجموعات النشطة</span>
@@ -843,25 +1134,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
             display: 'flex', 
             alignItems: 'center', 
             gap: 'var(--space-md)',
-            background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.08) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            background: 'var(--surface-muted)',
             border: '1px solid rgba(249, 115, 22, 0.15)',
-            borderRadius: 'var(--radius-lg)',
-            boxShadow: '0 8px 32px 0 rgba(249, 115, 22, 0.03)',
-            position: 'relative',
-            overflow: 'hidden'
+            borderRadius: 'var(--radius-lg)'
           }}>
-            <div style={{
-              position: 'absolute',
-              top: '-20px',
-              right: '-20px',
-              width: '60px',
-              height: '60px',
-              background: 'rgb(249, 115, 22)',
-              filter: 'blur(30px)',
-              opacity: 0.12,
-              pointerEvents: 'none'
-            }}></div>
-
             <div style={{ 
               display: 'flex', 
               alignItems: 'center', 
@@ -872,7 +1148,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               background: 'rgba(249, 115, 22, 0.12)',
               color: 'rgb(249, 115, 22)'
             }}>
-              <UserCheck size={24} />
+              <UserCheck size={24} aria-hidden="true" />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>الطلاب النشطة في المجموعات النشطة</span>
@@ -888,25 +1164,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
             display: 'flex', 
             alignItems: 'center', 
             gap: 'var(--space-md)',
-            background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(5, 7, 12, 0.4) 100%)',
+            background: 'var(--surface-muted)',
             border: '1px solid rgba(168, 85, 247, 0.15)',
-            borderRadius: 'var(--radius-lg)',
-            boxShadow: '0 8px 32px 0 rgba(168, 85, 247, 0.03)',
-            position: 'relative',
-            overflow: 'hidden'
+            borderRadius: 'var(--radius-lg)'
           }}>
-            <div style={{
-              position: 'absolute',
-              top: '-20px',
-              right: '-20px',
-              width: '60px',
-              height: '60px',
-              background: 'rgb(168, 85, 247)',
-              filter: 'blur(30px)',
-              opacity: 0.12,
-              pointerEvents: 'none'
-            }}></div>
-
             <div style={{ 
               display: 'flex', 
               alignItems: 'center', 
@@ -917,7 +1178,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               background: 'rgba(168, 85, 247, 0.12)',
               color: 'rgb(168, 85, 247)'
             }}>
-              <Clock size={24} />
+              <Clock size={24} aria-hidden="true" />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>نسبة إشغال المجموعات</span>
@@ -934,8 +1195,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
       )}
 
       {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem 0' }}>
-          <div className={styles.spinner}></div>
+        <div role="status" aria-live="polite" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 'var(--space-sm)', padding: '4rem 0' }}>
+          <div className={styles.spinner} aria-hidden="true"></div>
+          <span>جاري تحميل مجموعات المواعيد…</span>
         </div>
       ) : groups.length === 0 ? (
         <div className="glass-panel" style={{ 
@@ -961,13 +1223,14 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
             
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'right' }}>
+                <caption className={styles.tableCaption}>المجموعات الحالية ومواعيدها وسعتها وحالتها</caption>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>نوع المجموعة</th>
-                    <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>المواعيد والإنستراكتور</th>
-                    <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>الحجوزات / السعة</th>
-                    <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الحالة</th>
-                    <th style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>نوع المجموعة</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>المواعيد والمدرّب</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>الحجوزات / السعة</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الحالة</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1010,7 +1273,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                             )}
                             {group.freeSessionDateTime && (
                               <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
-                                السيشن المجانية: {formatTime(group.freeSessionDateTime)} مع دكتور مصطفى
+                                الجلسة المجانية: {formatTime(group.freeSessionDateTime)}
                               </span>
                             )}
                             {group.instructorName && (
@@ -1028,7 +1291,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                               </span>
                               <span>{percent}%</span>
                             </div>
-                            <div style={{ height: '6px', background: 'hsl(var(--bg-tertiary))', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div role="progressbar" aria-label={`إشغال ${group.name}`} aria-valuemin={0} aria-valuemax={group.capacity} aria-valuenow={group.bookedCount} aria-valuetext={`${group.bookedCount} من ${group.capacity}`} style={{ height: '6px', background: 'hsl(var(--bg-tertiary))', borderRadius: '3px', overflow: 'hidden' }}>
                               <div style={{ 
                                 width: `${percent}%`, 
                                 height: '100%', 
@@ -1040,14 +1303,15 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                         </td>
                         <td style={{ padding: '16px 8px', textAlign: 'center' }}>
                           <button
+                            type="button"
                             onClick={() => handleToggleGroup(group)}
-                            disabled={actionLoading}
+                            disabled={actionLoading || manualBookingSubmitting}
                             style={{
                               padding: '4px 12px',
                               fontSize: '0.75rem',
                               border: 'none',
                               borderRadius: '12px',
-                              cursor: 'pointer',
+                              cursor: actionLoading || manualBookingSubmitting ? 'not-allowed' : 'pointer',
                               fontWeight: 600,
                               background: group.isActive ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
                               color: group.isActive ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))',
@@ -1059,7 +1323,11 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                         <td style={{ padding: '16px 8px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
                             <button
-                              onClick={() => setSelectedGroup(group)}
+                              type="button"
+                              onClick={() => handleSelectGroup(group)}
+                              disabled={manualBookingSubmitting}
+                              aria-expanded={selectedGroup?.id === group.id}
+                              aria-controls="group-subscribers-panel"
                               className={`${styles.btn} ${styles.btnSecondary}`}
                               style={{ padding: '4px 8px', fontSize: '0.75rem', backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
                             >
@@ -1067,7 +1335,10 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                               المشتركين ({group.bookedCount})
                             </button>
                             <button
+                              type="button"
+                              aria-label={`تعديل مجموعة ${group.name}`}
                               onClick={() => handleStartEdit(group)}
+                              disabled={manualBookingSubmitting}
                               className={`${styles.btn} ${styles.btnSecondary}`}
                               style={{ padding: '4px 8px', fontSize: '0.75rem' }}
                             >
@@ -1075,10 +1346,11 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                             </button>
                              <button
                                type="button"
+                               aria-label={`حذف مجموعة ${group.name}`}
                                onClick={() => triggerDeleteGroup(group.id)}
                                className={`${styles.btn} ${styles.btnDanger}`}
                                style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                               disabled={actionLoading}
+                               disabled={actionLoading || manualBookingSubmitting}
                              >
                                <Trash2 size={12} />
                              </button>
@@ -1094,32 +1366,198 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
 
           {/* Booked Customers List (Conditional Panel) */}
           {selectedGroup && (
-            <div className="glass-panel" style={{ padding: 'var(--space-lg)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
-                <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'hsl(var(--text-primary))' }}>
-                  المشتركون في مَجموعة: <span style={{ color: 'hsl(var(--accent-primary))' }}>{selectedGroup.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)'}</span>
-                </h3>
-                <div style={{ display: 'flex', gap: '8px' }}>
+            <div id="group-subscribers-panel" className="glass-panel" style={{ padding: 'var(--space-lg)' }}>
+              <div className={styles.subscribersHeader}>
+                <div className={styles.subscribersHeading}>
+                  <h3 ref={subscribersHeadingRef} tabIndex={-1} className={styles.subscribersTitle}>
+                    المشتركون في مجموعة: <span style={{ color: 'hsl(var(--accent-primary))' }}>{selectedGroup.name || (selectedGroup.mode === 'online' ? 'أونلاين' : 'في السنتر')}</span>
+                  </h3>
+                  <p id="manual-booking-availability" className={styles.subscribersMeta}>
+                    {!selectedGroup.isActive
+                      ? 'المجموعة غير نشطة، فعّلها أولًا لإضافة مشترك.'
+                      : selectedGroup.bookedCount >= selectedGroup.capacity
+                        ? `المجموعة ممتلئة (${selectedGroup.bookedCount} من ${selectedGroup.capacity}).`
+                        : `${selectedGroup.bookedCount} من ${selectedGroup.capacity} مشترك، متاح ${selectedGroup.capacity - selectedGroup.bookedCount}.`}
+                  </p>
+                </div>
+                <div className={styles.subscribersActions}>
                   <button
+                    ref={manualBookingToggleRef}
+                    type="button"
+                    onClick={manualBookingOpen ? closeManualBookingEditor : openManualBookingEditor}
+                    disabled={!selectedGroup.isActive || selectedGroup.bookedCount >= selectedGroup.capacity || manualBookingSubmitting}
+                    aria-expanded={manualBookingOpen}
+                    aria-controls="manual-booking-editor"
+                    aria-describedby="manual-booking-availability"
+                    className={`${styles.btn} ${manualBookingOpen ? styles.btnSecondary : styles.btnPrimary}`}
+                  >
+                    <Plus size={15} aria-hidden="true" />
+                    {manualBookingOpen ? 'إلغاء الإضافة' : 'إضافة مشترك يدويًا'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleExportExcel(selectedGroup)}
+                    disabled={selectedGroup.bookings.length === 0}
                     className={`${styles.btn} ${styles.btnSecondary}`}
-                    style={{ padding: '4px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(34, 197, 94, 0.08)', color: 'rgb(34, 197, 94)', borderColor: 'rgba(34, 197, 94, 0.2)' }}
                   >
                     <Download size={12} />
                     تصدير المشتركين (Excel)
                   </button>
                   <button
-                    onClick={() => setSelectedGroup(null)}
+                    type="button"
+                    onClick={closeSelectedGroup}
+                    disabled={manualBookingSubmitting}
                     className={`${styles.btn} ${styles.btnSecondary}`}
-                    style={{ padding: '4px 10px', fontSize: '0.75rem' }}
                   >
                     إغلاق القائمة
                   </button>
                 </div>
               </div>
 
+              {manualBookingOpen && (
+                <section id="manual-booking-editor" className={styles.manualBookingEditor} aria-labelledby="manual-booking-title">
+                  <div>
+                    <h4 id="manual-booking-title" className={styles.manualBookingTitle}>بيانات المشترك</h4>
+                    <p className={styles.sectionHint}>سيُضاف الحجز مباشرة إلى هذه المجموعة، ولن يُنقل رقم مسجل في مجموعة أخرى تلقائيًا.</p>
+                  </div>
+
+                  <form
+                    className={styles.manualBookingForm}
+                    onSubmit={handleManualBookingSubmit}
+                    onKeyDown={handleManualBookingKeyDown}
+                    noValidate
+                    autoComplete="off"
+                    aria-busy={manualBookingSubmitting}
+                  >
+                    <div className={styles.manualBookingGrid}>
+                      <div className={styles.formGroup}>
+                        <label className={styles.label} htmlFor="manual-booking-name">اسم المشترك</label>
+                        <input
+                          ref={manualBookingNameRef}
+                          id="manual-booking-name"
+                          name="manualBookingCustomerName"
+                          type="text"
+                          value={manualBooking.customerName}
+                          onChange={(event) => {
+                            setManualBooking(previous => ({ ...previous, customerName: event.target.value }));
+                            setManualBookingErrors(previous => ({ ...previous, customerName: undefined }));
+                          }}
+                          className={styles.input}
+                          autoComplete="off"
+                          maxLength={120}
+                          required
+                          aria-invalid={Boolean(manualBookingErrors.customerName)}
+                          aria-describedby={manualBookingErrors.customerName ? 'manual-booking-name-error' : undefined}
+                          disabled={manualBookingSubmitting}
+                        />
+                        {manualBookingErrors.customerName && (
+                          <span id="manual-booking-name-error" className={styles.fieldError}>{manualBookingErrors.customerName}</span>
+                        )}
+                      </div>
+
+                      <div className={styles.formGroup}>
+                        <label className={styles.label} htmlFor="manual-booking-phone">رقم الهاتف أو واتساب</label>
+                        <input
+                          id="manual-booking-phone"
+                          name="manualBookingCustomerPhone"
+                          type="tel"
+                          dir="ltr"
+                          value={manualBooking.customerPhone}
+                          onChange={(event) => {
+                            setManualBooking(previous => ({ ...previous, customerPhone: event.target.value }));
+                            setManualBookingErrors(previous => ({ ...previous, customerPhone: undefined }));
+                          }}
+                          className={`${styles.input} ${styles.phoneInput}`}
+                          inputMode="tel"
+                          autoComplete="off"
+                          maxLength={64}
+                          placeholder="01012345678 أو +201012345678"
+                          required
+                          aria-invalid={Boolean(manualBookingErrors.customerPhone)}
+                          aria-describedby={manualBookingErrors.customerPhone ? 'manual-booking-phone-error' : 'manual-booking-phone-hint'}
+                          disabled={manualBookingSubmitting}
+                        />
+                        {manualBookingErrors.customerPhone ? (
+                          <span id="manual-booking-phone-error" className={styles.fieldError}>{manualBookingErrors.customerPhone}</span>
+                        ) : (
+                          <span id="manual-booking-phone-hint" className={styles.fieldHint}>يُقبل الرقم المحلي أو الدولي، وسنحفظه بصيغة موحدة.</span>
+                        )}
+                      </div>
+
+                      <div className={`${styles.formGroup} ${styles.manualBookingNotes}`}>
+                        <label className={styles.label} htmlFor="manual-booking-notes">ملاحظة داخلية <span className={styles.optionalLabel}>(اختياري)</span></label>
+                        <textarea
+                          id="manual-booking-notes"
+                          name="manualBookingNotes"
+                          value={manualBooking.notes}
+                          onChange={(event) => setManualBooking(previous => ({ ...previous, notes: event.target.value }))}
+                          className={styles.input}
+                          rows={3}
+                          maxLength={2000}
+                          placeholder="مثال: تم تأكيد الحجز هاتفيًا"
+                          aria-describedby="manual-booking-notes-count"
+                          disabled={manualBookingSubmitting}
+                        />
+                        <span id="manual-booking-notes-count" className={styles.fieldHint}>{manualBooking.notes.length} من 2000 حرف</span>
+                      </div>
+                    </div>
+
+                    <fieldset className={styles.manualBookingStatuses}>
+                      <legend className={styles.label}>حالة المشترك عند الإضافة</legend>
+                      <label className={styles.checkboxGroup}>
+                        <input
+                          type="checkbox"
+                          name="manualBookingIsPaid"
+                          checked={manualBooking.isPaid}
+                          onChange={(event) => setManualBooking(previous => ({ ...previous, isPaid: event.target.checked }))}
+                          className={styles.checkbox}
+                          disabled={manualBookingSubmitting}
+                        />
+                        <span>تم الدفع</span>
+                      </label>
+                      <label className={styles.checkboxGroup}>
+                        <input
+                          type="checkbox"
+                          name="manualBookingIsAttended"
+                          checked={manualBooking.isAttended}
+                          onChange={(event) => setManualBooking(previous => ({ ...previous, isAttended: event.target.checked }))}
+                          className={styles.checkbox}
+                          disabled={manualBookingSubmitting}
+                        />
+                        <span>تم الحضور</span>
+                      </label>
+                      <p className={styles.statusesHint}>تحديد «تم الدفع» يلغي المتابعات المعلقة لهذا العميل.</p>
+                    </fieldset>
+
+                    {manualBookingSubmitError && (
+                      <p role="alert" className={styles.inlineError}>{manualBookingSubmitError}</p>
+                    )}
+
+                    <div className={styles.manualBookingFormActions}>
+                      <button
+                        type="button"
+                        onClick={closeManualBookingEditor}
+                        className={`${styles.btn} ${styles.btnSecondary}`}
+                        disabled={manualBookingSubmitting}
+                      >
+                        إلغاء
+                      </button>
+                      <button
+                        type="submit"
+                        className={`${styles.btn} ${styles.btnPrimary}`}
+                        disabled={manualBookingSubmitting || !selectedGroup.isActive || selectedGroup.bookedCount >= selectedGroup.capacity}
+                      >
+                        {manualBookingSubmitting ? 'جاري إضافة المشترك...' : 'إضافة إلى المجموعة'}
+                        {!manualBookingSubmitting && <kbd className={styles.shortcutHint} aria-hidden="true">Ctrl/⌘ + Enter</kbd>}
+                      </button>
+                    </div>
+                  </form>
+                </section>
+              )}
+
               <div style={{ position: 'relative', marginBottom: 'var(--space-md)' }}>
                 <input
+                  aria-label="البحث في مشتركي المجموعة بالاسم أو رقم الهاتف"
                   type="text"
                   placeholder={selectedGroup.bookings.length === 0 ? "لا يوجد مشتركون للبحث" : "البحث باسم الطالب أو رقم الهاتف..."}
                   value={searchQuery}
@@ -1143,7 +1581,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
 
               {selectedGroup.bookings.length === 0 ? (
                 <p style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', textAlign: 'center', padding: '2rem 0' }}>
-                  لا يوجد مشتركون مسجلون في هذه المجموعة بعد.
+                  لا يوجد مشتركون مسجلون في هذه المجموعة بعد. استخدم زر «إضافة مشترك يدويًا» للبدء.
                 </p>
               ) : filteredBookings.length === 0 ? (
                 <p style={{ fontSize: '0.85rem', color: 'hsl(var(--accent-danger))', textAlign: 'center', padding: '2rem 0', fontWeight: 600 }}>
@@ -1152,14 +1590,15 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               ) : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'right' }}>
+                    <caption className={styles.tableCaption}>مشتركو المجموعة وحالة الحضور والدفع</caption>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>اسم العميل</th>
-                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>رقم الواتساب</th>
-                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>تاريخ الحجز</th>
-                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>حضور</th>
-                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>دفع</th>
-                        <th style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
+                        <th scope="col" style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>اسم العميل</th>
+                        <th scope="col" style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>رقم الواتساب</th>
+                        <th scope="col" style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>تاريخ الحجز</th>
+                        <th scope="col" style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>حضور</th>
+                        <th scope="col" style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>دفع</th>
+                        <th scope="col" style={{ padding: '10px 6px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1168,22 +1607,26 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                           <td style={{ padding: '12px 6px', fontWeight: 600 }}>{booking.customerName}</td>
                           <td style={{ padding: '12px 6px', fontSize: '0.85rem' }}>+{booking.customerPhone}</td>
                           <td style={{ padding: '12px 6px', fontSize: '0.85rem', color: 'hsl(var(--text-secondary))' }}>
-                            {new Date(booking.createdAt).toLocaleDateString('ar-EG', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {new Date(booking.createdAt).toLocaleDateString('ar-EG', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: projectTimezone })}
                           </td>
                           <td style={{ padding: '12px 6px', textAlign: 'center' }}>
                             <input 
                               type="checkbox" 
+                              aria-label={`تحديد حضور ${booking.customerName}`}
                               checked={booking.isAttended || false} 
                               onChange={(e) => handleToggleBookingStatus(booking.id, { isAttended: e.target.checked })} 
-                              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                              disabled={manualBookingSubmitting}
+                              style={{ width: '16px', height: '16px', cursor: manualBookingSubmitting ? 'not-allowed' : 'pointer' }}
                             />
                           </td>
                           <td style={{ padding: '12px 6px', textAlign: 'center' }}>
                             <input 
                               type="checkbox" 
+                              aria-label={`تحديد دفع ${booking.customerName}`}
                               checked={booking.isPaid || false} 
                               onChange={(e) => handleToggleBookingStatus(booking.id, { isPaid: e.target.checked })} 
-                              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                              disabled={manualBookingSubmitting}
+                              style={{ width: '16px', height: '16px', cursor: manualBookingSubmitting ? 'not-allowed' : 'pointer' }}
                             />
                           </td>
                           <td style={{ padding: '12px 6px', textAlign: 'center' }}>
@@ -1198,7 +1641,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                               <button
                                 type="button"
                                 onClick={() => handleDeleteBooking(booking)}
-                                disabled={deletingBookingId === booking.id}
+                                disabled={manualBookingSubmitting || deletingBookingId === booking.id}
                                 className={`${styles.btn} ${styles.btnDanger}`}
                                 style={{ padding: '4px 10px', fontSize: '0.75rem' }}
                                 title={pendingDeleteBookingId === booking.id ? 'اضغط للتأكيد النهائي' : 'حذف المشترك من المجموعة'}
@@ -1225,38 +1668,31 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
 
       {/* Add/Edit Modal */}
       {isModalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(5, 7, 12, 0.8)',
-          backdropFilter: 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999,
-          padding: 'var(--space-md)'
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '560px', maxHeight: '92vh', overflowY: 'auto', padding: 'var(--space-xl)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+        <div className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }}>
+          <div ref={editorRef} className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="group-editor-title" aria-describedby="group-editor-timezone" style={{ maxWidth: '560px', maxHeight: '92dvh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>
+              <h3 id="group-editor-title" style={{ fontSize: '1.1rem', fontWeight: 600 }}>
                 {editingGroupId ? 'تعديل مجموعة مواعيد' : 'إنشاء مجموعة جديدة'}
               </h3>
               <button 
+                ref={editorCloseRef}
                 type="button"
-                onClick={() => setIsModalOpen(false)} 
-                style={{ background: 'none', border: 'none', color: 'hsl(var(--text-muted))', fontSize: '1.5rem', cursor: 'pointer' }}
+                aria-label="إغلاق نموذج المجموعة"
+                onClick={closeEditor}
+                className={styles.closeBtn}
+                style={{ fontSize: '1.5rem' }}
               >
                 &times;
               </button>
             </div>
 
+            <p id="group-editor-timezone" className={styles.sectionHint}>أدخل كل المواعيد بتوقيت <b dir="ltr">{projectTimezone}</b>.</p>
+
             <form onSubmit={handleSaveGroup} className={styles.form}>
               <div className={styles.formGroup}>
-                <label className={styles.label}>نوع المجموعة</label>
+                <label className={styles.label} htmlFor="group-editor-mode">نوع المجموعة</label>
                 <select 
+                  id="group-editor-mode"
                   value={mode} 
                   onChange={(e) => setMode(e.target.value)} 
                   className={styles.select}
@@ -1268,8 +1704,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>إنستراكتور المجموعة</label>
+                <label className={styles.label} htmlFor="group-editor-instructor">مدرّب المجموعة</label>
                 <select
+                  id="group-editor-instructor"
                   value={selectedInstructor}
                   onChange={(e) => setSelectedInstructor(e.target.value)}
                   className={styles.select}
@@ -1288,8 +1725,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>ميعاد السيشن المجانية (مع دكتور مصطفى)</label>
+                <label className={styles.label} htmlFor="group-editor-free-session">موعد الجلسة المجانية</label>
                 <input
+                  id="group-editor-free-session"
                   type="datetime-local"
                   value={freeSessionDateTime}
                   onChange={(e) => setFreeSessionDateTime(e.target.value)}
@@ -1299,8 +1737,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>ميعاد السيشن الأولى للكورس</label>
+                <label className={styles.label} htmlFor="group-editor-first-session">موعد الجلسة الأولى للكورس</label>
                 <input 
+                  id="group-editor-first-session"
                   type="datetime-local" 
                   value={dateTime} 
                   onChange={(e) => setDateTime(e.target.value)} 
@@ -1310,8 +1749,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>ميعاد السيشن الثانية للكورس</label>
+                <label className={styles.label} htmlFor="group-editor-second-session">موعد الجلسة الثانية للكورس</label>
                 <input
+                  id="group-editor-second-session"
                   type="datetime-local"
                   value={courseSecondDateTime}
                   onChange={(e) => setCourseSecondDateTime(e.target.value)}
@@ -1321,14 +1761,16 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>أيام الكورس الأسبوعية (اختر يومين)</label>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                <span id="group-editor-days-label" className={styles.label}>أيام الكورس الأسبوعية (اختر يومين)</span>
+                <div role="group" aria-labelledby="group-editor-days-label" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
                   {DAY_NAMES.map((dayName, idx) => (
                     <button
                       key={idx}
                       type="button"
+                      aria-pressed={selectedDays.includes(idx)}
                       onClick={() => toggleDay(idx)}
                       style={{
+                        minHeight: '44px',
                         padding: '6px 14px',
                         fontSize: '0.8rem',
                         borderRadius: '16px',
@@ -1337,7 +1779,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
                         color: selectedDays.includes(idx) ? 'hsl(var(--accent-primary))' : 'hsl(var(--text-secondary))',
                         cursor: 'pointer',
                         fontWeight: selectedDays.includes(idx) ? 700 : 400,
-                        transition: 'all 0.2s'
+                        transition: 'background-color 0.2s, border-color 0.2s, color 0.2s'
                       }}
                     >
                       {dayName}
@@ -1350,8 +1792,9 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>السعة (عدد المشتركين الأقصى)</label>
+                <label className={styles.label} htmlFor="group-editor-capacity">السعة (عدد المشتركين الأقصى)</label>
                 <input 
+                  id="group-editor-capacity"
                   type="number" 
                   min={1}
                   value={capacity} 
@@ -1376,7 +1819,7 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
               <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
                 <button 
                   type="button" 
-                  onClick={() => setIsModalOpen(false)} 
+                  onClick={closeEditor}
                   className={`${styles.btn} ${styles.btnSecondary}`}
                   disabled={actionLoading}
                 >
@@ -1403,6 +1846,15 @@ export default function GroupAppointmentsManager({ onBack }: GroupAppointmentsMa
         cancelLabel="إلغاء"
         onConfirm={handleConfirmDeleteGroup}
         onCancel={() => { setConfirmDeleteOpen(false); setGroupToDelete(null); }}
+      />
+      <ConfirmDialog
+        isOpen={paidImportConfirmOpen}
+        title="تأكيد استيراد قائمة المدفوعين"
+        message={`سيتم فحص ${paidImportPhones.length} رقم، ثم حذف أي حجوزات مطابقة من كل المجموعات وإلغاء متابعاتها وإضافتها لقائمة الحظر. هذا الإجراء لا يمكن التراجع عنه تلقائيًا.`}
+        confirmLabel="تنفيذ الحظر والحذف"
+        cancelLabel="رجوع للمراجعة"
+        onConfirm={() => void handleConfirmPaidImport()}
+        onCancel={() => setPaidImportConfirmOpen(false)}
       />
     </div>
   );

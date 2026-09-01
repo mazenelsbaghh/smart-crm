@@ -1,129 +1,78 @@
-using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Modules.QuranChallenge.Domain;
 using Shared.Infrastructure;
-using StackExchange.Redis;
 
 namespace Modules.QuranChallenge.Services;
 
 public sealed class TikTokConnectionService
 {
+    private const string VerifiedConnectionMarker = "zernio:creator-info-verified";
     private readonly AppDbContext _dbContext;
-    private readonly IDatabase _redis;
     private readonly TikTokApiClient _apiClient;
-    private readonly TikTokTokenVault _tokenVault;
-    private readonly string _frontendUrl;
+    private readonly string? _accountId;
+    private readonly string? _profileId;
+    private readonly string _dashboardUrl;
 
-    public TikTokConnectionService(
-        AppDbContext dbContext,
-        IConnectionMultiplexer redis,
-        TikTokApiClient apiClient,
-        TikTokTokenVault tokenVault,
-        IConfiguration configuration)
+    public TikTokConnectionService(AppDbContext dbContext, TikTokApiClient apiClient, IConfiguration configuration)
     {
         _dbContext = dbContext;
-        _redis = redis.GetDatabase();
         _apiClient = apiClient;
-        _tokenVault = tokenVault;
-        _frontendUrl = (configuration["FRONTEND_URL"] ?? "http://localhost:3000").TrimEnd('/');
+        _accountId = configuration["ZERNIO_TIKTOK_ACCOUNT_ID"];
+        _profileId = configuration["ZERNIO_PROFILE_ID"];
+        _dashboardUrl = configuration["ZERNIO_DASHBOARD_URL"] ?? "https://zernio.com/dashboard/connections";
     }
 
-    public bool IsConfigured => _apiClient.IsConfigured;
+    public bool IsConfigured => _apiClient.IsConfigured
+        && !string.IsNullOrWhiteSpace(_accountId)
+        && !string.IsNullOrWhiteSpace(_profileId);
 
-    public async Task<string> AuthorizationUrlAsync(Guid projectId)
+    public string AccountId => !string.IsNullOrWhiteSpace(_accountId)
+        ? _accountId!
+        : throw new InvalidOperationException("إعدادات حساب TikTok في Zernio غير مكتملة.");
+
+    public bool IsVerified(QuranTikTokSettings? settings) =>
+        settings is not null
+        && IsConfigured
+        && string.Equals(settings.OpenId, _accountId, StringComparison.Ordinal)
+        && string.Equals(settings.GrantedScopes, VerifiedConnectionMarker, StringComparison.Ordinal);
+
+    public string AuthorizationUrl()
     {
-        var state = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        await _redis.StringSetAsync($"tiktok_oauth:{state}", projectId.ToString(), TimeSpan.FromMinutes(10));
-        return _apiClient.AuthorizationUrl(state);
+        var query = QueryString.Create(new Dictionary<string, string?>
+        {
+            ["profile"] = _profileId,
+            ["group"] = "profile",
+            ["profileId"] = _profileId,
+            ["accountId"] = _accountId
+        });
+        return $"{_dashboardUrl}{query}";
     }
 
-    public async Task<TikTokConnection> CompleteAsync(
-        string code,
-        string state,
+    public Task<QuranTikTokSettings?> SettingsAsync(Guid projectId, CancellationToken cancellationToken) =>
+        _dbContext.QuranTikTokSettings.IgnoreQueryFilters()
+            .SingleOrDefaultAsync(settings => settings.ProjectId == projectId, cancellationToken);
+
+    public async Task<QuranTikTokSettings> EnsureSettingsAsync(Guid projectId, CancellationToken cancellationToken)
+    {
+        var settings = await SettingsAsync(projectId, cancellationToken);
+        if (settings is not null) return settings;
+        settings = new QuranTikTokSettings { ProjectId = projectId };
+        _dbContext.QuranTikTokSettings.Add(settings);
+        return settings;
+    }
+
+    public async Task<QuranTikTokSettings> MarkVerifiedAsync(
+        Guid projectId,
+        TikTokCreatorInfo creator,
         CancellationToken cancellationToken)
     {
-        var projectValue = await _redis.StringGetDeleteAsync($"tiktok_oauth:{state}");
-        if (!Guid.TryParse(projectValue, out var projectId))
-        {
-            throw new InvalidOperationException("انتهت صلاحية محاولة ربط TikTok.");
-        }
-        var tokens = await _apiClient.ExchangeCodeAsync(code, cancellationToken);
-        if (!tokens.Scope.Split(',', StringSplitOptions.TrimEntries).Contains("video.publish"))
-        {
-            throw new InvalidOperationException("لم تُمنح صلاحية نشر الفيديو إلى TikTok.");
-        }
-        var user = await _apiClient.UserAsync(tokens.AccessToken, cancellationToken);
-        return new TikTokConnection(projectId, user, tokens);
-    }
-
-    public async Task<string> AccessTokenAsync(
-        QuranTikTokSettings settings,
-        CancellationToken cancellationToken)
-    {
-        if (settings.ProtectedAccessToken is null || settings.ProtectedRefreshToken is null)
-        {
-            throw new InvalidOperationException("اربط حساب TikTok أولاً.");
-        }
-        if (settings.AccessTokenExpiresAtUtc > DateTime.UtcNow.AddMinutes(5))
-        {
-            return _tokenVault.Unprotect(settings.ProtectedAccessToken);
-        }
-        var refreshed = await _apiClient.RefreshAsync(
-            _tokenVault.Unprotect(settings.ProtectedRefreshToken),
-            cancellationToken);
-        ApplyTokens(settings, refreshed);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        return refreshed.AccessToken;
-    }
-
-    public void ApplyConnection(QuranTikTokSettings settings, TikTokConnection connection)
-    {
-        settings.OpenId = connection.User.OpenId;
-        settings.DisplayName = connection.User.DisplayName;
-        ApplyTokens(settings, connection.Tokens);
+        var settings = await EnsureSettingsAsync(projectId, cancellationToken);
+        settings.OpenId = AccountId;
+        settings.DisplayName = creator.CreatorNickname ?? creator.CreatorUsername;
+        settings.GrantedScopes = VerifiedConnectionMarker;
         settings.LastError = null;
         settings.UpdatedAt = DateTime.UtcNow;
-    }
-
-    public async Task DisconnectAsync(
-        QuranTikTokSettings settings,
-        CancellationToken cancellationToken)
-    {
-        if (settings.ProtectedAccessToken is not null)
-        {
-            await _apiClient.RevokeAsync(
-                _tokenVault.Unprotect(settings.ProtectedAccessToken),
-                cancellationToken);
-        }
-        settings.OpenId = null;
-        settings.DisplayName = null;
-        settings.ProtectedAccessToken = null;
-        settings.ProtectedRefreshToken = null;
-        settings.AccessTokenExpiresAtUtc = null;
-        settings.RefreshTokenExpiresAtUtc = null;
-        settings.GrantedScopes = null;
-        settings.UpdatedAt = DateTime.UtcNow;
-    }
-
-    public Task<QuranTikTokSettings?> SettingsAsync(Guid projectId, CancellationToken cancellationToken)
-    {
-        return _dbContext.QuranTikTokSettings.IgnoreQueryFilters()
-            .SingleOrDefaultAsync(settings => settings.ProjectId == projectId, cancellationToken);
-    }
-
-    public string ChallengeUrl(string query) => $"{_frontendUrl}/quran-challenge?{query}";
-
-    private void ApplyTokens(QuranTikTokSettings settings, TikTokTokens tokens)
-    {
-        var now = DateTime.UtcNow;
-        settings.OpenId = tokens.OpenId;
-        settings.ProtectedAccessToken = _tokenVault.Protect(tokens.AccessToken);
-        settings.ProtectedRefreshToken = _tokenVault.Protect(tokens.RefreshToken);
-        settings.AccessTokenExpiresAtUtc = now.AddSeconds(tokens.ExpiresIn);
-        settings.RefreshTokenExpiresAtUtc = now.AddSeconds(tokens.RefreshExpiresIn);
-        settings.GrantedScopes = tokens.Scope;
-        settings.UpdatedAt = now;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return settings;
     }
 }
-
-public sealed record TikTokConnection(Guid ProjectId, TikTokUser User, TikTokTokens Tokens);

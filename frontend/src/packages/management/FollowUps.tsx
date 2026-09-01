@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { handleDialogKeyDown } from './dialog-accessibility';
 import { crmService, Customer } from '../../services/crm';
 import { 
   Calendar, 
@@ -40,18 +41,37 @@ const statusMapAr: Record<string, string> = {
   'All': 'الكل'
 };
 
+const followUpTypeMapAr: Record<string, string> = {
+  Nurturing: 'متابعة عميل',
+  AppointmentReminder: 'تذكير بموعد',
+};
+
+const toneMapAr: Record<string, string> = {
+  Creative: 'إبداعي',
+  Salesy: 'بيعي مباشر',
+};
+
+function formatCairoDate(value?: string): string {
+  if (!value) return 'غير متاح من المصدر';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'تاريخ غير صالح في المصدر';
+  return `${date.toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', dateStyle: 'medium', timeStyle: 'short' })} بتوقيت القاهرة`;
+}
+
 export default function FollowUps() {
   const { activeProject } = useAuth();
   
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [reEvaluating, setReEvaluating] = useState(false);
 
   // Confirmation States
   const [confirmReEvaluateOpen, setConfirmReEvaluateOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [followUpToDelete, setFollowUpToDelete] = useState<string | null>(null);
+  const [followUpToSend, setFollowUpToSend] = useState<FollowUp | null>(null);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -66,26 +86,40 @@ export default function FollowUps() {
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null);
   const [editNotes, setEditNotes] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
-  const [editType, setEditType] = useState<'Nurturing' | 'AppointmentReminder'>('Nurturing');
+  const [editType, setEditType] = useState<'Nurturing' | 'AppointmentReminder' | ''>('');
   const [editAppointmentTime, setEditAppointmentTime] = useState('');
-  const [editTone, setEditTone] = useState<string>('Default');
+  const [editTone, setEditTone] = useState<string>('');
+  const loadRequestIdRef = React.useRef(0);
+  const [referenceNow] = useState(() => Date.now());
 
   const fetchData = async () => {
-    if (!activeProject) return;
+    const requestId = ++loadRequestIdRef.current;
+    if (!activeProject) {
+      setFollowUps([]);
+      setCustomers([]);
+      setLoading(false);
+      setLoadError('تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.');
+      return;
+    }
     try {
       setLoading(true);
-      // Fetch follow-ups
-      const fuRes = await api.get<FollowUp[]>(`/api/projects/${activeProject.id}/follow-ups`);
-      // Fetch customers to map names
-      const custData = await crmService.getCustomers(activeProject.id);
+      setLoadError(null);
+      setFollowUps([]);
+      setCustomers([]);
+      const [fuRes, custData] = await Promise.all([
+        api.get<FollowUp[]>(`/api/projects/${activeProject.id}/follow-ups`),
+        crmService.getCustomers(activeProject.id),
+      ]);
+      if (requestId !== loadRequestIdRef.current) return;
       
       setFollowUps(fuRes.data);
       setCustomers(custData);
     } catch (e) {
+      if (requestId !== loadRequestIdRef.current) return;
       console.error('Failed to load follow-ups', e);
-      setMessage({ type: 'error', text: 'فشل تحميل مواعيد المتابعات.' });
+      setLoadError('فشل تحميل مواعيد المتابعات. لم يتم عرض قائمة فارغة بديلًا عنها.');
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) setLoading(false);
     }
   };
 
@@ -127,7 +161,7 @@ export default function FollowUps() {
 
   const getCustomerName = (customerId: string) => {
     const customer = customers.find(c => c.id === customerId);
-    return customer ? customer.name || customer.phoneNumber : `عميل (${customerId.substring(0, 8)})`;
+    return customer ? customer.name || customer.phoneNumber : 'عميل غير مسجل في بيانات العملاء المحملة';
   };
 
   const handleSend = async (id: string) => {
@@ -182,8 +216,8 @@ export default function FollowUps() {
       setEditDueDate('');
     }
     
-    setEditType(fu.type || 'Nurturing');
-    setEditTone(fu.tone || 'Default');
+    setEditType(fu.type || '');
+    setEditTone(fu.tone || '');
     
     if (fu.appointmentTime) {
       const d = new Date(fu.appointmentTime);
@@ -196,7 +230,10 @@ export default function FollowUps() {
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingFollowUp) return;
+    if (!editingFollowUp || !editType || !editTone) {
+      setMessage({ type: 'error', text: 'اختر نوع المتابعة ونبرتها قبل الحفظ.' });
+      return;
+    }
     
     try {
       setActionLoadingId(editingFollowUp.id);
@@ -266,7 +303,8 @@ export default function FollowUps() {
         <button
           type="button"
           onClick={triggerReEvaluateAll}
-          disabled={reEvaluating || pendingCount === 0}
+          disabled={!activeProject || reEvaluating || pendingCount === 0}
+          title={!activeProject ? 'مساحة العمل غير متاحة' : pendingCount === 0 ? 'لا توجد متابعات معلقة لإعادة ضبطها' : undefined}
           className={`${styles.btn} ${styles.btnPrimary}`}
           style={{ 
             padding: '10px 20px', 
@@ -289,7 +327,7 @@ export default function FollowUps() {
 
       {/* KPI Stats Cards */}
       <div className={styles.statsGrid}>
-        <div 
+        <button type="button"
           className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'All' ? styles.statCardActive : ''}`}
           onClick={() => setFilter('All')}
         >
@@ -299,9 +337,9 @@ export default function FollowUps() {
           </div>
           <h2 className={styles.statValue}>{totalCount}</h2>
           <span className={styles.statDesc}>كل المهام المجدولة</span>
-        </div>
+        </button>
 
-        <div 
+        <button type="button"
           className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'Pending' ? styles.statCardActive : ''}`}
           onClick={() => setFilter('Pending')}
         >
@@ -311,9 +349,9 @@ export default function FollowUps() {
           </div>
           <h2 className={styles.statValue}>{pendingCount}</h2>
           <span className={styles.statDesc}>في انتظار الإرسال</span>
-        </div>
+        </button>
 
-        <div 
+        <button type="button"
           className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'Completed' ? styles.statCardActive : ''}`}
           onClick={() => setFilter('Completed')}
         >
@@ -323,9 +361,9 @@ export default function FollowUps() {
           </div>
           <h2 className={styles.statValue}>{completedCount}</h2>
           <span className={styles.statDesc}>تم إرسالها بنجاح</span>
-        </div>
+        </button>
 
-        <div 
+        <button type="button"
           className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'Missed' ? styles.statCardActive : ''}`}
           onClick={() => setFilter('Missed')}
         >
@@ -335,9 +373,9 @@ export default function FollowUps() {
           </div>
           <h2 className={styles.statValue}>{missedCount}</h2>
           <span className={styles.statDesc}>فشل الإرسال أو تجاوز الموعد</span>
-        </div>
+        </button>
 
-        <div 
+        <button type="button"
           className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'Bypassed' ? styles.statCardActive : ''}`}
           onClick={() => setFilter('Bypassed')}
         >
@@ -347,11 +385,11 @@ export default function FollowUps() {
           </div>
           <h2 className={styles.statValue}>{bypassedCount}</h2>
           <span className={styles.statDesc}>تجاوزها الرد اليدوي للعميل</span>
-        </div>
+        </button>
       </div>
 
       {message && (
-        <div className={`glass-panel`} style={{ 
+        <div className={`glass-panel`} role={message.type === 'error' ? 'alert' : 'status'} style={{
           padding: 'var(--space-md)', 
           background: message.type === 'success' ? 'var(--success-soft)' : 'var(--danger-soft)',
           border: '1px solid var(--border-subtle)',
@@ -376,11 +414,13 @@ export default function FollowUps() {
         flexWrap: 'wrap'
       }}>
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+        <div role="group" aria-label="تصفية المتابعات حسب الحالة" style={{ display: 'flex', gap: 'var(--space-sm)' }}>
           {(['Pending', 'Completed', 'Bypassed', 'Missed', 'All'] as const).map(fOpt => (
             <button
               key={fOpt}
+              type="button"
               onClick={() => setFilter(fOpt)}
+              aria-pressed={filter === fOpt}
               style={{
                 padding: '0.5rem 1rem',
                 background: filter === fOpt ? 'var(--accent-soft)' : 'transparent',
@@ -390,7 +430,7 @@ export default function FollowUps() {
                 cursor: 'pointer',
                 fontWeight: 600,
                 fontSize: '0.85rem',
-                transition: 'all 0.15s ease'
+                transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease'
               }}
             >
               {statusMapAr[fOpt]}
@@ -402,19 +442,14 @@ export default function FollowUps() {
         <div style={{ position: 'relative', minWidth: '280px' }}>
           <input
             type="text"
+            aria-label="بحث في المتابعات باسم العميل أو رقم الهاتف"
             placeholder="بحث باسم العميل أو رقم الهاتف..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            className={styles.input}
             style={{
               width: '100%',
               padding: '8px 36px 8px 12px',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--border-subtle)',
-              background: 'var(--surface-muted)',
-              color: 'var(--text-strong)',
-              fontSize: '0.85rem',
-              outline: 'none',
-              transition: 'all 0.15s ease',
               textAlign: 'right'
             }}
           />
@@ -438,6 +473,12 @@ export default function FollowUps() {
             <div className={styles.spinner}></div>
             <p style={{ marginTop: 'var(--space-md)' }}>جاري تحميل المتابعات...</p>
           </div>
+        ) : loadError ? (
+          <div className={styles.emptyState} role="alert">
+            <h3 className={styles.emptyStateTitle}>تعذر تحميل المتابعات</h3>
+            <p className={styles.emptyStateDesc}>{loadError}</p>
+            {activeProject && <button type="button" onClick={() => void fetchData()} className={`${styles.btn} ${styles.btnPrimary}`}>إعادة المحاولة</button>}
+          </div>
         ) : filteredFollowUps.length === 0 ? (
           <div className={styles.emptyState}>
             <Calendar size={48} style={{ color: 'hsl(var(--text-muted))' }} />
@@ -447,6 +488,7 @@ export default function FollowUps() {
         ) : (
           <div className={styles.tableWrapper}>
             <table className={styles.table}>
+              <caption className="sr-only">مهام المتابعة وحالة الإرسال</caption>
               <thead>
                 <tr>
                   <th className={styles.th}>العميل</th>
@@ -459,7 +501,8 @@ export default function FollowUps() {
               </thead>
               <tbody>
                 {paginatedFollowUps.map(fu => {
-                  const isOverdue = new Date(fu.dueDate) < new Date() && fu.status === 'Pending';
+                  const dueDate = new Date(fu.dueDate);
+                  const isOverdue = !Number.isNaN(dueDate.getTime()) && dueDate.getTime() < referenceNow && fu.status === 'Pending';
                   return (
                     <tr key={fu.id} className={styles.tr}>
                       <td className={styles.td}>
@@ -488,35 +531,25 @@ export default function FollowUps() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isOverdue ? 'hsl(var(--accent-danger))' : 'var(--text-base)' }}>
                             {isOverdue ? <AlertCircle size={14} /> : <Clock size={14} />}
-                            <span>{new Date(fu.dueDate).toLocaleString('ar-EG')}</span>
+                            <span>{formatCairoDate(fu.dueDate)}</span>
                             {isOverdue && <span style={{ fontSize: '0.7rem', fontWeight: 700, marginRight: '4px', color: 'hsl(var(--accent-danger))' }}>متأخرة</span>}
                           </div>
                           {fu.type === 'AppointmentReminder' && fu.appointmentTime && (
                             <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', paddingRight: '20px' }}>
-                              الموعد: {new Date(fu.appointmentTime).toLocaleString('ar-EG')}
+                              الموعد: {formatCairoDate(fu.appointmentTime)}
                             </span>
                           )}
                         </div>
                       </td>
                       <td className={styles.td}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
-                          {fu.type === 'AppointmentReminder' ? (
-                            <span className={styles.statusBadge} style={{
-                              backgroundColor: 'rgba(16, 185, 129, 0.12)',
-                              color: 'hsl(140, 100%, 65%)',
-                              border: '1px solid rgba(16, 185, 129, 0.2)'
-                            }}>
-                              تذكير بموعد
-                            </span>
-                          ) : (
-                            <span className={styles.statusBadge} style={{
-                              backgroundColor: 'var(--accent-soft)',
-                              color: 'var(--accent)',
-                              border: '1px solid var(--border-strong)'
-                            }}>
-                              متابعة عميل
-                            </span>
-                          )}
+                          <span className={styles.statusBadge} style={{
+                            backgroundColor: fu.type === 'AppointmentReminder' ? 'rgba(16, 185, 129, 0.12)' : 'var(--accent-soft)',
+                            color: fu.type === 'AppointmentReminder' ? 'hsl(140, 100%, 65%)' : 'var(--accent)',
+                            border: fu.type === 'AppointmentReminder' ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid var(--border-strong)'
+                          }}>
+                            {fu.type ? followUpTypeMapAr[fu.type] ?? fu.type : 'نوع المتابعة غير متاح'}
+                          </span>
                           {fu.tone && fu.tone !== 'Default' && (
                             <span className={styles.statusBadge} style={{
                               backgroundColor: 'rgba(168, 85, 247, 0.12)',
@@ -524,7 +557,7 @@ export default function FollowUps() {
                               border: '1px solid rgba(168, 85, 247, 0.2)',
                               fontSize: '0.7rem'
                             }}>
-                              {fu.tone === 'Creative' ? 'إبداعي' : 'سلزجي صايع'}
+                              {toneMapAr[fu.tone] ?? `نبرة المصدر: ${fu.tone}`}
                             </span>
                           )}
                         </div>
@@ -550,7 +583,7 @@ export default function FollowUps() {
                           {fu.status === 'Pending' ? (
                             <>
                               <button
-                                onClick={() => handleSend(fu.id)}
+                                onClick={() => setFollowUpToSend(fu)}
                                 disabled={actionLoadingId !== null}
                                 className={`${styles.btn} ${styles.btnSuccess}`}
                                 style={{ padding: '4px 10px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
@@ -598,6 +631,7 @@ export default function FollowUps() {
                 <div className={styles.paginationInfo}>
                   <span>عرض السطور:</span>
                   <select
+                    aria-label="عدد المتابعات في الصفحة"
                     value={pageSize}
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
@@ -618,10 +652,12 @@ export default function FollowUps() {
 
                 <div className={styles.paginationControls}>
                   <button
+                    type="button"
                     onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                     disabled={currentPage === totalPages}
                     className={styles.paginationBtn}
                     title="الصفحة التالية"
+                    aria-label="الصفحة التالية"
                   >
                     <ChevronLeft size={16} />
                   </button>
@@ -635,9 +671,12 @@ export default function FollowUps() {
                       }
                       elements.push(
                         <button
+                          type="button"
                           key={page}
                           onClick={() => setCurrentPage(page)}
                           className={`${styles.paginationBtn} ${currentPage === page ? styles.paginationBtnActive : ''}`}
+                          aria-label={`الصفحة ${page}`}
+                          aria-current={currentPage === page ? 'page' : undefined}
                         >
                           {page}
                         </button>
@@ -646,10 +685,12 @@ export default function FollowUps() {
                     })}
 
                   <button
+                    type="button"
                     onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                     disabled={currentPage === 1}
                     className={styles.paginationBtn}
                     title="الصفحة السابقة"
+                    aria-label="الصفحة السابقة"
                   >
                     <ChevronRight size={16} />
                   </button>
@@ -662,9 +703,9 @@ export default function FollowUps() {
 
       {editingFollowUp && (
         <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`}>
+          <div className={`glass-panel ${styles.modal}`} role="dialog" aria-modal="true" aria-labelledby="follow-up-edit-title" onKeyDown={(event) => handleDialogKeyDown(event, () => setEditingFollowUp(null))}>
             <div className={styles.modalHeader}>
-              <h3 className={styles.modalTitle}>تعديل تفاصيل المتابعة</h3>
+              <h3 id="follow-up-edit-title" className={styles.modalTitle}>تعديل تفاصيل المتابعة</h3>
               <button 
                 type="button"
                 onClick={() => setEditingFollowUp(null)} 
@@ -678,12 +719,16 @@ export default function FollowUps() {
             
             <form onSubmit={handleSaveEdit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
               <div className={styles.formGroup}>
-                <label className={styles.label}>نوع المتابعة</label>
+                <label htmlFor="edit-follow-up-type" className={styles.label}>نوع المتابعة</label>
                 <select
+                  id="edit-follow-up-type"
+                  autoFocus
                   value={editType}
-                  onChange={(e) => setEditType(e.target.value as 'Nurturing' | 'AppointmentReminder')}
+                  onChange={(e) => setEditType(e.target.value as 'Nurturing' | 'AppointmentReminder' | '')}
                   className={styles.select}
+                  required
                 >
+                  <option value="">اختر النوع</option>
                   <option value="Nurturing">متابعة لتنشيط العميل (Nurturing)</option>
                   <option value="AppointmentReminder">تذكير بموعد / كورس (Reminder)</option>
                 </select>
@@ -691,8 +736,9 @@ export default function FollowUps() {
 
               {editType === 'Nurturing' ? (
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>تاريخ ووقت المتابعة</label>
+                  <label htmlFor="edit-follow-up-date" className={styles.label}>تاريخ ووقت المتابعة بتوقيت جهازك</label>
                   <input 
+                    id="edit-follow-up-date"
                     type="datetime-local" 
                     value={editDueDate}
                     onChange={(e) => setEditDueDate(e.target.value)}
@@ -700,10 +746,11 @@ export default function FollowUps() {
                     required
                   />
                 </div>
-              ) : (
+              ) : editType === 'AppointmentReminder' ? (
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>تاريخ ووقت الكورس / الموعد</label>
+                  <label htmlFor="edit-follow-up-appointment" className={styles.label}>تاريخ ووقت الموعد بتوقيت جهازك</label>
                   <input 
+                    id="edit-follow-up-appointment"
                     type="datetime-local" 
                     value={editAppointmentTime}
                     onChange={(e) => setEditAppointmentTime(e.target.value)}
@@ -714,24 +761,33 @@ export default function FollowUps() {
                     سيتم إرسال رسالة التذكير تلقائياً قبل هذا الموعد بـ 24 ساعة.
                   </span>
                 </div>
+              ) : (
+                <p className={styles.emptyStateDesc}>اختر نوع المتابعة لإظهار حقل الموعد المناسب.</p>
               )}
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>نبرة المتابعة (Tone)</label>
+                <label htmlFor="edit-follow-up-tone" className={styles.label}>نبرة المتابعة</label>
                 <select
+                  id="edit-follow-up-tone"
                   value={editTone}
                   onChange={(e) => setEditTone(e.target.value)}
                   className={styles.select}
+                  required
                 >
+                  <option value="">اختر النبرة</option>
+                  {editTone && !['Default', 'Creative', 'Salesy'].includes(editTone) && (
+                    <option value={editTone}>القيمة الحالية: {editTone}</option>
+                  )}
                   <option value="Default">الوضع الافتراضي (Default)</option>
                   <option value="Creative">إبداعي (Creative)</option>
-                  <option value="Salesy">سلزجي صايع (Salesy)</option>
+                  <option value="Salesy">بيعي مباشر</option>
                 </select>
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>نص الرسالة / ملاحظات</label>
+                <label htmlFor="edit-follow-up-notes" className={styles.label}>نص الرسالة أو الملاحظات</label>
                 <textarea
+                  id="edit-follow-up-notes"
                   value={editNotes}
                   onChange={(e) => setEditNotes(e.target.value)}
                   className={styles.textarea}
@@ -769,6 +825,18 @@ export default function FollowUps() {
         cancelLabel="إلغاء"
         onConfirm={handleConfirmReEvaluateAll}
         onCancel={() => setConfirmReEvaluateOpen(false)}
+      />
+      <ConfirmDialog
+        isOpen={followUpToSend !== null}
+        title="إرسال المتابعة الآن"
+        message={followUpToSend ? `سيتم إرسال متابعة العميل «${getCustomerName(followUpToSend.customerId)}» الآن بالنص المسجل.` : ''}
+        confirmLabel="إرسال الآن"
+        onConfirm={() => {
+          const followUp = followUpToSend;
+          setFollowUpToSend(null);
+          if (followUp) void handleSend(followUp.id);
+        }}
+        onCancel={() => setFollowUpToSend(null)}
       />
 
       <ConfirmDialog 

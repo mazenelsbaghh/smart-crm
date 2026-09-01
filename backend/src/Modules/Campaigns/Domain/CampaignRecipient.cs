@@ -10,7 +10,10 @@ namespace Modules.Campaigns.Domain
         Delivered,
         Read,
         Failed,
-        Responded
+        Responded,
+        Accelerated,
+        Processing,
+        DeliveryUnknown
     }
 
     public class CampaignRecipient : AuditableEntity, ITenantEntity

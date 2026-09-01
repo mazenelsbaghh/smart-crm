@@ -1,10 +1,7 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Modules.Advertising.Domain;
-using Modules.Advertising.Infrastructure.Facebook;
 using Modules.Advertising.Workers;
 using Shared.Infrastructure;
 
@@ -14,187 +11,147 @@ public sealed record WhatsAppTestResult(int CreatedAds, string State, string Rea
 
 public sealed class WhatsAppCreativeTestService(
     AppDbContext db,
-    MetaAdsClient meta,
-    AdvertisingSecretVault vault,
-    AdvertisingDecisionAi ai,
+    AdvertisingCloneService clones,
+    AdvertisingExperimentService experiments,
+    CampaignProvisioningService provisioning,
     AdvertisingDecisionService decisions,
-    IBackgroundJobClient backgroundJobs)
+    IBackgroundJobClient backgroundJobs,
+    BudgetAllocator budgets,
+    AdvertisingOwnershipPolicy ownership)
 {
-    private const int MaximumVariants = 2;
+    private const int DefaultAttributionWindowDays = 7;
 
     public async Task<WhatsAppTestResult> CreateAsync(Guid projectId, CancellationToken cancellationToken = default)
     {
-        var hasWhatsAppDestination = await db.AdvertisingOffers.IgnoreQueryFilters()
-            .AnyAsync(offer => offer.ProjectId == projectId && offer.State == "Eligible" && offer.DestinationsJson.Contains("wa.me"), cancellationToken);
-        if (!hasWhatsAppDestination)
-            return await WaitAsync(projectId, "لا توجد وجهة WhatsApp موثقة للمشروع، لذلك لن ينشئ النظام أي إعلان.", cancellationToken);
+        var baseline = await EligibleBaselineAsync(projectId, cancellationToken);
+        if (baseline?.PlanId is null)
+            return Wait("لا توجد حملة WhatsApp مدارة ونشطة تصلح كذراع Control.");
+        var sourcePlan = await db.AdvertisingCampaignPlans.IgnoreQueryFilters()
+            .SingleAsync(plan => plan.ProjectId == projectId && plan.Id == baseline.PlanId, cancellationToken);
+        var existing = await PendingExperimentAsync(projectId, sourcePlan.OfferId, cancellationToken);
+        if (existing is not null)
+            return await ProvisionExperimentAsync(projectId, existing, cancellationToken);
 
-        var baseline = await LoadBaselineAsync(projectId, cancellationToken);
-        if (baseline is null) return await WaitAsync(projectId, "لا توجد حملة WhatsApp نشطة تصلح كأساس للاختبار.", cancellationToken);
+        var candidate = await BestUnusedCreativeAsync(projectId, baseline.CreativeId, cancellationToken);
+        if (candidate is null)
+            return Wait("لا يوجد محتوى جديد مؤهل بحقوق وسياسة واضحتين؛ سيعيد النظام الفحص عند وصول محتوى جديد.");
+        var envelope = await ActiveEnvelopeAsync(projectId, sourcePlan.EnvelopeId, cancellationToken);
+        if (envelope is null) return Wait("لا يوجد تفويض ميزانية نشط للاختبار.");
 
-        var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(
-            current => current.ProjectId == projectId && current.State == AdvertisingConnectionState.Ready, cancellationToken);
-        if (connection?.ProtectedAccessToken is null || connection.AdAccountExternalId is null || connection.PageExternalId is null || baseline.AdSetExternalId is null)
-            return await WaitAsync(projectId, "اتصال Facebook أو صفحة المشروع أو حملة WhatsApp غير متاحة للاختبار.", cancellationToken);
+        var testBudget = CreativeTestBudget(envelope);
+        if (testBudget <= 0) return Wait("لا توجد سلطة صرف كافية لاختبار محتوى داخل هامش الأمان.");
+        var variantPlan = await clones.CloneAsync(projectId, sourcePlan.Id, AdvertisingCloneVariable.Creative,
+            candidate.Id, null, cancellationToken);
+        var experiment = await experiments.CreateAsync(projectId,
+            CreativeExperimentDefinition(sourcePlan, variantPlan, candidate, envelope, testBudget), cancellationToken);
+        variantPlan.ExperimentId = experiment.Id;
+        await db.SaveChangesAsync(cancellationToken);
+        return await ProvisionExperimentAsync(projectId, experiment, cancellationToken);
+    }
 
-        var candidates = await LoadCandidatesAsync(projectId, baseline.CreativeId, connection, cancellationToken);
-        if (candidates.Count == 0) return await WaitAsync(projectId, "لا توجد بوستات صفحة جديدة متاحة. سيحاول النظام تلقائيًا مع أول محتوى جديد.", cancellationToken);
-
-        var evidence = JsonSerializer.Serialize(new
-        {
-            destination = "WhatsApp",
-            baseline = new { baseline.Id, baseline.Name, baseline.AdSetExternalId, baseline.DailyBudget },
-            candidates = candidates.Select(creative => new { creative.Id, creative.SourceExternalId, creative.MediaType, creative.RecommendationScore })
-        });
-        var review = await ai.ReviewActionAsync(projectId, "CreateTest", evidence, cancellationToken);
-        var decision = CreateDecision(projectId, baseline.PromotionId, evidence, review);
-        db.AdvertisingDecisions.Add(decision);
-        AddReviews(projectId, decision, evidence, review);
-        if (review.AuditorVerdict != DecisionVerdict.Approve)
-        {
-            await db.SaveChangesAsync(cancellationToken);
-            return new(0, "WAITING", review.Reason);
-        }
-
+    private async Task<WhatsAppTestResult> ProvisionExperimentAsync(Guid projectId,
+        AdvertisingExperiment experiment, CancellationToken cancellationToken)
+    {
+        if (experiment.State == "Running") return Wait("يوجد اختبار محتوى يعمل بالفعل؛ لن ينشئ النظام نسخة مكررة.");
+        var variantArm = await db.AdvertisingExperimentArms.IgnoreQueryFilters().SingleAsync(arm =>
+            arm.ProjectId == projectId && arm.ExperimentId == experiment.Id && !arm.IsControl, cancellationToken);
+        var creativeId = CreativeId(variantArm.ChangedValueJson);
         try
         {
-            var token = vault.Unprotect(connection.ProtectedAccessToken);
-            var createdAds = 0;
-            var createdAdIds = new List<Guid>();
-            foreach (var creative in candidates)
-            {
-                var providerAd = await meta.CreateExistingPostAdPausedAsync(token,
-                    new MetaExistingPostAdRequest(connection.AdAccountExternalId, baseline.AdSetExternalId, creative.SourceExternalId!, $"AI WhatsApp Test · {creative.MediaType}"), cancellationToken);
-                var managedAd = new ManagedAdvertisement
-                {
-                    ProjectId = projectId,
-                    PromotionId = baseline.PromotionId,
-                    CreativeId = creative.Id,
-                    Name = $"AI WhatsApp Test · {creative.MediaType}",
-                    CampaignExternalId = baseline.CampaignExternalId,
-                    AdSetExternalId = baseline.AdSetExternalId,
-                    AdExternalId = providerAd.AdId,
-                    BudgetOwnerExternalId = baseline.BudgetOwnerExternalId ?? baseline.AdSetExternalId,
-                    BudgetOwnerType = baseline.BudgetOwnerType,
-                    PublisherPlatform = "facebook",
-                    PositionsJson = baseline.PositionsJson,
-                    DailyBudget = baseline.DailyBudget,
-                    ConfiguredStatus = ManagedDeliveryState.Paused,
-                    EffectiveStatus = "PAUSED"
-                };
-                db.ManagedAdvertisements.Add(managedAd);
-                await db.SaveChangesAsync(cancellationToken);
-                createdAds++;
-                createdAdIds.Add(managedAd.Id);
-            }
-            decision.State = DecisionState.Executed;
-            await db.SaveChangesAsync(cancellationToken);
-
-            var commandIds = await decisions.ProposeCanaryActivationAsync(projectId, cancellationToken, baseline.PromotionId, createdAdIds);
+            var hierarchy = await provisioning.ProvisionPausedAsync(projectId, variantArm.PlanId, creativeId,
+                null, Guid.Empty, $"creative-test:{experiment.Id:N}", cancellationToken);
+            if (!string.Equals(hierarchy.State, ProviderReconciliationState.VerifiedPaused.ToString(), StringComparison.Ordinal))
+                return await NeedsAttentionAsync(experiment, "لم يثبت التطابق الفعلي للحملة المتوقفة في Meta.", cancellationToken);
+            if (!await ReserveVariantBudgetAsync(projectId, experiment, variantArm, hierarchy.AdvertisementId, cancellationToken))
+                return await NeedsAttentionAsync(experiment, "بقي الإعلان متوقفًا لأن سلطة الصرف المتاحة لا تكفي الاختبار.", cancellationToken, "BlockedBudget");
+            var commandIds = await decisions.ProposeCanaryActivationAsync(projectId, cancellationToken,
+                adIds: [hierarchy.AdvertisementId]);
             foreach (var commandId in commandIds)
                 backgroundJobs.Enqueue<AdvertisingCommandWorker>(worker => worker.ExecuteAsync(projectId, commandId, CancellationToken.None));
-            return new(createdAds, commandIds.Count > 0 ? "ACTIVATION_QUEUED" : "PAUSED_PENDING_REVIEW", commandIds.Count > 0 ? "تمت مراجعة التفعيل." : "بانتظار مراجعة تفعيل مستقلة.");
-        }
-        catch (HttpRequestException ex)
-        {
-            decision.State = DecisionState.Failed;
-            db.TrackingIncidents.Add(new TrackingIncident
-            {
-                ProjectId = projectId,
-                Category = "WhatsAppCreativeTest",
-                Severity = "Critical",
-                Summary = "تعذر إكمال اختبار WhatsApp في Meta. أي إعلان تم إنشاؤه بقي متوقفًا لحين المراجعة.",
-                EvidenceJson = JsonSerializer.Serialize(new { errorType = ex.GetType().Name }),
-                DetectedAtUtc = DateTime.UtcNow
-            });
+            experiment.State = commandIds.Count > 0 ? "Running" : "Planned";
+            experiment.StartedAtUtc = commandIds.Count > 0 ? DateTime.UtcNow : null;
             await db.SaveChangesAsync(cancellationToken);
-            return new(0, "FAILED", "Meta رفضت إنشاء اختبار WhatsApp.");
+            return new(1, commandIds.Count > 0 ? "ACTIVATION_QUEUED" : "PAUSED_PENDING_REVIEW",
+                commandIds.Count > 0 ? "اجتاز الاختبار المراجعات وبدأ داخل السقف." : "تم إنشاء الذراع وقراءته كمتوقف؛ القرار المالي ما زال WAIT.");
         }
-    }
-
-    private async Task<ManagedAdvertisement?> LoadBaselineAsync(Guid projectId, CancellationToken cancellationToken) =>
-        await db.ManagedAdvertisements.IgnoreQueryFilters().Where(ad => ad.ProjectId == projectId
-            && ad.ConfiguredStatus == ManagedDeliveryState.Active && ad.AdSetExternalId != null && ad.AdExternalId != null)
-            .OrderByDescending(ad => ad.LastSyncedAtUtc ?? ad.ImportedAtUtc ?? ad.CreatedAt).FirstOrDefaultAsync(cancellationToken);
-
-    private async Task<List<AdvertisingCreative>> LoadCandidatesAsync(Guid projectId, Guid baselineCreativeId,
-        AdvertisingConnection connection, CancellationToken cancellationToken)
-    {
-        var candidates = await EligibleCandidatesAsync(projectId, baselineCreativeId, cancellationToken);
-        if (candidates.Count > 0) return candidates;
-
-        var token = vault.Unprotect(connection.ProtectedAccessToken!);
-        var pagePosts = await meta.GetPagePostsAsync(token, connection.PageExternalId!, cancellationToken);
-        foreach (var post in pagePosts.OrderByDescending(post => post.CreatedAtUtc).Take(MaximumVariants * 2))
+        catch (AdvertisingException exception)
         {
-            var sourceHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{projectId}:{post.Id}"))).ToLowerInvariant();
-            if (await db.AdvertisingCreatives.IgnoreQueryFilters().AnyAsync(creative => creative.ProjectId == projectId && creative.SourceHash == sourceHash, cancellationToken)) continue;
-            var mediaType = post.MediaType.Equals("Video", StringComparison.OrdinalIgnoreCase) ? CreativeMediaType.Video : CreativeMediaType.Image;
-            var rank = CreativeRankingService.Rank(mediaType, post.CreatedAtUtc, DateTime.UtcNow);
-            db.AdvertisingCreatives.Add(new AdvertisingCreative
-            {
-                ProjectId = projectId, SourceType = CreativeSourceType.ExistingPagePost, SourceExternalId = post.Id, SourceHash = sourceHash,
-                MediaType = mediaType, RightsState = "PageOwned", PolicyState = "PendingMetaReview", EligibilityState = CreativeEligibility.Eligible,
-                RecommendationScore = rank.Score, RecommendationEvidenceJson = JsonSerializer.Serialize(new { source = "FacebookPagePost", rank.Explanation }),
-                LastAnalyzedAtUtc = DateTime.UtcNow
-            });
+            experiment.State = "NeedsAttention";
+            experiment.ConclusionJson = JsonSerializer.Serialize(new { code = exception.Code });
+            await db.SaveChangesAsync(cancellationToken);
+            throw;
         }
-        await db.SaveChangesAsync(cancellationToken);
-        return await EligibleCandidatesAsync(projectId, baselineCreativeId, cancellationToken);
     }
 
-    private async Task<List<AdvertisingCreative>> EligibleCandidatesAsync(Guid projectId, Guid baselineCreativeId, CancellationToken cancellationToken)
+    private async Task<bool> ReserveVariantBudgetAsync(Guid projectId, AdvertisingExperiment experiment,
+        AdvertisingExperimentArm variantArm, Guid advertisementId, CancellationToken cancellationToken)
     {
-        var testedCreativeIds = await db.ManagedAdvertisements.IgnoreQueryFilters().Where(ad => ad.ProjectId == projectId)
-            .Select(ad => ad.CreativeId).ToListAsync(cancellationToken);
-        testedCreativeIds.Add(baselineCreativeId);
-        return await db.AdvertisingCreatives.IgnoreQueryFilters().Where(creative => creative.ProjectId == projectId
-            && creative.EligibilityState == CreativeEligibility.Eligible
-            && creative.SourceType == CreativeSourceType.ExistingPagePost
+        if (await db.AdvertisingBudgetAllocations.IgnoreQueryFilters().AnyAsync(allocation => allocation.ProjectId == projectId
+            && allocation.TargetId == advertisementId && allocation.Purpose == BudgetPurpose.CreativeTest
+            && allocation.State == "Active", cancellationToken)) return true;
+        var reservation = await budgets.ReserveBatchAsync(db, new BudgetReservationBatch(projectId,
+            experiment.EnvelopeId, [new(advertisementId, BudgetPurpose.CreativeTest, variantArm.AllocatedBudget)]), cancellationToken);
+        if (!reservation.Reserved) return false;
+        var allocations = await db.AdvertisingBudgetAllocations.IgnoreQueryFilters()
+            .Where(allocation => reservation.AllocationIds.Contains(allocation.Id)).ToListAsync(cancellationToken);
+        foreach (var allocation in allocations) { allocation.ExperimentId = experiment.Id; allocation.PlanId = variantArm.PlanId; }
+        return true;
+    }
+
+    private async Task<WhatsAppTestResult> NeedsAttentionAsync(AdvertisingExperiment experiment, string reason,
+        CancellationToken cancellationToken, string state = "NeedsAttention")
+    {
+        experiment.State = state;
+        experiment.ConclusionJson = JsonSerializer.Serialize(new { reason });
+        await db.SaveChangesAsync(cancellationToken);
+        return Wait(reason);
+    }
+
+    private async Task<ManagedAdvertisement?> EligibleBaselineAsync(Guid projectId, CancellationToken cancellationToken) =>
+        (await ownership.ManagedAdsAsync(projectId, activeOnly: true, cancellationToken))
+            .Where(ad => ad.PlanId != null && ad.DestinationType == "WHATSAPP")
+            .OrderByDescending(ad => ad.LastSyncedAtUtc ?? ad.CreatedAt)
+            .FirstOrDefault();
+
+    private Task<AdvertisingExperiment?> PendingExperimentAsync(Guid projectId, Guid offerId, CancellationToken cancellationToken) =>
+        db.AdvertisingExperiments.IgnoreQueryFilters().Where(experiment => experiment.ProjectId == projectId
+            && experiment.OfferId == offerId && experiment.PrimaryVariable == "creative"
+            && (experiment.State == "Planned" || experiment.State == "Running" || experiment.State == "BlockedBudget"))
+            .OrderByDescending(experiment => experiment.CreatedAt).FirstOrDefaultAsync(cancellationToken);
+
+    private Task<AdvertisingCreative?> BestUnusedCreativeAsync(Guid projectId, Guid baselineCreativeId,
+        CancellationToken cancellationToken) => db.AdvertisingCreatives.IgnoreQueryFilters()
+        .Where(creative => creative.ProjectId == projectId && creative.Id != baselineCreativeId
+            && creative.MediaType == CreativeMediaType.Video
+            && creative.EligibilityState == CreativeEligibility.Eligible && creative.RecommendationScore > 0
             && creative.SourceExternalId != null
-            && creative.RecommendationScore > 0
-            && !testedCreativeIds.Contains(creative.Id))
-            .OrderByDescending(creative => creative.RecommendationScore).ThenByDescending(creative => creative.LastAnalyzedAtUtc)
-            .Take(MaximumVariants).ToListAsync(cancellationToken);
+            && (creative.SourceType != CreativeSourceType.ExistingPagePost || creative.SourceExternalId.Contains("_"))
+            && creative.RightsState != "Rejected" && creative.PolicyState != "Rejected")
+        .OrderByDescending(creative => creative.MediaType == CreativeMediaType.Video)
+        .ThenByDescending(creative => creative.RecommendationScore).ThenByDescending(creative => creative.LastAnalyzedAtUtc)
+        .FirstOrDefaultAsync(cancellationToken);
+
+    private Task<AutonomyEnvelope?> ActiveEnvelopeAsync(Guid projectId, Guid envelopeId, CancellationToken cancellationToken) =>
+        db.AutonomyEnvelopes.IgnoreQueryFilters().SingleOrDefaultAsync(envelope => envelope.ProjectId == projectId
+            && envelope.Id == envelopeId && envelope.State == EnvelopeState.Active, cancellationToken);
+
+    private decimal CreativeTestBudget(AutonomyEnvelope envelope) => budgets.Allocate(envelope.DailyCap,
+        envelope.SafetyReservePercent, 1, false).Slices.Single(slice => slice.Purpose == BudgetPurpose.CreativeTest).Amount;
+
+    private static ExperimentDefinition CreativeExperimentDefinition(CampaignPlan controlPlan, CampaignPlan variantPlan,
+        AdvertisingCreative creative, AutonomyEnvelope envelope, decimal testBudget) => new(
+        controlPlan.OfferId, controlPlan.DestinationId, envelope.Id, $"Creative test · {creative.Id:N}",
+        "مقارنة محتوى جديد مع الـControl على نتيجة واتساب المؤهلة", "creative", "QualifiedLeadOrPurchase",
+        DefaultAttributionWindowDays, 72, testBudget, 10, .8m, 24, testBudget,
+        "{\"maximumLossPercent\":25}",
+        [new("Control", true, controlPlan.Id, "{}", testBudget / 2),
+         new("Variant", false, variantPlan.Id, JsonSerializer.Serialize(new { creative = creative.Id }), testBudget / 2)]);
+
+    private static Guid CreativeId(string changedValueJson)
+    {
+        using var document = JsonDocument.Parse(changedValueJson);
+        return document.RootElement.GetProperty("creative").GetGuid();
     }
 
-    private async Task<WhatsAppTestResult> WaitAsync(Guid projectId, string reason, CancellationToken cancellationToken)
-    {
-        db.AdvertisingDecisions.Add(new AdvertisingDecision
-        {
-            ProjectId = projectId,
-            ActionType = "CreateWhatsAppTest",
-            TargetType = "Creative",
-            EvidenceStartUtc = DateTime.UtcNow,
-            EvidenceEndUtc = DateTime.UtcNow,
-            EvidenceJson = JsonSerializer.Serialize(new { destination = "WhatsApp", reason }),
-            ProposedChangeJson = "{}",
-            RiskClass = "Financial",
-            State = DecisionState.Waiting
-        });
-        await db.SaveChangesAsync(cancellationToken);
-        return new(0, "WAITING", reason);
-    }
-
-    private static AdvertisingDecision CreateDecision(Guid projectId, Guid promotionId, string evidence, AiActivationReview review) => new()
-    {
-        ProjectId = projectId,
-        PromotionId = promotionId,
-        ActionType = "CreateWhatsAppTest",
-        TargetType = "Creative",
-        EvidenceStartUtc = DateTime.UtcNow,
-        EvidenceEndUtc = DateTime.UtcNow,
-        EvidenceJson = evidence,
-        ProposedChangeJson = "{\"destination\":\"WhatsApp\"}",
-        RiskClass = "Financial",
-        State = review.AuditorVerdict == DecisionVerdict.Approve ? DecisionState.Approved : DecisionState.Waiting
-    };
-
-    private void AddReviews(Guid projectId, AdvertisingDecision decision, string evidence, AiActivationReview review)
-    {
-        var evidenceHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(evidence))).ToLowerInvariant();
-        db.AdvertisingDecisionReviews.AddRange(
-            new DecisionReview { ProjectId = projectId, DecisionId = decision.Id, ReviewerType = "Strategist", Verdict = review.StrategistVerdict, ReasonsJson = review.StrategistJson, EvidenceHash = evidenceHash },
-            new DecisionReview { ProjectId = projectId, DecisionId = decision.Id, ReviewerType = "Auditor", Verdict = review.AuditorVerdict, ReasonsJson = review.AuditorJson, EvidenceHash = evidenceHash });
-    }
+    private static WhatsAppTestResult Wait(string reason) => new(0, "WAITING", reason);
 }

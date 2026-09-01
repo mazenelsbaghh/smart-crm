@@ -1,10 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import axios from 'axios';
-import { CheckCircle2, Link2, RefreshCw, Send, Unlink } from 'lucide-react';
+import { Clock3, ExternalLink, Link2, RefreshCw, Send } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { automationDateTime } from './automation-time';
 import styles from './quran-challenge.module.css';
 
 type VerseSelection = {
@@ -18,6 +21,14 @@ type TikTokSettings = {
   appConfigured: boolean;
   connected: boolean;
   displayName: string | null;
+  isEnabled: boolean;
+  intervalHours: number;
+  privacyLevel: PrivacyLevel;
+  allowComment: boolean;
+  allowDuet: boolean;
+  allowStitch: boolean;
+  captionTemplate: string;
+  nextPublishAtUtc: string | null;
   lastPublishedAtUtc: string | null;
   lastPublishId: string | null;
   lastPublishStatus: string | null;
@@ -27,7 +38,7 @@ type TikTokSettings = {
 type CreatorInfo = {
   creatorAvatarUrl: string | null;
   creatorUsername: string | null;
-  creatorNickname: string;
+  creatorNickname: string | null;
   privacyLevelOptions: PrivacyLevel[];
   commentDisabled: boolean;
   duetDisabled: boolean;
@@ -41,30 +52,22 @@ type PrivacyLevel =
   | 'FOLLOWER_OF_CREATOR'
   | 'SELF_ONLY';
 
-export function TikTokPublishingPanel({ selection }: { selection: VerseSelection }) {
+export function TikTokPublishingPanel({ selection, timezone }: { selection: VerseSelection; timezone: string | null }) {
   const { user, activeProject, loading: authLoading } = useAuth();
   const [settings, setSettings] = useState<TikTokSettings | null>(null);
   const [creator, setCreator] = useState<CreatorInfo | null>(null);
-  const [title, setTitle] = useState(defaultTitle(selection));
-  const [privacyLevel, setPrivacyLevel] = useState<PrivacyLevel | ''>('');
-  const [allowComment, setAllowComment] = useState(false);
-  const [allowDuet, setAllowDuet] = useState(false);
-  const [allowStitch, setAllowStitch] = useState(false);
-  const [consent, setConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [pollError, setPollError] = useState('');
   const [message, setMessage] = useState('');
-
-  useEffect(() => setTitle(defaultTitle(selection)), [
-    selection.surahNumber,
-    selection.ayahNumber,
-    selection.surahName,
-  ]);
+  const [confirmPublish, setConfirmPublish] = useState(false);
 
   const load = async () => {
     setLoading(true);
     setError('');
+    setPollError('');
+    setCreator(null);
     try {
       const response = await api.get<TikTokSettings>('/api/quran/tiktok');
       setSettings(response.data);
@@ -83,14 +86,10 @@ export function TikTokPublishingPanel({ selection }: { selection: VerseSelection
   };
 
   useEffect(() => {
-    if (user && activeProject) void load();
-  }, [user, activeProject]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!settings?.lastPublishStatus || !isPending(settings.lastPublishStatus)) return;
-    const timer = window.setInterval(() => void pollStatus(), 10000);
-    return () => window.clearInterval(timer);
-  }, [settings?.lastPublishStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!user || !activeProject) return;
+    const frame = window.requestAnimationFrame(() => void load());
+    return () => window.cancelAnimationFrame(frame);
+  }, [user, activeProject]);
 
   const connect = async () => {
     setBusy(true);
@@ -104,19 +103,17 @@ export function TikTokPublishingPanel({ selection }: { selection: VerseSelection
     }
   };
 
-  const disconnect = async () => {
+  const verifyConnection = async () => {
     setBusy(true);
     resetFeedback(setError, setMessage);
     try {
-      await api.post('/api/quran/tiktok/disconnect');
-      setSettings((current) => current ? {
-        ...current,
-        connected: false,
-        displayName: null,
-      } : current);
-      setCreator(null);
-      setMessage('تم فصل حساب TikTok.');
+      const creatorResponse = await api.post<CreatorInfo>('/api/quran/tiktok/verify-connection');
+      const settingsResponse = await api.get<TikTokSettings>('/api/quran/tiktok');
+      setCreator(creatorResponse.data);
+      setSettings(settingsResponse.data);
+      setMessage('تم التحقق من حساب TikTok وحفظ هوية الناشر.');
     } catch (requestError) {
+      setCreator(null);
       setError(apiErrorMessage(requestError));
     } finally {
       setBusy(false);
@@ -124,10 +121,6 @@ export function TikTokPublishingPanel({ selection }: { selection: VerseSelection
   };
 
   const publish = async () => {
-    if (!privacyLevel) {
-      setError('اختر خصوصية الفيديو قبل النشر.');
-      return;
-    }
     setBusy(true);
     resetFeedback(setError, setMessage);
     try {
@@ -135,12 +128,6 @@ export function TikTokPublishingPanel({ selection }: { selection: VerseSelection
         surahNumber: selection.surahNumber,
         ayahNumber: selection.ayahNumber,
         hiddenWordIndex: selection.hiddenWordIndex,
-        title,
-        privacyLevel,
-        allowComment,
-        allowDuet,
-        allowStitch,
-        consent,
       });
       setSettings((current) => current ? {
         ...current,
@@ -148,6 +135,21 @@ export function TikTokPublishingPanel({ selection }: { selection: VerseSelection
         lastError: null,
       } : current);
       setMessage('بدأ تجهيز الفيديو. سنحدّث حالة TikTok تلقائيًا هنا.');
+    } catch (requestError) {
+      setError(apiErrorMessage(requestError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async () => {
+    if (!settings) return;
+    setBusy(true);
+    resetFeedback(setError, setMessage);
+    try {
+      const response = await api.put<TikTokSettings>('/api/quran/tiktok', settings);
+      setSettings(response.data);
+      setMessage('تم حفظ الجدولة. سيستمر النشر حتى والمتصفح مغلق.');
     } catch (requestError) {
       setError(apiErrorMessage(requestError));
     } finally {
@@ -166,9 +168,11 @@ export function TikTokPublishingPanel({ selection }: { selection: VerseSelection
         lastPublishStatus: response.data.status,
         lastError: response.data.failReason,
       } : current);
+      setPollError('');
       if (showFeedback) setMessage(statusLabel(response.data.status));
     } catch (requestError) {
       if (showFeedback) setError(apiErrorMessage(requestError));
+      else setPollError(apiErrorMessage(requestError));
     }
   };
 
@@ -176,30 +180,30 @@ export function TikTokPublishingPanel({ selection }: { selection: VerseSelection
     try {
       const settingsResponse = await api.get<TikTokSettings>('/api/quran/tiktok');
       setSettings(settingsResponse.data);
+      setPollError('');
       if (settingsResponse.data.lastPublishId && isPending(settingsResponse.data.lastPublishStatus ?? '')) {
         await refreshStatus(false);
       }
     } catch (requestError) {
-      if (!axios.isAxiosError(requestError)) throw requestError;
+      setPollError(apiErrorMessage(requestError));
     }
   };
 
-  const canPublish = useMemo(() => Boolean(
-    settings?.connected
-    && creator
-    && title.trim()
-    && privacyLevel
-    && consent
-    && !busy
-  ), [busy, consent, creator, privacyLevel, settings?.connected, title]);
+  useEffect(() => {
+    if (!settings?.lastPublishStatus || !isPending(settings.lastPublishStatus)) return;
+    const timer = window.setInterval(() => void pollStatus(), 10000);
+    return () => window.clearInterval(timer);
+  }, [settings?.lastPublishStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <section className={`${styles.youtubeStudio} ${styles.tiktokStudio}`} aria-labelledby="tiktok-heading">
+  const canPublish = useMemo(() => Boolean(settings?.connected && creator && !busy), [busy, creator, settings?.connected]);
+  const creatorLabel = creator?.creatorNickname || creator?.creatorUsername || settings?.displayName || 'حساب TikTok';
+
+  return <><section className={`${styles.youtubeStudio} ${styles.tiktokStudio}`} aria-labelledby="tiktok-heading">
     <div className={`${styles.youtubeIntro} ${styles.tiktokIntro}`}>
-      <div className={`${styles.youtubeMark} ${styles.tiktokMark}`}><TikTokGlyph /></div>
-      <p className={styles.eyebrow}>TikTok</p>
-      <h2 id="tiktok-heading">راجع الفيديو،<br /><em>وانشره على حسابك.</em></h2>
-      <p>اختر الخصوصية والتفاعلات بنفسك في كل مرة. بعد الضغط، يتولّد فيديو الآية ويُرسل إلى TikTok وتظهر حالة المعالجة هنا.</p>
-      <p className={styles.tiktokPolicy}>TikTok يشترط موافقتك وقت كل نشر، لذلك لا يعمل هذا القسم بجدولة صامتة.</p>
+      <div className={`${styles.youtubeMark} ${styles.tiktokMark}`}><TikTokLabel /></div>
+      <p className={styles.eyebrow}>النشر التلقائي عبر Zernio</p>
+      <h2 id="tiktok-heading">اضبط الجدولة،<br /><em>وTikTok ينشر وحده.</em></h2>
+      <p>المهمة تعمل من السيرفر كل دقيقة، وتختار آية مناسبة وتولّد الفيديو وتنشره تلقائيًا على الحساب المتصل.</p>
     </div>
     <div className={styles.youtubeControls}>
       {authLoading || loading
@@ -212,63 +216,78 @@ export function TikTokPublishingPanel({ selection }: { selection: VerseSelection
               <div className={styles.channelRow}>
                 <div>
                   <span className={`${styles.connectionDot} ${settings.connected ? styles.connected : ''}`} />
-                  <div><small>حساب TikTok</small><strong>{creator?.creatorNickname ?? settings.displayName ?? 'غير مرتبط'}</strong></div>
+                  <div><small>حساب TikTok</small><strong>{settings.connected ? creatorLabel : 'غير متحقق منه'}</strong></div>
                 </div>
-                {settings.connected
-                  ? <button type="button" className={styles.disconnectButton} onClick={disconnect} disabled={busy}><Unlink size={16} /> فصل الحساب</button>
-                  : <button type="button" className={`${styles.connectButton} ${styles.tiktokConnect}`} onClick={connect} disabled={!settings.appConfigured || busy}><TikTokGlyph small /> ربط TikTok</button>}
+                <button type="button" className={styles.disconnectButton} onClick={connect} disabled={busy || !settings.appConfigured}><ExternalLink size={16} /> إدارة الربط في Zernio</button>
               </div>
 
-              {!settings.appConfigured && <p className={styles.youtubeWarning}>TikTok App غير مضبوط على الخادم. أضف Client Key وClient Secret أولاً.</p>}
+              {!settings.appConfigured && <p className={styles.youtubeWarning}>Zernio غير مكتمل على الخادم. أضف ZERNIO_API_KEY أولاً.</p>}
+              {settings.appConfigured && !settings.connected && <div className={styles.youtubeWarning} role="status">
+                <p>إعداد Zernio موجود، لكننا لن نعرض حسابًا متصلًا قبل قراءة هوية الناشر من TikTok.</p>
+                <button type="button" className={styles.publishNow} onClick={verifyConnection} disabled={busy}>
+                  <RefreshCw size={17} />{busy ? 'جارٍ التحقق…' : 'تحقق من الربط'}
+                </button>
+              </div>}
+
+              {settings.connected && !creator && <div className={styles.youtubeWarning} role="alert">
+                <p>الحساب مسجل كمتصل، لكن تعذر قراءة هوية الناشر. تحقق من الربط قبل النشر.</p>
+                <button type="button" className={styles.publishNow} onClick={verifyConnection} disabled={busy}>
+                  <RefreshCw size={17} />{busy ? 'جارٍ التحقق…' : 'إعادة التحقق'}
+                </button>
+              </div>}
 
               {settings.connected && creator && <>
                 <div className={styles.tiktokAccount}>
                   {creator.creatorAvatarUrl
-                    ? <img src={creator.creatorAvatarUrl} alt="" />
-                    : <span><TikTokGlyph /></span>}
-                  <div><small>سيُنشر على</small><strong>{creator.creatorNickname}</strong>{creator.creatorUsername && <b>@{creator.creatorUsername}</b>}</div>
+                    ? <Image unoptimized src={creator.creatorAvatarUrl} width={48} height={48} alt={`صورة حساب ${creatorLabel}`} />
+                    : <span><TikTokLabel /></span>}
+                  <div><small>سيُنشر على</small><strong>{creatorLabel}</strong>{creator.creatorUsername && <b>@{creator.creatorUsername}</b>}</div>
                   <em>الحد الأقصى {creator.maxVideoPostDurationSeconds} ث</em>
                 </div>
 
-                <label className={styles.captionTemplate}>
-                  <span>وصف فيديو TikTok</span>
-                  <textarea rows={6} maxLength={2200} value={title} onChange={(event) => setTitle(event.target.value)} />
-                  <small>{title.length}/2200، عدّل الوصف والهاشتاجات قبل كل نشر.</small>
-                </label>
+                <TikTokCountdown settings={settings} timezone={timezone} />
 
-                <label className={styles.tiktokPrivacy}>
-                  <span>خصوصية الفيديو</span>
-                  <select value={privacyLevel} onChange={(event) => setPrivacyLevel(event.target.value as PrivacyLevel | '')}>
-                    <option value="">اختر بنفسك</option>
-                    {creator.privacyLevelOptions.map((level) => <option value={level} key={level}>{privacyLabel(level)}</option>)}
-                  </select>
+                <div className={styles.scheduleGrid}>
+                  <label><span><Clock3 size={15} /> ينشر كل</span><div className={styles.intervalInput}><input type="number" min="1" max="168" value={settings.intervalHours} onChange={(event) => setSettings({ ...settings, intervalHours: Number(event.target.value) })} /><b>ساعة</b></div></label>
+                  <label className={styles.tiktokPrivacy}><span>خصوصية الفيديو</span><select value={settings.privacyLevel} onChange={(event) => setSettings({ ...settings, privacyLevel: event.target.value as PrivacyLevel })}>{creator.privacyLevelOptions.map((level) => <option value={level} key={level}>{privacyLabel(level)}</option>)}</select></label>
+                </div>
+
+                <label className={styles.captionTemplate}>
+                  <span>الوصف التلقائي</span>
+                  <textarea rows={6} maxLength={2200} value={settings.captionTemplate} onChange={(event) => setSettings({ ...settings, captionTemplate: event.target.value })} />
+                  <small>{settings.captionTemplate.length}/2200، المتغيرات: {'{surah}'}، {'{ayah}'}، {'{word}'}</small>
                 </label>
 
                 <fieldset className={styles.tiktokInteractions}>
                   <legend>السماح بالتفاعلات</legend>
-                  <TikTokCheck label="التعليقات" checked={allowComment} disabled={creator.commentDisabled} onChange={setAllowComment} />
-                  <TikTokCheck label="Duet" checked={allowDuet} disabled={creator.duetDisabled} onChange={setAllowDuet} />
-                  <TikTokCheck label="Stitch" checked={allowStitch} disabled={creator.stitchDisabled} onChange={setAllowStitch} />
+                  <TikTokCheck label="التعليقات" checked={settings.allowComment} disabled={creator.commentDisabled} onChange={(checked) => setSettings({ ...settings, allowComment: checked })} />
+                  <TikTokCheck label="Duet" checked={settings.allowDuet} disabled={creator.duetDisabled} onChange={(checked) => setSettings({ ...settings, allowDuet: checked })} />
+                  <TikTokCheck label="Stitch" checked={settings.allowStitch} disabled={creator.stitchDisabled} onChange={(checked) => setSettings({ ...settings, allowStitch: checked })} />
                 </fieldset>
 
-                <label className={styles.tiktokConsent}>
-                  <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-                  <span><CheckCircle2 size={18} /><b>بنشر الفيديو، أوافق على تأكيد استخدام الموسيقى الخاص بـ TikTok.</b><small>By posting, you agree to TikTok&apos;s Music Usage Confirmation.</small></span>
-                </label>
+                <label className={styles.automationSwitch}><input type="checkbox" checked={settings.isEnabled} onChange={(event) => setSettings({ ...settings, isEnabled: event.target.checked })} /><span /><div><strong>تشغيل النشر التلقائي على TikTok</strong><small>{settings.nextPublishAtUtc ? `الموعد القادم: ${automationDateTime(settings.nextPublishAtUtc, timezone)}` : 'سيبدأ بعد حفظ الجدولة'}</small></div></label>
 
-                <div className={styles.youtubeActions}>
+                <div className={`${styles.youtubeActions} ${styles.tiktokActions}`}>
                   <button type="button" className={styles.publishNow} onClick={() => void refreshStatus()} disabled={!settings.lastPublishId || busy}><RefreshCw size={17} /> تحديث الحالة</button>
-                  <button type="button" className={`${styles.saveSchedule} ${styles.tiktokPublish}`} onClick={publish} disabled={!canPublish}><Send size={17} />{busy ? 'جارٍ البدء…' : 'انشر فيديو الآية على TikTok'}</button>
+                  <button type="button" className={styles.saveSchedule} onClick={save} disabled={busy}>{busy ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button>
+                  <button type="button" className={`${styles.saveSchedule} ${styles.tiktokPublish}`} onClick={() => setConfirmPublish(true)} disabled={!canPublish}><Send size={17} />{busy ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button>
                 </div>
               </>}
 
               {settings.lastPublishStatus && <div className={styles.tiktokStatus}><span className={isPending(settings.lastPublishStatus) ? styles.statusPulse : ''} /><div><small>حالة آخر فيديو</small><strong>{statusLabel(settings.lastPublishStatus)}</strong></div></div>}
-              {settings.lastPublishedAtUtc && <p className={styles.lastPublish}>بدأ آخر نشر: {cairoDateTime(settings.lastPublishedAtUtc)}</p>}
-              {(error || settings.lastError) && <p className={styles.youtubeError}>{error || settings.lastError}</p>}
-              {message && <p className={styles.youtubeSuccess}>{message}</p>}
+              {settings.lastPublishedAtUtc && <p className={styles.lastPublish}>بدأ آخر نشر: {automationDateTime(settings.lastPublishedAtUtc, timezone)}</p>}
+              {(error || pollError || settings.lastError) && <p className={styles.youtubeError} role="alert">{error || pollError || settings.lastError}</p>}
+              {message && <p className={styles.youtubeSuccess} role="status">{message}</p>}
             </>}
     </div>
-  </section>;
+  </section><ConfirmDialog
+    isOpen={confirmPublish}
+    title="نشر الآية على TikTok الآن؟"
+    message={`ستُرسل الآية ${selection.ayahNumber} إلى حساب «${creatorLabel}» فورًا وفق إعدادات الخصوصية الحالية.`}
+    confirmLabel="ابدأ النشر"
+    onCancel={() => setConfirmPublish(false)}
+    onConfirm={() => { setConfirmPublish(false); void publish(); }}
+  /></>;
 }
 
 function TikTokCheck({ label, checked, disabled, onChange }: {
@@ -280,16 +299,40 @@ function TikTokCheck({ label, checked, disabled, onChange }: {
   return <label><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} /><span>{label}</span>{disabled && <small>معطّل في TikTok</small>}</label>;
 }
 
-function TikTokGlyph({ small = false }: { small?: boolean }) {
-  return <span className={styles.tiktokGlyph} style={{ fontSize: small ? '1rem' : '1.45rem' }} aria-hidden="true">♪</span>;
+function TikTokCountdown({ settings, timezone }: { settings: TikTokSettings; timezone: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!settings.isEnabled || !settings.nextPublishAtUtc) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [settings.isEnabled, settings.nextPublishAtUtc]);
+  const remaining = settings.nextPublishAtUtc
+    ? new Date(settings.nextPublishAtUtc).getTime() - now
+    : null;
+  const active = settings.connected && settings.isEnabled && remaining !== null;
+  return <div className={`${styles.nextPublish} ${active ? styles.nextPublishActive : ''}`}>
+    <div className={styles.nextPublishIcon}><Clock3 size={20} /></div>
+    <div className={styles.nextPublishCopy}>
+      <span>فيديو TikTok القادم</span>
+      <strong>{nextPublishLabel(settings, remaining)}</strong>
+      {active && settings.nextPublishAtUtc && <time dateTime={settings.nextPublishAtUtc}>{automationDateTime(settings.nextPublishAtUtc, timezone)}</time>}
+    </div>
+  </div>;
+}
+
+function nextPublishLabel(settings: TikTokSettings, remaining: number | null) {
+  if (!settings.isEnabled) return 'النشر التلقائي متوقف';
+  if (remaining === null) return 'احفظ الجدولة لتحديد الموعد';
+  if (remaining <= 0) return 'جارٍ تجهيز الفيديو التالي…';
+  return `بعد ${formatCountdown(remaining)}`;
+}
+
+function TikTokLabel() {
+  return <span className={styles.tiktokGlyph} aria-hidden="true">TikTok</span>;
 }
 
 function EmptyState({ title, detail }: { title: string; detail: string }) {
   return <div className={styles.youtubeEmpty}><Link2 size={24} /><strong>{title}</strong><span>{detail}</span></div>;
-}
-
-function defaultTitle(selection: VerseSelection) {
-  return `هل عرفت الكلمة الناقصة من ${selection.surahName}، الآية ${selection.ayahNumber}؟ ✨\nاكتب إجابتك قبل ظهور النتيجة.\nصلِّ على النبي ﷺ ولا تنسَ المتابعة والإعجاب.\n#أكمل_الآية #القرآن_الكريم #ياسر_الدوسري`;
 }
 
 function privacyLabel(level: PrivacyLevel) {
@@ -319,8 +362,8 @@ function isPending(status: string) {
 
 function applyOAuthFeedback(setError: (value: string) => void, setMessage: (value: string) => void) {
   const oauthStatus = new URLSearchParams(window.location.search).get('tiktok');
-  if (oauthStatus === 'connected') setMessage('تم ربط حساب TikTok بنجاح.');
-  if (oauthStatus && oauthStatus !== 'connected') setError('لم يكتمل ربط TikTok. راجع صلاحية video.publish ثم حاول مرة أخرى.');
+  if (oauthStatus === 'connected') setMessage('عدت من Zernio. اضغط «تحقق من الربط» لقراءة هوية حساب TikTok وحفظها.');
+  if (oauthStatus && oauthStatus !== 'connected') setError('لم يكتمل ربط TikTok في Zernio.');
   if (oauthStatus) window.history.replaceState({}, '', window.location.pathname);
 }
 
@@ -334,10 +377,13 @@ function apiErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'حدث خطأ غير متوقع.';
 }
 
-function cairoDateTime(date: string) {
-  return new Intl.DateTimeFormat('ar-EG', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'Africa/Cairo',
-  }).format(new Date(date));
+function formatCountdown(milliseconds: number) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const days = Math.floor(seconds / 86400);
+  const time = [
+    Math.floor((seconds % 86400) / 3600),
+    Math.floor((seconds % 3600) / 60),
+    seconds % 60,
+  ].map((value) => String(value).padStart(2, '0')).join(':');
+  return days ? `${days} يوم و ${time}` : time;
 }

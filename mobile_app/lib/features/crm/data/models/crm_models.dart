@@ -39,7 +39,9 @@ class Customer {
       leadScore: json['leadScore'] ?? 0,
       tags: List<String>.from(json['tags'] ?? []),
       notes: json['notes'] ?? '',
-      budget: json['budget'] != null ? (json['budget'] as num).toDouble() : null,
+      budget: json['budget'] != null
+          ? (json['budget'] as num).toDouble()
+          : null,
       interests: List<String>.from(json['interests'] ?? []),
       pipelineStage: json['pipelineStage'],
       label: json['label'],
@@ -48,17 +50,17 @@ class Customer {
   }
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'city': city,
-        'leadScore': leadScore,
-        'tags': tags,
-        'notes': notes,
-        'budget': budget,
-        'interests': interests,
-        'pipelineStage': pipelineStage,
-        'label': label,
-        'isBlacklisted': isBlacklisted,
-      };
+    'name': name,
+    'city': city,
+    'leadScore': leadScore,
+    'tags': tags,
+    'notes': notes,
+    'budget': budget,
+    'interests': interests,
+    'pipelineStage': pipelineStage,
+    'label': label,
+    'isBlacklisted': isBlacklisted,
+  };
 }
 
 class PipelineStage {
@@ -119,10 +121,23 @@ class Deal {
   }
 
   Map<String, dynamic> toJson() => {
-        'customerId': customerId,
-        'title': title,
-        'amount': amount,
-        'pipelineStageId': pipelineStageId,
-        'status': status,
-      };
+    'customerId': customerId,
+    'title': title,
+    'amount': amount,
+    'pipelineStageId': pipelineStageId,
+    'status': status,
+  };
+
+  Deal copyWith({required String pipelineStageId}) {
+    return Deal(
+      id: id,
+      projectId: projectId,
+      customerId: customerId,
+      title: title,
+      amount: amount,
+      pipelineStageId: pipelineStageId,
+      status: status,
+      closedAt: closedAt,
+    );
+  }
 }

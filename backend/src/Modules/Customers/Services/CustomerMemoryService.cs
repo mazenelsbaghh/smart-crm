@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Shared.Security;
 
 namespace Modules.Customers.Services
 {
@@ -22,11 +23,16 @@ namespace Modules.Customers.Services
     {
         private readonly AppDbContext _dbContext;
         private readonly IGeminiClient _geminiClient;
+        private readonly IProjectSecretVault _secretVault;
 
-        public CustomerMemoryService(AppDbContext dbContext, IGeminiClient geminiClient)
+        public CustomerMemoryService(
+            AppDbContext dbContext,
+            IGeminiClient geminiClient,
+            IProjectSecretVault secretVault)
         {
             _dbContext = dbContext;
             _geminiClient = geminiClient;
+            _secretVault = secretVault;
         }
 
         public async Task UpdateMemoryFromConversationAsync(Guid projectId, Guid customerId, Guid conversationId)
@@ -56,7 +62,7 @@ Conversation Transcript:
 {transcript}";
 
             var settings = await _dbContext.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
-            string? apiKeyOverride = !string.IsNullOrEmpty(settings?.GeminiApiKey) ? settings.GeminiApiKey : null;
+            string? apiKeyOverride = _secretVault.Unprotect(projectId, settings?.GeminiApiKey);
 
             string response = string.Empty;
 
@@ -229,7 +235,7 @@ Conversation Transcript:
 {transcript}";
 
             var settings = await _dbContext.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
-            string? apiKeyOverride = !string.IsNullOrEmpty(settings?.GeminiApiKey) ? settings.GeminiApiKey : null;
+            string? apiKeyOverride = _secretVault.Unprotect(projectId, settings?.GeminiApiKey);
 
             string response;
             try

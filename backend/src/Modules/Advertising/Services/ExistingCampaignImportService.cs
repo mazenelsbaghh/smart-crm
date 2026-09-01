@@ -28,8 +28,11 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
         return providerAds.Select(ad => new ExistingAdCandidate(ad, managedIds.Contains(ad.AdId), IneligibleReason(ad))).ToArray();
     }
 
-    public async Task<ExistingCampaignImportResult> ImportAsync(Guid projectId, IReadOnlyCollection<string> requestedAdIds, CancellationToken cancellationToken)
+    public async Task<ExistingCampaignImportResult> ImportAsync(Guid projectId, IReadOnlyCollection<string> requestedAdIds,
+        Guid actorUserId, bool confirmOwnershipTransfer, CancellationToken cancellationToken)
     {
+        if (!confirmOwnershipTransfer)
+            throw new AdvertisingException("ADS_OWNERSHIP_TRANSFER_REQUIRED", "Explicit ownership transfer is required before Autopilot can mutate imported delivery.", 409);
         if (requestedAdIds.Count is < 1 or > 50) throw new AdvertisingException("ADS_IMPORT_COUNT_INVALID", "Select between 1 and 50 Facebook ads.", 422);
         var envelope = await db.AutonomyEnvelopes.IgnoreQueryFilters().OrderByDescending(candidate => candidate.CreatedAt)
             .FirstOrDefaultAsync(candidate => candidate.ProjectId == projectId && candidate.State != EnvelopeState.Revoked, cancellationToken)
@@ -39,11 +42,13 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
         var selected = candidates.Where(candidate => selectedIds.Contains(candidate.Ad.AdId)).ToArray();
         if (selected.Length != selectedIds.Count) throw new AdvertisingException("ADS_PROVIDER_AD_NOT_FOUND", "One or more selected Facebook ads no longer exist.", 409);
         if (selected.Any(candidate => candidate.IneligibleReason is not null))
-            throw new AdvertisingException("ADS_FACEBOOK_ONLY_REQUIRED", "Only ads restricted to supported Facebook placements can be managed.", 422);
+            throw new AdvertisingException("ADS_WHATSAPP_IMPORT_REQUIRED", "Only verified click-to-WhatsApp ads can be transferred to Autopilot.", 422);
         var newAds = selected.Where(candidate => !candidate.AlreadyManaged).Select(candidate => candidate.Ad).ToArray();
         if (newAds.Length == 0) return new(0, selected.Length, 0m);
 
-        var imported = BuildManagedEntities(projectId, envelope, newAds);
+        var connection = await db.AdvertisingConnections.SingleAsync(item => item.ProjectId == projectId && item.State == AdvertisingConnectionState.Ready, cancellationToken);
+        var imported = BuildManagedEntities(projectId, connection.Id, envelope, newAds, actorUserId);
+        db.AdvertisingManagedOwnership.AddRange(imported.Ownership);
         db.AdvertisingPromotions.AddRange(imported.Promotions);
         db.AdvertisingCreatives.AddRange(imported.Creatives);
         db.ManagedAdvertisements.AddRange(imported.Ads);
@@ -64,7 +69,8 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
         return new(imported.Ads.Count, selected.Count(candidate => candidate.AlreadyManaged), reservedDailyBudget);
     }
 
-    private static ImportedEntities BuildManagedEntities(Guid projectId, AutonomyEnvelope envelope, IReadOnlyCollection<MetaExistingAd> providerAds)
+    private static ImportedEntities BuildManagedEntities(Guid projectId, Guid connectionId, AutonomyEnvelope envelope,
+        IReadOnlyCollection<MetaExistingAd> providerAds, Guid actorUserId)
     {
         var promotions = providerAds.GroupBy(ad => ad.CampaignId).ToDictionary(group => group.Key, group => new AdvertisingPromotion
         {
@@ -74,6 +80,16 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
         });
         var creatives = new List<AdvertisingCreative>();
         var managedAds = new List<ManagedAdvertisement>();
+        var ownership = providerAds.GroupBy(ad => ad.CampaignId).ToDictionary(group => group.Key, group => new ManagedOwnershipRecord
+        {
+            ProjectId = projectId, ConnectionId = connectionId, ProviderCampaignExternalId = group.Key,
+            OwnershipKind = ManagedOwnershipKind.ImportedWithAuthority, AuthorizedByUserId = actorUserId,
+            AuthorizedAtUtc = DateTime.UtcNow, ImportEvidenceJson = JsonSerializer.Serialize(new
+            {
+                source = "MetaReadBack", campaignId = group.Key, adIds = group.Select(ad => ad.AdId).Order().ToArray()
+            }),
+            AllowedMutationScopeJson = "[\"Pause\",\"Resume\",\"Budget\",\"CreativeReplacement\"]"
+        });
         foreach (var providerAd in providerAds)
         {
             var creative = new AdvertisingCreative
@@ -85,16 +101,19 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
             creatives.Add(creative);
             managedAds.Add(new ManagedAdvertisement
             {
-                ProjectId = projectId, PromotionId = promotions[providerAd.CampaignId].Id, CreativeId = creative.Id, Name = providerAd.AdName,
+                ProjectId = projectId, ConnectionId = connectionId, OwnershipRecordId = ownership[providerAd.CampaignId].Id,
+                PromotionId = promotions[providerAd.CampaignId].Id, CreativeId = creative.Id, Name = providerAd.AdName,
                 CampaignExternalId = providerAd.CampaignId, AdSetExternalId = providerAd.AdSetId, AdExternalId = providerAd.AdId,
                 BudgetOwnerExternalId = providerAd.BudgetOwnerId, BudgetOwnerType = providerAd.BudgetOwnerType,
-                PublisherPlatform = "facebook", ManagementSource = "ImportedFromMeta",
+                PublisherPlatform = "dynamic", ManagementSource = "ImportedWithAuthority",
                 PositionsJson = JsonSerializer.Serialize(ManagedPositions(providerAd)),
                 DailyBudget = providerAd.DailyBudget, ConfiguredStatus = providerAd.EffectiveStatus == "ACTIVE" ? ManagedDeliveryState.Active : ManagedDeliveryState.Paused,
-                EffectiveStatus = providerAd.EffectiveStatus, LastSyncedAtUtc = DateTime.UtcNow, ImportedAtUtc = DateTime.UtcNow
+                EffectiveStatus = providerAd.EffectiveStatus,
+                ReconciliationState = providerAd.EffectiveStatus == "PAUSED" ? ProviderReconciliationState.VerifiedPaused : ProviderReconciliationState.Active,
+                DestinationType = "WHATSAPP", LastSyncedAtUtc = DateTime.UtcNow, ImportedAtUtc = DateTime.UtcNow
             });
         }
-        return new(promotions.Values.ToArray(), creatives, managedAds);
+        return new(promotions.Values.ToArray(), creatives, managedAds, ownership.Values.ToArray());
     }
 
     private async Task<(AdvertisingConnection Connection, string Token)> FacebookConnectionAsync(Guid projectId, CancellationToken cancellationToken)
@@ -108,7 +127,9 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
 
     private static string? IneligibleReason(MetaExistingAd ad)
     {
-        if (!ad.IsFacebookOnly) return "الحملة تستخدم مواضع غير Facebook أو مواضع غير مدعومة.";
+        if (!string.Equals(ad.Destination, "WhatsApp", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(ad.PageId) || string.IsNullOrWhiteSpace(ad.WhatsAppPhoneNumber))
+            return "الإعلان ليس Click-to-WhatsApp بهوية صفحة ورقم مثبتين.";
         if (ad.DailyBudget <= 0) return "تعذّر تحديد الميزانية اليومية من Ad Set أو Campaign.";
         return null;
     }
@@ -118,5 +139,7 @@ public sealed class ExistingCampaignImportService(AppDbContext db, MetaAdsClient
         providerAd.Destination == "WhatsApp" ? ["feed"] : [];
 
     private static string Hash(string source) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
-    private sealed record ImportedEntities(IReadOnlyCollection<AdvertisingPromotion> Promotions, IReadOnlyCollection<AdvertisingCreative> Creatives, IReadOnlyCollection<ManagedAdvertisement> Ads);
+    private sealed record ImportedEntities(IReadOnlyCollection<AdvertisingPromotion> Promotions,
+        IReadOnlyCollection<AdvertisingCreative> Creatives, IReadOnlyCollection<ManagedAdvertisement> Ads,
+        IReadOnlyCollection<ManagedOwnershipRecord> Ownership);
 }

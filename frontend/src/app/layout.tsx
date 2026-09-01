@@ -5,7 +5,7 @@ import '@aejkatappaja/phantom-ui/ssr.css';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'سمارت سيلز - لوحة التحكم',
+  title: 'سمارت كاستمر - لوحة التحكم',
   description: 'منصة إدارة المبيعات والعملاء والردود الذكية',
 };
 

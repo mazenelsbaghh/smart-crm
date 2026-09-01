@@ -6,6 +6,9 @@ namespace Shared.Events
     {
         public Guid ProjectId { get; set; }
         public Guid CustomerId { get; set; }
+        public Guid? ConversationId { get; set; }
+        public Guid? WhatsAppAccountId { get; set; }
+        public string Channel { get; set; } = "WhatsApp";
         public string Sender { get; set; } = string.Empty;
         public string City { get; set; }
         public decimal? Budget { get; set; }

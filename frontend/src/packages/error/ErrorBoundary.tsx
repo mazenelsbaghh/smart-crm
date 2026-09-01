@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 import styles from './error-boundary.module.css';
 
@@ -16,50 +17,32 @@ export default function ErrorBoundary({ error, reset }: ErrorProps) {
   }, [error]);
 
   return (
-    <div className={styles.container}>
-      <div className={styles.backdropGlow1}></div>
-      <div className={styles.backdropGlow2}></div>
-
-      <div className={styles.card}>
+    <section className={styles.container} aria-labelledby="runtime-error-title">
+      <div className={styles.card} role="alert" aria-labelledby="runtime-error-title">
         <div className={styles.iconContainer}>
-          <AlertTriangle size={48} color="#ec4899" className={styles.iconAnimation} />
+          <AlertTriangle size={40} aria-hidden="true" />
         </div>
 
-        <h1 className={styles.title}>Something went wrong</h1>
+        <h1 id="runtime-error-title" className={styles.title}>حصل خطأ غير متوقع</h1>
         <p className={styles.subtitle}>
-          An unexpected error occurred while processing your request.
+          بياناتك لم تتغيّر بسبب هذه الشاشة. حاول تحميل الجزء ده مرة تانية، أو ارجع للوحة التحكم.
         </p>
-
-        {error.message && (
-          <div className={styles.errorDetails}>
-            <p className={styles.errorText}>
-              <strong>Details:</strong> {error.message}
-            </p>
-            {error.digest && (
-              <p className={styles.digestText}>
-                <strong>Digest ID:</strong> <code>{error.digest}</code>
-              </p>
-            )}
-          </div>
-        )}
 
         <div className={styles.buttonGroup}>
           <button
+            type="button"
             onClick={() => reset()}
-            className={`neon-btn ${styles.primaryButton}`}
+            className={styles.primaryButton}
           >
-            <RefreshCw size={16} style={{ marginRight: '8px' }} />
-            Try Again
+            <RefreshCw size={18} aria-hidden="true" />
+            حاول تاني
           </button>
-          <button
-            onClick={() => (window.location.href = '/dashboard')}
-            className={`neon-btn-secondary ${styles.secondaryButton}`}
-          >
-            <Home size={16} style={{ marginRight: '8px' }} />
-            Return Home
-          </button>
+          <Link href="/" className={styles.secondaryButton}>
+            <Home size={18} aria-hidden="true" />
+            ارجع للوحة التحكم
+          </Link>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

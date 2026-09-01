@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { useToast } from '../../context/toast-context';
 import { crmService, Customer } from '../../services/crm';
 import { api } from '../../services/api';
 import CustomerDetail from '../../components/shared/CustomerDetail';
-import * as XLSX from 'xlsx';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { 
   Search, 
   MapPin, 
@@ -21,12 +21,16 @@ import {
 } from 'lucide-react';
 import styles from './crm.module.css';
 
+const formatCount = (value: number) => Number.isFinite(value) ? value.toLocaleString('ar-EG') : 'غير متاح';
+const formatPhone = (value: string) => value.startsWith('+') ? value : `+${value}`;
+
 export default function CustomerList() {
   const { activeProject } = useAuth();
   const { showToast } = useToast();
   
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -40,20 +44,22 @@ export default function CustomerList() {
 
   const [importing, setImporting] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [importResult, setImportResult] = useState<{
     matchedCount: number;
     newCount: number;
+    removedBookingsCount: number;
+    cancelledFollowUpsCount: number;
     matchedPhones: string[];
     newPhones: string[];
   } | null>(null);
 
-  // Reset to first page when search, filters, label or project change
   useEffect(() => {
-    setCurrentPage(1);
-  }, [search, stageFilter, cityFilter, selectedLabel, activeProject]);
-
-  useEffect(() => {
-    setSelectedLabel('All');
+    const resetTimer = window.setTimeout(() => {
+      setSelectedLabel('All');
+      setCurrentPage(1);
+    }, 0);
+    return () => window.clearTimeout(resetTimer);
   }, [activeProject]);
 
   // Calculate label counts dynamically from ALL customers
@@ -69,19 +75,32 @@ export default function CustomerList() {
   // Modal state
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [generatingIds, setGeneratingIds] = useState<string[]>([]);
+  const loadRequestIdRef = React.useRef(0);
+  const importFileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const fetchCustomers = async () => {
-    if (!activeProject) return;
+  const fetchCustomers = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
+    if (!activeProject) {
+      setCustomers([]);
+      setLoading(false);
+      setLoadError('تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.');
+      return;
+    }
     try {
       setLoading(true);
+      setLoadError(null);
+      setCustomers([]);
       const data = await crmService.getCustomers(activeProject.id);
+      if (requestId !== loadRequestIdRef.current) return;
       setCustomers(data);
     } catch (e) {
+      if (requestId !== loadRequestIdRef.current) return;
       console.error('Failed to load CRM customers', e);
+      setLoadError('تعذر تحميل سجل العملاء. لم يتم استبدال البيانات بقائمة فارغة.');
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) setLoading(false);
     }
-  };
+  }, [activeProject]);
 
   const handleGenerateAIProfile = async (customerId: string) => {
     if (!activeProject) return;
@@ -90,46 +109,46 @@ export default function CustomerList() {
       await api.post(`/api/projects/${activeProject.id}/customers/${customerId}/memory/generate`);
       await fetchCustomers();
       showToast('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح! ✨', 'success');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to generate customer profile', err);
-      const errMsg = err.response?.data || 'فشل توليد ملف التعريف. تأكد من وجود رسائل سابقة للعميل.';
-      showToast(errMsg, 'error');
+      showToast('فشل توليد ملف التعريف. تأكد من وجود رسائل سابقة للعميل.', 'error');
     } finally {
       setGeneratingIds(prev => prev.filter(id => id !== customerId));
     }
   };
 
-  const handleDownloadTemplate = () => {
-    const headers = [['رقم الهاتف']];
-    const examples = [
-      ['01068690092'],
-      ['20122334455']
-    ];
-    const wsData = [...headers, ...examples];
+  const handleDownloadTemplate = async () => {
+    try {
+      const XLSX = await import('xlsx');
+      const headers = [['رقم الهاتف']];
 
-    const worksheet = XLSX.utils.aoa_to_sheet(wsData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'قالب أرقام الطلاب');
+      const worksheet = XLSX.utils.aoa_to_sheet(headers);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'قالب أرقام الطلاب');
 
-    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'paid_students_template.xlsx');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', 'paid_students_template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to generate blacklist import template', error);
+      showToast('تعذر إنشاء نموذج Excel. حاول مجددًا.', 'error');
+    }
   };
 
-  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const file = files[0];
-
+  const importPaidCustomers = async (file: File) => {
+    if (!activeProject) return;
+    const projectId = activeProject.id;
     setImporting(true);
     setImportResult(null);
     try {
+      const XLSX = await import('xlsx');
       const reader = new FileReader();
       reader.onload = async (evt) => {
         try {
@@ -137,7 +156,7 @@ export default function CustomerList() {
           const workbook = XLSX.read(bstr, { type: 'binary' });
           const worksheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[worksheetName];
-          const rawData = XLSX.utils.sheet_to_json<any>(worksheet);
+          const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet);
 
           // Extract only the phone numbers from any column that might represent phone
           const phones = rawData.map(row => {
@@ -152,12 +171,21 @@ export default function CustomerList() {
           }
 
           // Send to backend
-          const response = await api.post(`/api/projects/${activeProject!.id}/import-blacklist`, phones);
+          const response = await api.post<{
+            matchedCount: number;
+            newCount: number;
+            removedBookingsCount: number;
+            cancelledFollowUpsCount: number;
+            matchedPhones: string[];
+            newPhones: string[];
+          }>(`/api/projects/${projectId}/import-blacklist`, phones);
           const data = response.data;
           
           setImportResult({
             matchedCount: data.matchedCount,
             newCount: data.newCount,
+            removedBookingsCount: data.removedBookingsCount,
+            cancelledFollowUpsCount: data.cancelledFollowUpsCount,
             matchedPhones: data.matchedPhones || [],
             newPhones: data.newPhones || []
           });
@@ -171,6 +199,10 @@ export default function CustomerList() {
           setImporting(false);
         }
       };
+      reader.onerror = () => {
+        showToast('تعذر قراءة الملف من الجهاز. اختر ملفًا صالحًا وحاول مرة أخرى.', 'error');
+        setImporting(false);
+      };
       reader.readAsBinaryString(file);
     } catch (err) {
       console.error(err);
@@ -180,14 +212,28 @@ export default function CustomerList() {
   };
 
   useEffect(() => {
-    fetchCustomers();
-  }, [activeProject]);
+    const loadTimer = window.setTimeout(() => void fetchCustomers(), 0);
+    return () => window.clearTimeout(loadTimer);
+  }, [fetchCustomers]);
 
   if (loading) {
     return (
       <div className={styles.loadingBox}>
         <div className={styles.spinner}></div>
         <p>جاري تحميل سجل العملاء...</p>
+      </div>
+    );
+  }
+
+  if (loadError && customers.length === 0) {
+    return (
+      <div className={styles.loadingBox} role="alert">
+        <p>{loadError}</p>
+        {activeProject && (
+          <button type="button" className={styles.editButton} onClick={() => void fetchCustomers()}>
+            إعادة المحاولة
+          </button>
+        )}
       </div>
     );
   }
@@ -239,7 +285,10 @@ export default function CustomerList() {
           <p className={styles.pageSubtitle}>راجع بيانات العملاء والتقييمات والوسوم ومراحل البيع</p>
         </div>
         <button
+          type="button"
           onClick={() => setShowImportPanel(!showImportPanel)}
+          aria-expanded={showImportPanel}
+          aria-controls="blacklist-import-panel"
           className={styles.editButton}
           style={{
             display: 'flex',
@@ -253,7 +302,7 @@ export default function CustomerList() {
             borderRadius: 'var(--radius-md)',
             cursor: 'pointer',
             fontWeight: 600,
-            transition: 'all 0.2s'
+            transition: 'background-color 0.2s, border-color 0.2s, color 0.2s'
           }}
         >
           <Upload size={16} />
@@ -263,13 +312,14 @@ export default function CustomerList() {
 
       {/* Import Blacklist Panel */}
       {showImportPanel && (
-        <div className="glass-panel" style={{ padding: 'var(--space-md)', marginBottom: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <section id="blacklist-import-panel" className="glass-panel" aria-labelledby="blacklist-import-heading" style={{ padding: 'var(--space-md)', marginBottom: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'hsl(var(--text-primary))' }}>
+            <h3 id="blacklist-import-heading" style={{ fontSize: '0.95rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'hsl(var(--text-primary))' }}>
               <ShieldAlert size={18} style={{ color: 'hsl(var(--accent-warning))' }} />
               استيراد الطلاب الذين قاموا بالدفع لحظرهم تلقائياً من الرد
             </h3>
             <button
+              type="button"
               onClick={handleDownloadTemplate}
               className={styles.editButton}
               style={{
@@ -288,11 +338,14 @@ export default function CustomerList() {
               تحميل نموذج الملف (Template)
             </button>
           </div>
-          <p style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
-            ارفع ملف Excel (.xlsx) يحتوي على قائمة الطلاب الذين دفعوا بالفعل. سيقوم النظام بالبحث عنهم وحظرهم تلقائياً بحيث لا يقوم بوت الرد الآلي بإرسال أي رسائل لهم بعد الآن.
+          <p role="note" style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
+            سيحظر النظام الرد الآلي للأرقام، وينشئ العملاء غير الموجودين، ويحذف الحجوزات المطابقة، ويلغي المتابعات المعلقة. ستظهر خطوة تأكيد بعد اختيار الملف وقبل إرسال أي بيانات.
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginTop: 'var(--space-xs)' }}>
-            <label 
+            <button
+              type="button"
+              onClick={() => importFileInputRef.current?.click()}
+              disabled={importing}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -310,14 +363,19 @@ export default function CustomerList() {
             >
               <Upload size={16} />
               {importing ? 'جاري الاستيراد وقراءة الملف...' : 'اختر ملف Excel لرفعه وحظر الطلاب'}
-              <input
-                type="file"
-                accept=".xlsx, .xls"
-                onChange={handleImportExcel}
-                disabled={importing}
-                style={{ display: 'none' }}
-              />
-            </label>
+            </button>
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(event) => {
+                setPendingImportFile(event.target.files?.[0] ?? null);
+                event.target.value = '';
+              }}
+              disabled={importing}
+              hidden
+              tabIndex={-1}
+            />
           </div>
 
           {/* Results display */}
@@ -326,13 +384,16 @@ export default function CustomerList() {
               <div style={{ display: 'flex', gap: 'var(--space-lg)', marginBottom: 'var(--space-md)' }}>
                 <div style={{ padding: '10px 14px', background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.15)', borderRadius: 'var(--radius-md)', flex: 1 }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: '2px' }}>تمت مطابقتهم وحظرهم (مسجلين بالفعل):</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'rgb(16, 185, 129)' }}>{importResult.matchedCount} طالب</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'rgb(16, 185, 129)' }}>{formatCount(importResult.matchedCount)} طالب</div>
                 </div>
                 <div style={{ padding: '10px 14px', background: 'rgba(249, 115, 22, 0.06)', border: '1px solid rgba(249, 115, 22, 0.15)', borderRadius: 'var(--radius-md)', flex: 1 }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: '2px' }}>أرقام جديدة غير مسجلة (حظر وقائي):</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'rgb(249, 115, 22)' }}>{importResult.newCount} طالب</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'rgb(249, 115, 22)' }}>{formatCount(importResult.newCount)} طالب</div>
                 </div>
               </div>
+              <p role="status" style={{ color: 'var(--text-soft)', fontSize: '0.82rem', marginBottom: 'var(--space-md)' }}>
+                حُذفت {formatCount(importResult.removedBookingsCount)} حجوزات مطابقة، وأُلغيت {formatCount(importResult.cancelledFollowUpsCount)} متابعات معلقة.
+              </p>
 
               {/* Detailed Lists */}
               <div style={{ display: 'flex', gap: 'var(--space-md)', flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -341,7 +402,7 @@ export default function CustomerList() {
                     <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px', color: 'rgb(16, 185, 129)' }}>أرقام الطلاب المطابِقة (تم حظرهم):</div>
                     <div style={{ maxHeight: '120px', overflowY: 'auto', fontSize: '0.78rem', fontFamily: 'monospace', color: 'var(--text-strong)', lineHeight: '1.4' }}>
                       {importResult.matchedPhones.map(phone => (
-                        <div key={phone} style={{ padding: '2px 0' }}>+{phone}</div>
+                        <div key={phone} style={{ padding: '2px 0' }}>{formatPhone(phone)}</div>
                       ))}
                     </div>
                   </div>
@@ -351,7 +412,7 @@ export default function CustomerList() {
                     <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px', color: 'rgb(249, 115, 22)' }}>أرقام الطلاب الجدد (حظر وقائي):</div>
                     <div style={{ maxHeight: '120px', overflowY: 'auto', fontSize: '0.78rem', fontFamily: 'monospace', color: 'var(--text-strong)', lineHeight: '1.4' }}>
                       {importResult.newPhones.map(phone => (
-                        <div key={phone} style={{ padding: '2px 0' }}>+{phone}</div>
+                        <div key={phone} style={{ padding: '2px 0' }}>{formatPhone(phone)}</div>
                       ))}
                     </div>
                   </div>
@@ -359,7 +420,7 @@ export default function CustomerList() {
               </div>
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {/* AI Smart Labels Statistics & Filter Bar */}
@@ -367,7 +428,10 @@ export default function CustomerList() {
         <button 
           type="button"
           className={`${styles.labelCard} ${selectedLabel === 'All' ? styles.labelCardActive : ''}`}
-          onClick={() => setSelectedLabel('All')}
+          onClick={() => {
+            setSelectedLabel('All');
+            setCurrentPage(1);
+          }}
           style={{ font: 'inherit', color: 'inherit' }}
         >
           <span className={styles.labelCardName}>كل التصنيفات</span>
@@ -378,7 +442,10 @@ export default function CustomerList() {
             key={stat.name}
             type="button"
             className={`${styles.labelCard} ${selectedLabel === stat.name ? styles.labelCardActive : ''}`}
-            onClick={() => setSelectedLabel(stat.name)}
+            onClick={() => {
+              setSelectedLabel(stat.name);
+              setCurrentPage(1);
+            }}
             style={{ font: 'inherit', color: 'inherit' }}
           >
             <span className={styles.labelCardName}>{stat.name}</span>
@@ -393,9 +460,13 @@ export default function CustomerList() {
           <Search size={18} className={styles.searchIcon} />
           <input 
             type="text" 
+            aria-label="بحث في العملاء بالاسم أو رقم الهاتف"
             placeholder="ابحث بالاسم أو رقم الهاتف..." 
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setCurrentPage(1);
+            }}
             className={`neon-input ${styles.searchInput}`}
           />
         </div>
@@ -404,8 +475,12 @@ export default function CustomerList() {
           <div className={styles.filterSelectWrapper}>
             <UserCheck size={16} className={styles.filterIcon} />
             <select 
+              aria-label="تصفية العملاء حسب مرحلة البيع"
               value={stageFilter} 
-              onChange={(e) => setStageFilter(e.target.value)}
+              onChange={(e) => {
+                setStageFilter(e.target.value);
+                setCurrentPage(1);
+              }}
               className={`neon-input ${styles.filterSelect}`}
             >
               {stages.map(st => (
@@ -417,8 +492,12 @@ export default function CustomerList() {
           <div className={styles.filterSelectWrapper}>
             <MapPin size={16} className={styles.filterIcon} />
             <select 
+              aria-label="تصفية العملاء حسب المدينة"
               value={cityFilter} 
-              onChange={(e) => setCityFilter(e.target.value)}
+              onChange={(e) => {
+                setCityFilter(e.target.value);
+                setCurrentPage(1);
+              }}
               className={`neon-input ${styles.filterSelect}`}
             >
               {cities.map(ct => (
@@ -436,6 +515,7 @@ export default function CustomerList() {
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className={styles.table}>
+              <caption className="sr-only">سجل العملاء وبيانات CRM</caption>
               <thead>
                 <tr>
                   <th className={styles.th}>العميل</th>
@@ -458,7 +538,7 @@ export default function CustomerList() {
                         style={{ border: 'none', background: 'none', display: 'flex', width: '100%', textAlign: 'right', font: 'inherit', color: 'inherit', padding: 0 }}
                       >
                         <div className={styles.avatar}>
-                          {(c.name || 'C').charAt(0).toUpperCase()}
+                          {(c.name || '?').charAt(0).toUpperCase()}
                         </div>
                         <div className={styles.customerNameBox}>
                           <span className={styles.customerName}>{c.name || 'عميل بدون اسم'}</span>
@@ -491,7 +571,7 @@ export default function CustomerList() {
                     <td className={styles.td}>
                       <div className={styles.scoreBox}>
                         <Sparkles size={12} style={{ color: 'hsl(var(--accent-secondary))', marginRight: '4px' }} />
-                        <span className={styles.scoreVal}>{c.leadScore || 0}</span>
+                        <span className={styles.scoreVal}>{Number.isFinite(c.leadScore) ? c.leadScore : 'غير متاح'}</span>
                       </div>
                     </td>
                     <td className={styles.td}>
@@ -501,7 +581,7 @@ export default function CustomerList() {
                         color: c.pipelineStage === 'Won' ? 'hsl(140, 100%, 65%)' : 
                                c.pipelineStage === 'Lost' ? 'hsl(0, 100%, 65%)' : 'hsl(var(--text-secondary))'
                       }}>
-                        {c.pipelineStage || 'جديد'}
+                        {c.pipelineStage || 'غير محددة'}
                       </span>
                     </td>
                     <td className={styles.td}>
@@ -525,6 +605,7 @@ export default function CustomerList() {
                           onClick={() => setSelectedCustomerId(c.id)} 
                           className={styles.editButton}
                           title="تعديل الملف"
+                          aria-label={`تعديل ملف ${c.name || c.phoneNumber}`}
                         >
                           <Edit2 size={14} />
                         </button>
@@ -539,6 +620,7 @@ export default function CustomerList() {
                             color: 'hsl(270, 84%, 75%)'
                           }}
                           title="تحديث ذكي بالـ AI"
+                          aria-label={`توليد ملف ذكاء اصطناعي للعميل ${c.name || c.phoneNumber}`}
                         >
                           {generatingIds.includes(c.id) ? (
                             <div className={styles.spinnerMini} />
@@ -559,6 +641,7 @@ export default function CustomerList() {
                 <div className={styles.paginationInfo}>
                   <span>عرض السطور:</span>
                   <select
+                    aria-label="عدد العملاء في الصفحة"
                     value={pageSize}
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
@@ -583,6 +666,7 @@ export default function CustomerList() {
                     disabled={currentPage === totalPages}
                     className={styles.paginationBtn}
                     title="الصفحة التالية"
+                    aria-label="الصفحة التالية"
                   >
                     <ChevronLeft size={16} />
                   </button>
@@ -599,6 +683,8 @@ export default function CustomerList() {
                           key={page}
                           onClick={() => setCurrentPage(page)}
                           className={`${styles.paginationBtn} ${currentPage === page ? styles.paginationBtnActive : ''}`}
+                          aria-label={`الصفحة ${page}`}
+                          aria-current={currentPage === page ? 'page' : undefined}
                         >
                           {page}
                         </button>
@@ -611,6 +697,7 @@ export default function CustomerList() {
                     disabled={currentPage === 1}
                     className={styles.paginationBtn}
                     title="الصفحة السابقة"
+                    aria-label="الصفحة السابقة"
                   >
                     <ChevronRight size={16} />
                   </button>
@@ -620,6 +707,18 @@ export default function CustomerList() {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        isOpen={pendingImportFile !== null}
+        title="تأكيد الاستيراد والحذف"
+        message={`سيتم حظر الرد الآلي لكل رقم في ${pendingImportFile?.name ?? 'الملف'}، وإنشاء العملاء غير الموجودين، وحذف حجوزاتهم المطابقة، وإلغاء متابعاتهم المعلقة. لا يمكن التراجع عن حذف الحجوزات؛ راجع الملف قبل المتابعة.`}
+        confirmLabel="تنفيذ الاستيراد"
+        onConfirm={() => {
+          const selectedFile = pendingImportFile;
+          setPendingImportFile(null);
+          if (selectedFile) void importPaidCustomers(selectedFile);
+        }}
+        onCancel={() => setPendingImportFile(null)}
+      />
     </div>
   );
 }

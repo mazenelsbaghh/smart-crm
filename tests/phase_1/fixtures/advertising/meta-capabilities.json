@@ -1,0 +1,24 @@
+{
+  "graphApiVersion": "v26.0",
+  "adAccount": { "id": "act_fixture", "accountStatus": 1, "currency": "EGP", "timezone": "Africa/Cairo" },
+  "page": { "id": "page_fixture" },
+  "waba": { "id": "waba_fixture" },
+  "phone": { "id": "phone_fixture", "qualityRating": "GREEN" },
+  "dataset": { "id": "dataset_fixture", "associatedWithWaba": true },
+  "requiredPermissions": [
+    "ads_read",
+    "ads_management",
+    "business_management",
+    "pages_show_list",
+    "whatsapp_business_management",
+    "whatsapp_business_manage_events"
+  ],
+  "runtimeProbe": {
+    "destination": "WHATSAPP",
+    "optimizationGoal": "CONVERSATIONS",
+    "bidStrategy": "LOWEST_COST_WITHOUT_CAP",
+    "placementMode": "ADVANTAGE_PLUS_AUTOMATIC",
+    "validateOnlyRequired": true
+  },
+  "expected": { "state": "Healthy", "maximumAgeHours": 6, "realActivationAllowed": false }
+}

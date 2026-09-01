@@ -4,26 +4,17 @@ import React, { useState, useEffect } from 'react';
 import { Conversation, Message } from '../../../types/chat';
 import { Customer } from '../../../services/crm';
 import { api } from '../../../services/api';
+import { useToast } from '../../../context/toast-context';
 import { AiReplyIndicator, ActionButton } from '../../../components/shared/InboxSharedElements';
+import ConfirmDialog from '../../../components/shared/ConfirmDialog';
 import { 
   Send, 
   User, 
   Sparkles,
-  Phone,
-  MessageSquare,
-  Mail,
-  Calendar,
-  FolderOpen,
-  FileText,
-  Paperclip,
-  Smile,
   ChevronRight,
-  Briefcase,
   Plus,
   Check,
   Trash2,
-  ThumbsUp,
-  Heart,
   ShieldBan
 } from 'lucide-react';
 import styles from '../inbox.module.css';
@@ -39,6 +30,13 @@ interface FollowUp {
   tone?: string;
 }
 
+const conversationStatusAr: Record<Conversation['status'], string> = {
+  Open: 'مفتوحة',
+  Pending: 'قيد المتابعة',
+  Resolved: 'تم حلها',
+  Closed: 'مغلقة',
+};
+
 interface ChatWorkspaceProps {
   activeConv: Conversation | null;
   customer: Customer | null;
@@ -48,8 +46,8 @@ interface ChatWorkspaceProps {
   handleSend: () => void;
   sending: boolean;
   isAiTyping: boolean;
-  aiTypingStage: 'generating' | 'typing';
-  aiTypingCountdown: number;
+  aiTypingStage: 'generating' | 'typing' | null;
+  aiTypingCountdown: number | null;
   channel: 'WhatsApp' | 'Messenger' | 'Comments';
   messageInputRef: React.RefObject<HTMLTextAreaElement | null>;
   messageEndRef: React.RefObject<HTMLDivElement | null>;
@@ -63,6 +61,13 @@ interface ChatWorkspaceProps {
   setActiveConv?: (conv: Conversation | null) => void;
   onUpdateCustomer: (fields: Partial<Customer>) => Promise<void>;
   updating: boolean;
+  hasOlderMessages?: boolean;
+  loadingOlderMessages?: boolean;
+  onLoadOlderMessages?: () => void;
+  messageLoadError?: string | null;
+  onRetryMessages?: () => void;
+  messagesLoading?: boolean;
+  onOpenDetails?: (trigger: HTMLButtonElement) => void;
 }
 
 export default function ChatWorkspace({
@@ -87,10 +92,17 @@ export default function ChatWorkspace({
   setReaction,
   setActiveConv,
   onUpdateCustomer,
-  updating
+  updating,
+  hasOlderMessages = false,
+  loadingOlderMessages = false,
+  onLoadOlderMessages,
+  messageLoadError,
+  onRetryMessages,
+  messagesLoading = false,
+  onOpenDetails,
 }: ChatWorkspaceProps) {
-  
-  const [activeTab, setActiveTab] = useState<'Timeline' | 'Conversation' | 'Notes' | 'Analytics' | 'Orders' | 'Files' | 'History'>('Conversation');
+  const { showToast } = useToast();
+  const [activeTab, setActiveTab] = useState<'Timeline' | 'Conversation' | 'Notes'>('Conversation');
   const [notesText, setNotesText] = useState(customer?.notes || '');
   const [now] = useState(() => Date.now());
 
@@ -103,6 +115,9 @@ export default function ChatWorkspace({
   const [newNotes, setNewNotes] = useState('');
   const [newApptTime, setNewApptTime] = useState('');
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [followUpToDelete, setFollowUpToDelete] = useState<string | null>(null);
+  const [pendingBlacklistState, setPendingBlacklistState] = useState<boolean | null>(null);
 
   // Fetch customer follow-ups on load/change
   useEffect(() => {
@@ -111,6 +126,7 @@ export default function ChatWorkspace({
     let active = true;
     const fetchFollowUps = async () => {
       setLoadingFollowUps(true);
+      setFollowUpError(null);
       try {
         const response = await api.get<FollowUp[]>(`/api/projects/${activeConv.projectId}/follow-ups`);
         if (active) {
@@ -119,6 +135,7 @@ export default function ChatWorkspace({
         }
       } catch (err) {
         console.error('Error loading customer follow-ups', err);
+        if (active) setFollowUpError('تعذر تحميل المتابعات لهذا العميل.');
       } finally {
         if (active) setLoadingFollowUps(false);
       }
@@ -159,8 +176,10 @@ export default function ChatWorkspace({
       setNewApptTime('');
       setNewNotes('');
       setShowAddForm(false);
+      showToast('تمت جدولة المتابعة', 'success');
     } catch (err) {
       console.error('Failed to create follow-up', err);
+      showToast('تعذر جدولة المتابعة. راجع البيانات وحاول مرة أخرى.', 'error');
     } finally {
       setCreatingFollowUp(false);
     }
@@ -172,15 +191,21 @@ export default function ChatWorkspace({
       setFollowUps(prev => prev.map(f => f.id === id ? { ...f, status: 'Completed' as const } : f));
     } catch (err) {
       console.error('Failed to complete follow-up', err);
+      showToast('تعذر إكمال المتابعة.', 'error');
     }
   };
 
-  const handleDeleteFollowUp = async (id: string) => {
+  const deleteSelectedFollowUp = async () => {
+    if (!followUpToDelete) return;
     try {
-      await api.delete(`/api/follow-ups/${id}`);
-      setFollowUps(prev => prev.filter(f => f.id !== id));
+      await api.delete(`/api/follow-ups/${followUpToDelete}`);
+      setFollowUps(prev => prev.filter(f => f.id !== followUpToDelete));
+      showToast('تم حذف المتابعة', 'success');
     } catch (err) {
       console.error('Failed to delete follow-up', err);
+      showToast('تعذر حذف المتابعة.', 'error');
+    } finally {
+      setFollowUpToDelete(null);
     }
   };
 
@@ -228,30 +253,7 @@ export default function ChatWorkspace({
   }
 
   const customerName = customer?.name || activeConv.customer.facebookName || activeConv.customer.name || 'عميل غير معروف';
-  const customerCity = customer?.city || 'القاهرة';
   const isMsgWindowOpen = channel !== 'Messenger' || isWithin24hWindow(activeConv.lastMessageAt);
-
-  // Mock timeline entries
-  const timelineEntries = [
-    {
-      id: '1',
-      date: '12 مايو',
-      title: 'تم تقديم المعلومات للعميل',
-      description: 'تم إرسال تفاصيل الكورس ومحتويات البرنامج التدريبي.',
-      manager: 'Marty C.',
-      pill: 'Discovery',
-      pillClass: styles.pillDiscovery
-    },
-    {
-      id: '2',
-      date: '15 مايو',
-      title: 'جاري استكمال بيانات العميل والتسجيل',
-      description: 'العميل مهتم ويرغب في معرفة طرق الدفع المتاحة.',
-      manager: 'Marty C.',
-      pill: 'Negotiation',
-      pillClass: styles.pillNegotiation
-    }
-  ];
 
   return (
     <div className={styles.chatPanel}>
@@ -275,11 +277,9 @@ export default function ChatWorkspace({
             <div className={styles.customerInfoBlock}>
               <h2 className={styles.workspaceCustomerName}>{customerName}</h2>
               <p className={styles.customerSubDetails}>
-                <span>مدير منتج — {customerCity}</span>
-                <span className={styles.dividerDot}>•</span>
-                <span>{customer?.phoneNumber || activeConv.customer.phone || 'قناة فيسبوك'}</span>
-                <span className={styles.dividerDot}>•</span>
-                <span>{customerCity.toLowerCase()}@example.com</span>
+                <span>{customer?.phoneNumber || activeConv.customer.phone || 'بيانات الاتصال غير متاحة'}</span>
+                {customer?.city && <><span className={styles.dividerDot}>•</span><span>{customer.city}</span></>}
+                {activeConv.whatsAppAccountName && <><span className={styles.dividerDot}>•</span><span>عبر {activeConv.whatsAppAccountName}</span></>}
               </p>
             </div>
           </div>
@@ -290,24 +290,34 @@ export default function ChatWorkspace({
                 <User size={18} />
               </div>
               <div className={styles.managerNameBlock}>
-                <span className={styles.managerLabel}>المشرف</span>
-                <span className={styles.managerName}>مارتي ك.</span>
+                <span className={styles.managerLabel}>المكلّف بالمحادثة</span>
+                <span className={styles.managerName}>{activeConv.assignedAgentName || 'غير مُعيّن'}</span>
               </div>
             </div>
 
             <div className={styles.stagePillsRow}>
-              <span className={`${styles.statusPill} ${styles.statusPillHigh}`}>عالي</span>
-              <span className={`${styles.statusPill} ${styles.statusPillWarm}`}>مهتم</span>
+              <span className={`${styles.statusPill} ${styles.statusPillWarm}`}>{conversationStatusAr[activeConv.status]}</span>
             </div>
           </div>
         </div>
 
         {/* Quick action buttons row + tabs */}
         <div className={styles.headerActionsRow}>
+          {onOpenDetails && (
+            <button
+              type="button"
+              className={styles.responsiveDetailsTrigger}
+              onClick={(event) => onOpenDetails(event.currentTarget)}
+              aria-haspopup="dialog"
+            >
+              <User size={16} aria-hidden="true" />
+              بيانات العميل
+            </button>
+          )}
           <button
             type="button"
             className={`${styles.aiBlockToggle} ${customer?.isBlacklisted ? styles.aiBlockToggleActive : ''}`}
-            onClick={() => onUpdateCustomer({ isBlacklisted: !customer?.isBlacklisted })}
+            onClick={() => setPendingBlacklistState(!customer?.isBlacklisted)}
             disabled={updating || !customer}
             aria-pressed={customer?.isBlacklisted ?? false}
           >
@@ -315,46 +325,22 @@ export default function ChatWorkspace({
             {customer?.isBlacklisted ? 'الرد الآلي محظور' : 'حظر الرد الآلي'}
           </button>
 
-          <div className={styles.circularActionsGroup}>
-            <button type="button" className={styles.circularBtn} title="اتصال">
-              <Phone size={16} />
-            </button>
-            <button type="button" className={styles.circularBtn} title="رسالة واتساب">
-              <MessageSquare size={16} />
-            </button>
-            <button type="button" className={styles.circularBtn} title="إرسال بريد إلكتروني">
-              <Mail size={16} />
-            </button>
-            <button type="button" className={styles.circularBtn} title="جدولة موعد">
-              <Calendar size={16} />
-            </button>
-            <button type="button" className={styles.circularBtn} title="ملفات العميل">
-              <FolderOpen size={16} />
-            </button>
-          </div>
-
-          {/* Deal ID/Info pill */}
-          <div className={styles.dealPill}>
-            <Briefcase size={12} style={{ marginLeft: '4px' }} />
-            <span>الصفقة #3263627</span>
-          </div>
-
           {/* Workspace Tabs navigation */}
-          <div className={styles.workspaceTabs}>
-            {(['Timeline', 'Conversation', 'Notes', 'Analytics', 'Orders', 'Files', 'History'] as const).map(tab => (
+          <div className={styles.workspaceTabs} role="tablist" aria-label="أقسام المحادثة">
+            {(['Conversation', 'Timeline', 'Notes'] as const).map(tab => (
               <button
                 key={tab}
                 type="button"
                 className={`${styles.tabBtn} ${activeTab === tab ? styles.tabBtnActive : ''}`}
                 onClick={() => setActiveTab(tab)}
+                role="tab"
+                aria-selected={activeTab === tab}
+                aria-controls={`chat-panel-${tab}`}
+                id={`chat-tab-${tab}`}
               >
                 {tab === 'Timeline' && 'الملخص'}
                 {tab === 'Conversation' && 'المحادثة'}
                 {tab === 'Notes' && 'الملاحظات'}
-                {tab === 'Analytics' && 'التحليلات'}
-                {tab === 'Orders' && 'التفاصيل'}
-                {tab === 'Files' && 'الملفات'}
-                {tab === 'History' && 'السجل'}
               </button>
             ))}
           </div>
@@ -364,20 +350,49 @@ export default function ChatWorkspace({
       {/* Main Workspace Display Content */}
       <div className={styles.workspaceBody}>
         {activeTab === 'Conversation' && (
-          <>
+          <section
+            id="chat-panel-Conversation"
+            role="tabpanel"
+            aria-labelledby="chat-tab-Conversation"
+          >
             {/* Conversation/Chat Messages view */}
-            <div className={styles.messagesContainer}>
-              {messages.length === 0 ? (
+            <div className={styles.messagesContainer} role="log" aria-live="polite" aria-label={`سجل محادثة ${customerName}`}>
+              {messagesLoading ? (
+                <div className={styles.emptyMessages} role="status" aria-busy="true">
+                  <p>جاري تحميل رسائل المحادثة...</p>
+                </div>
+              ) : messageLoadError ? (
+                <div className={styles.emptyMessages} role="alert">
+                  <p>{messageLoadError}</p>
+                  {onRetryMessages && (
+                    <button type="button" className={styles.retryConversationsBtn} onClick={onRetryMessages}>
+                      إعادة تحميل المحادثة
+                    </button>
+                  )}
+                </div>
+              ) : null}
+              {!messagesLoading && hasOlderMessages && onLoadOlderMessages && (
+                <button
+                  type="button"
+                  className={styles.retryConversationsBtn}
+                  onClick={onLoadOlderMessages}
+                  disabled={loadingOlderMessages}
+                >
+                  {loadingOlderMessages ? 'جاري تحميل الرسائل الأقدم...' : 'تحميل رسائل أقدم'}
+                </button>
+              )}
+              {!messagesLoading && !messageLoadError && messages.length === 0 ? (
                 <div className={styles.emptyMessages}>
                   <p>لا توجد رسائل سابقة. أرسل رسالة لبدء المحادثة.</p>
                 </div>
-              ) : (
+              ) : !messagesLoading && !messageLoadError ? (
                 messages.map((msg) => {
                   const isIncoming = msg.senderType === 'Customer';
                   return (
                     <div
                       key={msg.id}
                       className={`${styles.msgRow} ${isIncoming ? styles.msgRowIncoming : styles.msgRowOutgoing}`}
+                      aria-label={`${isIncoming ? customerName : msg.senderType === 'AI' ? 'المساعد الذكي' : 'الموظف'}، ${formatEgyptTime(msg.createdAt)}`}
                     >
                       <div className={`${styles.msgBubble} ${
                         isIncoming 
@@ -398,12 +413,28 @@ export default function ChatWorkspace({
                     </div>
                   );
                 })
+              ) : null}
+              {isAiTyping && aiTypingStage === null ? (
+                <div className={styles.msgRowOutgoing} role="status" aria-live="polite">
+                  <div className={`${styles.msgBubble} ${styles.msgBubbleAI}`}>
+                    <div className={styles.aiBadgeRow}><Sparkles size={12} aria-hidden="true" /><span>الذكاء الاصطناعي</span></div>
+                    <span>يجري إعداد رد؛ مرحلة المعالجة ووقت الانتهاء غير متاحين من المصدر.</span>
+                  </div>
+                </div>
+              ) : isAiTyping && aiTypingStage === 'typing' && aiTypingCountdown === null ? (
+                <div className={styles.msgRowOutgoing} role="status" aria-live="polite">
+                  <div className={`${styles.msgBubble} ${styles.msgBubbleAI}`}>
+                    <div className={styles.aiBadgeRow}><Sparkles size={12} aria-hidden="true" /><span>الذكاء الاصطناعي</span></div>
+                    <span>جاري كتابة الرد؛ وقت الانتهاء غير متاح من المصدر.</span>
+                  </div>
+                </div>
+              ) : (
+                <AiReplyIndicator
+                  isAiTyping={isAiTyping}
+                  aiTypingStage={aiTypingStage ?? 'generating'}
+                  aiTypingCountdown={aiTypingCountdown ?? 0}
+                />
               )}
-              <AiReplyIndicator 
-                isAiTyping={isAiTyping} 
-                aiTypingStage={aiTypingStage} 
-                aiTypingCountdown={aiTypingCountdown} 
-              />
               <div ref={messageEndRef} />
             </div>
 
@@ -413,8 +444,9 @@ export default function ChatWorkspace({
                 <div className={styles.commentsInputsRow}>
                   {/* Public Comment Input */}
                   <div className={styles.commentInputWrapper}>
-                    <label className={styles.commentLabel}>الرد العام (على الكومنت)</label>
+                    <label htmlFor="public-comment-reply" className={styles.commentLabel}>الرد العام على التعليق</label>
                     <textarea
+                      id="public-comment-reply"
                       ref={messageInputRef}
                       className={styles.commentTextarea}
                       placeholder="اكتب رد عام للتعليق..."
@@ -426,8 +458,9 @@ export default function ChatWorkspace({
                   
                   {/* Private DM Input */}
                   <div className={styles.commentInputWrapper}>
-                    <label className={styles.commentLabel}>الرسالة الخاصة (في ماسنجر)</label>
+                    <label htmlFor="private-comment-reply" className={styles.commentLabel}>الرسالة الخاصة في ماسنجر</label>
                     <textarea
+                      id="private-comment-reply"
                       className={styles.commentTextarea}
                       placeholder="اكتب رسالة خاصة للمستلم..."
                       value={privateDM || ''}
@@ -446,16 +479,18 @@ export default function ChatWorkspace({
                       className={`${styles.reactionBtn} ${reaction === 'LIKE' ? styles.reactionBtnActive : ''}`}
                       onClick={() => setReaction && setReaction(reaction === 'LIKE' ? null : 'LIKE')}
                       disabled={sending}
+                      aria-pressed={reaction === 'LIKE'}
                     >
-                      👍 Like
+                      👍 إعجاب
                     </button>
                     <button
                       type="button"
                       className={`${styles.reactionBtn} ${reaction === 'LOVE' ? styles.reactionBtnActive : ''}`}
                       onClick={() => setReaction && setReaction(reaction === 'LOVE' ? null : 'LOVE')}
                       disabled={sending}
+                      aria-pressed={reaction === 'LOVE'}
                     >
-                      ❤️ Love
+                      ❤️ أحببته
                     </button>
                   </div>
 
@@ -471,39 +506,38 @@ export default function ChatWorkspace({
               </div>
             ) : (
               <div className={styles.messageComposer}>
-                <button type="button" className={styles.composerToolBtn} title="إرفاق ملف">
-                  <Paperclip size={18} />
-                </button>
-                
                 <textarea
                   ref={messageInputRef}
                   className={styles.messageInput}
-                  placeholder={isMsgWindowOpen ? "اكتب رسالة هنا للرد..." : "⚠️ انتهت نافذة الـ 24 ساعة للماسنجر"}
+                  placeholder={isMsgWindowOpen ? "اكتب رسالة هنا للرد..." : "انتهت نافذة الـ 24 ساعة للماسنجر"}
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
                   onKeyDown={handleKeyDown}
                   disabled={!isMsgWindowOpen || sending}
+                  aria-label={`اكتب ردًا إلى ${customerName}`}
                 />
-
-                <button type="button" className={styles.composerToolBtn} title="إيموجي">
-                  <Smile size={18} />
-                </button>
 
                 <button
                   type="button"
                   className={styles.composerSendBtn}
                   onClick={handleSend}
                   disabled={sending || !inputMessage.trim() || !isMsgWindowOpen}
+                  aria-label={sending ? 'جاري إرسال الرسالة' : 'إرسال الرسالة'}
                 >
                   <Send size={16} />
                 </button>
               </div>
             )}
-          </>
+          </section>
         )}
 
         {activeTab === 'Timeline' && (
-          <div className={styles.timelineContainer}>
+          <section
+            className={styles.timelineContainer}
+            id="chat-panel-Timeline"
+            role="tabpanel"
+            aria-labelledby="chat-tab-Timeline"
+          >
             <div className={styles.timelineHeaderRow}>
               <h4>جدول زمن المتابعة والتقدم للعميل ({customerName})</h4>
               <ActionButton 
@@ -520,8 +554,9 @@ export default function ChatWorkspace({
               <form onSubmit={handleAddFollowUp} className={styles.quickFollowUpForm}>
                 <div className={styles.followUpInputsGrid}>
                   <div className={styles.commentInputWrapper}>
-                    <label className={styles.commentLabel}>نوع الإجراء</label>
+                    <label htmlFor="follow-up-type" className={styles.commentLabel}>نوع الإجراء</label>
                     <select
+                      id="follow-up-type"
                       value={newType}
                       onChange={(e) => setNewType(e.target.value as 'Nurturing' | 'AppointmentReminder')}
                       className={styles.commentTextarea}
@@ -534,8 +569,9 @@ export default function ChatWorkspace({
 
                   {newType === 'Nurturing' ? (
                     <div className={styles.commentInputWrapper}>
-                      <label className={styles.commentLabel}>تاريخ ووقت المتابعة</label>
+                      <label htmlFor="follow-up-due-at" className={styles.commentLabel}>تاريخ ووقت المتابعة، بتوقيت جهازك</label>
                       <input 
+                        id="follow-up-due-at"
                         type="datetime-local" 
                         value={newDueDate}
                         onChange={(e) => setNewDueDate(e.target.value)}
@@ -546,8 +582,9 @@ export default function ChatWorkspace({
                     </div>
                   ) : (
                     <div className={styles.commentInputWrapper}>
-                      <label className={styles.commentLabel}>تاريخ ووقت الكورس / الموعد</label>
+                      <label htmlFor="follow-up-appointment-at" className={styles.commentLabel}>تاريخ ووقت الموعد، بتوقيت جهازك</label>
                       <input 
+                        id="follow-up-appointment-at"
                         type="datetime-local" 
                         value={newApptTime}
                         onChange={(e) => setNewApptTime(e.target.value)}
@@ -559,8 +596,9 @@ export default function ChatWorkspace({
                   )}
 
                   <div className={styles.commentInputWrapper} style={{ gridColumn: 'span 2' }}>
-                    <label className={styles.commentLabel}>رسالة المتابعة / ملاحظات</label>
+                    <label htmlFor="follow-up-notes" className={styles.commentLabel}>رسالة المتابعة أو الملاحظات</label>
                     <input 
+                      id="follow-up-notes"
                       type="text" 
                       placeholder="اكتب تفاصيل أو ملاحظات التذكير..."
                       value={newNotes}
@@ -582,7 +620,9 @@ export default function ChatWorkspace({
             {/* Follow-Ups list table */}
             <div className={styles.followUpTableSection}>
               <h5>المتابعات والمهام النشطة للعميل</h5>
-              {loadingFollowUps ? (
+              {followUpError ? (
+                <div role="alert" className={styles.emptyMessages}>{followUpError}</div>
+              ) : loadingFollowUps ? (
                 <p style={{ fontSize: '0.85rem', color: '#7D7D7D', textAlign: 'center', padding: '16px' }}>جاري تحميل المتابعات...</p>
               ) : followUps.length === 0 ? (
                 <div style={{ fontSize: '0.85rem', color: '#7D7D7D', textAlign: 'center', padding: '24px', backgroundColor: '#F8F8F6', borderRadius: '8px', border: '1px dashed #E8E8E8' }}>
@@ -591,6 +631,7 @@ export default function ChatWorkspace({
               ) : (
                 <div className={styles.sharedTableContainer}>
                   <table className={styles.sharedTable}>
+                    <caption className="sr-only">المتابعات الفعلية المسجلة للعميل</caption>
                     <thead>
                       <tr>
                         <th>التاريخ والوقت</th>
@@ -603,13 +644,13 @@ export default function ChatWorkspace({
                     <tbody>
                       {followUps.map(f => (
                         <tr key={f.id}>
-                          <td>{new Date(f.dueDate).toLocaleDateString('ar-EG')} {new Date(f.dueDate).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</td>
+                          <td>{new Date(f.dueDate).toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', dateStyle: 'medium', timeStyle: 'short' })}</td>
                           <td>
                             <span className={f.type === 'AppointmentReminder' ? styles.badgeReminder : styles.badgeNurture}>
                               {f.type === 'AppointmentReminder' ? 'تذكير موعد' : 'متابعة عميل'}
                             </span>
                           </td>
-                          <td>{f.notes || 'إرسال تلقائي'}</td>
+                          <td>{f.notes || 'لا توجد ملاحظات'}</td>
                           <td>
                             <span className={`${styles.badgeStatus} ${f.status === 'Completed' ? styles.badgeStatusCompleted : f.status === 'Missed' ? styles.badgeStatusMissed : styles.badgeStatusPending}`}>
                               {f.status === 'Completed' ? 'مكتملة' : f.status === 'Missed' ? 'فائتة' : 'معلقة'}
@@ -621,6 +662,7 @@ export default function ChatWorkspace({
                                 type="button" 
                                 className={styles.inlineActionBtnCheck} 
                                 title="إكمال المهمة"
+                                aria-label="تحديد المتابعة كمكتملة"
                                 onClick={() => handleCompleteFollowUp(f.id)}
                               >
                                 <Check size={14} />
@@ -630,7 +672,8 @@ export default function ChatWorkspace({
                               type="button" 
                               className={styles.inlineActionBtnDelete} 
                               title="حذف المهمة"
-                              onClick={() => handleDeleteFollowUp(f.id)}
+                              aria-label="حذف المتابعة"
+                              onClick={() => setFollowUpToDelete(f.id)}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -642,36 +685,20 @@ export default function ChatWorkspace({
                 </div>
               )}
             </div>
-
-            <div className={styles.timelineDivider} />
-            
-            <div className={styles.timelineList}>
-              {timelineEntries.map(entry => (
-                <div key={entry.id} className={styles.timelineItem}>
-                  <div className={styles.timelineDotLine}>
-                    <div className={styles.timelineDot}></div>
-                    <span className={styles.timelineDateLabel}>{entry.date}</span>
-                  </div>
-
-                  <div className={styles.timelineCard}>
-                    <div className={styles.timelineCardHeader}>
-                      <span className={`${styles.timelinePill} ${entry.pillClass}`}>{entry.pill}</span>
-                      <span className={styles.timelineManagerText}>{entry.manager} <ChevronRight size={12} style={{ display: 'inline' }} /></span>
-                    </div>
-                    <h5 className={styles.timelineCardTitle}>{entry.title}</h5>
-                    <p className={styles.timelineCardDesc}>{entry.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          </section>
         )}
 
         {activeTab === 'Notes' && (
-          <div className={styles.notesContainer}>
+          <section
+            className={styles.notesContainer}
+            id="chat-panel-Notes"
+            role="tabpanel"
+            aria-labelledby="chat-tab-Notes"
+          >
             <h4>ملاحظات حول العميل</h4>
             <p>تساعدك هذه المساحة على تدوين أهم النقاط والاهتمامات الخاصة بالعميل ومتابعتها.</p>
             <textarea
+              aria-label={`ملاحظات العميل ${customerName}`}
               className={styles.notesTextarea}
               placeholder="اكتب ملاحظاتك هنا..."
               value={notesText}
@@ -680,28 +707,38 @@ export default function ChatWorkspace({
             <button 
               type="button" 
               className={styles.saveNotesBtn}
-              onClick={() => {
-                // Trigger client save callback if needed
+              onClick={async () => {
+                await onUpdateCustomer({ notes: notesText });
               }}
+              disabled={updating || !customer}
             >
-              حفظ الملاحظات
+              {updating ? 'جاري الحفظ...' : 'حفظ الملاحظات'}
             </button>
-          </div>
-        )}
-
-        {(activeTab === 'Analytics' || activeTab === 'Orders' || activeTab === 'Files' || activeTab === 'History') && (
-          <div className={styles.tabPlaceholder}>
-            <FileText size={48} className={styles.placeholderIcon} />
-            <h4>لا يوجد محتوى حالي في تبويب {
-              activeTab === 'Analytics' ? 'التحليلات' :
-              activeTab === 'Orders' ? 'التفاصيل' :
-              activeTab === 'Files' ? 'الملفات' :
-              activeTab === 'History' ? 'السجل' : activeTab
-            }</h4>
-            <p>سيتم ربط هذا الجزء بالخلفية قريباً.</p>
-          </div>
+          </section>
         )}
       </div>
+      <ConfirmDialog
+        isOpen={followUpToDelete !== null}
+        title="حذف المتابعة"
+        message="سيتم حذف هذه المتابعة نهائيًا. هل تريد المتابعة؟"
+        confirmLabel="حذف المتابعة"
+        onConfirm={() => void deleteSelectedFollowUp()}
+        onCancel={() => setFollowUpToDelete(null)}
+      />
+      <ConfirmDialog
+        isOpen={pendingBlacklistState !== null}
+        title={pendingBlacklistState ? 'حظر الرد الآلي' : 'إلغاء حظر الرد الآلي'}
+        message={pendingBlacklistState
+          ? `سيتم منع الردود الآلية عن ${customerName} حتى إلغاء الحظر يدويًا.`
+          : `سيُسمح مجددًا بالردود الآلية عن ${customerName} وفق إعدادات المشروع.`}
+        confirmLabel={pendingBlacklistState ? 'تأكيد الحظر' : 'تأكيد إلغاء الحظر'}
+        onConfirm={() => {
+          const nextState = pendingBlacklistState;
+          setPendingBlacklistState(null);
+          if (nextState !== null) void onUpdateCustomer({ isBlacklisted: nextState });
+        }}
+        onCancel={() => setPendingBlacklistState(null)}
+      />
     </div>
   );
 }

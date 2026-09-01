@@ -17,7 +17,8 @@
   pointer-events: none;
   opacity: 0;
   transform: scale(0.95);
-  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  visibility: hidden;
+  transition: opacity var(--transition-fast), transform var(--transition-fast), visibility var(--transition-fast);
   z-index: 1000;
   box-shadow: var(--shadow-panel);
 }
@@ -44,7 +45,9 @@
   border-color: var(--border-subtle) transparent transparent transparent;
 }
 
-.tooltipWrapper:hover .tooltipTip.top {
+.tooltipWrapper:hover .tooltipTip.top,
+.tooltipWrapper:focus-within .tooltipTip.top {
+  visibility: visible;
   opacity: 1;
   transform: translateX(-50%) translateY(0) scale(1);
 }
@@ -63,7 +66,9 @@
   border-color: transparent transparent var(--border-subtle) transparent;
 }
 
-.tooltipWrapper:hover .tooltipTip.bottom {
+.tooltipWrapper:hover .tooltipTip.bottom,
+.tooltipWrapper:focus-within .tooltipTip.bottom {
+  visibility: visible;
   opacity: 1;
   transform: translateX(-50%) translateY(0) scale(1);
 }
@@ -82,7 +87,9 @@
   border-color: transparent transparent transparent var(--border-subtle);
 }
 
-.tooltipWrapper:hover .tooltipTip.left {
+.tooltipWrapper:hover .tooltipTip.left,
+.tooltipWrapper:focus-within .tooltipTip.left {
+  visibility: visible;
   opacity: 1;
   transform: translateY(-50%) translateX(0) scale(1);
 }
@@ -101,7 +108,9 @@
   border-color: transparent var(--border-subtle) transparent transparent;
 }
 
-.tooltipWrapper:hover .tooltipTip.right {
+.tooltipWrapper:hover .tooltipTip.right,
+.tooltipWrapper:focus-within .tooltipTip.right {
+  visibility: visible;
   opacity: 1;
   transform: translateY(-50%) translateX(0) scale(1);
 }

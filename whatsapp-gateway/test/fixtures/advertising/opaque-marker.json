@@ -1,0 +1,11 @@
+{
+  "extendedTextMessage": {
+    "text": "مهتم",
+    "contextInfo": {
+      "externalAdReply": {
+        "ctwaPayload": "opaque-undocumented-value",
+        "conversionData": "opaque-conversion-value"
+      }
+    }
+  }
+}

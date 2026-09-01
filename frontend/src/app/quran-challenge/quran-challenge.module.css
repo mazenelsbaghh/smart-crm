@@ -13,18 +13,36 @@
 .ayah { display: flex; flex-wrap: wrap; justify-content: center; gap: .15em .42em; min-height: 8.5rem; align-content: center; }
 .ayah span,.ayah strong { display: inline; }
 .pageStepper { display: flex; justify-content: center; gap: .45rem; margin-top: 1rem; }
-.pageStepper button { width: 1.35rem; height: .22rem; padding: 0; border: 0; border-radius: 2rem; background: oklch(0.92 0.03 89 / .25); cursor: pointer; transition: width .2s ease-out, background .2s ease-out; }
-.pageStepper button.activePage { width: 2.3rem; background: var(--gold); }
+.pageStepper button { display: grid; width: 2.75rem; height: 2.75rem; padding: 0; place-items: center; border: 0; border-radius: .6rem; background: transparent; cursor: pointer; }
+.pageStepper button::before { width: 1.35rem; height: .22rem; border-radius: 2rem; background: oklch(0.92 0.03 89 / .25); content: ''; transition: width .2s ease-out, background .2s ease-out; }
+.pageStepper button.activePage::before { width: 2.3rem; background: var(--gold); }
 .downloadAction { border: 1px solid oklch(0.3 0.03 134 / .25); font: inherit; cursor: pointer; }
 .downloadAction:hover:not(:disabled) { transform: translateY(-2px); background: oklch(0.45 0.07 139 / .16); }
 .downloadAction:disabled { cursor: wait; opacity: .58; }
+
+.projectScopeNotice { display: flex; align-items: center; justify-content: space-between; gap: 1.25rem; padding: 1.35rem clamp(1.4rem, 8vw, 10rem); border-block: 1px solid oklch(0.31 0.03 134 / .18); color: var(--ink); background: oklch(0.94 0.028 89); }
+.projectScopeNotice h2 { margin: 0; font-size: 1.05rem; }
+.projectScopeNotice p { max-width: 68ch; margin: .35rem 0 0; color: oklch(0.42 0.03 134); font-size: .82rem; line-height: 1.65; }
+.projectScopeNotice button { min-height: 2.75rem; flex: 0 0 auto; padding: .7rem 1rem; border: 1px solid var(--moss); border-radius: .7rem; color: var(--sand); background: var(--moss); font: inherit; font-weight: 800; cursor: pointer; }
+
+.page button:focus-visible,
+.page input:focus-visible,
+.page select:focus-visible,
+.page textarea:focus-visible,
+.page a:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+
+.loadButton,
+.primaryAction,
+.secondaryAction,
+.downloadAction,
+.captionBox button { min-height: 2.75rem; }
 .renderStatus { margin: .8rem 0 0; padding: .8rem 1rem; border-radius: .7rem; color: var(--leaf); background: oklch(0.45 0.07 139 / .09); font-size: .8rem; font-weight: 700; line-height: 1.7; }
 
 .youtubeStudio { display: grid; grid-template-columns: minmax(18rem,.72fr) minmax(0,1.28fr); gap: clamp(2.5rem,7vw,8rem); padding: clamp(4rem,8vw,8rem) clamp(1.4rem,8vw,10rem); color: var(--sand); background: var(--ink); }
 .facebookStudio { border-top: 1px solid oklch(.84 .03 90 / .13); background: oklch(.205 .035 256); }
 .tiktokStudio { border-top: 1px solid oklch(.84 .03 90 / .13); background: oklch(.19 .026 255); }
 .tiktokMark { color: oklch(.19 .026 255); background: oklch(.91 .16 190); box-shadow: .35rem .25rem 0 oklch(.62 .23 10); }
-.tiktokGlyph { font-family: Arial, sans-serif; font-weight: 900; line-height: 1; }
+.tiktokGlyph { font-family: Arial, sans-serif; font-size: .68rem; font-weight: 900; line-height: 1; }
 .tiktokIntro h2 em { color: oklch(.84 .14 190); }
 .tiktokPolicy { padding-top: 1rem; border-top: 1px solid oklch(.84 .03 90 / .14); font-size: .78rem; }
 .tiktokConnect { color: oklch(.15 .02 255); background: oklch(.86 .16 190); }
@@ -95,10 +113,12 @@
 .privacyNote { margin: .7rem 0 0; color: oklch(.68 .04 84); font-size: .72rem; line-height: 1.7; }
 .automationSwitch { display: grid; grid-template-columns: 2.65rem 1fr; gap: .85rem; align-items: center; margin-top: 1.7rem; cursor: pointer; }.automationSwitch input { position: absolute; opacity: 0; pointer-events: none; }.automationSwitch>span { position: relative; width: 2.65rem; height: 1.45rem; border-radius: 2rem; background: oklch(.38 .025 132); transition: background .2s ease-out; }.automationSwitch>span::after { content: ''; position: absolute; top: .2rem; inset-inline-start: .22rem; width: 1.05rem; height: 1.05rem; border-radius: 50%; background: oklch(.84 .025 90); transition: transform .2s ease-out; }.automationSwitch input:checked+span { background: var(--gold); }.automationSwitch input:checked+span::after { transform: translateX(-1.15rem); background: var(--ink); }.automationSwitch input:focus-visible+span { box-shadow: 0 0 0 3px oklch(.7 .105 82 / .2); }.automationSwitch div strong,.automationSwitch div small { display: block; }.automationSwitch div small { margin-top: .2rem; color: oklch(.65 .025 132); }
 .youtubeActions { display: grid; grid-template-columns: .8fr 1.2fr; gap: .75rem; margin-top: 1.7rem; }.saveSchedule { border: 0; color: var(--ink); background: var(--gold); }.publishNow { border: 1px solid oklch(.84 .03 90 / .22); color: var(--sand); background: transparent; }.saveSchedule:hover:not(:disabled),.publishNow:hover:not(:disabled),.connectButton:hover:not(:disabled),.disconnectButton:hover { transform: translateY(-2px); }.saveSchedule:disabled,.publishNow:disabled { cursor: not-allowed; opacity: .45; }
+.tiktokActions { grid-template-columns: auto 1fr 1.25fr; }
 .youtubeWarning,.youtubeError,.youtubeSuccess { margin: 1rem 0 0; padding: .8rem 1rem; border-radius: .7rem; font-size: .8rem; font-weight: 700; line-height: 1.7; }.youtubeWarning { color: oklch(.86 .09 84); background: oklch(.62 .1 82 / .13); }.youtubeError { color: oklch(.78 .11 28); background: oklch(.55 .14 28 / .13); }.youtubeSuccess { color: oklch(.8 .1 145); background: oklch(.6 .12 145 / .12); }.lastPublish { margin: 1rem 0 0; color: oklch(.66 .025 132); font-size: .75rem; }
+.youtubeWarning p { margin: 0; }.youtubeWarning .publishNow { margin-top: .75rem; }
 .youtubeEmpty { min-height: 28rem; display: grid; place-items: center; align-content: center; gap: .65rem; color: oklch(.72 .025 132); text-align: center; border: 1px dashed oklch(.84 .03 90 / .22); border-radius: 1rem; }.youtubeEmpty strong { color: var(--sand); }.youtubeSkeleton { min-height: 34rem; border-radius: 1rem; background: linear-gradient(100deg,oklch(.27 .025 132),oklch(.32 .03 132),oklch(.27 .025 132)); background-size: 220% 100%; animation: youtubeSkeleton 1.4s ease-in-out infinite; }
 @keyframes youtubeSkeleton { to { background-position: -220% 0; } }
 
-@media (max-width: 760px) { .youtubeStudio { grid-template-columns: 1fr; }.youtubeIntro { position: static; }.youtubeIntro h2 { font-size: 3rem; }.scheduleGrid,.youtubeActions { grid-template-columns: 1fr; }.channelRow { align-items: flex-start; flex-direction: column; }.connectButton,.disconnectButton { width: 100%; } }
+@media (max-width: 760px) { .youtubeStudio { grid-template-columns: 1fr; }.youtubeIntro { position: static; }.youtubeIntro h2 { font-size: 3rem; }.scheduleGrid,.youtubeActions,.tiktokActions { grid-template-columns: 1fr; }.channelRow { align-items: flex-start; flex-direction: column; }.connectButton,.disconnectButton { width: 100%; }.projectScopeNotice { align-items: stretch; flex-direction: column; }.projectScopeNotice button { width: 100%; } }
 @media (max-width: 760px) { .tiktokInteractions { grid-template-columns: 1fr; }.tiktokAccount { grid-template-columns: auto 1fr; }.tiktokAccount>em { grid-column: 2; } }
-@media (prefers-reduced-motion: reduce) { .youtubeSkeleton,.statusPulse { animation: none; }.connectButton,.disconnectButton,.saveSchedule,.publishNow,.automationSwitch>span,.automationSwitch>span::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .youtubeSkeleton,.statusPulse { animation: none; }.connectButton,.disconnectButton,.saveSchedule,.publishNow,.automationSwitch>span,.automationSwitch>span::after,.downloadAction,.loadButton,.pageStepper button::before,.captionBox button { transition: none; } }

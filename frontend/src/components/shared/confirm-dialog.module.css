@@ -5,8 +5,6 @@
   right: 0;
   bottom: 0;
   background-color: var(--overlay);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -63,11 +61,11 @@
   font-family: var(--font-family);
   font-size: 0.85rem;
   font-weight: 700;
+  min-height: 44px;
   padding: 8px 16px;
   border-radius: var(--radius-md);
   cursor: pointer;
-  outline: none;
-  transition: var(--transition-normal);
+  transition: background-color var(--transition-normal), border-color var(--transition-normal), color var(--transition-normal);
   border: 1px solid transparent;
 }
 
@@ -78,8 +76,6 @@
 
 .confirmBtn:hover {
   background-color: var(--accent-hover);
-  box-shadow: var(--shadow-neon);
-  transform: translateY(-1px);
 }
 
 .confirmBtn:focus-visible {
@@ -110,4 +106,26 @@
 @keyframes scaleUp {
   from { transform: scale(0.95); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+@media (max-width: 480px) {
+  .modal {
+    padding: var(--space-md);
+  }
+
+  .actions {
+    flex-direction: column-reverse;
+  }
+
+  .confirmBtn,
+  .cancelBtn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .modal {
+    animation: none;
+  }
 }

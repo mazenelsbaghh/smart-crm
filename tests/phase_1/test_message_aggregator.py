@@ -2,41 +2,45 @@ import pytest
 import httpx
 import uuid
 import time
-import pika
-import json
+import asyncio
+import os
 
-BASE_URL = "http://localhost:80/api"
+BASE_URL = os.getenv("TEST_API_BASE_URL", "http://localhost:80/api")
 
 @pytest.mark.asyncio
-async def test_message_aggregation_flow(rabbitmq_config):
+async def test_message_aggregation_flow():
     sender_phone = f"555{uuid.uuid4().hex[:6]}"
-    
-    # 1. Setup RabbitMQ consumer to catch the published event
-    credentials = pika.PlainCredentials(rabbitmq_config["user"], rabbitmq_config["password"])
-    params = pika.ConnectionParameters(
-        host=rabbitmq_config["host"],
-        port=rabbitmq_config["port"],
-        credentials=credentials
-    )
-    
-    connection = pika.BlockingConnection(params)
-    channel = connection.channel()
-    
-    queue_name = "MessageAggregatedEvent_test_queue"
-    # Declare exchange and queue to ensure they exist for testing
-    channel.exchange_declare(exchange="smartcore_exchange", exchange_type="direct", durable=True)
-    channel.queue_declare(queue=queue_name, durable=True, exclusive=False, auto_delete=False)
-    channel.queue_bind(queue=queue_name, exchange="smartcore_exchange", routing_key="MessageAggregatedEvent")
-    channel.queue_purge(queue=queue_name)
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        # Create Project
+        # Create an explicitly test-scoped project so the configured short aggregation
+        # window is used without coupling this behavior test to one queue transport.
         proj_resp = await client.post(f"{BASE_URL}/projects", json={"name": "AggregatorTestProj"})
         assert proj_resp.status_code == 201
         proj_id = proj_resp.json()["id"]
 
+        email = f"aggregator_{uuid.uuid4().hex[:8]}@smartcore.com"
+        register = await client.post(f"{BASE_URL}/auth/register", json={
+            "email": email,
+            "password": "Password123",
+            "projectId": proj_id,
+            "role": "Admin",
+        })
+        assert register.status_code in (200, 201), register.text
+        login = await client.post(f"{BASE_URL}/auth/login", json={
+            "email": email,
+            "password": "Password123",
+        })
+        assert login.status_code == 200, login.text
+        headers = {"Authorization": f"Bearer {login.json()['accessToken']}"}
+        settings = await client.put(f"{BASE_URL}/projects/{proj_id}/settings", json={
+            "aiAutoReplyEnabled": True,
+            "timezone": "UTC",
+            "geminiApiKey": "mock_api_key_for_testing",
+        }, headers=headers)
+        assert settings.status_code == 200, settings.text
+
         # Send 3 webhook messages in rapid succession (0.5s apart)
-        contents = ["Hello!", "I have a question", "regarding smart pricing."]
+        contents = ["ممكن", "تفاصيل", "السعر"]
         for text in contents:
             webhook_resp = await client.post(
                 f"{BASE_URL}/webhooks/whatsapp/message",
@@ -50,27 +54,37 @@ async def test_message_aggregation_flow(rabbitmq_config):
                 }
             )
             assert webhook_resp.status_code == 200
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
-        # 2. Get event from RabbitMQ (Wait up to 12 seconds: 5s silence window + buffer)
-        received_event = None
-        start_time = time.time()
-        while time.time() - start_time < 12.0:
-            method_frame, header_frame, body = channel.basic_get(queue=queue_name, auto_ack=True)
-            if method_frame:
-                evt = json.loads(body.decode())
-                if evt.get("ProjectId") == proj_id:
-                    received_event = evt
-                    break
-            time.sleep(0.5)
+        # The three incoming messages must produce one price-specific CRM analysis.
+        # This proves the final aggregate included the last fragment without claiming
+        # that a disconnected WhatsApp session delivered an outbound message.
+        messages = []
+        customer = None
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
+            conversations = await client.get(
+                f"{BASE_URL}/projects/{proj_id}/conversations", headers=headers
+            )
+            assert conversations.status_code == 200, conversations.text
+            if conversations.json():
+                response = await client.get(
+                    f"{BASE_URL}/conversations/{conversations.json()[0]['id']}/messages",
+                    headers=headers,
+                )
+                assert response.status_code == 200, response.text
+                messages = response.json()
+            customers = await client.get(
+                f"{BASE_URL}/projects/{proj_id}/customers", headers=headers
+            )
+            assert customers.status_code == 200, customers.text
+            matches = [item for item in customers.json() if item["phoneNumber"] == sender_phone]
+            customer = matches[0] if matches else None
+            if customer and customer.get("label") == "استفسار عن السعر":
+                break
+            await asyncio.sleep(0.5)
 
-        connection.close()
-
-        # Assert event was successfully generated and received
-        assert received_event is not None
-        assert received_event["ProjectId"] == proj_id
-        assert received_event["Sender"] == sender_phone
-        
-        # Verify content contains all three messages separated by newlines
-        expected_content = "\n".join(contents)
-        assert received_event["Content"] == expected_content
+        incoming = [message for message in messages if message["direction"] == "Incoming"]
+        assert len(incoming) == 3
+        assert customer is not None
+        assert customer["label"] == "استفسار عن السعر"

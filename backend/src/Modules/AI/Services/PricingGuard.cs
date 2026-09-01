@@ -5,6 +5,45 @@ namespace Modules.AI.Services
 {
     public static class PricingGuard
     {
+        private const RegexOptions MatchOptions =
+            RegexOptions.IgnoreCase |
+            RegexOptions.CultureInvariant |
+            RegexOptions.IgnorePatternWhitespace;
+
+        private static readonly Regex PricingTerms = new(
+            """
+            (?: سعر | اسعار | أسعار | الاسعار | الأسعار | بكام | تكلفة | تكلفه |
+                رسوم | مصاريف | قسط | اقساط | أقساط | تقسيط )
+            | \b(?: price | prices | cost | costs | fee | fees | installment | installments )\b
+            | \bhow\s+much\b
+            """,
+            MatchOptions);
+
+        private static readonly Regex ArabicPaymentMethodQuestions = new(
+            """
+            (?: طرق | طريقة | وسائل | وسيلة | تفاصيل | بيانات )\s+(?:ال)?دفع
+            | (?: ازاي | إزاي | كيف | كيفية | فين | أين | اين | وين )\s+(?:ال|أ|ا)?دفع
+            | (?:ال|أ|ا)?دفع\s+(?: ازاي | إزاي | كيف | فين | أين | اين | وين )
+            | (?: هل(?:\s+(?:أقدر|اقدر))? | ينفع | ممكن | أقدر | اقدر )\s+
+              (?:ال|أ|ا)?دفع\s+(?:
+                كاش | ب(?:ال)?كاش | نقد(?:ا|ًا)? | فيزا | ب(?:ال)?فيزا |
+                بطاقة | البطاقة | ب(?:ال)?بطاقة |
+                عن\s+طريق\s+(?: تحويل | فودافون\s+كاش | انستا\s+باي | إنستا\s+باي )
+              )
+            """,
+            MatchOptions);
+
+        private static readonly Regex EnglishPaymentMethodQuestions = new(
+            """
+            \b(?:
+                payment\s+(?: method | methods | option | options | details | instructions | plan | plans )
+                | how\s+to\s+pay
+                | (?: how | where )\s+(?:(?: can | do | should )\s+)?(?:i\s+)?pay
+                | (?: can | could | may )\s+i\s+pay\s+(?: by | with | using )
+            )\b
+            """,
+            MatchOptions);
+
         public static bool IsPricingQuestion(string content)
         {
             if (string.IsNullOrWhiteSpace(content))
@@ -12,10 +51,9 @@ namespace Modules.AI.Services
                 return false;
             }
 
-            return Regex.IsMatch(
-                content,
-                "(سعر|اسعار|أسعار|الاسعار|الأسعار|بكام|تكلفة|تكلفه|قسط|اقساط|أقساط|دفع|price|cost|fees)",
-                RegexOptions.IgnoreCase);
+            return PricingTerms.IsMatch(content) ||
+                   ArabicPaymentMethodQuestions.IsMatch(content) ||
+                   EnglishPaymentMethodQuestions.IsMatch(content);
         }
 
         public static string? BuildPricingReplyFromKnowledge(string knowledgeText)

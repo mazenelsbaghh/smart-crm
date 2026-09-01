@@ -99,7 +99,8 @@ namespace Modules.Media.Services
             IntegrationOutbox.Enqueue(_context, new AdvertisingProjectAssetChanged
             {
                 ProjectId = projectId, AssetId = asset.Id, Action = "Upsert", ContentType = contentType,
-                FileHash = fileHash, StoragePath = objectKey, FileSize = fileBytes.Length, RightsState = "Owned"
+                FileHash = fileHash, StoragePath = objectKey, FileSize = fileBytes.Length, RightsState = "Owned",
+                SourceAggregateType = nameof(Asset), SourceAggregateId = asset.Id, SourceVersion = asset.ProjectionVersion
             });
             await _context.SaveChangesAsync();
 
@@ -179,10 +180,12 @@ namespace Modules.Media.Services
             }
 
             _context.Assets.Remove(asset);
+            asset.ProjectionVersion++;
             IntegrationOutbox.Enqueue(_context, new AdvertisingProjectAssetChanged
             {
                 ProjectId = asset.ProjectId, AssetId = asset.Id, Action = "Delete", ContentType = asset.ContentType,
-                FileHash = asset.FileHash, StoragePath = asset.StoragePath, FileSize = asset.FileSize, RightsState = "Owned"
+                FileHash = asset.FileHash, StoragePath = asset.StoragePath, FileSize = asset.FileSize, RightsState = "Owned",
+                SourceAggregateType = nameof(Asset), SourceAggregateId = asset.Id, SourceVersion = asset.ProjectionVersion, IsTombstone = true
             });
             await _context.SaveChangesAsync();
 

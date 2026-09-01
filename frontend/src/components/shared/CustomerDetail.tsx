@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import { Customer, crmService } from '../../services/crm';
 import { api } from '../../services/api';
 import { X, Plus, Calendar, Tag, Sparkles, ArrowRight } from 'lucide-react';
 import { useToast } from '../../context/toast-context';
 import Tooltip from './Tooltip';
 import PhantomLoader from './PhantomLoader';
+import { isolateModal } from './modal-accessibility';
 import styles from './customer-detail.module.css';
 
 interface CustomerDetailProps {
@@ -30,6 +32,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   const { showToast } = useToast();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   
@@ -48,7 +51,6 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   const [editableTriggers, setEditableTriggers] = useState('');
   const [editableObjections, setEditableObjections] = useState('');
   const [savingMemory, setSavingMemory] = useState(false);
-  const [loadingMemory, setLoadingMemory] = useState(false);
   const [generatingMemory, setGeneratingMemory] = useState(false);
   
   // Follow-up form
@@ -61,10 +63,19 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
   // New tag field
   const [newTag, setNewTag] = useState('');
+  const modalRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
 
-  const fetchCustomerData = async () => {
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  const fetchCustomerData = useCallback(async () => {
     try {
       setLoading(true);
+      setLoadError(false);
       const data = await crmService.getCustomer(customerId);
       setCustomer(data);
       setName(data.name || '');
@@ -81,9 +92,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       setFollowUps(filtered);
 
       // Fetch AI Customer Memory
-      let hasMemory = false;
       try {
-        setLoadingMemory(true);
         const memResp = await api.get(`/api/customers/${customerId}/memory`);
         if (memResp.data) {
           const summary = memResp.data.longTermSummary || '';
@@ -103,69 +112,70 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             setEditableObjections(objections.join(', '));
           } catch { setEditableObjections(''); }
 
-          if (summary.trim() !== '' || facts.length > 0) {
-            hasMemory = true;
-          }
         }
-      } catch (err) {
-        console.error('Customer memory not found or failed to load', err);
-        setEditableSummary('');
-        setEditableFacts('');
-        setEditableTriggers('');
-        setEditableObjections('');
-      } finally {
-        setLoadingMemory(false);
-      }
-
-      if (!hasMemory) {
-        // Automatically trigger AI memory generation!
-        try {
-          setGeneratingMemory(true);
-          const resp = await api.post(`/api/projects/${projectId}/customers/${customerId}/memory/generate`);
-          if (resp.data) {
-            const mem = resp.data;
-            setEditableSummary(mem.longTermSummary || '');
-            try {
-              const facts = JSON.parse(mem.factsJson || '[]');
-              setEditableFacts(facts.join(', '));
-            } catch { setEditableFacts(''); }
-            try {
-              const triggers = JSON.parse(mem.triggersJson || '[]');
-              setEditableTriggers(triggers.join(', '));
-            } catch { setEditableTriggers(''); }
-            try {
-              const objections = JSON.parse(mem.objectionsJson || '[]');
-              setEditableObjections(objections.join(', '));
-            } catch { setEditableObjections(''); }
-
-            // Reload customer basic info to show updated name, city, budget, leadScore, etc.
-            const custResp = await crmService.getCustomer(customerId);
-            setCustomer(custResp);
-            setName(custResp.name || '');
-            setCity(custResp.city || '');
-            setLeadScore(custResp.leadScore || 0);
-            setNotes(custResp.notes || '');
-            setTags(custResp.tags || []);
-            setLabel(custResp.label || '');
-            setIsBlacklisted(custResp.isBlacklisted || false);
-          }
-        } catch (genErr) {
-          console.error('Failed to auto-generate memory on load', genErr);
-        } finally {
-          setGeneratingMemory(false);
+      } catch (memoryError: unknown) {
+        if (axios.isAxiosError(memoryError) && memoryError.response?.status === 404) {
+          setEditableSummary('');
+          setEditableFacts('');
+          setEditableTriggers('');
+          setEditableObjections('');
+        } else {
+          console.error('Failed to load customer memory', memoryError);
+          showToast('تعذر تحميل ملخص الذكاء الاصطناعي، وبقية بيانات العميل ما زالت متاحة.', 'warning');
         }
       }
 
     } catch (e) {
       console.error('Error loading customer detail data', e);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, [customerId, projectId, showToast]);
 
   useEffect(() => {
-    fetchCustomerData();
-  }, [customerId, projectId]);
+    const timer = window.setTimeout(() => void fetchCustomerData(), 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchCustomerData]);
+
+  useEffect(() => {
+    if (isInline) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+    const restoreIsolation = overlayRef.current ? isolateModal(overlayRef.current) : () => undefined;
+
+    const trapCustomerDialogKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(
+        modalRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])') ?? [],
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', trapCustomerDialogKeyboard);
+    return () => {
+      document.removeEventListener('keydown', trapCustomerDialogKeyboard);
+      document.body.style.overflow = previousOverflow;
+      restoreIsolation();
+      previouslyFocused?.focus();
+    };
+  }, [isInline, loadError, loading]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -182,10 +192,12 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
         label,
         isBlacklisted,
       });
+      showToast('تم حفظ بيانات العميل.', 'success');
       onUpdate();
       onClose();
     } catch (err) {
       console.error('Failed to save customer updates', err);
+      showToast('تعذر حفظ بيانات العميل. راجع الاتصال ثم أعد المحاولة.', 'error');
     } finally {
       setSaving(false);
     }
@@ -218,11 +230,11 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       const resp = await api.post(`/api/projects/${projectId}/customers/${customerId}/memory/generate`);
       if (resp.data) {
         await fetchCustomerData();
-        showToast('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح! 🧠', 'success');
+        showToast('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح.', 'success');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to generate customer profile', err);
-      const errMsg = err.response?.data || 'فشل توليد ملف التعريف. تأكد من وجود رسائل سابقة للعميل.';
+      const errMsg = getRequestError(err, 'فشل توليد ملف التعريف. تأكد من وجود رسائل سابقة للعميل.');
       showToast(errMsg, 'error');
     } finally {
       setGeneratingMemory(false);
@@ -270,8 +282,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       const fuResp = await api.get<FollowUp[]>(`/api/projects/${projectId}/follow-ups`);
       const filtered = fuResp.data.filter(f => f.customerId === customerId);
       setFollowUps(filtered);
+      showToast('تمت جدولة المتابعة.', 'success');
     } catch (err) {
       console.error('Failed to create follow-up', err);
+      showToast('تعذر جدولة المتابعة. لم يتم حفظ المهمة.', 'error');
     } finally {
       setCreatingFollowUp(false);
     }
@@ -286,7 +300,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               <div className={styles.customerLoadingTitle}>ملف العميل والتفاصيل الأساسية</div>
               <div className={styles.customerLoadingSubtitle}>بيانات التواصل وسجل المحادثات</div>
             </div>
-            <div className={styles.customerLoadingAction}>إغلاق</div>
+            <button ref={closeButtonRef} type="button" className={styles.customerLoadingAction} onClick={onClose}>إغلاق</button>
           </div>
           <div className={styles.customerLoadingGrid}>
             <div className={styles.customerLoadingColumn}>
@@ -306,29 +320,56 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
     if (isInline) {
       return (
-        <div className={`glass-panel ${styles.inlineCard}`}>
+        <div className={styles.inlineCard} aria-busy="true">
           {loadingMarkup}
         </div>
       );
     }
     return (
-      <div className={styles.backdrop}>
-        <div className={`glass-panel ${styles.modal}`}>
+      <div ref={overlayRef} className={styles.backdrop}>
+        <div ref={modalRef} className={styles.modal} role="dialog" aria-modal="true" aria-label="تحميل ملف العميل" aria-busy="true">
           {loadingMarkup}
         </div>
       </div>
     );
   }
 
+  if (loadError) {
+    const errorState = (
+      <div
+        ref={isInline ? undefined : modalRef}
+        className={styles.customerError}
+        role={isInline ? 'alert' : 'dialog'}
+        aria-modal={isInline ? undefined : true}
+        aria-labelledby="customer-error-title"
+        aria-describedby="customer-error-description"
+      >
+        <h2 id="customer-error-title">تعذر تحميل ملف العميل</h2>
+        <p id="customer-error-description">تحقق من الاتصال ثم أعد المحاولة. لم يتم تغيير أي بيانات.</p>
+        <div>
+          <button type="button" className={styles.scheduleBtn} onClick={() => void fetchCustomerData()}>إعادة المحاولة</button>
+          <button ref={isInline ? undefined : closeButtonRef} type="button" className={styles.backBtn} onClick={onClose}>إغلاق</button>
+        </div>
+      </div>
+    );
+    return isInline ? errorState : <div ref={overlayRef} className={styles.backdrop}>{errorState}</div>;
+  }
+
   const clampedDisplayScore = Math.min(100, Math.max(0, leadScore));
 
   const contentMarkup = (
-    <div className={`glass-panel ${isInline ? styles.inlineCard : styles.modal}`}>
+    <div
+      ref={modalRef}
+      className={isInline ? styles.inlineCard : styles.modal}
+      role={isInline ? 'region' : 'dialog'}
+      aria-modal={isInline ? undefined : true}
+      aria-labelledby="customer-detail-title"
+    >
       {/* Header */}
       <div className={styles.header}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h2 className={styles.title}>{customer?.name || 'تفاصيل العميل'}</h2>
+            <h2 id="customer-detail-title" className={styles.title}>{customer?.name || 'تفاصيل العميل'}</h2>
             {customer?.label && (
               <span className={styles.smartLabelBadge}>{customer.label}</span>
             )}
@@ -346,9 +387,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               الرجوع للقائمة
             </button>
           )}
-          <div onClick={onClose} className={styles.closeBtn}>
-            <X size={20} />
-          </div>
+          <button ref={closeButtonRef} type="button" onClick={onClose} className={styles.closeBtn} aria-label="إغلاق ملف العميل">
+            <X size={20} aria-hidden="true" />
+          </button>
         </div>
       </div>
 
@@ -359,8 +400,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             <h3 className={styles.sectionTitle}>سياق الملف الشخصي</h3>
             
             <div className={styles.formGroup}>
-              <label className={styles.label}>الاسم الكامل</label>
+              <label htmlFor="customer-detail-name" className={styles.label}>الاسم الكامل</label>
               <input 
+                id="customer-detail-name"
                 type="text" 
                 value={name} 
                 onChange={(e) => setName(e.target.value)} 
@@ -369,9 +411,23 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               />
             </div>
 
+            <div className={styles.formGroup} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0 12px 0' }}>
+              <input
+                type="checkbox"
+                id="isBlacklistedCheckbox"
+                checked={isBlacklisted}
+                onChange={(e) => setIsBlacklisted(e.target.checked)}
+                style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'hsl(var(--accent-primary))' }}
+              />
+              <label htmlFor="isBlacklistedCheckbox" className={styles.label} style={{ marginBottom: 0, cursor: 'pointer', fontWeight: '500' }}>
+                حظر الرد الآلي بالذكاء الاصطناعي
+              </label>
+            </div>
+
             <div className={styles.formGroup}>
-              <label className={styles.label}>تصنيف العميل (Label)</label>
+              <label htmlFor="customer-detail-label" className={styles.label}>تصنيف العميل</label>
               <input 
+                id="customer-detail-label"
                 type="text" 
                 value={label} 
                 onChange={(e) => setLabel(e.target.value)} 
@@ -382,8 +438,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
             <div className={styles.formRow}>
               <div className={styles.formGroup}>
-                <label className={styles.label}>المدينة</label>
+                <label htmlFor="customer-detail-city" className={styles.label}>المدينة</label>
                 <input 
+                  id="customer-detail-city"
                   type="text" 
                   value={city} 
                   onChange={(e) => setCity(e.target.value)} 
@@ -392,8 +449,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>تقييم الاهتمام (Lead Score)</label>
+                <label htmlFor="customer-detail-score" className={styles.label}>تقييم الاهتمام من 100</label>
                 <input
+                  id="customer-detail-score"
                   type="number"
                   min="0"
                   max="100"
@@ -404,22 +462,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               </div>
             </div>
 
-            <div className={styles.formGroup} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0 12px 0' }}>
-              <input 
-                type="checkbox" 
-                id="isBlacklistedCheckbox"
-                checked={isBlacklisted} 
-                onChange={(e) => setIsBlacklisted(e.target.checked)} 
-                style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'hsl(var(--accent-primary))' }}
-              />
-              <label htmlFor="isBlacklistedCheckbox" className={styles.label} style={{ marginBottom: 0, cursor: 'pointer', fontWeight: '500' }}>
-                حظر الرد الآلي بالذكاء الاصطناعي (Blacklist)
-              </label>
-            </div>
-
             <div className={styles.formGroup}>
-              <label className={styles.label}>ملاحظات المحادثة</label>
+              <label htmlFor="customer-detail-notes" className={styles.label}>ملاحظات المحادثة</label>
               <textarea
+                id="customer-detail-notes"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 className={styles.textarea}
@@ -429,9 +475,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
             {/* Tag manager */}
             <div className={styles.formGroup}>
-              <label className={styles.label}>الوسوم والكلمات الدلالية</label>
+              <label htmlFor="customer-detail-tag" className={styles.label}>الوسوم والكلمات الدلالية</label>
               <div className={styles.tagInputRow}>
                 <input
+                  id="customer-detail-tag"
                   type="text"
                   placeholder="وسم جديد..."
                   value={newTag}
@@ -446,7 +493,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   }}
                 />
                 <Tooltip content="إضافة وسم جديد لتصنيف العميل" position="top">
-                  <button type="button" onClick={handleAddTag} className={styles.addTagBtn} style={{ height: '100%' }}>
+                  <button type="button" onClick={handleAddTag} className={styles.addTagBtn} style={{ height: '100%' }} aria-label="إضافة الوسم">
                     <Plus size={16} />
                   </button>
                 </Tooltip>
@@ -456,7 +503,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   <span key={tag} className={styles.tag}>
                     <Tag size={12} style={{ marginRight: '4px' }} />
                     {tag}
-                    <X size={12} onClick={() => handleRemoveTag(tag)} className={styles.removeTagIcon} />
+                    <button type="button" onClick={() => handleRemoveTag(tag)} className={styles.removeTagButton} aria-label={`إزالة الوسم ${tag}`}><X size={12} aria-hidden="true" /></button>
                   </span>
                 ))}
               </div>
@@ -475,10 +522,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
           <div className={styles.interactionsColumn}>
             {/* AI intelligence warning score indicators */}
             <div className={styles.scoreIndicatorPanel}>
-              <h3 className={styles.sectionTitle}>AI Summary & Profile</h3>
+              <h3 className={styles.sectionTitle}>ملخص العميل ودرجة الاهتمام</h3>
               <div className={styles.scoreCards} style={{ marginBottom: '12px' }}>
                 <div className={styles.scoreCard} style={{ border: '1px solid var(--accent)', backgroundColor: 'var(--accent-soft)', width: '100%' }}>
-                  <span className={styles.scoreLabel}>Lead Score</span>
+                  <span className={styles.scoreLabel}>درجة الاهتمام</span>
                   <span className={styles.scoreVal}>{clampedDisplayScore}/100</span>
                 </div>
               </div>
@@ -486,8 +533,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               {/* Editable Customer Memory */}
               <form onSubmit={handleSaveMemory} style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>ملخص العميل (AI Summary)</label>
+                  <label htmlFor="customer-memory-summary" className={styles.label}>ملخص العميل بالذكاء الاصطناعي</label>
                   <textarea 
+                    id="customer-memory-summary"
                     value={editableSummary} 
                     onChange={(e) => setEditableSummary(e.target.value)} 
                     className={styles.textarea} 
@@ -496,8 +544,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   />
                 </div>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>الحقائق المكتشفة (Facts - مفصولة بفاصلة)</label>
+                  <label htmlFor="customer-memory-facts" className={styles.label}>الحقائق المكتشفة، مفصولة بفاصلة</label>
                   <input 
+                    id="customer-memory-facts"
                     type="text"
                     value={editableFacts} 
                     onChange={(e) => setEditableFacts(e.target.value)} 
@@ -507,8 +556,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 </div>
                 <div className={styles.formRow}>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>الاعتراضات (Objections)</label>
+                    <label htmlFor="customer-memory-objections" className={styles.label}>الاعتراضات</label>
                     <input 
+                      id="customer-memory-objections"
                       type="text"
                       value={editableObjections} 
                       onChange={(e) => setEditableObjections(e.target.value)} 
@@ -517,8 +567,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     />
                   </div>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>المحفزات (Triggers)</label>
+                    <label htmlFor="customer-memory-triggers" className={styles.label}>المحفزات</label>
                     <input 
+                      id="customer-memory-triggers"
                       type="text"
                       value={editableTriggers} 
                       onChange={(e) => setEditableTriggers(e.target.value)} 
@@ -539,7 +590,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(203, 184, 255, 0.12)', borderColor: 'rgba(203, 184, 255, 0.25)', color: '#CBB8FF' }}>
                       <Sparkles size={14} />
                       <PhantomLoader loading={generatingMemory} label="تحديث ملف العميل بالذكاء الاصطناعي">
-                        <span>تحديث ذكي بالـ AI</span>
+                        <span>تحديث بالذكاء الاصطناعي</span>
                       </PhantomLoader>
                     </button>
                   </Tooltip>
@@ -552,21 +603,23 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               <h3 className={styles.sectionTitle}>جدولة متابعة / تذكير</h3>
               <form onSubmit={handleAddFollowUp} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>نوع الإجراء</label>
+                  <label htmlFor="customer-follow-up-type" className={styles.label}>نوع الإجراء</label>
                   <select
+                    id="customer-follow-up-type"
                     value={newFollowUpType}
-                    onChange={(e) => setNewFollowUpType(e.target.value as any)}
+                    onChange={(e) => setNewFollowUpType(e.target.value as 'Nurturing' | 'AppointmentReminder')}
                     className={styles.select}
                   >
-                    <option value="Nurturing">متابعة لتنشيط العميل (Nurturing)</option>
-                    <option value="AppointmentReminder">تذكير بموعد / كورس (Reminder)</option>
+                    <option value="Nurturing">متابعة لتنشيط العميل</option>
+                    <option value="AppointmentReminder">تذكير بموعد أو كورس</option>
                   </select>
                 </div>
 
                 {newFollowUpType === 'Nurturing' ? (
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>تاريخ ووقت المتابعة</label>
+                    <label htmlFor="customer-follow-up-date" className={styles.label}>تاريخ ووقت المتابعة</label>
                     <input 
+                      id="customer-follow-up-date"
                       type="datetime-local" 
                       value={newFollowUpDate}
                       onChange={(e) => setNewFollowUpDate(e.target.value)}
@@ -576,8 +629,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   </div>
                 ) : (
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>تاريخ ووقت الكورس / الموعد</label>
+                    <label htmlFor="customer-appointment-date" className={styles.label}>تاريخ ووقت الكورس أو الموعد</label>
                     <input 
+                      id="customer-appointment-date"
                       type="datetime-local" 
                       value={newAppointmentTime}
                       onChange={(e) => setNewAppointmentTime(e.target.value)}
@@ -591,21 +645,23 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 )}
 
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>نبرة المتابعة (Tone)</label>
+                  <label htmlFor="customer-follow-up-tone" className={styles.label}>نبرة المتابعة</label>
                   <select
+                    id="customer-follow-up-tone"
                     value={newFollowUpTone}
                     onChange={(e) => setNewFollowUpTone(e.target.value)}
                     className={styles.select}
                   >
-                    <option value="Default">الوضع الافتراضي (Default)</option>
-                    <option value="Creative">إبداعي (Creative)</option>
-                    <option value="Salesy">سلزجي صايع (Salesy)</option>
+                    <option value="Default">النبرة الافتراضية</option>
+                    <option value="Creative">إبداعية</option>
+                    <option value="Salesy">مبيعات مباشرة</option>
                   </select>
                 </div>
 
                 <div className={styles.formGroup}>
-                  <label className={styles.label}>نص الرسالة / ملاحظات</label>
+                  <label htmlFor="customer-follow-up-notes" className={styles.label}>نص الرسالة أو الملاحظات</label>
                   <input 
+                    id="customer-follow-up-notes"
                     type="text" 
                     placeholder="اكتب رسالة مخصصة أو اتركها فارغة للإرسال التلقائي"
                     value={newFollowUpNotes}
@@ -667,7 +723,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                             padding: '2px 6px',
                             fontSize: '0.7rem'
                           }}>
-                            {f.tone === 'Creative' ? 'إبداعي' : 'سلزجي صايع'}
+                            {f.tone === 'Creative' ? 'إبداعية' : 'مبيعات مباشرة'}
                           </span>
                         )}
                         {f.type === 'AppointmentReminder' && f.appointmentTime && (
@@ -692,8 +748,21 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   }
 
   return (
-    <div className={styles.backdrop}>
+    <div ref={overlayRef} className={styles.backdrop} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       {contentMarkup}
     </div>
   );
+}
+
+function getRequestError(error: unknown, fallback: string) {
+  if (typeof error === 'object' && error !== null) {
+    const response = (error as { response?: { data?: unknown } }).response;
+    if (typeof response?.data === 'string') return response.data;
+    if (typeof response?.data === 'object' && response.data !== null) {
+      const message = (response.data as { message?: string; error?: string }).message
+        ?? (response.data as { message?: string; error?: string }).error;
+      if (message) return message;
+    }
+  }
+  return fallback;
 }

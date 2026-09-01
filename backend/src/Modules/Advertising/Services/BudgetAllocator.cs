@@ -14,6 +14,32 @@ public sealed record BudgetBatchReservationResult(bool Reserved, IReadOnlyList<G
 
 public sealed class BudgetAllocator
 {
+    public async Task<List<BudgetPeriodLedger>> EnsureCurrentLedgersAsync(AppDbContext db, AutonomyEnvelope envelope,
+        CancellationToken cancellationToken = default)
+    {
+        var ledgers = new List<BudgetPeriodLedger>();
+        foreach (var period in BudgetPeriodPolicy.Resolve(envelope, DateTime.UtcNow))
+        {
+            var ledger = await db.AdvertisingBudgetLedgers.IgnoreQueryFilters().SingleOrDefaultAsync(item =>
+                item.ProjectId == envelope.ProjectId && item.EnvelopeId == envelope.Id
+                && item.PeriodKind == period.Kind && item.PeriodStartUtc == period.StartUtc, cancellationToken);
+            if (ledger is null)
+            {
+                var reserve = decimal.Round(period.Cap * envelope.SafetyReservePercent / 100m, 2, MidpointRounding.ToZero);
+                ledger = new BudgetPeriodLedger
+                {
+                    ProjectId = envelope.ProjectId, EnvelopeId = envelope.Id, EnvelopeVersion = envelope.Version,
+                    PeriodKind = period.Kind, PeriodStartUtc = period.StartUtc, PeriodEndUtc = period.EndUtc,
+                    AuthorizedCap = period.Cap, SafetyReserve = reserve, UsableCap = period.Cap - reserve,
+                    Currency = envelope.Currency
+                };
+                db.AdvertisingBudgetLedgers.Add(ledger);
+            }
+            ledgers.Add(ledger);
+        }
+        return ledgers;
+    }
+
     public AllocationResult Allocate(decimal dailyCap, decimal reservePercent, int creativeTests, bool hasRetargeting)
     {
         if (dailyCap <= 0) throw new ArgumentOutOfRangeException(nameof(dailyCap));
@@ -47,39 +73,103 @@ public sealed class BudgetAllocator
     {
         if (request.Items.Count == 0 || request.Items.Any(item => item.Amount <= 0))
             return new(false, [], 0m, "ADS_INVALID_RESERVATION");
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        var envelope = await db.AutonomyEnvelopes.IgnoreQueryFilters().SingleAsync(x => x.ProjectId == request.ProjectId && x.Id == request.EnvelopeId, cancellationToken);
-        var start = DateTime.UtcNow.Date; var end = start.AddDays(1);
-        var ledger = await db.AdvertisingBudgetLedgers.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == request.ProjectId && x.EnvelopeId == request.EnvelopeId && x.PeriodStartUtc == start, cancellationToken);
-        if (ledger is null)
+        await using var transaction = db.Database.IsRelational()
+            ? await db.Database.BeginTransactionAsync(db.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken)
+            : null;
+        if (db.Database.IsNpgsql())
         {
-            var reserve = decimal.Round(envelope.DailyCap * envelope.SafetyReservePercent / 100m, 2, MidpointRounding.ToZero);
-            ledger = new BudgetPeriodLedger { ProjectId = request.ProjectId, EnvelopeId = request.EnvelopeId, PeriodStartUtc = start, PeriodEndUtc = end,
-                AuthorizedCap = envelope.DailyCap, SafetyReserve = reserve, UsableCap = envelope.DailyCap - reserve, Currency = envelope.Currency };
-            db.AdvertisingBudgetLedgers.Add(ledger);
+            var lockKey = $"advertising-budget:{request.ProjectId:N}:{request.EnvelopeId:N}";
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey}))", cancellationToken);
         }
-        var available = ledger.UsableCap - ledger.CommittedAmount + ledger.ReleasedAmount;
+        var envelope = await db.AutonomyEnvelopes.IgnoreQueryFilters().SingleAsync(x => x.ProjectId == request.ProjectId && x.Id == request.EnvelopeId, cancellationToken);
+        if (envelope.State != EnvelopeState.Active)
+            return new(false, [], 0m, "ADS_ENVELOPE_NOT_ACTIVE");
+        var ledgers = await EnsureCurrentLedgersAsync(db, envelope, cancellationToken);
+        var available = ledgers.Min(AdvertisingSpendGuard.RemainingAuthority);
         var requested = request.Items.Sum(item => item.Amount);
-        if (requested > available) { await transaction.RollbackAsync(cancellationToken); return new(false, [], available, "ADS_USABLE_CAP_EXCEEDED"); }
+        if (requested > available)
+        {
+            if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+            return new(false, [], Math.Max(0m, available), "ADS_USABLE_CAP_EXCEEDED");
+        }
+        var daily = ledgers.Single(ledger => ledger.PeriodKind == "Daily");
         var allocations = request.Items.Select(item => new BudgetAllocation
         {
-            ProjectId = request.ProjectId, LedgerId = ledger.Id, TargetId = item.TargetId, Purpose = item.Purpose,
-            AllocatedAmount = item.Amount, StartsAtUtc = start, EndsAtUtc = end, DecisionId = item.DecisionId
+            ProjectId = request.ProjectId, LedgerId = daily.Id, TargetId = item.TargetId, Purpose = item.Purpose,
+            AllocatedAmount = item.Amount, StartsAtUtc = daily.PeriodStartUtc, EndsAtUtc = daily.PeriodEndUtc, DecisionId = item.DecisionId
         }).ToList();
-        ledger.CommittedAmount += requested; ledger.Version++;
         db.AdvertisingBudgetAllocations.AddRange(allocations);
+        foreach (var ledger in ledgers)
+        {
+            ledger.CommittedAmount += requested;
+            ledger.Version++;
+            db.AdvertisingBudgetAllocationDebits.AddRange(allocations.Select(allocation => new BudgetAllocationLedgerDebit
+            {
+                ProjectId = request.ProjectId, AllocationId = allocation.Id, LedgerId = ledger.Id, ReservedAmount = allocation.AllocatedAmount
+            }));
+        }
         await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
         return new(true, allocations.Select(allocation => allocation.Id).ToArray(), available - requested, "ADS_RESERVED");
     }
 
     public async Task ReleaseAsync(AppDbContext db, Guid projectId, Guid allocationId, CancellationToken cancellationToken = default)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await using var transaction = db.Database.IsRelational()
+            ? await db.Database.BeginTransactionAsync(db.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken)
+            : null;
         var allocation = await db.AdvertisingBudgetAllocations.IgnoreQueryFilters().SingleAsync(x => x.ProjectId == projectId && x.Id == allocationId, cancellationToken);
+        if (db.Database.IsNpgsql())
+        {
+            var envelopeId = await db.AdvertisingBudgetLedgers.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && x.Id == allocation.LedgerId)
+                .Select(x => x.EnvelopeId).SingleAsync(cancellationToken);
+            var lockKey = $"advertising-budget:{projectId:N}:{envelopeId:N}";
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey}))", cancellationToken);
+            await db.Entry(allocation).ReloadAsync(cancellationToken);
+        }
         if (allocation.State != "Active") return;
-        var ledger = await db.AdvertisingBudgetLedgers.IgnoreQueryFilters().SingleAsync(x => x.ProjectId == projectId && x.Id == allocation.LedgerId, cancellationToken);
-        allocation.State = "Released"; ledger.ReleasedAmount += allocation.AllocatedAmount; ledger.Version++;
-        await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
+        var debits = await db.AdvertisingBudgetAllocationDebits.IgnoreQueryFilters()
+            .Where(x => x.ProjectId == projectId && x.AllocationId == allocationId && x.State == "Reserved").ToListAsync(cancellationToken);
+        var ledgerIds = debits.Select(debit => debit.LedgerId).ToArray();
+        var ledgers = await db.AdvertisingBudgetLedgers.IgnoreQueryFilters().Where(x => x.ProjectId == projectId && ledgerIds.Contains(x.Id)).ToListAsync(cancellationToken);
+        allocation.State = "Released";
+        foreach (var debit in debits)
+        {
+            debit.State = "Released"; debit.ReleasedAtUtc = DateTime.UtcNow;
+            var ledger = ledgers.Single(item => item.Id == debit.LedgerId);
+            ledger.ReleasedAmount += debit.ReservedAmount; ledger.Version++;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+    }
+}
+
+public sealed record BudgetPeriodDefinition(string Kind, DateTime StartUtc, DateTime EndUtc, decimal Cap);
+
+public static class BudgetPeriodPolicy
+{
+    public static IReadOnlyList<BudgetPeriodDefinition> Resolve(AutonomyEnvelope envelope, DateTime nowUtc)
+    {
+        var timezone = TimeZoneInfo.FindSystemTimeZoneById(envelope.ReportingTimezoneIana);
+        var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc), timezone);
+        var dayStartLocal = DateTime.SpecifyKind(local.Date, DateTimeKind.Unspecified);
+        var dayEndLocal = dayStartLocal.AddDays(1);
+        var result = new List<BudgetPeriodDefinition>
+        {
+            new("Daily", TimeZoneInfo.ConvertTimeToUtc(dayStartLocal, timezone),
+                TimeZoneInfo.ConvertTimeToUtc(dayEndLocal, timezone), envelope.DailyCap)
+        };
+        if (envelope.PeriodCap is { } periodCap)
+        {
+            if (string.Equals(envelope.PeriodCapKind, "Total", StringComparison.OrdinalIgnoreCase))
+                result.Add(new("Total", envelope.StartsAtUtc, envelope.EndsAtUtc ?? DateTime.SpecifyKind(new DateTime(9998, 12, 31), DateTimeKind.Utc), periodCap));
+            else
+            {
+                var monthStart = new DateTime(local.Year, local.Month, 1, 0, 0, 0, DateTimeKind.Unspecified);
+                result.Add(new("Monthly", TimeZoneInfo.ConvertTimeToUtc(monthStart, timezone),
+                    TimeZoneInfo.ConvertTimeToUtc(monthStart.AddMonths(1), timezone), periodCap));
+            }
+        }
+        return result;
     }
 }

@@ -25,7 +25,6 @@ namespace Modules.Facebook.API
         private readonly IConfiguration _configuration;
         private readonly IHubContext<NotificationHub> _hubContext;
         private readonly IMessageAggregator _messageAggregator;
-        private readonly Shared.Queue.IEventBus _eventBus;
         private readonly StackExchange.Redis.IDatabase _redis;
         private readonly IFacebookGraphService _graphService;
         private readonly CustomerOptOutService _customerOptOutService;
@@ -35,7 +34,6 @@ namespace Modules.Facebook.API
             IConfiguration configuration,
             IHubContext<NotificationHub> hubContext,
             IMessageAggregator messageAggregator,
-            Shared.Queue.IEventBus eventBus,
             StackExchange.Redis.IConnectionMultiplexer redis,
             IFacebookGraphService graphService,
             CustomerOptOutService customerOptOutService)
@@ -44,7 +42,6 @@ namespace Modules.Facebook.API
             _configuration = configuration;
             _hubContext = hubContext;
             _messageAggregator = messageAggregator;
-            _eventBus = eventBus;
             _redis = redis.GetDatabase();
             _graphService = graphService;
             _customerOptOutService = customerOptOutService;
@@ -244,8 +241,26 @@ namespace Modules.Facebook.API
                 MessageType = "Text",
                 Timestamp = DateTime.UtcNow
             };
+            await using var messageTransaction = _context.Database.IsRelational()
+                ? await _context.Database.BeginTransactionAsync(HttpContext.RequestAborted)
+                : null;
             _context.Messages.Add(msg);
             await _context.SaveChangesAsync();
+            if (!customer.IsBlacklisted)
+            {
+                await _messageAggregator.AggregateMessageAsync(
+                    projectId,
+                    senderPSID,
+                    messageText,
+                    msg.Id,
+                    msg.Timestamp,
+                    conversationId: conversation.Id,
+                    cancellationToken: HttpContext.RequestAborted,
+                    channel: "Messenger",
+                    channelMetadata: JsonSerializer.Serialize(new { pageId, senderPSID }));
+            }
+            if (messageTransaction is not null)
+                await messageTransaction.CommitAsync(HttpContext.RequestAborted);
 
             // Broadcast via SignalR
             await _hubContext.Clients.Group($"project_{projectId}").SendAsync("ReceiveMessage", new
@@ -284,18 +299,6 @@ namespace Modules.Facebook.API
                 });
             }
 
-            // Publish to aggregator for AI auto-reply
-            if (!customer.IsBlacklisted)
-            {
-                await _eventBus.PublishAsync(new Shared.Events.MessageAggregatedEvent
-                {
-                    ProjectId = projectId,
-                    Sender = senderPSID,
-                    Content = messageText,
-                    Channel = "Messenger",
-                    ChannelMetadata = JsonSerializer.Serialize(new { pageId, senderPSID })
-                });
-            }
         }
 
         private async Task HandleCommentReceived(string pageId, JsonElement value)
@@ -391,8 +394,26 @@ namespace Modules.Facebook.API
                 FacebookCommentId = commentId,
                 Timestamp = DateTime.UtcNow
             };
+            await using var messageTransaction = _context.Database.IsRelational()
+                ? await _context.Database.BeginTransactionAsync(HttpContext.RequestAborted)
+                : null;
             _context.Messages.Add(msg);
             await _context.SaveChangesAsync();
+            if (!customer.IsBlacklisted)
+            {
+                await _messageAggregator.AggregateMessageAsync(
+                    projectId,
+                    senderPSID,
+                    commentText ?? string.Empty,
+                    msg.Id,
+                    msg.Timestamp,
+                    conversationId: conversation.Id,
+                    cancellationToken: HttpContext.RequestAborted,
+                    channel: "FacebookComment",
+                    channelMetadata: JsonSerializer.Serialize(new { pageId, commentId, postId, senderPSID }));
+            }
+            if (messageTransaction is not null)
+                await messageTransaction.CommitAsync(HttpContext.RequestAborted);
 
             // Broadcast via SignalR
             await _hubContext.Clients.Group($"project_{projectId}").SendAsync("ReceiveMessage", new
@@ -433,18 +454,6 @@ namespace Modules.Facebook.API
                 });
             }
 
-            // Publish for AI auto-reply
-            if (!customer.IsBlacklisted)
-            {
-                await _eventBus.PublishAsync(new Shared.Events.MessageAggregatedEvent
-                {
-                    ProjectId = projectId,
-                    Sender = senderPSID,
-                    Content = commentText ?? "",
-                    Channel = "FacebookComment",
-                    ChannelMetadata = JsonSerializer.Serialize(new { pageId, commentId, postId, senderPSID })
-                });
-            }
         }
 
         private static bool ValidateSignature(string payload, string signatureHeader, string appSecret)

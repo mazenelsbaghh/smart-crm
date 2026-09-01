@@ -3,6 +3,12 @@ using System;
 
 namespace Modules.GroupAppointments.Domain
 {
+    public static class GroupBookingPhoneFields
+    {
+        public const string CustomerCanonical = "PhoneNumberCanonical";
+        public const string BookingCanonical = "CustomerPhoneCanonical";
+    }
+
     public class GroupAppointmentBooking : AuditableEntity, ITenantEntity
     {
         public Guid ProjectId { get; set; }

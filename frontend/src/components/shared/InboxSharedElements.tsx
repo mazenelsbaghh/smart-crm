@@ -14,10 +14,10 @@ interface AiReplyIndicatorProps {
 export function AiReplyIndicator({ isAiTyping, aiTypingStage, aiTypingCountdown }: AiReplyIndicatorProps) {
   if (!isAiTyping) return null;
   return (
-    <div className={styles.msgRowOutgoing}>
+    <div className={styles.msgRowOutgoing} role="status" aria-live="polite" aria-atomic="true">
       <div className={`${styles.msgBubble} ${styles.msgBubbleAI}`}>
         <div className={styles.aiBadgeRow}>
-          <Sparkles size={12} className={styles.typingSparkle} />
+          <Sparkles size={12} className={styles.typingSparkle} aria-hidden="true" />
           <span>الذكاء الاصطناعي</span>
         </div>
         <div className={styles.typingDots}>
@@ -44,7 +44,7 @@ interface TypingIndicatorProps {
 export function TypingIndicator({ isTyping, label = 'جاري الكتابة...' }: TypingIndicatorProps) {
   if (!isTyping) return null;
   return (
-    <div className={styles.msgRowIncoming}>
+    <div className={styles.msgRowIncoming} role="status" aria-live="polite" aria-atomic="true">
       <div className={styles.msgBubble}>
         <div className={styles.typingDots}>
           <span>{label}</span>

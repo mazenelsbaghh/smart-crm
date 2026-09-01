@@ -108,8 +108,11 @@ services:
       RabbitMQ__Username: "${RABBITMQ_DEFAULT_USER:-admin}"
       RabbitMQ__Password: "${RABBITMQ_DEFAULT_PASS:-changeme_rabbitmq}"
       Gemini__ApiKey: "${GEMINI_API_KEY}"
+      AI__ReplyWorkerCount: "${AI_REPLY_WORKER_COUNT:-4}"
+      TALKTIPS_TRIAL_STATUS_API_KEY: "${TALKTIPS_TRIAL_STATUS_API_KEY:-}"
       JWT__ExpiryMinutes: "525600"
       WhatsAppGateway__Url: "http://whatsapp-gateway:3000"
+      WhatsAppGateway__WebhookSecret: "${WHATSAPP_GATEWAY_WEBHOOK_SECRET:?WHATSAPP_GATEWAY_WEBHOOK_SECRET is required}"
       Elasticsearch__Url: "http://elasticsearch:9200"
       MinIO__Endpoint: "http://minio:9000"
       MinIO__AccessKey: "${MINIO_ROOT_USER:-minioadmin}"
@@ -124,20 +127,24 @@ services:
       FACEBOOK_APP_SECRET: "${FACEBOOK_APP_SECRET:-}"
       FACEBOOK_VERIFY_TOKEN: "${FACEBOOK_VERIFY_TOKEN:-smartcrm_verify_2026}"
       FACEBOOK_OAUTH_REDIRECT_URI: "${FACEBOOK_OAUTH_REDIRECT_URI:-http://localhost/api/facebook/oauth/callback}"
-      FACEBOOK_GRAPH_API_VERSION: "${FACEBOOK_GRAPH_API_VERSION:-v25.0}"
-      Advertising__Meta__GraphApiVersion: "${FACEBOOK_GRAPH_API_VERSION:-v25.0}"
+      Advertising__Enabled: "${ADVERTISING_ENABLED:-false}"
+      Advertising__AllowRealActivation: "${ADVERTISING_ALLOW_REAL_ACTIVATION:-false}"
+      FACEBOOK_GRAPH_API_VERSION: "${FACEBOOK_GRAPH_API_VERSION:-v26.0}"
+      Advertising__Meta__GraphApiVersion: "${FACEBOOK_GRAPH_API_VERSION:-v26.0}"
       Advertising__Meta__UseMock: "${ADVERTISING_META_USE_MOCK:-true}"
       Advertising__Meta__AppId: "${FACEBOOK_APP_ID:-}"
       Advertising__Meta__AppSecret: "${FACEBOOK_APP_SECRET:-}"
-      Advertising__Meta__OAuthRedirectUri: "${FACEBOOK_ADS_OAUTH_REDIRECT_URI:-http://localhost/api/ad-manager/facebook/oauth/callback}"
+      Advertising__Meta__OAuthRedirectUri: "${FACEBOOK_ADS_OAUTH_REDIRECT_URI:-https://localhost/api/ad-manager/meta/oauth/callback}"
       Advertising__SafetyReservePercent: "${ADVERTISING_SAFETY_RESERVE_PERCENT:-15}"
+      Advertising__WhatsAppCloud__VerifyToken: "${WHATSAPP_CLOUD_VERIFY_TOKEN:-}"
+      Advertising__WhatsAppCloud__AppSecret: "${WHATSAPP_CLOUD_APP_SECRET:-}"
       FRONTEND_URL: "${FRONTEND_URL:-http://localhost:3000}"
       YOUTUBE_CLIENT_ID: "${YOUTUBE_CLIENT_ID:-}"
       YOUTUBE_CLIENT_SECRET: "${YOUTUBE_CLIENT_SECRET:-}"
       YOUTUBE_OAUTH_REDIRECT_URI: "${YOUTUBE_OAUTH_REDIRECT_URI:-http://localhost/api/quran/youtube/callback}"
-      TIKTOK_CLIENT_KEY: "${TIKTOK_CLIENT_KEY:-}"
-      TIKTOK_CLIENT_SECRET: "${TIKTOK_CLIENT_SECRET:-}"
-      TIKTOK_OAUTH_REDIRECT_URI: "${TIKTOK_OAUTH_REDIRECT_URI:-http://localhost/api/quran/tiktok/callback}"
+      ZERNIO_API_KEY: "${ZERNIO_API_KEY:-}"
+      ZERNIO_PROFILE_ID: "${ZERNIO_PROFILE_ID:-}"
+      ZERNIO_TIKTOK_ACCOUNT_ID: "${ZERNIO_TIKTOK_ACCOUNT_ID:-}"
       QuranChallenge__RendererUrl: "${QURAN_RENDERER_URL:-http://frontend:3000/quran-video/render}"
       DataProtection__KeysPath: "/app/data-protection-keys"
     volumes:
@@ -165,6 +172,7 @@ services:
       - PORT=3000
       - REDIS_URL=redis://redis:6379
       - BACKEND_URL=http://backend:5000
+      - WHATSAPP_GATEWAY_WEBHOOK_SECRET=${WHATSAPP_GATEWAY_WEBHOOK_SECRET:?WHATSAPP_GATEWAY_WEBHOOK_SECRET is required}
       - AUTO_RESTORE_SESSIONS=${AUTO_RESTORE_SESSIONS:-true}
     volumes:
       - ./whatsapp-gateway/sessions:/app/sessions

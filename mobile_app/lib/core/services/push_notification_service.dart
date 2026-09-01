@@ -8,80 +8,80 @@ import '../widgets/notification_banner.dart';
 import 'api_client.dart';
 
 @pragma('vm:entry-point')
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // Handles background and terminated state notification events
-  print('[FCM] Background message received: ${message.messageId}');
-}
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage _) async {}
 
 class PushNotificationService {
-  static final ValueNotifier<String> statusNotifier = ValueNotifier<String>('غير مسجل (Not Registered)');
-  static final ValueNotifier<String?> tokenNotifier = ValueNotifier<String?>(null);
+  static final ValueNotifier<String> statusNotifier = ValueNotifier<String>(
+    'غير مسجل',
+  );
+  static final ValueNotifier<String?> tokenNotifier = ValueNotifier<String?>(
+    null,
+  );
 
   final ApiClient _apiClient;
   final String _projectId;
   final GlobalKey<NavigatorState> _navigatorKey;
   final Function(String route) _onNavigate;
+  StreamSubscription<String>? _tokenRefreshSubscription;
+  StreamSubscription<RemoteMessage>? _foregroundSubscription;
+  StreamSubscription<RemoteMessage>? _openedSubscription;
+  bool _disposed = false;
+  bool _handlersConfigured = false;
 
   PushNotificationService({
     required ApiClient apiClient,
     required String projectId,
     required GlobalKey<NavigatorState> navigatorKey,
     required Function(String route) onNavigate,
-  })  : _apiClient = apiClient,
-        _projectId = projectId,
-        _navigatorKey = navigatorKey,
-        _onNavigate = onNavigate;
+  }) : _apiClient = apiClient,
+       _projectId = projectId,
+       _navigatorKey = navigatorKey,
+       _onNavigate = onNavigate;
 
   Future<void> initialize() async {
     try {
       final messaging = FirebaseMessaging.instance;
 
-      // ── 1. Set up onTokenRefresh EARLY as a reliable fallback ──
       // On iOS, Firebase will fire this automatically once APNS is ready,
       // even if our manual getToken() call below fails.
-      messaging.onTokenRefresh.listen((newToken) async {
-        print('[FCM] onTokenRefresh fired with token: $newToken');
+      _tokenRefreshSubscription = messaging.onTokenRefresh.listen((
+        newToken,
+      ) async {
+        if (_disposed) return;
         tokenNotifier.value = newToken;
         statusNotifier.value = 'جاري التسجيل في السيرفر...';
         await _registerTokenWithBackend(newToken);
       });
 
-      // ── 2. Request notification permission ──
       statusNotifier.value = 'جاري طلب الصلاحيات...';
       final settings = await messaging.requestPermission(
         alert: true,
         badge: true,
         sound: true,
       );
-      print('[FCM] Permission status: ${settings.authorizationStatus}');
-
+      if (_disposed) return;
       if (settings.authorizationStatus == AuthorizationStatus.denied) {
         statusNotifier.value = 'تم رفض صلاحيات الإشعارات';
         _setupMessageHandlers(messaging);
         return;
       }
 
-      // ── 3. On iOS, wait for APNS token from Apple ──
       if (Platform.isIOS) {
         statusNotifier.value = 'جاري انتظار معرف APNS من آبل...';
         String? apnsToken;
-        const maxRetries = 20; // Wait up to 20 seconds
+        const maxRetries = 20;
 
         for (int i = 0; i < maxRetries; i++) {
+          if (_disposed) return;
           apnsToken = await messaging.getAPNSToken();
           if (apnsToken != null) {
-            print('[FCM] APNS Token retrieved on attempt ${i + 1}: $apnsToken');
             break;
           }
-          print('[FCM] APNS token not ready yet (${i + 1}/$maxRetries)...');
           await Future.delayed(const Duration(seconds: 1));
         }
 
         if (apnsToken == null) {
-          // APNS token never arrived — don't try getToken(), it will crash.
-          // The onTokenRefresh listener above will pick it up later if it arrives.
-          print('[FCM] APNS token not available after $maxRetries seconds. '
-              'Relying on onTokenRefresh fallback.');
+          // Calling getToken before APNS is ready can fail; the listener recovers later.
           statusNotifier.value =
               'في انتظار تسجيل APNS... (سيتم تلقائياً عند الجاهزية)';
           _setupMessageHandlers(messaging);
@@ -92,17 +92,17 @@ class PushNotificationService {
         await Future.delayed(const Duration(seconds: 2));
       }
 
-      // ── 4. Fetch FCM token (with retry) ──
+      if (_disposed) return;
       statusNotifier.value = 'جاري جلب رمز FCM...';
       String? token;
       const tokenRetries = 3;
 
       for (int i = 0; i < tokenRetries; i++) {
+        if (_disposed) return;
         try {
           token = await messaging.getToken();
           if (token != null) break;
-        } catch (e) {
-          print('[FCM] getToken() attempt ${i + 1} failed: $e');
+        } catch (_) {
           if (i < tokenRetries - 1) {
             await Future.delayed(const Duration(seconds: 2));
           }
@@ -110,23 +110,21 @@ class PushNotificationService {
       }
 
       if (token != null) {
-        print('[FCM] FCM token obtained: $token');
+        if (_disposed) return;
         tokenNotifier.value = token;
         statusNotifier.value = 'جاري التسجيل في السيرفر...';
         await _registerTokenWithBackend(token);
       } else {
-        print('[FCM] Could not get FCM token after retries. '
-            'Relying on onTokenRefresh fallback.');
         statusNotifier.value =
             'في انتظار رمز FCM... (سيتم تلقائياً عند الجاهزية)';
       }
 
-      // ── 5. Set up all message handlers ──
       _setupMessageHandlers(messaging);
-
-    } catch (e) {
-      statusNotifier.value = 'فشل التهيئة: $e';
-      print('[FCM] Push Notification Service initialization failed: $e');
+    } catch (_) {
+      if (!_disposed) {
+        statusNotifier.value =
+            'تعذر تفعيل الإشعارات الآن. تحقق من الاتصال وحاول مجددًا.';
+      }
     }
   }
 
@@ -134,13 +132,14 @@ class PushNotificationService {
   /// Called regardless of whether token registration succeeded, so that
   /// notifications still work if the token arrives later via onTokenRefresh.
   void _setupMessageHandlers(FirebaseMessaging messaging) {
-    // Background message handler
+    if (_disposed || _handlersConfigured) return;
+    _handlersConfigured = true;
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-    // Foreground notifications → show premium banner
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print('[FCM] Foreground message: ${message.messageId}');
-
+    _foregroundSubscription = FirebaseMessaging.onMessage.listen((
+      RemoteMessage message,
+    ) {
+      if (_disposed) return;
       final notification = message.notification;
       if (notification != null && _navigatorKey.currentState != null) {
         final type = message.data['type']?.toString() ?? 'General';
@@ -159,33 +158,33 @@ class PushNotificationService {
       }
     });
 
-    // Notification click from background
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      print('[FCM] Notification click (background): ${message.messageId}');
+    _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen((
+      RemoteMessage message,
+    ) {
+      if (_disposed) return;
       _handleNotificationClick(message);
     });
 
-    // App launched from terminated state via notification
     messaging.getInitialMessage().then((message) {
-      if (message != null) {
-        print('[FCM] Launched from notification (terminated): ${message.messageId}');
+      if (!_disposed && message != null) {
         _handleNotificationClick(message);
       }
     });
   }
 
   Future<void> _registerTokenWithBackend(String token) async {
+    if (_disposed) return;
     try {
-      print('[FCM] Registering token on backend: $token');
       await _apiClient.dio.post(
         '/api/projects/$_projectId/fcm-tokens',
         data: {'token': token},
       );
-      statusNotifier.value = 'مسجل ونشط (Registered & Active)';
-      print('[FCM] Token registered successfully on backend.');
-    } catch (e) {
-      statusNotifier.value = 'فشل التسجيل في السيرفر: $e';
-      print('[FCM] Failed to register token on backend: $e');
+      if (!_disposed) statusNotifier.value = 'مسجل ونشط';
+    } catch (_) {
+      if (!_disposed) {
+        statusNotifier.value =
+            'تعذر تسجيل الإشعارات بالخادم. تحقق من الاتصال وحاول مجددًا.';
+      }
     }
   }
 
@@ -194,5 +193,17 @@ class PushNotificationService {
     if (type == 'Booking') {
       _onNavigate('/bookings');
     }
+  }
+
+  void dispose() {
+    _disposed = true;
+    unawaited(_tokenRefreshSubscription?.cancel());
+    unawaited(_foregroundSubscription?.cancel());
+    unawaited(_openedSubscription?.cancel());
+    _tokenRefreshSubscription = null;
+    _foregroundSubscription = null;
+    _openedSubscription = null;
+    tokenNotifier.value = null;
+    statusNotifier.value = 'غير مسجل';
   }
 }

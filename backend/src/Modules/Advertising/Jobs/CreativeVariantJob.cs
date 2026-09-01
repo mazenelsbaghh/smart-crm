@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Modules.Advertising.Domain;
-using Modules.Media.Services;
+using Shared.Storage;
 using Shared.Infrastructure;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
@@ -9,7 +9,7 @@ using SixLabors.ImageSharp.Processing;
 
 namespace Modules.Advertising.Jobs;
 
-public sealed class CreativeVariantJob(AppDbContext db, IMinIoStorageService storage, ILogger<CreativeVariantJob> logger)
+public sealed class CreativeVariantJob(AppDbContext db, IObjectStorage storage, ILogger<CreativeVariantJob> logger)
 {
     private static readonly (string Placement, int Width, int Height)[] Targets =
     [
@@ -23,7 +23,7 @@ public sealed class CreativeVariantJob(AppDbContext db, IMinIoStorageService sto
         foreach (var target in Targets)
         {
             if (await db.AdvertisingCreativeVariants.IgnoreQueryFilters().AnyAsync(x => x.ProjectId == projectId && x.CreativeId == creativeId && x.Placement == target.Placement && x.SourceHash == creative.SourceHash, cancellationToken)) continue;
-            await using var source = await storage.DownloadFileAsync(creative.SourceStoragePath);
+            await using var source = await storage.DownloadAsync(creative.SourceStoragePath, cancellationToken);
             var outputKey = $"projects/{projectId:N}/advertising/{creativeId:N}/{creative.SourceHash[..Math.Min(12, creative.SourceHash.Length)]}-{target.Placement}.{(creative.MediaType == CreativeMediaType.Video ? "mp4" : "jpg")}";
             if (creative.MediaType == CreativeMediaType.Video)
                 await GenerateVideoAsync(source, outputKey, target.Width, target.Height, cancellationToken);
@@ -46,7 +46,7 @@ public sealed class CreativeVariantJob(AppDbContext db, IMinIoStorageService sto
         await using var output = new MemoryStream();
         await image.SaveAsync(output, new JpegEncoder { Quality = 86 }, cancellationToken);
         output.Position = 0;
-        await storage.UploadFileAsync(outputKey, output, "image/jpeg");
+        await storage.UploadAsync(outputKey, output, "image/jpeg", cancellationToken);
     }
 
     private async Task GenerateVideoAsync(Stream source, string outputKey, int width, int height, CancellationToken cancellationToken)
@@ -64,7 +64,7 @@ public sealed class CreativeVariantJob(AppDbContext db, IMinIoStorageService sto
             await process.WaitForExitAsync(cancellationToken);
             if (process.ExitCode != 0) throw new InvalidOperationException($"FFmpeg failed ({process.ExitCode}).");
             await using var result = File.OpenRead(output);
-            await storage.UploadFileAsync(outputKey, result, "video/mp4");
+            await storage.UploadAsync(outputKey, result, "video/mp4", cancellationToken);
         }
         catch (Exception ex)
         {

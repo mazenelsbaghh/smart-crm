@@ -10,12 +10,14 @@ namespace Modules.Campaigns.Domain
         Running,
         Paused,
         Completed,
-        Cancelled
+        Cancelled,
+        Preparing
     }
 
     public class Campaign : AuditableEntity, ITenantEntity
     {
         public Guid ProjectId { get; set; }
+        public Guid? WhatsAppAccountId { get; set; }
         public string Name { get; set; }
         public Guid SegmentId { get; set; }
         public string MessageTemplateA { get; set; }

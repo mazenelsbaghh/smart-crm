@@ -26,17 +26,17 @@ namespace Modules.AI.Services
     public class AIIdentitySettings
     {
         public string[] AgentNames { get; set; } = System.Array.Empty<string>();
-        public string NameSelectionMode { get; set; } = "HourlyRotation";
-        public bool SignatureEnabled { get; set; } = true;
-        public string SignatureTemplate { get; set; } = "- {agentName} ✨";
+        public string NameSelectionMode { get; set; } = "First";
+        public bool SignatureEnabled { get; set; }
+        public string SignatureTemplate { get; set; } = "- {agentName}";
         public string ComplaintSignatureTemplate { get; set; } = "- {agentName}";
     }
 
     public class AIToneSettings
     {
-        public string TonePreset { get; set; } = "egyptian-slang-sales";
+        public string TonePreset { get; set; } = "egyptian-polite";
         public string? CustomTone { get; set; }
-        public string TargetAudience { get; set; } = "طلاب كورس كول سنتر يبحثون عن عمل";
+        public string TargetAudience { get; set; } = string.Empty;
         public string[] AllowedPhrases { get; set; } = System.Array.Empty<string>();
         public string[] ProhibitedPhrases { get; set; } = System.Array.Empty<string>();
         public string? BusinessInstructions { get; set; }
@@ -68,8 +68,8 @@ namespace Modules.AI.Services
         public string AiError { get; set; } = "أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.";
         public string InvalidAiOutput { get; set; } = "أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.";
         public string GenericCustomerService { get; set; } = "أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.";
-        public string FacebookPublicComment { get; set; } = "تم الرد في الخاص يا فندم! ❤️";
-        public string WhatsAppTransitionSuccess { get; set; } = "أنا بعتلك رسالة على الواتساب، خلينا نتواصل هناك. ✨";
+        public string FacebookPublicComment { get; set; } = "تم إرسال التفاصيل في رسالة خاصة.";
+        public string WhatsAppTransitionSuccess { get; set; } = "تم إرسال رسالة على واتساب ويمكننا استكمال المحادثة هناك.";
         public string WhatsAppTransitionFailure { get; set; } = "حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.";
         public string WhatsAppTransitionMessage { get; set; } = "أهلاً يا {customerName}، معاك {agentName} من {projectName}. نكمل مع حضرتك هنا على واتساب عشان نساعدك بشكل أسرع.";
         public string FollowUpDefault { get; set; } = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟";

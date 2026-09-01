@@ -21,7 +21,7 @@ namespace Modules.AI.Services
     public class AIBehaviorTemplateContext
     {
         public string CustomerName { get; set; } = "يا فندم";
-        public string AgentName { get; set; } = "ساندي";
+        public string AgentName { get; set; } = "فريق خدمة العملاء";
         public string ProjectName { get; set; } = "المشروع";
         public string PhoneNumber { get; set; } = string.Empty;
         public string Channel { get; set; } = "WhatsApp";
@@ -124,7 +124,7 @@ namespace Modules.AI.Services
 
             if (names.Length == 0)
             {
-                names = new[] { "ساجي", "لارا", "مادلين", "شاهي", "ساندي" };
+                names = new[] { "فريق خدمة العملاء" };
             }
 
             if (string.Equals(settings.Identity.NameSelectionMode, "First", StringComparison.OrdinalIgnoreCase))
@@ -229,17 +229,17 @@ namespace Modules.AI.Services
             {
                 Identity = new AIIdentitySettings
                 {
-                    AgentNames = new[] { "ساجي", "لارا", "مادلين", "شاهي", "ساندي" },
-                    NameSelectionMode = "HourlyRotation",
-                    SignatureEnabled = true,
-                    SignatureTemplate = "- {agentName} ✨",
+                    AgentNames = new[] { "فريق خدمة العملاء" },
+                    NameSelectionMode = "First",
+                    SignatureEnabled = false,
+                    SignatureTemplate = "- {agentName}",
                     ComplaintSignatureTemplate = "- {agentName}"
                 },
                 Tone = new AIToneSettings
                 {
-                    TonePreset = settings?.AiTonePreference ?? "العامية المصرية الروشة والصايعة",
+                    TonePreset = settings?.AiTonePreference ?? "العامية المصرية المهذبة والمحترمة",
                     CustomTone = settings?.AiTonePreference,
-                    TargetAudience = settings?.AiTargetAudience ?? "طلاب كورس كول سنتر يبحثون عن عمل"
+                    TargetAudience = settings?.AiTargetAudience ?? string.Empty
                 },
                 AdvancedInstructions = null
             };

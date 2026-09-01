@@ -5,39 +5,52 @@ using Microsoft.EntityFrameworkCore;
 using Modules.Conversations.Domain;
 using Modules.Conversations.Hubs;
 using Modules.GroupAppointments.Domain;
+using Modules.GroupAppointments.Services;
 using Shared.Infrastructure;
 using Shared.Security;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Threading;
 using FirebaseAdmin.Messaging;
 using StackExchange.Redis;
 using Hangfire;
 using Modules.CRM.Services;
 using Shared.Queue;
+using Modules.WhatsApp.Services;
 
 namespace Modules.GroupAppointments.API
 {
     [ApiController]
+    [Authorize]
     [Route("api")]
     public class GroupAppointmentsController : ControllerBase
     {
         private readonly AppDbContext _context;
         private readonly ITenantContext _tenantContext;
+        private readonly IProjectAuthorizationService _authorization;
+        private readonly GroupBookingCoordinator _bookingCoordinator;
         private readonly IHubContext<NotificationHub> _hubContext;
         private readonly IDatabase _redis;
+        private readonly WhatsAppAccountService _whatsAppAccounts;
 
         public GroupAppointmentsController(
-            AppDbContext context, 
-            ITenantContext tenantContext, 
+            AppDbContext context,
+            ITenantContext tenantContext,
+            IProjectAuthorizationService authorization,
+            GroupBookingCoordinator bookingCoordinator,
             IHubContext<NotificationHub> hubContext,
-            IConnectionMultiplexer redis)
+            IConnectionMultiplexer redis,
+            WhatsAppAccountService whatsAppAccounts)
         {
             _context = context;
             _tenantContext = tenantContext;
+            _authorization = authorization;
+            _bookingCoordinator = bookingCoordinator;
             _hubContext = hubContext;
             _redis = redis.GetDatabase();
+            _whatsAppAccounts = whatsAppAccounts;
         }
 
         // --- Admin/Agent Authorized Endpoints ---
@@ -46,6 +59,7 @@ namespace Modules.GroupAppointments.API
         public async Task<IActionResult> GetGroups()
         {
             var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
             var timezone = settings?.Timezone ?? "Africa/Cairo";
 
@@ -77,6 +91,7 @@ namespace Modules.GroupAppointments.API
                 g.InstructorName,
                 g.FreeSessionDateTime,
                 g.CourseSecondDateTime,
+                g.WhatsAppAccountId,
                 g.CreatedAt,
                 g.UpdatedAt,
                 BookedCount = g.Bookings.Count,
@@ -99,6 +114,7 @@ namespace Modules.GroupAppointments.API
         public async Task<IActionResult> GetAutomationOverview()
         {
             var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
 
             var groups = await _context.GroupAppointments
@@ -144,6 +160,7 @@ namespace Modules.GroupAppointments.API
                     group.Capacity,
                     group.WhatsAppGroupJid,
                     group.WhatsAppGroupInviteLink,
+                    group.WhatsAppAccountId,
                     BookedCount = group.Bookings.Count,
                     HasWhatsAppGroup = hasWhatsAppGroup,
                     PendingFollowUpCount = pendingFollowUpCount,
@@ -171,8 +188,10 @@ namespace Modules.GroupAppointments.API
         [HttpPost("group-appointments/automation/run-now")]
         public IActionResult RunAutomationNow()
         {
+            var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanManageProject(User, projectId)) return Forbid();
             var jobId = BackgroundJob.Enqueue<FollowUpScheduler>(
-                scheduler => scheduler.RunWhatsAppGroupAutomationLifecycleJobAsync());
+                scheduler => scheduler.RunWhatsAppGroupAutomationLifecycleJobAsync(projectId));
 
             return Accepted(new
             {
@@ -184,10 +203,19 @@ namespace Modules.GroupAppointments.API
         [HttpPost("group-appointments")]
         public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest request)
         {
+            var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanManageProject(User, projectId)) return Forbid();
+            var whatsAppAccount = await _whatsAppAccounts.ResolveAsync(
+                projectId,
+                request.WhatsAppAccountId);
+            if (whatsAppAccount is null)
+                return BadRequest(new { code = "WHATSAPP_ACCOUNT_NOT_IN_PROJECT" });
             var mode = request.Mode ?? "offline";
             var autoName = mode == "online" ? "أونلاين" : "في السنتر";
             var group = new GroupAppointment
             {
+                ProjectId = projectId,
+                WhatsAppAccountId = whatsAppAccount.Id,
                 Name = string.IsNullOrEmpty(request.Name) ? autoName : request.Name,
                 DateTime = DateTime.SpecifyKind(request.DateTime, DateTimeKind.Utc),
                 Capacity = request.Capacity,
@@ -208,8 +236,26 @@ namespace Modules.GroupAppointments.API
         [HttpPut("group-appointments/{id}")]
         public async Task<IActionResult> UpdateGroup(Guid id, [FromBody] UpdateGroupRequest request)
         {
-            var group = await _context.GroupAppointments.FindAsync(id);
+            var group = await _context.GroupAppointments.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(candidate => candidate.Id == id);
             if (group == null) return NotFound();
+            if (!_authorization.CanManageProject(User, group.ProjectId)) return Forbid();
+            if (request.WhatsAppAccountId.HasValue)
+            {
+                var whatsAppAccount = await _whatsAppAccounts.ResolveAsync(
+                    group.ProjectId,
+                    request.WhatsAppAccountId);
+                if (whatsAppAccount is null)
+                    return BadRequest(new { code = "WHATSAPP_ACCOUNT_NOT_IN_PROJECT" });
+                if (group.WhatsAppAccountId != whatsAppAccount.Id
+                    && (!string.IsNullOrWhiteSpace(group.WhatsAppGroupJid)
+                        || await _context.FollowUps.IgnoreQueryFilters()
+                            .AnyAsync(followUp => followUp.ProjectId == group.ProjectId
+                                && followUp.AppointmentTime == group.DateTime
+                                && followUp.WhatsAppAccountId == group.WhatsAppAccountId)))
+                    return Conflict(new { code = "WHATSAPP_ACCOUNT_ALREADY_BOUND" });
+                group.WhatsAppAccountId = whatsAppAccount.Id;
+            }
 
             group.Name = request.Name ?? group.Name;
             if (request.DateTime.HasValue)
@@ -249,8 +295,18 @@ namespace Modules.GroupAppointments.API
                 group.CourseSecondDateTime = DateTime.SpecifyKind(request.CourseSecondDateTime.Value, DateTimeKind.Utc);
             }
 
-            _context.Entry(group).State = EntityState.Modified;
-            await _context.SaveChangesAsync();
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return Conflict(new
+                {
+                    code = "GROUP_APPOINTMENT_CHANGED",
+                    message = "The WhatsApp group was changed while this update was being saved. Refresh and try again."
+                });
+            }
 
             return Ok(group);
         }
@@ -258,8 +314,10 @@ namespace Modules.GroupAppointments.API
         [HttpDelete("group-appointments/{id}")]
         public async Task<IActionResult> DeleteGroup(Guid id)
         {
-            var group = await _context.GroupAppointments.FindAsync(id);
+            var group = await _context.GroupAppointments.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(candidate => candidate.Id == id);
             if (group == null) return NotFound();
+            if (!_authorization.CanManageProject(User, group.ProjectId)) return Forbid();
 
             _context.GroupAppointments.Remove(group);
             await _context.SaveChangesAsync();
@@ -270,8 +328,10 @@ namespace Modules.GroupAppointments.API
         [HttpPatch("group-appointments/{id}/toggle")]
         public async Task<IActionResult> ToggleGroup(Guid id)
         {
-            var group = await _context.GroupAppointments.FindAsync(id);
+            var group = await _context.GroupAppointments.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(candidate => candidate.Id == id);
             if (group == null) return NotFound();
+            if (!_authorization.CanManageProject(User, group.ProjectId)) return Forbid();
 
             group.IsActive = !group.IsActive;
             _context.Entry(group).State = EntityState.Modified;
@@ -288,6 +348,7 @@ namespace Modules.GroupAppointments.API
                 .FirstOrDefaultAsync(b => b.Id == bookingId);
 
             if (booking == null) return NotFound();
+            if (!_authorization.CanManageProject(User, booking.ProjectId)) return Forbid();
 
             var group = booking.GroupAppointment;
             var groupId = booking.GroupAppointmentId;
@@ -328,6 +389,7 @@ namespace Modules.GroupAppointments.API
                 .FirstOrDefaultAsync(b => b.Id == bookingId);
 
             if (booking == null) return NotFound();
+            if (!_authorization.CanManageProject(User, booking.ProjectId)) return Forbid();
 
             var previousPaid = booking.IsPaid;
             var previousAttended = booking.IsAttended;
@@ -359,8 +421,18 @@ namespace Modules.GroupAppointments.API
             if (previousPaid != booking.IsPaid || previousAttended != booking.IsAttended)
                 IntegrationOutbox.Enqueue(_context, new AdvertisingBookingOutcomeChanged
                 {
-                    ProjectId = booking.ProjectId, BookingId = booking.Id, CustomerId = booking.CustomerId,
-                    IsPaid = booking.IsPaid, IsAttended = booking.IsAttended, Value = 0m, Currency = "EGP"
+                    ProjectId = booking.ProjectId,
+                    BookingId = booking.Id,
+                    CustomerId = booking.CustomerId,
+                    IsPaid = booking.IsPaid,
+                    IsAttended = booking.IsAttended,
+                    Value = 0m,
+                    Currency = "EGP",
+                    State = booking.IsPaid ? "Paid" : booking.IsAttended ? "Attended" : "Confirmed",
+                    OutcomeOccurredAtUtc = DateTime.UtcNow,
+                    SourceAggregateType = booking.GetType().Name,
+                    SourceAggregateId = booking.Id,
+                    SourceVersion = 1
                 });
             await _context.SaveChangesAsync();
 
@@ -399,6 +471,69 @@ namespace Modules.GroupAppointments.API
                 booking.IsPaid,
                 booking.CreatedAt
             });
+        }
+
+        [Authorize]
+        [HttpPost("group-appointments/{groupId}/bookings/manual")]
+        public async Task<IActionResult> CreateManualBooking(
+            Guid groupId,
+            [FromBody] ManualGroupBookingRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanManageProject(User, projectId))
+            {
+                return Forbid();
+            }
+
+            var validation = ValidateManualBookingRequest(request);
+            if (validation.ErrorCode != null)
+            {
+                return BadRequest(new
+                {
+                    error = validation.ErrorMessage,
+                    code = validation.ErrorCode
+                });
+            }
+            var validRequest = validation.Request!;
+
+            var result = await _bookingCoordinator.BookAsync(new GroupBookingCommand
+            {
+                ProjectId = projectId,
+                GroupId = groupId,
+                CustomerName = validRequest.CustomerName,
+                CustomerPhone = validRequest.CustomerPhone,
+                ExistingBookingPolicy = ExistingGroupBookingPolicy.Reject,
+                Origin = GroupBookingOrigin.Manual,
+                ExpirationPolicy = GroupBookingExpirationPolicy.Ignore,
+                IsPaid = validRequest.IsPaid,
+                IsAttended = validRequest.IsAttended,
+                Notes = validRequest.Notes
+            }, cancellationToken);
+
+            if (result.Status == GroupBookingStatus.GroupNotFound)
+            {
+                return NotFound(new { error = "المجموعة غير موجودة.", code = "GROUP_NOT_FOUND" });
+            }
+            if (result.Status == GroupBookingStatus.GroupInactive)
+            {
+                return Conflict(new { error = "لا يمكن إضافة مشترك إلى مجموعة غير نشطة.", code = "GROUP_INACTIVE" });
+            }
+            if (result.Status == GroupBookingStatus.GroupFull)
+            {
+                return Conflict(new { error = "المجموعة ممتلئة ولا توجد أماكن متاحة.", code = "GROUP_FULL" });
+            }
+            if (result.Status == GroupBookingStatus.BookingAlreadyExists)
+            {
+                return ExistingManualBookingConflict(result.ExistingBooking!, groupId);
+            }
+            if (!result.Succeeded)
+            {
+                return BadRequest(new { error = "بيانات الحجز غير صالحة.", code = "MANUAL_BOOKING_INVALID" });
+            }
+
+            await BroadcastManualBookingAsync(result);
+            return ManualBookingCreatedResponse(result);
         }
 
         // --- Anonymous Public Booking Endpoints ---
@@ -452,143 +587,73 @@ namespace Modules.GroupAppointments.API
 
         [AllowAnonymous]
         [HttpPost("public/group-appointments/book")]
-        public async Task<IActionResult> BookGroupSlot([FromBody] PublicBookRequest request)
+        public async Task<IActionResult> BookGroupSlot(
+            [FromBody] PublicBookRequest request,
+            CancellationToken cancellationToken = default)
         {
             _tenantContext.SetProjectId(request.ProjectId);
+            var customerName = request.CustomerName?.Trim() ?? string.Empty;
+            if (customerName.Length is 0 or > 120 || request.CustomerPhone?.Length is null or > 64)
+            {
+                return BadRequest(new { error = "يرجى إدخال اسم صحيح ورقم هاتف صالح." });
+            }
 
-            var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == request.ProjectId);
+            var settings = await _context.ProjectSettings.FirstOrDefaultAsync(
+                projectSettings => projectSettings.ProjectId == request.ProjectId,
+                cancellationToken);
             if (settings == null || !settings.IsGroupAppointmentsEnabled)
             {
                 return BadRequest(new { error = "خدمة حجز المواعيد غير مفعلة لهذا المشروع" });
             }
 
-            // Lock or verify capacity atomically
-            var group = await _context.GroupAppointments
-                .Include(g => g.Bookings)
-                .FirstOrDefaultAsync(g => g.Id == request.GroupAppointmentId && g.ProjectId == request.ProjectId);
+            var cleanPhone = GroupBookingPhone.Normalize(request.CustomerPhone);
+            if (cleanPhone == null)
+            {
+                return BadRequest(new { error = "رقم الهاتف غير صالح. استخدم من 7 إلى 15 رقمًا بدون أي نص." });
+            }
 
-            if (group == null || !group.IsActive)
+            var bookingResult = await _bookingCoordinator.BookAsync(new GroupBookingCommand
+            {
+                ProjectId = request.ProjectId,
+                GroupId = request.GroupAppointmentId,
+                CustomerName = customerName,
+                CustomerPhone = cleanPhone,
+                ExistingBookingPolicy = ExistingGroupBookingPolicy.Transfer,
+                Origin = GroupBookingOrigin.Public,
+                ExpirationPolicy = GroupBookingExpirationPolicy.RejectAfterTwentyFourHours,
+                Timezone = settings.Timezone
+            }, cancellationToken);
+            if (bookingResult.Status is GroupBookingStatus.GroupNotFound or GroupBookingStatus.GroupInactive)
             {
                 return BadRequest(new { error = "المجموعة المطلوبة غير متوفرة" });
             }
-
-            var timezone = settings.Timezone ?? "Africa/Cairo";
-            var adjustedGroup = await AdjustGroupIfPassedAsync(group, timezone);
-            if (adjustedGroup == null || !adjustedGroup.IsActive)
+            if (bookingResult.Status == GroupBookingStatus.GroupExpired)
             {
                 return BadRequest(new { error = "عذراً، لقد انتهى موعد هذه المجموعة بالفعل" });
             }
-            group = adjustedGroup;
-
-            if (group.Bookings.Count >= group.Capacity)
+            if (bookingResult.Status == GroupBookingStatus.GroupFull)
             {
                 return BadRequest(new { error = "المجموعة ممتلئة" });
             }
-
-            var cleanPhone = request.CustomerPhone.Trim();
-            var existingBooking = await _context.GroupAppointmentBookings
-                .FirstOrDefaultAsync(b => b.ProjectId == request.ProjectId && b.CustomerPhone == cleanPhone);
-
-            // Resolve customer
-            var customer = await _context.Customers
-                .FirstOrDefaultAsync(c => c.ProjectId == request.ProjectId && c.PhoneNumber == cleanPhone);
-
-            if (customer == null)
+            if (bookingResult.Status == GroupBookingStatus.AlreadyInGroup)
             {
-                customer = new Customer
-                {
-                    ProjectId = request.ProjectId,
-                    PhoneNumber = cleanPhone,
-                    Name = request.CustomerName.Trim(),
-                    City = string.Empty,
-                    LeadScore = 10,
-                    Tags = new[] { "حجز مجموعة" },
-                    Notes = $"تم الحجز تلقائياً في مجموعة: {group.Name}"
-                };
-                _context.Customers.Add(customer);
-                await _context.SaveChangesAsync();
+                var currentGroup = await _context.GroupAppointments
+                    .AsNoTracking()
+                    .Include(candidate => candidate.Bookings)
+                    .FirstOrDefaultAsync(
+                        candidate => candidate.ProjectId == request.ProjectId && candidate.Id == request.GroupAppointmentId,
+                        cancellationToken);
+                return Ok(currentGroup ?? bookingResult.Group);
             }
-            else
+            if (!bookingResult.Succeeded)
             {
-                var tagsList = customer.Tags?.ToList() ?? new List<string>();
-                if (!tagsList.Contains("حجز مجموعة"))
-                {
-                    tagsList.Add("حجز مجموعة");
-                    customer.Tags = tagsList.ToArray();
-                }
-                TimeZoneInfo projectZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone(settings?.Timezone);
-                var utcTime = DateTime.SpecifyKind(group.DateTime, DateTimeKind.Utc);
-                var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
-
-                if (existingBooking != null && existingBooking.GroupAppointmentId != request.GroupAppointmentId)
-                {
-                    customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم نقل حجز الطالب من مجموعة إلى مجموعة: {group.Name} بتاريخ {localTime:yyyy-MM-dd HH:mm}";
-                }
-                else
-                {
-                    customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم حجز موعد في مجموعة: {group.Name} بتاريخ {localTime:yyyy-MM-dd HH:mm}";
-                }
-                _context.Entry(customer).State = EntityState.Modified;
+                return BadRequest(new { error = "يرجى إدخال اسم صحيح ورقم هاتف صالح." });
             }
 
-            GroupAppointmentBooking booking;
-            bool isTransfer = false;
-
-            if (existingBooking != null)
-            {
-                if (existingBooking.GroupAppointmentId == request.GroupAppointmentId)
-                {
-                    return Ok(group); // Already in this group, do nothing
-                }
-
-                isTransfer = true;
-                // Transfer to new group
-                existingBooking.GroupAppointmentId = request.GroupAppointmentId;
-                existingBooking.IsAttended = false; // Reset attendance for the new group
-                // Keep existingBooking.IsPaid as is so their payment status carries over!
-                existingBooking.CreatedAt = DateTime.UtcNow; // Update booking date to now
-
-                _context.Entry(existingBooking).State = EntityState.Modified;
-                await _context.SaveChangesAsync();
-
-                booking = existingBooking;
-            }
-            else
-            {
-                // Create booking
-                booking = new GroupAppointmentBooking
-                {
-                    ProjectId = request.ProjectId,
-                    GroupAppointmentId = request.GroupAppointmentId,
-                    CustomerId = customer.Id,
-                    CustomerName = request.CustomerName.Trim(),
-                    CustomerPhone = cleanPhone
-                };
-
-                _context.GroupAppointmentBookings.Add(booking);
-                IntegrationOutbox.Enqueue(_context, new AdvertisingBookingOutcomeChanged
-                {
-                    ProjectId = request.ProjectId, BookingId = booking.Id, CustomerId = customer.Id,
-                    IsPaid = false, IsAttended = false, Value = 0m, Currency = "EGP"
-                });
-                await _context.SaveChangesAsync();
-            }
-
-            // Create alert
-            string alertMessage = isTransfer
-                ? $"تم نقل حجز الطالب: {booking.CustomerName} ({booking.CustomerPhone}) إلى المجموعة {group.Name}"
-                : $"تم تسجيل حجز جديد: {booking.CustomerName} ({booking.CustomerPhone}) في المجموعة {group.Name}";
-
-            var alert = new NotificationAlert
-            {
-                ProjectId = request.ProjectId,
-                UserId = Guid.Empty,
-                Type = "Booking",
-                Message = alertMessage,
-                IsRead = false
-            };
-            _context.NotificationAlerts.Add(alert);
-            await _context.SaveChangesAsync();
+            var group = bookingResult.Group!;
+            var booking = bookingResult.Booking!;
+            var customer = bookingResult.Customer!;
+            var alert = bookingResult.Alert!;
 
             // Broadcast SignalR
             try
@@ -670,6 +735,7 @@ namespace Modules.GroupAppointments.API
         public async Task<IActionResult> GetInstructors()
         {
             var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
             var instructors = SplitInstructors(settings?.ActiveInstructors);
             return Ok(new { instructors });
@@ -679,6 +745,7 @@ namespace Modules.GroupAppointments.API
         public async Task<IActionResult> UpdateInstructors([FromBody] UpdateInstructorsRequest request)
         {
             var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanManageProject(User, projectId)) return Forbid();
             var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
             if (settings == null)
             {
@@ -736,6 +803,127 @@ namespace Modules.GroupAppointments.API
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
+
+        private static ManualBookingValidation ValidateManualBookingRequest(ManualGroupBookingRequest request)
+        {
+            var customerName = request.CustomerName?.Trim() ?? string.Empty;
+            var notes = request.Notes?.Trim();
+            if (customerName.Length is 0 or > 120 || request.CustomerPhone?.Length is null or > 64 || notes?.Length > 2000)
+            {
+                return ManualBookingValidation.Invalid(
+                    "MANUAL_BOOKING_INVALID",
+                    "يرجى إدخال اسم صحيح ورقم هاتف صالح، وألا تتجاوز الملاحظات الحد المسموح.");
+            }
+
+            var customerPhone = GroupBookingPhone.Normalize(request.CustomerPhone);
+            return customerPhone == null
+                ? ManualBookingValidation.Invalid("PHONE_INVALID", "رقم الهاتف غير صالح. استخدم من 7 إلى 15 رقمًا بدون أي نص.")
+                : ManualBookingValidation.Valid(new(customerName, customerPhone, request.IsPaid, request.IsAttended, notes));
+        }
+
+        private ConflictObjectResult ExistingManualBookingConflict(
+            GroupAppointmentBooking existingBooking,
+            Guid requestedGroupId) =>
+            Conflict(new
+            {
+                error = existingBooking.GroupAppointmentId == requestedGroupId
+                    ? "هذا المشترك موجود بالفعل في المجموعة."
+                    : $"هذا المشترك محجوز بالفعل في مجموعة {existingBooking.GroupAppointment?.Name ?? "أخرى"}. احذف الحجز أو انقله يدويًا أولًا.",
+                code = "BOOKING_ALREADY_EXISTS",
+                existingGroupId = existingBooking.GroupAppointmentId,
+                existingGroupName = existingBooking.GroupAppointment?.Name
+            });
+
+        private async Task BroadcastManualBookingAsync(GroupBookingResult createdBooking)
+        {
+            var group = createdBooking.Group!;
+            var booking = createdBooking.Booking!;
+            var customer = createdBooking.Customer!;
+            try
+            {
+                await _hubContext.Clients.Group($"project_{group.ProjectId}").SendAsync("GroupBookingUpdated", new
+                {
+                    groupId = group.Id,
+                    groupName = group.Name,
+                    customerPhone = booking.CustomerPhone,
+                    customerName = booking.CustomerName,
+                    newBookedCount = createdBooking.BookedCount,
+                    capacity = group.Capacity,
+                    isFull = createdBooking.BookedCount >= group.Capacity,
+                    bookingId = booking.Id,
+                    isAttended = booking.IsAttended,
+                    isPaid = booking.IsPaid
+                });
+
+                await _hubContext.Clients.Group($"project_{group.ProjectId}").SendAsync("CustomerUpdated", new
+                {
+                    id = customer.Id,
+                    projectId = customer.ProjectId,
+                    phoneNumber = customer.PhoneNumber,
+                    name = customer.Name,
+                    city = customer.City,
+                    leadScore = customer.LeadScore,
+                    tags = customer.Tags,
+                    notes = customer.Notes,
+                    budget = customer.Budget,
+                    interests = customer.Interests,
+                    label = customer.Label
+                });
+            }
+            catch (Exception ex)
+            {
+                // The booking is committed; realtime delivery failure must not make clients retry the write.
+                Console.WriteLine($"[GroupAppointmentsController] SignalR manual booking error: {ex.Message}");
+            }
+        }
+
+        private ObjectResult ManualBookingCreatedResponse(GroupBookingResult createdBooking)
+        {
+            var group = createdBooking.Group!;
+            var booking = createdBooking.Booking!;
+            return StatusCode(StatusCodes.Status201Created, new
+            {
+                message = "تمت إضافة المشترك إلى المجموعة بنجاح.",
+                booking = new
+                {
+                    booking.Id,
+                    booking.CustomerId,
+                    booking.CustomerName,
+                    booking.CustomerPhone,
+                    booking.IsPaid,
+                    booking.IsAttended,
+                    booking.CreatedAt
+                },
+                group = new
+                {
+                    group.Id,
+                    group.Name,
+                    group.Capacity,
+                    bookedCount = createdBooking.BookedCount,
+                    slotsLeft = Math.Max(0, group.Capacity - createdBooking.BookedCount),
+                    isFull = createdBooking.BookedCount >= group.Capacity
+                }
+            });
+        }
+
+        private sealed record ValidatedManualBookingRequest(
+            string CustomerName,
+            string CustomerPhone,
+            bool IsPaid,
+            bool IsAttended,
+            string? Notes);
+
+        private sealed record ManualBookingValidation(
+            ValidatedManualBookingRequest? Request,
+            string? ErrorCode,
+            string? ErrorMessage)
+        {
+            public static ManualBookingValidation Valid(ValidatedManualBookingRequest request) => new(request, null, null);
+
+            public static ManualBookingValidation Invalid(string errorCode, string errorMessage) =>
+                new(null, errorCode, errorMessage);
+        }
+
     }
 
     public class CreateGroupRequest
@@ -749,6 +937,7 @@ namespace Modules.GroupAppointments.API
         public string? InstructorName { get; set; }
         public DateTime? FreeSessionDateTime { get; set; }
         public DateTime? CourseSecondDateTime { get; set; }
+        public Guid? WhatsAppAccountId { get; set; }
     }
 
     public class UpdateGroupRequest
@@ -762,6 +951,7 @@ namespace Modules.GroupAppointments.API
         public string? InstructorName { get; set; }
         public DateTime? FreeSessionDateTime { get; set; }
         public DateTime? CourseSecondDateTime { get; set; }
+        public Guid? WhatsAppAccountId { get; set; }
     }
 
     public class PublicBookRequest
@@ -776,6 +966,15 @@ namespace Modules.GroupAppointments.API
     {
         public bool? IsAttended { get; set; }
         public bool? IsPaid { get; set; }
+    }
+
+    public class ManualGroupBookingRequest
+    {
+        public string? CustomerName { get; set; }
+        public string? CustomerPhone { get; set; }
+        public bool IsPaid { get; set; }
+        public bool IsAttended { get; set; }
+        public string? Notes { get; set; }
     }
 
     public class UpdateInstructorsRequest

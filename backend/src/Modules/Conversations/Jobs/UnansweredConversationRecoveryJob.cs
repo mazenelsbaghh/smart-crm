@@ -1,59 +1,259 @@
 using Microsoft.EntityFrameworkCore;
+using Modules.Advertising.Services;
 using Modules.Conversations.Domain;
 using Modules.Projects.Domain;
+using Modules.Conversations.Services;
+using Modules.WhatsApp.Services;
 using Shared.Events;
 using Shared.Infrastructure;
-using Shared.Queue;
-using StackExchange.Redis;
 using System.Text.Json;
 
 namespace Modules.Conversations.Jobs;
 
+public sealed record UnansweredConversationRecoveryDependencies(
+    WhatsAppGatewaySessionClient WhatsAppGateway,
+    ILogger<UnansweredConversationRecoveryJob> Logger);
+
 public sealed class UnansweredConversationRecoveryJob(
     AppDbContext dbContext,
-    IEventBus eventBus,
-    IConnectionMultiplexer redis,
-    ILogger<UnansweredConversationRecoveryJob> logger)
+    ConversationReplyWindowService replyWindows,
+    UnansweredConversationRecoveryDependencies dependencies)
 {
-    private const int BatchSize = 200;
-    private static readonly TimeSpan MinimumMessageAge = TimeSpan.FromMinutes(3);
-    private static readonly TimeSpan RecoveryLookback = TimeSpan.FromHours(48);
-    private static readonly TimeSpan RetryLockDuration = TimeSpan.FromMinutes(30);
+    private const int BatchSize = 25;
+    private const int WhatsAppCandidateScanSize = BatchSize * 20;
+    private static readonly TimeSpan MinimumMessageAge = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan MessengerReplyWindow = TimeSpan.FromHours(23);
+    private static readonly TimeSpan RecoveryLookback = TimeSpan.FromDays(30);
 
     public async Task ExecuteAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTime.UtcNow;
         var cutoff = now.Subtract(MinimumMessageAge);
         var recoveryStart = now.Subtract(RecoveryLookback);
-        var conversations = await LoadUnansweredConversationsAsync(recoveryStart, cutoff, cancellationToken);
-        if (conversations.Count == 0) return;
+        var selection = await LoadUnansweredConversationsAsync(now, recoveryStart, cutoff, cancellationToken);
+        if (selection.Conversations.Count == 0) return;
 
-        var messages = await LoadLatestIncomingMessagesAsync(conversations, cutoff, cancellationToken);
+        var messages = await LoadLatestIncomingMessagesAsync(selection.Conversations, cutoff, cancellationToken);
         if (messages.Count == 0) return;
 
-        var recoveryContext = await LoadRecoveryContextAsync(conversations, cancellationToken);
-        var recoveredCount = await RequeueMessagesAsync(messages, recoveryContext);
+        var recoveryContext = await LoadRecoveryContextAsync(
+            selection.Conversations,
+            selection.WhatsAppSessions,
+            now,
+            cancellationToken);
+        var recoveredCount = await RequeueMessagesAsync(messages, recoveryContext, cancellationToken);
         if (recoveredCount > 0)
-            logger.LogInformation("Requeued {Count} unanswered conversations for AI reply recovery", recoveredCount);
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            dependencies.Logger.LogInformation("Requeued {Count} unanswered conversations for AI reply recovery", recoveredCount);
+        }
     }
 
-    private Task<List<Conversation>> LoadUnansweredConversationsAsync(
+    private async Task<Dictionary<WhatsAppSessionKey, WhatsAppGatewaySessionStatus>> LoadWhatsAppSessionsAsync(
+        IEnumerable<WhatsAppSessionKey> whatsAppAccounts,
+        CancellationToken cancellationToken)
+    {
+        var connectionChecks = whatsAppAccounts.Select(account =>
+            GetWhatsAppSessionAsync(account, cancellationToken));
+        var projectConnections = await Task.WhenAll(connectionChecks);
+        return projectConnections.ToDictionary(connection => connection.Account, connection => connection.Session);
+    }
+
+    private async Task<(WhatsAppSessionKey Account, WhatsAppGatewaySessionStatus Session)> GetWhatsAppSessionAsync(
+        WhatsAppSessionKey account,
+        CancellationToken cancellationToken)
+    {
+        var session = await dependencies.WhatsAppGateway.GetAsync(
+            account.ProjectId,
+            account.AccountId,
+            cancellationToken);
+        if (!session.Connected || !session.ConnectedAt.HasValue)
+            dependencies.Logger.LogInformation(
+                "Skipping WhatsApp AI recovery for project {ProjectId}, account {AccountId} because the gateway status is {Status} or has no connection epoch.",
+                account.ProjectId,
+                account.AccountId,
+                session.Status);
+        return (account, session);
+    }
+
+    private async Task<RecoverySelection> LoadUnansweredConversationsAsync(
+        DateTime now,
         DateTime recoveryStart,
         DateTime cutoff,
-        CancellationToken cancellationToken) => dbContext.Conversations
+        CancellationToken cancellationToken)
+    {
+        var candidates = UnansweredConversationCandidates(now, recoveryStart, cutoff);
+        var whatsAppAccountRows = await candidates
+            .Where(conversation => conversation.Channel == "WhatsApp"
+                && conversation.WhatsAppDestinationId == null)
+            .Select(conversation => new
+            {
+                conversation.ProjectId,
+                AccountId = conversation.WhatsAppAccountId ?? conversation.ProjectId
+            })
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+        var whatsAppAccounts = whatsAppAccountRows
+            .Select(row => new WhatsAppSessionKey(row.ProjectId, row.AccountId))
+            .ToArray();
+        var whatsAppSessions = await LoadWhatsAppSessionsAsync(
+            whatsAppAccounts,
+            cancellationToken);
+        var accountsWithConnectionEpoch = whatsAppSessions
+            .Where(connection => connection.Value.Connected && connection.Value.ConnectedAt.HasValue)
+            .Select(connection => connection.Key)
+            .ToArray();
+        var projectsWithConnectionEpoch = accountsWithConnectionEpoch
+            .Select(account => account.ProjectId)
+            .Distinct()
+            .ToArray();
+        var projectTimezones = await dbContext.ProjectSettings
+            .IgnoreQueryFilters()
+            .Where(settings => projectsWithConnectionEpoch.Contains(settings.ProjectId))
+            .ToDictionaryAsync(
+                settings => settings.ProjectId,
+                settings => settings.Timezone,
+                cancellationToken);
+        var candidateBuckets = new List<IReadOnlyList<Conversation>>();
+        foreach (var account in accountsWithConnectionEpoch)
+        {
+            var accountCandidates = await candidates
+                .Where(conversation => conversation.Channel == "WhatsApp"
+                    && conversation.WhatsAppDestinationId == null
+                    && conversation.ProjectId == account.ProjectId
+                    && (conversation.WhatsAppAccountId ?? conversation.ProjectId) == account.AccountId)
+                .OrderBy(conversation => conversation.LastUnansweredRecoveryAttemptAt.HasValue)
+                .ThenBy(conversation => conversation.LastUnansweredRecoveryAttemptAt)
+                .ThenBy(conversation => conversation.LastMessageTimestamp)
+                .Take(WhatsAppCandidateScanSize)
+                .ToListAsync(cancellationToken);
+            var scheduled = accountCandidates
+                .Where(conversation => IsDueForRecovery(
+                    conversation,
+                    now,
+                    whatsAppSessions[account].ConnectedAt!.Value,
+                    TimezoneHelper.GetTimeZone(projectTimezones.GetValueOrDefault(conversation.ProjectId))))
+                .ToList();
+            if (scheduled.Count > 0) candidateBuckets.Add(scheduled);
+        }
+        var otherSources = await candidates
+            .Where(conversation => conversation.Channel != "WhatsApp")
+            .Select(conversation => new { conversation.ProjectId, conversation.Channel })
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        foreach (var source in otherSources)
+        {
+            var sourceCandidates = await candidates
+                .Where(conversation => conversation.ProjectId == source.ProjectId
+                    && conversation.Channel == source.Channel)
+                .OrderBy(conversation => conversation.LastUnansweredRecoveryAttemptAt.HasValue)
+                .ThenBy(conversation => conversation.LastUnansweredRecoveryAttemptAt)
+                .ThenBy(conversation => conversation.LastMessageTimestamp)
+                .Take(WhatsAppCandidateScanSize)
+                .ToListAsync(cancellationToken);
+            if (sourceCandidates.Count > 0) candidateBuckets.Add(sourceCandidates);
+        }
+
+        var selectedConversations = RoundRobinCandidates(
+            candidateBuckets,
+            WhatsAppCandidateScanSize);
+        var selectedWhatsAppAccounts = selectedConversations
+            .Where(conversation => conversation.Channel == "WhatsApp")
+            .Select(SessionKey)
+            .ToHashSet();
+        var selectedSessions = whatsAppSessions
+            .Where(session => selectedWhatsAppAccounts.Contains(session.Key))
+            .ToDictionary(session => session.Key, session => session.Value);
+        return new RecoverySelection(selectedConversations, selectedSessions);
+    }
+
+    private static bool IsDueForRecovery(
+        Conversation conversation,
+        DateTime nowUtc,
+        DateTimeOffset connectedAt,
+        TimeZoneInfo timezone)
+    {
+        var originalDueUtc = conversation.LastMessageTimestamp.Add(MinimumMessageAge);
+        var eligibleDueUtc = originalDueUtc;
+        if (conversation.LastMessageTimestamp < connectedAt.UtcDateTime)
+        {
+            var boundaryUtc = originalDueUtc > connectedAt.UtcDateTime
+                ? originalDueUtc
+                : connectedAt.UtcDateTime;
+            eligibleDueUtc = WhatsAppDailyDeliverySchedule.NextOccurrenceAfter(
+                originalDueUtc,
+                boundaryUtc,
+                timezone);
+        }
+
+        return WhatsAppDailyDeliverySchedule.IsDueInCurrentConnection(
+            eligibleDueUtc,
+            nowUtc,
+            connectedAt,
+            timezone);
+    }
+
+    private static List<Conversation> RoundRobinCandidates(
+        IReadOnlyList<IReadOnlyList<Conversation>> buckets,
+        int limit)
+    {
+        var selected = new List<Conversation>(Math.Min(limit, buckets.Sum(bucket => bucket.Count)));
+        for (var index = 0; selected.Count < limit; index++)
+        {
+            var added = false;
+            foreach (var bucket in buckets)
+            {
+                if (index >= bucket.Count) continue;
+                selected.Add(bucket[index]);
+                added = true;
+                if (selected.Count == limit) break;
+            }
+            if (!added) break;
+        }
+        return selected;
+    }
+
+    private IQueryable<Conversation> UnansweredConversationCandidates(
+        DateTime now,
+        DateTime recoveryStart,
+        DateTime cutoff) => dbContext.Conversations
         .IgnoreQueryFilters()
         .Where(conversation => (conversation.Status == "Open" || conversation.Status == "Pending")
             && conversation.LastMessageTimestamp >= recoveryStart
             && conversation.LastMessageTimestamp <= cutoff
+            && conversation.WhatsAppDeliveryUnknownAt == null
+            && ((conversation.Channel != "Messenger" && conversation.Channel != "FacebookComment")
+                || conversation.LastMessageTimestamp >= now.Subtract(MessengerReplyWindow))
+            && !dbContext.Conversations.IgnoreQueryFilters().Any(other =>
+                other.ProjectId == conversation.ProjectId
+                && other.Channel == conversation.Channel
+                && (conversation.Channel != "WhatsApp"
+                    || (other.WhatsAppAccountId ?? other.ProjectId)
+                        == (conversation.WhatsAppAccountId ?? conversation.ProjectId))
+                && (other.Status == "Open" || other.Status == "Pending")
+                && other.LastMessageTimestamp > conversation.LastMessageTimestamp
+                && dbContext.Customers.IgnoreQueryFilters().Any(currentCustomer =>
+                    currentCustomer.Id == conversation.CustomerId
+                    && dbContext.Customers.IgnoreQueryFilters().Any(otherCustomer =>
+                        otherCustomer.Id == other.CustomerId
+                        && ((conversation.Channel == "WhatsApp"
+                                && currentCustomer.PhoneNumber != null
+                                && currentCustomer.PhoneNumber == otherCustomer.PhoneNumber)
+                            || (conversation.Channel != "WhatsApp"
+                                && currentCustomer.FacebookPSID != null
+                                && currentCustomer.FacebookPSID == otherCustomer.FacebookPSID)))))
+            && dbContext.Customers.IgnoreQueryFilters().Any(customer => customer.Id == conversation.CustomerId && !customer.IsBlacklisted)
+            && !dbContext.GroupAppointmentBookings.IgnoreQueryFilters().Any(booking => booking.CustomerId == conversation.CustomerId && booking.IsPaid)
+            && dbContext.ProjectSettings.IgnoreQueryFilters().Any(settings => settings.ProjectId == conversation.ProjectId
+                && ((conversation.Channel == "WhatsApp" && settings.AiAutoReplyEnabled)
+                    || (conversation.Channel == "Messenger" && settings.MessengerAiAutoReplyEnabled)
+                    || (conversation.Channel == "FacebookComment" && settings.CommentsAiAutoReplyEnabled)))
             && dbContext.Messages
-                .Where(message => message.ConversationId == conversation.Id)
+                .Where(message => message.ConversationId == conversation.Id && message.MessageType == "Text")
                 .OrderByDescending(message => message.Timestamp)
                 .ThenByDescending(message => message.Id)
                 .Select(message => message.Direction)
-                .FirstOrDefault() == "Incoming")
-        .OrderBy(conversation => conversation.LastMessageTimestamp)
-        .Take(BatchSize)
-        .ToListAsync(cancellationToken);
+                .FirstOrDefault() == "Incoming");
 
     private async Task<List<Message>> LoadLatestIncomingMessagesAsync(
         IReadOnlyCollection<Conversation> conversations,
@@ -62,18 +262,24 @@ public sealed class UnansweredConversationRecoveryJob(
     {
         var conversationIds = conversations.Select(conversation => conversation.Id).ToArray();
         var latestMessages = await dbContext.Messages
-            .Where(message => conversationIds.Contains(message.ConversationId))
+            .Where(message => conversationIds.Contains(message.ConversationId) && message.MessageType == "Text")
             .GroupBy(message => message.ConversationId)
             .Select(group => group.OrderByDescending(message => message.Timestamp).ThenByDescending(message => message.Id).First())
             .ToListAsync(cancellationToken);
 
-        return latestMessages.Where(message => message.Direction == "Incoming"
-            && message.MessageType != "Reaction"
-            && message.Timestamp <= cutoff).ToList();
+        var conversationOrder = conversations
+            .Select((conversation, index) => new { conversation.Id, index })
+            .ToDictionary(item => item.Id, item => item.index);
+        return latestMessages
+            .Where(message => message.Direction == "Incoming" && message.Timestamp <= cutoff)
+            .OrderBy(message => conversationOrder[message.ConversationId])
+            .ToList();
     }
 
     private async Task<RecoveryContext> LoadRecoveryContextAsync(
         IReadOnlyCollection<Conversation> conversations,
+        IReadOnlyDictionary<WhatsAppSessionKey, WhatsAppGatewaySessionStatus> whatsAppSessions,
+        DateTime nowUtc,
         CancellationToken cancellationToken)
     {
         var customerIds = conversations.Select(conversation => conversation.CustomerId).Distinct().ToArray();
@@ -88,7 +294,9 @@ public sealed class UnansweredConversationRecoveryJob(
             customers,
             settings,
             paidCustomers,
-            pages);
+            pages,
+            whatsAppSessions,
+            nowUtc);
     }
 
     private async Task<Dictionary<Guid, Customer>> LoadCustomersAsync(
@@ -133,14 +341,22 @@ public sealed class UnansweredConversationRecoveryJob(
 
     private async Task<int> RequeueMessagesAsync(
         IEnumerable<Message> messages,
-        RecoveryContext recoveryContext)
+        RecoveryContext recoveryContext,
+        CancellationToken cancellationToken)
     {
         var recoveredCount = 0;
         foreach (var message in messages)
         {
+            if (recoveredCount >= BatchSize) break;
             var recoveryEvent = CreateRecoveryEvent(message, recoveryContext);
             if (recoveryEvent is null) continue;
-            if (await PublishOnceAsync(recoveryEvent, message)) recoveredCount++;
+            if (!await TryStageRecoveryAsync(
+                recoveryEvent,
+                message,
+                recoveryContext.NowUtc,
+                cancellationToken)) continue;
+            recoveryContext.Conversations[message.ConversationId].LastUnansweredRecoveryAttemptAt = recoveryContext.NowUtc;
+            recoveredCount++;
         }
         return recoveredCount;
     }
@@ -156,41 +372,81 @@ public sealed class UnansweredConversationRecoveryJob(
 
         var sender = conversation.Channel == "WhatsApp" ? customer.PhoneNumber : customer.FacebookPSID;
         if (string.IsNullOrWhiteSpace(sender)) return null;
+        if (conversation.Channel == "FacebookComment" && string.IsNullOrWhiteSpace(message.FacebookCommentId)) return null;
+
         var metadata = BuildChannelMetadata(conversation, message, sender, recoveryContext.Pages);
         if (conversation.Channel != "WhatsApp" && metadata is null) return null;
+
+        WhatsAppGatewaySessionStatus? whatsAppSession = null;
+        if (conversation.Channel == "WhatsApp")
+            recoveryContext.WhatsAppSessions.TryGetValue(SessionKey(conversation), out whatsAppSession);
 
         return new MessageAggregatedEvent
         {
             ProjectId = conversation.ProjectId,
+            ConversationId = conversation.Id,
+            WhatsAppAccountId = conversation.Channel == "WhatsApp"
+                ? conversation.WhatsAppAccountId ?? conversation.ProjectId
+                : null,
             Sender = sender,
             Content = message.Content,
             Channel = conversation.Channel,
-            ChannelMetadata = metadata
+            ChannelMetadata = metadata,
+            SourceMessageTimestampUtc = message.Timestamp,
+            WhatsAppDeliveryIdempotencyKey = whatsAppSession?.ConnectedAt.HasValue == true
+                ? ConversationReplyWindowService.WhatsAppDeliveryKey(
+                    message.Id,
+                    whatsAppSession.ConnectedAt.Value)
+                : null,
+            RequiredWhatsAppConnectedAt = whatsAppSession?.ConnectedAt
         };
     }
 
-    private async Task<bool> PublishOnceAsync(MessageAggregatedEvent recoveryEvent, Message message)
+    private async Task<bool> TryStageRecoveryAsync(
+        MessageAggregatedEvent recoveryEvent,
+        Message message,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
     {
-        var lockKey = $"ai:unanswered-recovery:{message.ConversationId}:{message.Id}";
-        var redisDatabase = redis.GetDatabase();
-        var lockAcquired = await redisDatabase.StringSetAsync(
-            lockKey,
-            DateTime.UtcNow.ToString("O"),
-            RetryLockDuration,
-            When.NotExists);
-        if (!lockAcquired) return false;
+        if (string.Equals(recoveryEvent.Channel, "WhatsApp", StringComparison.Ordinal))
+        {
+            if (!recoveryEvent.WhatsAppAccountId.HasValue
+                || !recoveryEvent.RequiredWhatsAppConnectedAt.HasValue) return false;
 
-        var published = false;
-        try
-        {
-            await eventBus.PublishAsync(recoveryEvent);
-            published = true;
-            return true;
+            var liveSession = await dependencies.WhatsAppGateway.GetAsync(
+                recoveryEvent.ProjectId,
+                recoveryEvent.WhatsAppAccountId.Value,
+                cancellationToken);
+            if (!liveSession.Connected
+                || liveSession.ConnectedAt != recoveryEvent.RequiredWhatsAppConnectedAt)
+            {
+                dependencies.Logger.LogInformation(
+                    "Skipping WhatsApp AI recovery for project {ProjectId}, account {AccountId} because the connection epoch changed before staging.",
+                    recoveryEvent.ProjectId,
+                    recoveryEvent.WhatsAppAccountId);
+                return false;
+            }
         }
-        finally
-        {
-            if (!published) await redisDatabase.KeyDeleteAsync(lockKey);
-        }
+
+        var occurrenceKey = recoveryEvent.RequiredWhatsAppConnectedAt.HasValue
+            ? ConversationReplyWindowService.WhatsAppEpochOccurrenceKey(
+                recoveryEvent.RequiredWhatsAppConnectedAt.Value)
+            : ConversationReplyWindowService.SourceMessageOccurrenceKey(message.Id);
+        await replyWindows.StageAsync(new ConversationReplyWindowRequest(
+            recoveryEvent.ProjectId,
+            message.ConversationId,
+            message.Id,
+            recoveryEvent.Sender,
+            recoveryEvent.Content,
+            message.Timestamp,
+            nowUtc,
+            occurrenceKey,
+            recoveryEvent.Channel,
+            recoveryEvent.WhatsAppAccountId,
+            recoveryEvent.ChannelMetadata,
+            recoveryEvent.RequiredWhatsAppConnectedAt,
+            recoveryEvent.WhatsAppDeliveryIdempotencyKey), cancellationToken);
+        return true;
     }
 
     private static bool IsAutoReplyEnabled(string channel, ProjectSettings settings) => channel switch
@@ -225,5 +481,16 @@ public sealed class UnansweredConversationRecoveryJob(
         IReadOnlyDictionary<Guid, Customer> Customers,
         IReadOnlyDictionary<Guid, ProjectSettings> Settings,
         IReadOnlySet<Guid> PaidCustomers,
-        IReadOnlyDictionary<Guid, string> Pages);
+        IReadOnlyDictionary<Guid, string> Pages,
+        IReadOnlyDictionary<WhatsAppSessionKey, WhatsAppGatewaySessionStatus> WhatsAppSessions,
+        DateTime NowUtc);
+
+    private sealed record RecoverySelection(
+        IReadOnlyList<Conversation> Conversations,
+        IReadOnlyDictionary<WhatsAppSessionKey, WhatsAppGatewaySessionStatus> WhatsAppSessions);
+
+    private static WhatsAppSessionKey SessionKey(Conversation conversation) =>
+        new(conversation.ProjectId, conversation.WhatsAppAccountId ?? conversation.ProjectId);
+
+    private readonly record struct WhatsAppSessionKey(Guid ProjectId, Guid AccountId);
 }

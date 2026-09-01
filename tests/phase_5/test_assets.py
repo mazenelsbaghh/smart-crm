@@ -55,7 +55,7 @@ async def test_asset_lifecycle_upload_download_deduplicate():
         data = {"projectId": proj_id}
 
         upload_resp = await client.post(f"{BASE_URL}/assets/upload", files=files, data=data, headers=headers)
-        assert upload_resp.status_code == 201
+        assert upload_resp.status_code == 201, upload_resp.text
         asset_info = upload_resp.json()
         assert asset_info["fileName"] == "test.txt"
         assert asset_info["contentType"] == "text/plain"

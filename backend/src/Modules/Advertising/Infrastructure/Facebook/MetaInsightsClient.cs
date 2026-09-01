@@ -1,12 +1,45 @@
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
+using Modules.Advertising.Domain;
 
 namespace Modules.Advertising.Infrastructure.Facebook;
 
 public sealed record MetaInsightRow(string AdExternalId, DateTime StartUtc, DateTime EndUtc, decimal Spend, long Impressions,
     long Clicks, decimal Frequency, IReadOnlyDictionary<string, decimal> Actions, IReadOnlyDictionary<string, decimal> ActionValues);
 public sealed record MetaAdState(string Id, string Status, string EffectiveStatus, decimal DailyBudget);
+
+public static class MetaInsightRevisionPolicy
+{
+    public static string Fingerprint(MetaInsightRow row) => Canonical(row.Spend, row.Impressions, row.Clicks,
+        row.Frequency, row.Actions, row.ActionValues);
+
+    public static string Fingerprint(InsightsSnapshot snapshot) => Canonical(snapshot.Spend, snapshot.Impressions,
+        snapshot.Clicks, snapshot.Frequency, Normalize(snapshot.ProviderActionsJson), Normalize(snapshot.ProviderActionValuesJson));
+
+    private static IReadOnlyDictionary<string, decimal> Normalize(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) return new Dictionary<string, decimal>();
+        var nested = root.EnumerateObject().FirstOrDefault().Value;
+        return nested.ValueKind == JsonValueKind.Object
+            ? nested.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.GetDecimal(), StringComparer.Ordinal)
+            : new Dictionary<string, decimal>();
+    }
+
+    private static string Canonical(decimal spend, long impressions, long clicks, decimal frequency,
+        IReadOnlyDictionary<string, decimal> actions, IReadOnlyDictionary<string, decimal> values) => Hash(JsonSerializer.Serialize(new
+        {
+            spend, impressions, clicks, frequency,
+            actions = actions.OrderBy(pair => pair.Key).Select(pair => new { pair.Key, pair.Value }),
+            values = values.OrderBy(pair => pair.Key).Select(pair => new { pair.Key, pair.Value })
+        }));
+
+    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+}
 
 public sealed class MetaInsightsClient(HttpClient httpClient)
 {

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '../../context/auth-context';
 import { useToast } from '../../context/toast-context';
 import { api } from '../../services/api';
@@ -8,6 +9,8 @@ import { SignalRService } from '../../services/signalr';
 import { Conversation, Message } from '../../types/chat';
 import InboxLayout from './InboxLayout';
 import { Customer } from '../../services/crm';
+import { resolveConversationDeepLink } from './conversation-deep-link';
+import { mergeConversationMessages } from './conversation-messages';
 
 const statusLabels: Record<string, string> = {
   All: 'الكل',
@@ -16,14 +19,30 @@ const statusLabels: Record<string, string> = {
   Resolved: 'تم حلها',
   Closed: 'مغلقة',
 };
+const CONVERSATION_PAGE_SIZE = 20;
+const MESSAGE_PAGE_SIZE = 30;
+
+interface InboxDeepLink {
+  conversationId: string | null;
+  customerId: string | null;
+}
 
 export default function Inbox() {
   const { activeProject, loading: authLoading, refreshProjects } = useAuth();
   const { showToast } = useToast();
+  const searchParams = useSearchParams();
+  const requestedConversationId = searchParams.get('conversationId');
+  const requestedCustomerId = searchParams.get('customerId');
+  const deepLink = React.useMemo<InboxDeepLink>(() => ({
+    conversationId: requestedConversationId,
+    customerId: requestedCustomerId,
+  }), [requestedConversationId, requestedCustomerId]);
   
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConv, setActiveConv] = useState<Conversation | null>(null);
+  const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('All');
@@ -33,17 +52,56 @@ export default function Inbox() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [updating, setUpdating] = useState(false);
-
+  const [hasMoreConversations, setHasMoreConversations] = useState(false);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [messageLoadError, setMessageLoadError] = useState<{ conversationId: string; message: string } | null>(null);
+  const [messageReloadToken, setMessageReloadToken] = useState(0);
+  const [loadingMessagesFor, setLoadingMessagesFor] = useState<string | null>(null);
   // AI Typing States
   const [aiTypingConversations, setAiTypingConversations] = useState<Record<string, boolean>>({});
   const [aiTypingStages, setAiTypingStages] = useState<Record<string, 'generating' | 'typing'>>({});
-  const [aiTypingCountdown, setAiTypingCountdown] = useState(10);
+  const [aiTypingCountdowns, setAiTypingCountdowns] = useState<Record<string, number | null>>({});
 
   const signalRServiceRef = useRef<SignalRService | null>(null);
   const activeConvRef = useRef<Conversation | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
+  const handledDeepLinkRef = useRef<string | null>(null);
+  const loadedProjectIdRef = useRef<string | null>(null);
+  const conversationQueryKeyRef = useRef('');
+  const conversationPaginationControllerRef = useRef<AbortController | null>(null);
+  const olderMessagesControllerRef = useRef<AbortController | null>(null);
+  const messagesConversationIdRef = useRef<string | null>(null);
+  const pendingManualSendRef = useRef<{
+    conversationId: string;
+    content: string;
+    idempotencyKey: string;
+  } | null>(null);
+
+  const selectConversation = React.useCallback((conversation: Conversation | null) => {
+    const nextConversationId = conversation?.id ?? null;
+    if (activeConvRef.current?.id !== nextConversationId) {
+      olderMessagesControllerRef.current?.abort();
+      olderMessagesControllerRef.current = null;
+      messagesConversationIdRef.current = nextConversationId;
+      setMessages([]);
+      setLoadedConversationId(null);
+      setActiveCustomer(null);
+      setMessageLoadError(null);
+      setHasOlderMessages(false);
+      setLoadingOlderMessages(false);
+      setLoadingMessagesFor(null);
+    }
+    activeConvRef.current = conversation;
+    setActiveConv(conversation);
+  }, []);
+
+  const resetConversationWorkspace = React.useCallback(() => {
+    selectConversation(null);
+  }, [selectConversation]);
 
   useEffect(() => {
     activeConvRef.current = activeConv;
@@ -57,22 +115,27 @@ export default function Inbox() {
   // Keyboard Shortcuts Listener
   useEffect(() => {
     const handleKeyDownGlobal = (e: KeyboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const isTextEntry = Boolean(target?.matches('input, textarea, select, [contenteditable="true"]'));
+
       // 1. "/" focuses search input
-      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+      if (e.key === '/' && !isTextEntry && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         searchInputRef.current?.focus();
       }
 
-      // 2. Escape to blur active fields and close active conversation
+      // 2. Escape leaves a field first; a subsequent press closes the conversation.
       if (e.key === 'Escape') {
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
+        if (target?.closest('[role="dialog"]')) return;
+        if (isTextEntry && target) {
+          target.blur();
+          return;
         }
-        setActiveConv(null);
+        selectConversation(null);
       }
 
       // 3. "R" focuses compose message input when conversation is active
-      if ((e.key === 'r' || e.key === 'R' || e.key === 'ق') && activeConvRef.current && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+      if ((e.key === 'r' || e.key === 'R' || e.key === 'ق') && activeConvRef.current && !isTextEntry && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         messageInputRef.current?.focus();
       }
@@ -83,20 +146,46 @@ export default function Inbox() {
     function handleGlobalKeyDown(e: KeyboardEvent) {
       handleKeyDownGlobal(e);
     }
-  }, [activeConv]);
+  }, [activeConv, selectConversation]);
 
   const activeProjectId = activeProject?.id;
   const projectUnavailable = !authLoading && !activeProjectId;
+  const conversationQueryKey = `${activeProjectId ?? ''}:${filterStatus}:${debouncedSearchQuery}`;
+  React.useLayoutEffect(() => {
+    conversationQueryKeyRef.current = conversationQueryKey;
+  }, [conversationQueryKey]);
 
   // Bound the request so unstable mobile connections cannot leave the worklist suspended.
   useEffect(() => {
     const controller = new AbortController();
+    conversationPaginationControllerRef.current?.abort();
+    conversationPaginationControllerRef.current = null;
+    const paginationResetTimer = window.setTimeout(() => setLoadingMoreConversations(false), 0);
 
     if (!activeProjectId) {
-      return () => controller.abort();
+      loadedProjectIdRef.current = null;
+      const resetTimer = window.setTimeout(resetConversationWorkspace, 0);
+      return () => {
+        window.clearTimeout(resetTimer);
+        window.clearTimeout(paginationResetTimer);
+        controller.abort();
+        conversationPaginationControllerRef.current?.abort();
+      };
     }
 
     const fetchConversations = async () => {
+      if (loadedProjectIdRef.current !== activeProjectId) {
+        loadedProjectIdRef.current = activeProjectId;
+        handledDeepLinkRef.current = null;
+        setConversations([]);
+        setHasMoreConversations(false);
+        resetConversationWorkspace();
+      }
+      if (!deepLink.conversationId && !deepLink.customerId) handledDeepLinkRef.current = null;
+      const deepLinkKey = `${activeProjectId}:${deepLink.conversationId ?? ''}:${deepLink.customerId ?? ''}`;
+      const shouldResolveDeepLink = Boolean(deepLink.conversationId || deepLink.customerId)
+        && handledDeepLinkRef.current !== deepLinkKey;
+      if (shouldResolveDeepLink) selectConversation(null);
       setLoading(true);
       setLoadError(null);
 
@@ -106,12 +195,33 @@ export default function Inbox() {
             status: filterStatus === 'All' ? undefined : filterStatus,
             channel: 'WhatsApp',
             search: debouncedSearchQuery || undefined,
-            limit: 20
+            limit: CONVERSATION_PAGE_SIZE
           },
           signal: controller.signal,
           timeout: 15_000
         });
-        setConversations(response.data);
+        let nextConversations = response.data;
+
+        if (shouldResolveDeepLink) {
+          const deepLinkResolution = await resolveConversationDeepLink({
+            projectId: activeProjectId,
+            channel: 'WhatsApp',
+            conversationPage: nextConversations,
+            conversationId: deepLink.conversationId,
+            customerId: deepLink.customerId,
+            signal: controller.signal,
+          });
+          nextConversations = deepLinkResolution.conversationPage;
+          handledDeepLinkRef.current = deepLinkKey;
+          if (deepLinkResolution.conversation) {
+            selectConversation(deepLinkResolution.conversation);
+          } else {
+            showToast('المحادثة المطلوبة غير موجودة في واتساب أو لم تعد متاحة.', 'warning');
+          }
+        }
+
+        setConversations(nextConversations);
+        setHasMoreConversations(response.data.length === CONVERSATION_PAGE_SIZE);
       } catch (error) {
         if (controller.signal.aborted) return;
         console.error('Error loading WhatsApp conversations', error);
@@ -124,8 +234,12 @@ export default function Inbox() {
     };
 
     fetchConversations();
-    return () => controller.abort();
-  }, [activeProjectId, authLoading, filterStatus, debouncedSearchQuery, reloadToken]);
+    return () => {
+      window.clearTimeout(paginationResetTimer);
+      controller.abort();
+      conversationPaginationControllerRef.current?.abort();
+    };
+  }, [activeProjectId, authLoading, deepLink, filterStatus, debouncedSearchQuery, reloadToken, resetConversationWorkspace, selectConversation, showToast]);
 
   const retryConversations = async () => {
     setLoadError(null);
@@ -136,32 +250,128 @@ export default function Inbox() {
     setReloadToken((current) => current + 1);
   };
 
-  const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
+  const loadMoreConversations = async () => {
+    const oldestConversation = conversations.at(-1);
+    if (!activeProjectId || !oldestConversation || loadingMoreConversations) return;
+    const requestQueryKey = conversationQueryKeyRef.current;
+    const controller = new AbortController();
+    conversationPaginationControllerRef.current?.abort();
+    conversationPaginationControllerRef.current = controller;
+    setLoadingMoreConversations(true);
+    try {
+      const response = await api.get<Conversation[]>(`/api/projects/${activeProjectId}/conversations`, {
+        params: {
+          status: filterStatus === 'All' ? undefined : filterStatus,
+          channel: 'WhatsApp',
+          search: debouncedSearchQuery || undefined,
+          before: oldestConversation.lastMessageAt,
+          limit: CONVERSATION_PAGE_SIZE,
+        },
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || conversationQueryKeyRef.current !== requestQueryKey) return;
+      setConversations((current) => {
+        const knownIds = new Set(current.map((conversation) => conversation.id));
+        return [...current, ...response.data.filter((conversation) => !knownIds.has(conversation.id))];
+      });
+      setHasMoreConversations(response.data.length === CONVERSATION_PAGE_SIZE);
+    } catch (error) {
+      if (controller.signal.aborted || conversationQueryKeyRef.current !== requestQueryKey) return;
+      console.error('Error loading older WhatsApp conversations', error);
+      showToast('تعذر تحميل المحادثات الأقدم.', 'error');
+    } finally {
+      if (conversationPaginationControllerRef.current === controller) {
+        conversationPaginationControllerRef.current = null;
+        setLoadingMoreConversations(false);
+      }
+    }
+  };
 
   // Fetch messages and customer details for active conversation
   useEffect(() => {
     if (!activeConv) {
       return;
     }
+    const conversationId = activeConv.id;
+    const customerId = activeConv.customer.id;
+    const controller = new AbortController();
+    let requestActive = true;
     const fetchData = async () => {
+      olderMessagesControllerRef.current?.abort();
+      olderMessagesControllerRef.current = null;
+      setLoadingOlderMessages(false);
+      if (messagesConversationIdRef.current !== conversationId) {
+        messagesConversationIdRef.current = conversationId;
+        setMessages([]);
+        setLoadedConversationId(null);
+      }
+      setLoadingMessagesFor(conversationId);
+      setMessageLoadError(null);
       try {
         const [msgResp, custResp] = await Promise.all([
-          api.get<Message[]>(`/api/conversations/${activeConv.id}/messages`),
-          api.get(`/api/customers/${activeConv.customer.id}`)
+          api.get<Message[]>(`/api/conversations/${conversationId}/messages`, {
+            params: { limit: MESSAGE_PAGE_SIZE },
+            signal: controller.signal,
+          }),
+          api.get(`/api/customers/${customerId}`, { signal: controller.signal })
         ]);
-        setMessages(msgResp.data);
+        if (!requestActive || controller.signal.aborted || activeConvRef.current?.id !== conversationId) return;
+        setMessages((current) => mergeConversationMessages(msgResp.data, current));
+        setLoadedConversationId(conversationId);
+        setHasOlderMessages(msgResp.data.length === MESSAGE_PAGE_SIZE);
         setActiveCustomer(custResp.data);
         setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       } catch (e) {
+        if (!requestActive || controller.signal.aborted || activeConvRef.current?.id !== conversationId) return;
         console.error('Error loading messages or customer details', e);
+        setMessageLoadError({ conversationId, message: 'تعذر تحميل رسائل المحادثة أو بيانات العميل. لم يتم عرض سجل فارغ بديلًا عنها.' });
+      } finally {
+        if (requestActive && activeConvRef.current?.id === conversationId) setLoadingMessagesFor(null);
       }
     };
     fetchData();
-  }, [activeConv]);
+    return () => {
+      requestActive = false;
+      controller.abort();
+    };
+  }, [activeConv, messageReloadToken]);
+
+  const loadOlderMessages = async () => {
+    const oldestMessage = messages[0];
+    if (!activeConv || !oldestMessage || loadingOlderMessages) return;
+    const conversationId = activeConv.id;
+    const controller = new AbortController();
+    olderMessagesControllerRef.current?.abort();
+    olderMessagesControllerRef.current = controller;
+    setLoadingOlderMessages(true);
+    try {
+      const response = await api.get<Message[]>(`/api/conversations/${conversationId}/messages`, {
+        params: { before: oldestMessage.createdAt, limit: MESSAGE_PAGE_SIZE },
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || activeConvRef.current?.id !== conversationId
+        || messagesConversationIdRef.current !== conversationId) return;
+      setMessages((current) => {
+        if (messagesConversationIdRef.current !== conversationId) return current;
+        return mergeConversationMessages(response.data, current);
+      });
+      setHasOlderMessages(response.data.length === MESSAGE_PAGE_SIZE);
+    } catch (error) {
+      if (controller.signal.aborted || activeConvRef.current?.id !== conversationId) return;
+      console.error('Error loading older WhatsApp messages', error);
+      showToast('تعذر تحميل الرسائل الأقدم.', 'error');
+    } finally {
+      if (olderMessagesControllerRef.current === controller) {
+        olderMessagesControllerRef.current = null;
+        setLoadingOlderMessages(false);
+      }
+    }
+  };
 
   const displayedCustomer = activeConv && activeCustomer?.id === activeConv.customer.id
     ? activeCustomer
     : null;
+  const displayedMessages = loadedConversationId === activeConv?.id ? messages : [];
 
   // SignalR for real-time updates
   useEffect(() => {
@@ -192,10 +402,12 @@ export default function Inbox() {
         // Update messages if viewing this conversation
         const currentActive = activeConvRef.current;
         if (currentActive && msg.conversationId === currentActive.id) {
-          setMessages(prev => {
-            if (prev.find(m => m.id === msg.id)) return prev;
-            return [...prev, msg];
-          });
+          if (messagesConversationIdRef.current !== currentActive.id) {
+            messagesConversationIdRef.current = currentActive.id;
+            setMessages([msg]);
+          } else {
+            setMessages(prev => mergeConversationMessages(prev, [msg]));
+          }
         }
         
         setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
@@ -212,9 +424,10 @@ export default function Inbox() {
             [convId]: stage
           }));
         }
-        if (isTyping) {
-          setAiTypingCountdown(estimatedSeconds ?? 10);
-        }
+        setAiTypingCountdowns((prev) => ({
+          ...prev,
+          [convId]: isTyping && typeof estimatedSeconds === 'number' ? estimatedSeconds : null,
+        }));
       });
 
       signalR.registerOnAITypingError((convId: string, message: string) => {
@@ -239,14 +452,27 @@ export default function Inbox() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject]);
 
-  const isAiTyping = activeConv ? !!aiTypingConversations[activeConv.id] : false;
-  const aiTypingStage = activeConv ? aiTypingStages[activeConv.id] || 'generating' : 'generating';
+  const isAiTyping = activeConv
+    ? aiTypingConversations[activeConv.id] ?? activeConv.isAiTyping ?? false
+    : false;
+  const aiTypingStage = activeConv
+    ? aiTypingStages[activeConv.id] ?? activeConv.aiTypingStage ?? null
+    : null;
+  const aiTypingCountdown = activeConv
+    ? Object.prototype.hasOwnProperty.call(aiTypingCountdowns, activeConv.id)
+      ? aiTypingCountdowns[activeConv.id]
+      : typeof activeConv.aiTypingCountdown === 'number' ? activeConv.aiTypingCountdown : null
+    : null;
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isAiTyping && aiTypingStage === 'typing') {
+    const conversationId = activeConv?.id;
+    if (conversationId && isAiTyping && aiTypingStage === 'typing') {
       interval = setInterval(() => {
-        setAiTypingCountdown((prev) => (prev > 1 ? prev - 1 : 1));
+        setAiTypingCountdowns((prev) => {
+          const current = prev[conversationId];
+          return { ...prev, [conversationId]: current === null || current === undefined ? null : (current > 1 ? current - 1 : 1) };
+        });
       }, 1000);
     }
     return () => {
@@ -257,14 +483,31 @@ export default function Inbox() {
   // Send reply
   const handleSend = async () => {
     if (!inputMessage.trim() || !activeConv || !activeProject || sending) return;
+    const conversationId = activeConv.id;
+    const content = inputMessage.trim();
+    const pendingCommand = pendingManualSendRef.current;
+    const idempotencyKey = pendingCommand?.conversationId === conversationId
+      && pendingCommand.content === content
+      ? pendingCommand.idempotencyKey
+      : crypto.randomUUID();
+    pendingManualSendRef.current = { conversationId, content, idempotencyKey };
     setSending(true);
     try {
-      const response = await api.post<Message>(`/api/conversations/${activeConv.id}/messages`, {
-        content: inputMessage,
-        channel: 'WhatsApp'
+      const response = await api.post<Message>(`/api/conversations/${conversationId}/messages`, {
+        content,
+        channel: 'WhatsApp',
+        idempotencyKey,
       });
-      setMessages(prev => [...prev, response.data]);
-      setInputMessage('');
+      pendingManualSendRef.current = null;
+      if (activeConvRef.current?.id === conversationId) {
+        if (messagesConversationIdRef.current !== conversationId) {
+          messagesConversationIdRef.current = conversationId;
+          setMessages([response.data]);
+        } else {
+          setMessages((current) => mergeConversationMessages(current, [response.data]));
+        }
+        setInputMessage((current) => current.trim() === content ? '' : current);
+      }
       showToast('تم إرسال الرسالة بنجاح', 'success');
       setTimeout(() => messageEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch {
@@ -322,8 +565,8 @@ export default function Inbox() {
       customer={displayedCustomer}
       conversations={conversations}
       activeConv={activeConv}
-      setActiveConv={setActiveConv}
-      messages={messages}
+      setActiveConv={selectConversation}
+      messages={displayedMessages}
       inputMessage={inputMessage}
       setInputMessage={setInputMessage}
       handleSend={handleSend}
@@ -346,6 +589,15 @@ export default function Inbox() {
         ? 'تعذر تحديد المشروع النشط. أعد المحاولة لتحميل المحادثات.'
         : loadError}
       onRetryConversations={retryConversations}
+      hasMoreConversations={hasMoreConversations}
+      loadingMoreConversations={loadingMoreConversations}
+      onLoadMoreConversations={() => void loadMoreConversations()}
+      hasOlderMessages={loadedConversationId === activeConv?.id && hasOlderMessages}
+      loadingOlderMessages={loadingOlderMessages}
+      onLoadOlderMessages={() => void loadOlderMessages()}
+      messageLoadError={messageLoadError?.conversationId === activeConv?.id ? messageLoadError?.message ?? null : null}
+      onRetryMessages={() => setMessageReloadToken((current) => current + 1)}
+      messagesLoading={loadingMessagesFor === activeConv?.id}
     />
   );
 }

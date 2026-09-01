@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Shared.Infrastructure;
 using System;
@@ -13,10 +14,14 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Modules.AI.Services;
+using Modules.CRM.Services;
+using Shared.Security;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Modules.Conversations.API
 {
     [ApiController]
+    [Authorize]
     [Route("api")]
     public class ConversationController : ControllerBase
     {
@@ -29,6 +34,7 @@ namespace Modules.Conversations.API
         private readonly StackExchange.Redis.IDatabase _redis;
         private readonly Modules.Facebook.Services.IFacebookGraphService _facebookGraphService;
         private readonly IAIBehaviorSettingsService _aiBehaviorSettingsService;
+        private readonly IProjectAuthorizationService _projectAuthorization;
 
         public ConversationController(
             AppDbContext context, 
@@ -38,7 +44,8 @@ namespace Modules.Conversations.API
             IConfiguration configuration,
             StackExchange.Redis.IConnectionMultiplexer redis,
             Modules.Facebook.Services.IFacebookGraphService facebookGraphService,
-            IAIBehaviorSettingsService aiBehaviorSettingsService)
+            IAIBehaviorSettingsService aiBehaviorSettingsService,
+            IProjectAuthorizationService projectAuthorization)
         {
             _context = context;
             _assignmentEngine = assignmentEngine;
@@ -49,29 +56,38 @@ namespace Modules.Conversations.API
             _redis = redis.GetDatabase();
             _facebookGraphService = facebookGraphService;
             _aiBehaviorSettingsService = aiBehaviorSettingsService;
+            _projectAuthorization = projectAuthorization;
         }
 
         [HttpGet("projects/{projectId}/conversations")]
         public async Task<IActionResult> ListConversations(
             Guid projectId,
-            [FromQuery] string status = "All",
-            [FromQuery] string channel = "WhatsApp",
-            [FromQuery] string search = null,
-            [FromQuery] DateTime? before = null,
-            [FromQuery] int limit = 20)
+            [FromQuery] ConversationListQuery request)
         {
+            if (!_projectAuthorization.CanRead(User, projectId)) return Forbid();
+            var pageSize = Math.Clamp(request.Limit, 1, 100);
             IQueryable<Conversation> query = _context.Conversations
                 .Where(c => c.ProjectId == projectId);
 
-            // Filter by channel
-            if (!string.IsNullOrEmpty(channel) && !channel.Equals("All", StringComparison.OrdinalIgnoreCase))
+            if (request.ConversationId.HasValue)
             {
-                query = query.Where(c => c.Channel == channel);
+                query = query.Where(c => c.Id == request.ConversationId.Value);
             }
 
-            if (!string.IsNullOrEmpty(status) && !status.Equals("All", StringComparison.OrdinalIgnoreCase))
+            if (request.CustomerId.HasValue)
             {
-                query = query.Where(c => c.Status == status);
+                query = query.Where(c => c.CustomerId == request.CustomerId.Value);
+            }
+
+            // Filter by channel
+            if (!string.IsNullOrEmpty(request.Channel) && !request.Channel.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(c => c.Channel == request.Channel);
+            }
+
+            if (!string.IsNullOrEmpty(request.Status) && !request.Status.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(c => c.Status == request.Status);
             }
 
             var joinedQuery = query.Join(_context.Customers,
@@ -83,10 +99,10 @@ namespace Modules.Conversations.API
                     Customer = cust
                 });
 
-            if (!string.IsNullOrEmpty(search))
+            if (!string.IsNullOrEmpty(request.Search))
             {
-                var searchLower = search.ToLower();
-                var phoneSearch = new string(search.Where(char.IsDigit).ToArray());
+                var searchLower = request.Search.ToLower();
+                var phoneSearch = new string(request.Search.Where(char.IsDigit).ToArray());
                 var internationalPhoneSearch = phoneSearch.StartsWith("0")
                     ? $"20{phoneSearch.Substring(1)}"
                     : phoneSearch;
@@ -103,21 +119,22 @@ namespace Modules.Conversations.API
                          x.Customer.PhoneNumber.Contains(localPhoneSearch))));
             }
 
-            if (before.HasValue)
+            if (request.Before.HasValue)
             {
-                var beforeUtc = before.Value.ToUniversalTime();
+                var beforeUtc = request.Before.Value.ToUniversalTime();
                 joinedQuery = joinedQuery.Where(x => x.Conversation.LastMessageTimestamp < beforeUtc);
             }
 
             var conversations = await joinedQuery
                 .OrderByDescending(x => x.Conversation.LastMessageTimestamp)
-                .Take(limit)
+                .Take(pageSize)
                 .Select(x => new
                 {
                     x.Conversation.Id,
                     x.Conversation.ProjectId,
                     x.Conversation.Status,
                     x.Conversation.Channel,
+                    x.Conversation.WhatsAppAccountId,
                     x.Conversation.LastMessageTimestamp,
                     x.Conversation.CreatedAt,
                     x.Conversation.AssignedUserId,
@@ -133,6 +150,19 @@ namespace Modules.Conversations.API
                     }
                 })
                 .ToListAsync();
+
+            var whatsAppAccountIds = conversations
+                .Where(conversation => conversation.WhatsAppAccountId.HasValue)
+                .Select(conversation => conversation.WhatsAppAccountId!.Value)
+                .Distinct()
+                .ToArray();
+            var whatsAppAccountNames = whatsAppAccountIds.Length == 0
+                ? new Dictionary<Guid, string>()
+                : await _context.WhatsAppAccounts
+                    .IgnoreQueryFilters()
+                    .Where(account => account.ProjectId == projectId
+                        && whatsAppAccountIds.Contains(account.Id))
+                    .ToDictionaryAsync(account => account.Id, account => account.Name);
 
             var mapped = conversations.Select(c => {
                 var redisKey = $"ai_typing:{c.Id}";
@@ -163,6 +193,12 @@ namespace Modules.Conversations.API
                     id = c.Id,
                     projectId = c.ProjectId,
                     status = c.Status,
+                    channel = c.Channel,
+                    whatsAppAccountId = c.WhatsAppAccountId,
+                    whatsAppAccountName = c.WhatsAppAccountId.HasValue
+                        && whatsAppAccountNames.TryGetValue(c.WhatsAppAccountId.Value, out var accountName)
+                            ? accountName
+                            : null,
                     lastMessageAt = c.LastMessageTimestamp.ToString("o"),
                     createdAt = c.CreatedAt.ToString("o"),
                     unreadCount = 0,
@@ -184,7 +220,16 @@ namespace Modules.Conversations.API
             [FromQuery] DateTime? before = null,
             [FromQuery] int limit = 10)
         {
+            var projectId = await _context.Conversations
+                .IgnoreQueryFilters()
+                .Where(conversation => conversation.Id == conversationId)
+                .Select(conversation => (Guid?)conversation.ProjectId)
+                .FirstOrDefaultAsync();
+            if (!projectId.HasValue) return NotFound();
+            if (!_projectAuthorization.CanRead(User, projectId.Value)) return Forbid();
+
             var query = _context.Messages
+                .IgnoreQueryFilters()
                 .Where(m => m.ConversationId == conversationId);
 
             if (before.HasValue)
@@ -231,30 +276,169 @@ namespace Modules.Conversations.API
             {
                 return NotFound($"Conversation {id} not found.");
             }
+            if (!_projectAuthorization.CanRead(User, conversation.ProjectId)) return Forbid();
+            if (conversation.WhatsAppDestinationId.HasValue)
+                return Conflict(new { code = "WHATSAPP_CLOUD_OUTBOUND_NOT_CONFIGURED" });
 
-            // Create Outgoing message
+            var customer = await _context.Customers
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(candidate => candidate.Id == conversation.CustomerId
+                    && candidate.ProjectId == conversation.ProjectId);
+            if (customer is null) return NotFound("Customer not found.");
+
+            string externalMessageId;
+            Guid? whatsAppAccountId = null;
+            if (conversation.Channel == "Messenger")
+            {
+                if (string.IsNullOrWhiteSpace(customer.FacebookPSID))
+                    return BadRequest(new { code = "MESSENGER_RECIPIENT_NOT_AVAILABLE" });
+                var connectedPage = await _context.ConnectedPages
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(page => page.ProjectId == conversation.ProjectId && page.IsActive);
+                if (connectedPage is null) return BadRequest(new { code = "MESSENGER_PAGE_NOT_CONNECTED" });
+                try
+                {
+                    await _facebookGraphService.SendMessageAsync(
+                        connectedPage.FacebookPageId,
+                        connectedPage.PageAccessToken,
+                        customer.FacebookPSID,
+                        request.Content);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ConversationController] Facebook delivery failed: {ex.Message}");
+                    return StatusCode(502, new { code = "MESSENGER_DELIVERY_FAILED" });
+                }
+                externalMessageId = $"msg_agent_{Guid.NewGuid():N}";
+            }
+            else if (conversation.Channel == "WhatsApp")
+            {
+                if (string.IsNullOrWhiteSpace(customer.PhoneNumber))
+                    return BadRequest(new { code = "WHATSAPP_RECIPIENT_NOT_AVAILABLE" });
+                whatsAppAccountId = conversation.WhatsAppAccountId ?? conversation.ProjectId;
+                var sessionClient = HttpContext.RequestServices
+                    .GetRequiredService<Modules.Advertising.Services.WhatsAppGatewaySessionClient>();
+                var session = await sessionClient.GetAsync(conversation.ProjectId, whatsAppAccountId.Value);
+                if (!session.Connected || !session.ConnectedAt.HasValue)
+                    return StatusCode(503, new { code = "WHATSAPP_ACCOUNT_NOT_CONNECTED" });
+
+                var clientCommandId = request.IdempotencyKey?.Trim();
+                if (string.IsNullOrWhiteSpace(clientCommandId)
+                    && Request.Headers.TryGetValue("Idempotency-Key", out var headerKey))
+                    clientCommandId = headerKey.ToString().Trim();
+                if (string.IsNullOrWhiteSpace(clientCommandId))
+                    return BadRequest(new { code = "IDEMPOTENCY_KEY_REQUIRED" });
+                if (clientCommandId.Length > 64
+                    || clientCommandId.Any(character => !char.IsLetterOrDigit(character)
+                        && character != '-' && character != '_' && character != ':'))
+                    return BadRequest(new { code = "INVALID_IDEMPOTENCY_KEY" });
+
+                var gatewayDeliveryKey = $"manual:{conversation.Id:N}:{clientCommandId}";
+                var gatewayPayload = new
+                {
+                    projectId = conversation.ProjectId,
+                    whatsappAccountId = whatsAppAccountId,
+                    to = customer.PhoneNumber,
+                    message = request.Content,
+                    idempotencyKey = gatewayDeliveryKey,
+                    expectedConnectedAt = session.ConnectedAt
+                };
+                var jsonPayload = JsonSerializer.Serialize(
+                    gatewayPayload,
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                HttpResponseMessage response;
+                try
+                {
+                    response = await Shared.Infrastructure.GatewayRetryHelper.PostOnceAsync(
+                        _httpClient,
+                        $"{_configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000"}/api/whatsapp/send",
+                        jsonPayload);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ConversationController] WhatsApp delivery outcome is unknown: {ex.Message}");
+                    await MarkDeliveryUnknownAsync(conversation, gatewayDeliveryKey);
+                    return StatusCode(502, new { code = "WHATSAPP_DELIVERY_UNKNOWN" });
+                }
+                using (response)
+                {
+                    var responseBody = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        if ((int)response.StatusCode == 409 || (int)response.StatusCode >= 500
+                            && (int)response.StatusCode != 503)
+                            await MarkDeliveryUnknownAsync(conversation, gatewayDeliveryKey);
+                        return StatusCode((int)response.StatusCode, new
+                        {
+                            code = (int)response.StatusCode is 412 or 503
+                                ? "WHATSAPP_DELIVERY_DEFERRED"
+                                : (int)response.StatusCode == 409 || (int)response.StatusCode >= 500
+                                    ? "WHATSAPP_DELIVERY_UNKNOWN"
+                                    : "WHATSAPP_DELIVERY_FAILED",
+                            gatewayResponse = responseBody
+                        });
+                    }
+                    externalMessageId = ProviderMessageId(responseBody)!;
+                    if (string.IsNullOrWhiteSpace(externalMessageId))
+                    {
+                        await MarkDeliveryUnknownAsync(conversation, gatewayDeliveryKey);
+                        return StatusCode(502, new { code = "WHATSAPP_DELIVERY_UNKNOWN" });
+                    }
+                }
+
+                var existingMessage = await _context.Messages
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(existing => existing.ConversationId == conversation.Id
+                        && existing.ExternalMessageId == externalMessageId);
+                if (string.Equals(
+                        conversation.WhatsAppDeliveryUnknownKey,
+                        gatewayDeliveryKey,
+                        StringComparison.Ordinal))
+                {
+                    conversation.WhatsAppDeliveryUnknownAt = null;
+                    conversation.WhatsAppDeliveryUnknownKey = null;
+                }
+                if (existingMessage is not null)
+                {
+                    if (_context.ChangeTracker.HasChanges())
+                        await _context.SaveChangesAsync();
+                    return Ok(MessageResponse(existingMessage));
+                }
+            }
+            else
+            {
+                return BadRequest(new { code = "UNSUPPORTED_CONVERSATION_CHANNEL" });
+            }
+
+            var sentAt = DateTime.UtcNow;
             var message = new Message
             {
+                Id = whatsAppAccountId.HasValue
+                    ? DeterministicMessageId(conversation.ProjectId, whatsAppAccountId.Value, externalMessageId)
+                    : Guid.NewGuid(),
                 ConversationId = conversation.Id,
-                ExternalMessageId = $"msg_agent_{Guid.NewGuid().ToString("N")}",
+                ExternalMessageId = externalMessageId,
                 Direction = "Outgoing",
                 Content = request.Content,
                 MessageType = "Text",
-                Timestamp = DateTime.UtcNow
+                Timestamp = sentAt
             };
-
             _context.Messages.Add(message);
-            
-            // Update conversation last message timestamp
-            conversation.LastMessageTimestamp = DateTime.UtcNow;
+            conversation.LastMessageTimestamp = sentAt;
             _context.Entry(conversation).State = EntityState.Modified;
-
-            await _context.SaveChangesAsync();
 
             // Complete existing pending follow-ups for this customer
             var pendingFollowUps = await _context.FollowUps
                 .IgnoreQueryFilters()
-                .Where(f => f.CustomerId == conversation.CustomerId && f.Status == "Pending")
+                .Where(f => f.ProjectId == conversation.ProjectId
+                    && f.CustomerId == conversation.CustomerId
+                    && f.Status == "Pending"
+                    && (f.ConversationId == conversation.Id
+                        || (!f.ConversationId.HasValue
+                            && f.Channel == conversation.Channel
+                            && (conversation.Channel != "WhatsApp"
+                                || (f.WhatsAppAccountId ?? f.ProjectId)
+                                    == (conversation.WhatsAppAccountId ?? conversation.ProjectId)))))
                 .ToListAsync();
 
             foreach (var fu in pendingFollowUps)
@@ -266,102 +450,54 @@ namespace Modules.Conversations.API
             // Schedule default follow-up in 24 hours only if AI auto-reply is enabled and customer is not blacklisted
             var settings = await _context.ProjectSettings
                 .FirstOrDefaultAsync(s => s.ProjectId == conversation.ProjectId);
-            var cust = await _context.Customers
-                .FirstOrDefaultAsync(c => c.Id == conversation.CustomerId);
+            bool shouldScheduleFollowUp = settings != null && settings.AiAutoReplyEnabled && !customer.IsBlacklisted;
 
-            bool shouldScheduleFollowUp = settings != null && settings.AiAutoReplyEnabled && (cust == null || !cust.IsBlacklisted);
-
-            if (shouldScheduleFollowUp)
+            try
             {
-                var defaultFollowUp = new Modules.CRM.Domain.FollowUp
+                if (shouldScheduleFollowUp)
                 {
-                    Id = Guid.NewGuid(),
-                    ProjectId = conversation.ProjectId,
-                    CustomerId = conversation.CustomerId,
-                    Type = "Nurturing",
-                    DueDate = DateTime.UtcNow.AddHours(24),
-                    Notes = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
-                    Status = "Pending"
-                };
-
-                _context.FollowUps.Add(defaultFollowUp);
-            }
-            await _context.SaveChangesAsync();
-
-            // Broadcast message via SignalR to project group
-            var payload = new
-            {
-                id = message.Id,
-                conversationId = message.ConversationId,
-                senderType = "Agent",
-                content = message.Content,
-                createdAt = message.Timestamp.ToString("o"),
-                status = "Sent",
-                mediaUrl = (string)null,
-                mediaType = (string)null
-            };
-
-            await _hubContext.Clients.Group($"project_{conversation.ProjectId}").SendAsync("ReceiveMessage", payload);
-
-            // Route to appropriate gateway based on channel
-            if (conversation.Channel == "Messenger")
-            {
-                // Send via Facebook Messenger
-                var customer = await _context.Customers.FindAsync(conversation.CustomerId);
-                if (customer != null && !string.IsNullOrEmpty(customer.FacebookPSID))
-                {
-                    try
-                    {
-                        var connectedPage = await _context.ConnectedPages
-                            .IgnoreQueryFilters()
-                            .FirstOrDefaultAsync(cp => cp.ProjectId == conversation.ProjectId && cp.IsActive);
-                        if (connectedPage != null)
-                        {
-                            await _facebookGraphService.SendMessageAsync(
-                                connectedPage.FacebookPageId,
-                                connectedPage.PageAccessToken,
-                                customer.FacebookPSID,
-                                request.Content);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[ConversationController] Exception while calling Facebook Graph: {ex.Message}");
-                    }
+                    var automationAccountId = conversation.Channel == "WhatsApp"
+                        ? conversation.WhatsAppAccountId ?? conversation.ProjectId
+                        : (Guid?)null;
+                    await HttpContext.RequestServices
+                        .GetRequiredService<AutomationFollowUpService>()
+                        .UpsertPendingAutomationFollowUpAsync(
+                            new PendingAutomationFollowUpRequest(
+                                conversation.ProjectId,
+                                conversation.CustomerId,
+                                conversation.Channel == "WhatsApp"
+                                    ? $"whatsapp-ai-nurture:{automationAccountId!.Value:N}:{conversation.Id:N}"
+                                    : $"{conversation.Channel.ToLowerInvariant()}-ai-nurture:{conversation.Id:N}",
+                                sentAt.AddHours(24),
+                                "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟",
+                                ConversationId: conversation.Id,
+                                WhatsAppAccountId: automationAccountId,
+                                Channel: conversation.Channel),
+                            HttpContext.RequestAborted);
                 }
+                await _context.SaveChangesAsync();
             }
-            else
+            catch (DbUpdateException) when (whatsAppAccountId.HasValue)
             {
-                // Forward to WhatsApp Gateway (default)
-                var customer = await _context.Customers.FindAsync(conversation.CustomerId);
-                if (customer != null && !string.IsNullOrEmpty(customer.PhoneNumber))
-                {
-                    var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
-                    var gatewayPayload = new
-                    {
-                        projectId = conversation.ProjectId,
-                        to = customer.PhoneNumber,
-                        message = request.Content
-                    };
-                    
-                    var jsonPayload = JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-
-                    try
-                    {
-                        var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            var responseBody = await response.Content.ReadAsStringAsync();
-                            Console.WriteLine($"[ConversationController] Gateway returned error code {response.StatusCode}: {responseBody}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[ConversationController] Exception while calling WhatsApp Gateway: {ex.Message}");
-                    }
-                }
+                _context.Entry(message).State = EntityState.Detached;
+                var persistedMessage = await _context.Messages
+                    .IgnoreQueryFilters()
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(existing => existing.Id == message.Id);
+                if (persistedMessage is null) throw;
+                return Ok(MessageResponse(persistedMessage));
             }
 
+            var payload = MessageResponse(message);
+            try
+            {
+                await _hubContext.Clients.Group($"project_{conversation.ProjectId}")
+                    .SendAsync("ReceiveMessage", payload);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ConversationController] Message was delivered, but SignalR notification failed: {ex.Message}");
+            }
             return Ok(payload);
         }
 
@@ -371,8 +507,11 @@ namespace Modules.Conversations.API
         [HttpPost("projects/{projectId}/conversations/{id}/comment-reply")]
         public async Task<IActionResult> CommentReply(Guid projectId, Guid id, [FromBody] CommentReplyRequest request)
         {
+            if (!_projectAuthorization.CanRead(User, projectId)) return Forbid();
             var conversation = await _context.Conversations.FindAsync(id);
-            if (conversation == null || conversation.Channel != "FacebookComment")
+            if (conversation == null
+                || conversation.ProjectId != projectId
+                || conversation.Channel != "FacebookComment")
                 return NotFound("Comment conversation not found");
 
             var connectedPage = await _context.ConnectedPages
@@ -568,11 +707,15 @@ namespace Modules.Conversations.API
         [HttpPost("conversations/{id}/assign")]
         public async Task<IActionResult> AssignConversation(Guid id, [FromBody] AssignConversationRequest request, [FromHeader(Name = "X-Project-Id")] Guid? projectIdHeader)
         {
-            var projectId = projectIdHeader ?? _context.CurrentProjectId;
-            if (projectId == Guid.Empty)
-            {
-                return BadRequest("Project Context Required");
-            }
+            var conversationProjectId = await _context.Conversations
+                .IgnoreQueryFilters()
+                .Where(conversation => conversation.Id == id)
+                .Select(conversation => (Guid?)conversation.ProjectId)
+                .FirstOrDefaultAsync();
+            if (!conversationProjectId.HasValue) return NotFound();
+            var projectId = conversationProjectId.Value;
+            if (projectIdHeader.HasValue && projectIdHeader.Value != projectId) return Forbid();
+            if (!_projectAuthorization.CanRead(User, projectId)) return Forbid();
 
             try
             {
@@ -588,6 +731,10 @@ namespace Modules.Conversations.API
         [HttpPost("projects/{projectId}/agents/{agentId}/presence")]
         public async Task<IActionResult> UpdatePresence(Guid projectId, Guid agentId, [FromBody] PresenceUpdateRequest request)
         {
+            if (!_projectAuthorization.CanRead(User, projectId)) return Forbid();
+            if (_projectAuthorization.GetUserId(User) != agentId
+                && !_projectAuthorization.CanManageProject(User, projectId))
+                return Forbid();
             await _assignmentEngine.UpdatePresenceAsync(projectId, agentId, request.IsOnline);
             return Ok(new { projectId, agentId, request.IsOnline });
         }
@@ -595,6 +742,7 @@ namespace Modules.Conversations.API
         [HttpGet("projects/{projectId}/agents/workload")]
         public async Task<IActionResult> GetWorkloadReport(Guid projectId)
         {
+            if (!_projectAuthorization.CanRead(User, projectId)) return Forbid();
             var report = await _assignmentEngine.GetWorkloadReportAsync(projectId);
             return Ok(report);
         }
@@ -604,6 +752,7 @@ namespace Modules.Conversations.API
         {
             var conversation = await _context.Conversations.FindAsync(id);
             if (conversation == null) return NotFound();
+            if (!_projectAuthorization.CanRead(User, conversation.ProjectId)) return Forbid();
 
             var oldStatus = conversation.Status;
             conversation.Status = request.Status;
@@ -638,6 +787,9 @@ namespace Modules.Conversations.API
             {
                 return NotFound($"Conversation {id} not found.");
             }
+            if (!_projectAuthorization.CanRead(User, conversation.ProjectId)) return Forbid();
+            if (conversation.WhatsAppDestinationId.HasValue)
+                return Conflict(new { code = "WHATSAPP_CLOUD_OUTBOUND_NOT_CONFIGURED" });
 
             // Find the message in the DB to get its details (direction, external message id, etc.)
             var targetMessage = await _context.Messages
@@ -656,88 +808,191 @@ namespace Modules.Conversations.API
             {
                 return BadRequest(new { error = "Reaction is disabled or not allowed for this project/channel." });
             }
+            if (conversation.Channel != "WhatsApp")
+                return BadRequest(new { code = "UNSUPPORTED_REACTION_CHANNEL" });
 
-            // Save the outgoing reaction message (represented as an informational message or reaction)
-            var reactionMessage = new Message
-            {
-                ConversationId = id,
-                ExternalMessageId = $"msg_reaction_{Guid.NewGuid():N}",
-                Direction = "Outgoing",
-                Content = $"[تفاعل] {request.ReactionText}",
-                MessageType = "Reaction",
-                Timestamp = DateTime.UtcNow
-            };
-
-            _context.Messages.Add(reactionMessage);
-            await _context.SaveChangesAsync();
-
-            // Forward to WhatsApp Gateway
             var customer = await _context.Customers
                 .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(c => c.Id == conversation.CustomerId);
-            if (customer != null && !string.IsNullOrEmpty(customer.PhoneNumber))
+                .FirstOrDefaultAsync(c => c.Id == conversation.CustomerId
+                    && c.ProjectId == conversation.ProjectId);
+            if (customer is null || string.IsNullOrWhiteSpace(customer.PhoneNumber))
+                return BadRequest(new { code = "WHATSAPP_RECIPIENT_NOT_AVAILABLE" });
+
+            var accountId = conversation.WhatsAppAccountId ?? conversation.ProjectId;
+            var sessionClient = HttpContext.RequestServices
+                .GetRequiredService<Modules.Advertising.Services.WhatsAppGatewaySessionClient>();
+            var session = await sessionClient.GetAsync(conversation.ProjectId, accountId);
+            if (!session.Connected || !session.ConnectedAt.HasValue)
+                return StatusCode(503, new { code = "WHATSAPP_ACCOUNT_NOT_CONNECTED" });
+
+            var clientCommandId = request.IdempotencyKey?.Trim();
+            if (string.IsNullOrWhiteSpace(clientCommandId)
+                && Request.Headers.TryGetValue("Idempotency-Key", out var reactionHeaderKey))
+                clientCommandId = reactionHeaderKey.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(clientCommandId))
+                return BadRequest(new { code = "IDEMPOTENCY_KEY_REQUIRED" });
+            if (clientCommandId.Length > 64
+                || clientCommandId.Any(character => !char.IsLetterOrDigit(character)
+                    && character != '-' && character != '_' && character != ':'))
+                return BadRequest(new { code = "INVALID_IDEMPOTENCY_KEY" });
+
+            var gatewayPayload = new
             {
-                var gatewayUrl = _configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
-                
-                // In Baileys, we need to specify if the target message was sent by us (fromMe = true/false).
-                // If Direction is "Outgoing", then targetFromMe is true. If "Incoming", then targetFromMe is false.
-                bool targetFromMe = targetMessage.Direction == "Outgoing";
+                projectId = conversation.ProjectId,
+                whatsappAccountId = accountId,
+                to = customer.PhoneNumber,
+                reactionText = request.ReactionText,
+                targetMessageId = targetMessage.ExternalMessageId,
+                targetFromMe = targetMessage.Direction == "Outgoing",
+                idempotencyKey = $"manual-reaction:{conversation.Id:N}:{clientCommandId}",
+                expectedConnectedAt = session.ConnectedAt
+            };
+            var jsonPayload = JsonSerializer.Serialize(
+                gatewayPayload,
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            string responseBody;
+            try
+            {
+                using var response = await Shared.Infrastructure.GatewayRetryHelper.PostOnceAsync(
+                    _httpClient,
+                    $"{_configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000"}/api/whatsapp/react",
+                    jsonPayload);
+                responseBody = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                    return StatusCode((int)response.StatusCode, new
+                    {
+                        code = (int)response.StatusCode is 412 or 503
+                            ? "WHATSAPP_DELIVERY_DEFERRED"
+                            : (int)response.StatusCode == 409 || (int)response.StatusCode >= 500
+                                ? "WHATSAPP_DELIVERY_UNKNOWN"
+                                : "WHATSAPP_DELIVERY_FAILED",
+                        gatewayResponse = responseBody
+                    });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ConversationController] WhatsApp reaction outcome is unknown: {ex.Message}");
+                return StatusCode(502, new { code = "WHATSAPP_DELIVERY_UNKNOWN" });
+            }
 
-                var gatewayPayload = new
+            var externalMessageId = ProviderMessageId(responseBody);
+            if (string.IsNullOrWhiteSpace(externalMessageId))
+                return StatusCode(502, new { code = "WHATSAPP_DELIVERY_UNKNOWN" });
+            var reactionMessage = await _context.Messages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(existing => existing.ConversationId == conversation.Id
+                    && existing.ExternalMessageId == externalMessageId);
+            if (reactionMessage is not null) return Ok(MessageResponse(reactionMessage));
+            if (reactionMessage is null)
+            {
+                reactionMessage = new Message
                 {
-                    projectId = conversation.ProjectId,
-                    to = customer.PhoneNumber,
-                    reactionText = request.ReactionText,
-                    targetMessageId = targetMessage.ExternalMessageId,
-                    targetFromMe = targetFromMe
+                    Id = DeterministicMessageId(conversation.ProjectId, accountId, externalMessageId),
+                    ConversationId = id,
+                    ExternalMessageId = externalMessageId,
+                    Direction = "Outgoing",
+                    Content = $"[تفاعل] {request.ReactionText}",
+                    MessageType = "Reaction",
+                    Timestamp = DateTime.UtcNow
                 };
-                
-                var jsonPayload = JsonSerializer.Serialize(gatewayPayload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-
+                _context.Messages.Add(reactionMessage);
                 try
                 {
-                    var response = await Shared.Infrastructure.GatewayRetryHelper.PostWithRetryAsync(_httpClient, $"{gatewayUrl}/api/whatsapp/react", jsonPayload);
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        var responseBody = await response.Content.ReadAsStringAsync();
-                        Console.WriteLine($"[ConversationController] Gateway react returned error code {response.StatusCode}: {responseBody}");
-                    }
+                    await _context.SaveChangesAsync();
                 }
-                catch (Exception ex)
+                catch (DbUpdateException)
                 {
-                    Console.WriteLine($"[ConversationController] Exception while calling WhatsApp Gateway react: {ex.Message}");
+                    _context.Entry(reactionMessage).State = EntityState.Detached;
+                    reactionMessage = await _context.Messages
+                        .IgnoreQueryFilters()
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(existing => existing.Id == DeterministicMessageId(
+                            conversation.ProjectId,
+                            accountId,
+                            externalMessageId));
+                    if (reactionMessage is null) throw;
                 }
             }
 
             // Broadcast via SignalR to project group
-            var payload = new
-            {
-                id = reactionMessage.Id,
-                conversationId = reactionMessage.ConversationId,
-                senderType = "Agent",
-                content = reactionMessage.Content,
-                createdAt = reactionMessage.Timestamp.ToString("o"),
-                status = "Sent",
-                mediaUrl = (string)null,
-                mediaType = (string)null,
-                messageType = "Reaction"
-            };
+            var payload = MessageResponse(reactionMessage);
 
             await _hubContext.Clients.Group($"project_{conversation.ProjectId}").SendAsync("ReceiveMessage", payload);
 
             return Ok(payload);
         }
+
+        private async Task MarkDeliveryUnknownAsync(
+            Conversation conversation,
+            string deliveryKey)
+        {
+            conversation.WhatsAppDeliveryUnknownAt = DateTime.UtcNow;
+            conversation.WhatsAppDeliveryUnknownKey = deliveryKey;
+            await _context.SaveChangesAsync();
+        }
+
+        private static string? ProviderMessageId(string responseBody)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(responseBody);
+                return document.RootElement.TryGetProperty("messageId", out var property)
+                    && property.ValueKind == JsonValueKind.String
+                    ? property.GetString()
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static Guid DeterministicMessageId(
+            Guid projectId,
+            Guid whatsAppAccountId,
+            string externalMessageId)
+        {
+            var value = $"whatsapp-outgoing:{projectId:N}:{whatsAppAccountId:N}:{externalMessageId}";
+            var bytes = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value));
+            return new Guid(bytes.AsSpan(0, 16));
+        }
+
+        private static object MessageResponse(Message message) => new
+        {
+            id = message.Id,
+            conversationId = message.ConversationId,
+            senderType = "Agent",
+            content = message.Content,
+            createdAt = message.Timestamp.ToString("o"),
+            status = "Sent",
+            mediaUrl = (string?)null,
+            mediaType = (string?)null,
+            messageType = message.MessageType
+        };
     }
 
     public class ReactToMessageRequest
     {
         public string ReactionText { get; set; } = string.Empty;
+        public string? IdempotencyKey { get; set; }
+    }
+
+    public class ConversationListQuery
+    {
+        public string Status { get; set; } = "All";
+        public string Channel { get; set; } = "WhatsApp";
+        public string? Search { get; set; }
+        public DateTime? Before { get; set; }
+        public int Limit { get; set; } = 20;
+        public Guid? ConversationId { get; set; }
+        public Guid? CustomerId { get; set; }
     }
 
     public class SendMessageRequest
     {
         public string Content { get; set; } = string.Empty;
         public string? Channel { get; set; }
+        public string? IdempotencyKey { get; set; }
     }
 
     public class CommentReplyRequest

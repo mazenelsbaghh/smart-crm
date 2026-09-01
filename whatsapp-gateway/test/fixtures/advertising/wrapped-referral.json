@@ -1,0 +1,15 @@
+{
+  "ephemeralMessage": {
+    "message": {
+      "extendedTextMessage": {
+        "text": "من الإعلان",
+        "contextInfo": {
+          "externalAdReply": {
+            "ctwaClid": "wrapped-click-id",
+            "sourceId": "238500000000002"
+          }
+        }
+      }
+    }
+  }
+}

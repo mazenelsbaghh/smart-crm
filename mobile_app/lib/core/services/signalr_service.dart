@@ -1,136 +1,145 @@
 import 'dart:async';
+
 import 'package:signalr_netcore/signalr_client.dart';
+
 import 'secure_storage.dart';
 
 class SignalRService {
   final SecureStorageService _secureStorage;
   final String _wsUrl;
   HubConnection? _connection;
+  int _connectionGeneration = 0;
 
-  // Listeners callbacks
-  void Function(dynamic message)? onMessageReceived;
+  void Function(Map<String, dynamic> message)? onMessageReceived;
   void Function(String convId, String status)? onConversationStatusChanged;
-  void Function(dynamic suggestion)? onAISuggestionGenerated;
+  void Function(Map<String, dynamic> suggestion)? onAISuggestionGenerated;
   void Function(Map<String, dynamic> data)? onAITyping;
-  void Function(Map<String, dynamic> data)? onAITypingError;
   void Function(String title, String body, String type)? onNotificationReceived;
-  void Function(String agentId, String status)? onAgentPresenceUpdated;
-  void Function(dynamic customer)? onCustomerUpdated;
+  void Function(Map<String, dynamic> customer)? onCustomerUpdated;
 
-  SignalRService({
-    required SecureStorageService secureStorage,
-    String? wsUrl,
-  })  : _secureStorage = secureStorage,
-        _wsUrl = wsUrl ?? 'https://n8n-mazen.online/hubs';
+  SignalRService({required SecureStorageService secureStorage, String? wsUrl})
+    : _secureStorage = secureStorage,
+      _wsUrl = wsUrl ?? 'https://n8n-mazen.online/hubs';
 
-  Future<void> start({required String projectId}) async {
-    if (_connection != null && _connection!.state != HubConnectionState.Disconnected) return;
+  Future<bool> start({required String projectId}) async {
+    if (_connection != null &&
+        _connection!.state != HubConnectionState.Disconnected) {
+      return true;
+    }
 
+    final connectionGeneration = ++_connectionGeneration;
     final token = await _secureStorage.getAccessToken() ?? '';
+    if (connectionGeneration != _connectionGeneration) return false;
     final hubUrl = '$_wsUrl/notifications?projectId=$projectId';
 
-    _connection = HubConnectionBuilder()
-        .withUrl(hubUrl, options: HttpConnectionOptions(
-          accessTokenFactory: () async => token,
-        ))
+    final connection = HubConnectionBuilder()
+        .withUrl(
+          hubUrl,
+          options: HttpConnectionOptions(accessTokenFactory: () async => token),
+        )
         .build();
+    _connection = connection;
 
-    // Listen to backend hub events
-    _connection!.on('ReceiveMessage', (arguments) {
-      if (arguments != null && arguments.isNotEmpty && onMessageReceived != null) {
-        onMessageReceived!(arguments[0]);
+    connection.on('ReceiveMessage', (arguments) {
+      final payload = _firstMap(arguments);
+      if (payload != null) onMessageReceived?.call(payload);
+    });
+
+    connection.on('ConversationStatusChanged', (arguments) {
+      if (arguments == null || arguments.length < 2) return;
+      final conversationId = arguments[0];
+      final status = arguments[1];
+      if (conversationId is String &&
+          conversationId.isNotEmpty &&
+          status is String &&
+          status.isNotEmpty) {
+        onConversationStatusChanged?.call(conversationId, status);
       }
     });
 
-    _connection!.on('ConversationStatusChanged', (arguments) {
-      if (arguments != null && arguments.length >= 2 && onConversationStatusChanged != null) {
-        onConversationStatusChanged!(arguments[0].toString(), arguments[1].toString());
-      }
+    connection.on('AISuggestionGenerated', (arguments) {
+      final payload = _firstMap(arguments);
+      if (payload != null) onAISuggestionGenerated?.call(payload);
     });
 
-    _connection!.on('AISuggestionGenerated', (arguments) {
-      if (arguments != null && arguments.isNotEmpty && onAISuggestionGenerated != null) {
-        onAISuggestionGenerated!(arguments[0]);
-      }
+    connection.on('AITyping', (arguments) {
+      final payload = _firstMap(arguments);
+      if (payload != null) onAITyping?.call(payload);
     });
 
-    _connection!.on('AITyping', (arguments) {
-      if (arguments != null && arguments.isNotEmpty && onAITyping != null) {
-        final map = arguments[0] as Map<String, dynamic>;
-        onAITyping!(map);
-      }
+    connection.on('ReceiveNotification', (arguments) {
+      final data = _firstMap(arguments);
+      if (data == null) return;
+      final rawType = data['type'];
+      final rawMessage = data['message'];
+      final type = rawType is String ? rawType : 'General';
+      final message = rawMessage is String ? rawMessage : '';
+      final title = switch (type) {
+        'Booking' => 'حجز جديد',
+        'Complaint' => 'شكوى جديدة',
+        'VIP' => 'عميل مميز',
+        _ => 'تنبيه جديد',
+      };
+      onNotificationReceived?.call(title, message, type);
     });
 
-    _connection!.on('AITypingError', (arguments) {
-      if (arguments != null && arguments.isNotEmpty && onAITypingError != null) {
-        final map = arguments[0] as Map<String, dynamic>;
-        onAITypingError!(map);
-      }
-    });
-
-    _connection!.on('ReceiveNotification', (arguments) {
-      if (arguments != null && arguments.isNotEmpty && onNotificationReceived != null) {
-        try {
-          final data = arguments[0];
-          if (data is Map) {
-            final type = data['type']?.toString() ?? 'General';
-            final message = data['message']?.toString() ?? '';
-            String title = 'تنبيه جديد';
-            if (type == 'Booking') {
-              title = 'حجز جديد 📅';
-            } else if (type == 'Complaint') {
-              title = 'شكوى جديدة ⚠️';
-            } else if (type == 'VIP') {
-              title = 'عميل VIP 🌟';
-            }
-            onNotificationReceived!(title, message, type);
-          }
-        } catch (e) {
-          print('[SignalR] Error parsing ReceiveNotification: $e');
-        }
-      }
-    });
-
-    _connection!.on('AgentPresenceUpdated', (arguments) {
-      if (arguments != null && arguments.length >= 2 && onAgentPresenceUpdated != null) {
-        onAgentPresenceUpdated!(arguments[0].toString(), arguments[1].toString());
-      }
-    });
-
-    _connection!.on('CustomerUpdated', (arguments) {
-      if (arguments != null && arguments.isNotEmpty && onCustomerUpdated != null) {
-        onCustomerUpdated!(arguments[0]);
-      }
+    connection.on('CustomerUpdated', (arguments) {
+      final payload = _firstMap(arguments);
+      if (payload != null) onCustomerUpdated?.call(payload);
     });
 
     try {
-      await _connection!.start();
-      print('[SignalR] Connected successfully.');
-      await _connection!.invoke('JoinProjectGroup', args: [projectId]);
-    } catch (e) {
-      print('[SignalR] Connection error: $e');
-      _connection = null;
+      await connection.start();
+      if (!_isCurrent(connection, connectionGeneration)) {
+        await _stopIgnoringErrors(connection);
+        return false;
+      }
+      await connection.invoke('JoinProjectGroup', args: [projectId]);
+      if (!_isCurrent(connection, connectionGeneration)) {
+        await _stopIgnoringErrors(connection);
+        return false;
+      }
+      return true;
+    } catch (_) {
+      await _stopIgnoringErrors(connection);
+      if (_isCurrent(connection, connectionGeneration)) _connection = null;
+      return false;
     }
   }
 
   Future<void> stop() async {
-    if (_connection == null) return;
+    final connection = _connection;
+    _connectionGeneration++;
+    _connection = null;
+    if (connection == null) return;
+    await _stopIgnoringErrors(connection);
+  }
+
+  bool _isCurrent(HubConnection connection, int generation) {
+    return identical(_connection, connection) &&
+        generation == _connectionGeneration;
+  }
+
+  Future<void> _stopIgnoringErrors(HubConnection connection) async {
     try {
-      await _connection!.stop();
-      print('[SignalR] Disconnected.');
-    } catch (e) {
-      print('[SignalR] Disconnect error: $e');
-    } finally {
-      _connection = null;
+      await connection.stop();
+    } catch (_) {
+      // A closed or failed transport needs no further recovery.
     }
   }
 
-  Future<void> updatePresence(String status) async {
-    if (_connection?.state != HubConnectionState.Connected) return;
-    try {
-      await _connection!.invoke('UpdatePresence', args: [status]);
-    } catch (e) {
-      print('[SignalR] Error updating presence: $e');
+  Map<String, dynamic>? _firstMap(List<Object?>? arguments) {
+    if (arguments == null || arguments.isEmpty) return null;
+    final value = arguments.first;
+    if (value is Map<String, dynamic>) return value;
+    if (value is! Map) return null;
+
+    final result = <String, dynamic>{};
+    for (final entry in value.entries) {
+      final key = entry.key;
+      if (key is! String) return null;
+      result[key] = entry.value;
     }
+    return result;
   }
 }

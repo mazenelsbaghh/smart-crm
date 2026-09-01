@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useEffect, useState, use } from 'react';
+import React, { use, useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { Calendar, Users, CheckCircle, AlertCircle, Clock, Smartphone, User } from 'lucide-react';
+import { AlertCircle, Calendar, CheckCircle, Clock, RefreshCw, Smartphone, User, Users } from 'lucide-react';
+import styles from './booking.module.css';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL !== undefined ? process.env.NEXT_PUBLIC_API_URL : 'http://localhost';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost';
+const DISPLAY_TIMEZONE = 'Africa/Cairo';
 
 interface GroupAppointment {
   id: string;
@@ -20,416 +22,278 @@ interface GroupAppointment {
 }
 
 interface PageProps {
-  params: Promise<{
-    projectId: string;
-  }>;
+  params: Promise<{ projectId: string }>;
 }
 
 export default function PublicBookingPage({ params }: PageProps) {
   const { projectId } = use(params);
-  
   const [groups, setGroups] = useState<GroupAppointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [selectedGroupId, setSelectedGroupId] = useState<string>('');
-  
-  // Form values
+  const [selectedGroupId, setSelectedGroupId] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  
-  // Alerts and responses
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<boolean>(false);
+  const [success, setSuccess] = useState(false);
+  const successHeadingRef = useRef<HTMLHeadingElement>(null);
 
-  const fetchActiveGroups = async () => {
-    if (!projectId) return;
+  const fetchActiveGroups = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
       const response = await axios.get<GroupAppointment[]>(
-        `${API_URL}/api/public/group-appointments/active/${projectId}`
+        `${API_URL}/api/public/group-appointments/active/${projectId}`,
+        { signal },
       );
+      if (signal?.aborted) return;
       setGroups(response.data);
-      if (response.data.length > 0) {
-        // Auto-select first available group if active
-        const available = response.data.find(g => g.slotsLeft > 0);
-        if (available) {
-          setSelectedGroupId(available.id);
-        }
-      }
-    } catch (e: any) {
-      console.error(e);
-      setError('تعذر تحميل مواعيد المجموعات المتاحة حالياً. يرجى إعادة المحاولة لاحقاً.');
+      setSelectedGroupId((current) => {
+        if (response.data.some((group) => group.id === current && group.slotsLeft > 0)) return current;
+        return response.data.find((group) => group.slotsLeft > 0)?.id ?? '';
+      });
+    } catch (requestError) {
+      if (signal?.aborted || axios.isCancel(requestError)) return;
+      console.error(requestError);
+      setError('تعذر تحميل المواعيد المتاحة. تحقق من اتصالك ثم أعد المحاولة.');
+      setGroups([]);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    void fetchActiveGroups();
   }, [projectId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void fetchActiveGroups(controller.signal), 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [fetchActiveGroups]);
+
+  useEffect(() => {
+    if (success) successHeadingRef.current?.focus();
+  }, [success]);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!selectedGroupId || !customerName.trim() || !customerPhone.trim()) {
-      setError('يرجى ملء جميع الحقول واختيار المجموعة.');
+      setError('أكمل بياناتك واختر المجموعة قبل تأكيد الحجز.');
       return;
     }
 
+    const cleanPhone = normalizePhone(customerPhone);
+    if (cleanPhone.length < 7 || cleanPhone.length > 15) {
+      setError('أدخل رقم واتساب صحيحًا من 7 إلى 15 رقمًا، شاملًا كود الدولة.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
     try {
-      setSubmitting(true);
-      setError(null);
-
-      // Clean phone number: remove any spaces, +, or non-numeric characters
-      const cleanPhone = customerPhone.replace(/\D/g, '');
-      if (cleanPhone.length < 7) {
-        setError('يرجى إدخال رقم هاتف صحيح شامل كود الدولة.');
-        setSubmitting(false);
-        return;
-      }
-
       await axios.post(`${API_URL}/api/public/group-appointments/book`, {
         projectId,
         groupAppointmentId: selectedGroupId,
         customerName: customerName.trim(),
-        customerPhone: cleanPhone
+        customerPhone: cleanPhone,
       });
-
       setSuccess(true);
       setCustomerName('');
       setCustomerPhone('');
-    } catch (e: any) {
-      console.error(e);
-      const errMsg = e.response?.data?.error || 'فشل تسجيل الحجز، يرجى المحاولة مرة أخرى.';
-      setError(errMsg);
+    } catch (requestError: unknown) {
+      console.error(requestError);
+      setError(getBookingError(requestError));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const formatDate = (isoString: string) => {
-    const options: Intl.DateTimeFormatOptions = { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    };
-    return new Date(isoString).toLocaleDateString('ar-EG', options);
-  };
-
-  const selectedGroup = groups.find(group => group.id === selectedGroupId);
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId);
 
   if (loading) {
     return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'var(--canvas)',
-        color: 'var(--text-strong)',
-        fontFamily: 'Cairo, sans-serif'
-      }}>
-        <div style={{
-          width: '40px',
-          height: '40px',
-          border: '3px solid var(--border-subtle)',
-          borderTopColor: 'var(--accent)',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite'
-        }}></div>
-        <p style={{ marginTop: '1rem', fontSize: '0.95rem' }}>جاري تحميل المواعيد المتاحة...</p>
-        <style dangerouslySetInnerHTML={{__html: `
-          @keyframes spin { to { transform: rotate(360deg); } }
-        `}} />
-      </div>
+      <main className={styles.page}>
+        <section className={styles.card} aria-busy="true" aria-label="تحميل المواعيد المتاحة">
+          <div className={styles.skeletonHeading} />
+          <div className={styles.skeletonLine} />
+          <div className={styles.skeletonGroup} />
+          <div className={styles.skeletonGroup} />
+          <p className={styles.loadingText}>جاري تحميل المواعيد المتاحة...</p>
+        </section>
+      </main>
     );
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'var(--canvas)',
-      fontFamily: 'Cairo, sans-serif',
-      color: 'var(--text-strong)',
-      padding: '2rem 1rem',
-      direction: 'rtl'
-    }}>
-      <div style={{
-        width: '100%',
-        maxWidth: '520px',
-        backgroundColor: 'var(--surface)',
-        border: '1px solid var(--border-subtle)',
-        backdropFilter: 'blur(16px)',
-        borderRadius: '16px',
-        padding: '2rem',
-        boxShadow: 'none'
-      }}>
+    <main className={styles.page}>
+      <section className={styles.card} aria-labelledby="booking-title">
         {success ? (
-          <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem' }}>
-            <div style={{
-              width: '64px',
-              height: '64px',
-              borderRadius: '50%',
-              backgroundColor: 'rgba(16, 185, 129, 0.1)',
-              color: '#10b981',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 0 15px rgba(16, 185, 129, 0.2)'
-            }}>
-              <CheckCircle size={36} />
-            </div>
+          <div className={styles.successState} role="status" aria-live="polite">
+            <span className={styles.successIcon}><CheckCircle size={34} aria-hidden="true" /></span>
             <div>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>تم تأكيد حجزك بنجاح!</h2>
-              <p style={{ fontSize: '0.9rem', color: '#94a3b8', lineHeight: '1.6' }}>
-                تم تسجيل بياناتك وحجز مقعدك في المجموعة المحددة بنجاح. سنقوم بالتواصل معك عبر واتساب لتأكيد التفاصيل.
-              </p>
+              <h1 ref={successHeadingRef} tabIndex={-1}>تم تأكيد حجزك</h1>
+              <p>سجلنا مقعدك{selectedGroup ? ` في ${selectedGroup.name}` : ''}. سنتواصل معك عبر واتساب لتأكيد التفاصيل.</p>
             </div>
-            <button
-              onClick={() => { setSuccess(false); void fetchActiveGroups(); }}
-              style={{
-                background: 'var(--accent)',
-                color: 'var(--accent-ink)',
-                border: 'none',
-                padding: '0.75rem 2rem',
-                borderRadius: '8px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-                transition: 'all 0.2s',
-                marginTop: '1rem'
-              }}
-              onMouseOver={(e) => { e.currentTarget.style.boxShadow = 'var(--shadow-neon)'; }}
-              onMouseOut={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
-            >
+            <button type="button" className={styles.primaryButton} onClick={() => {
+              setSuccess(false);
+              setSelectedGroupId('');
+              void fetchActiveGroups();
+            }}>
               حجز موعد آخر
             </button>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            <div style={{ textAlign: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1rem' }}>
-              <div style={{ display: 'inline-flex', padding: '0.5rem', backgroundColor: 'var(--accent-soft)', borderRadius: '12px', color: 'var(--accent)', marginBottom: '0.75rem' }}>
-                <Calendar size={24} />
-              </div>
-              <h1 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#fff' }}>حجز موعد المجموعات</h1>
-              <p style={{ fontSize: '0.825rem', color: '#94a3b8', marginTop: '0.25rem' }}>
-                يرجى إدخال اسمك ورقم واتساب واختيار المجموعة المناسبة لتسجيل الحجز.
-              </p>
-            </div>
+          <>
+            <header className={styles.header}>
+              <span className={styles.headerIcon}><Calendar size={24} aria-hidden="true" /></span>
+              <h1 id="booking-title">حجز موعد مجموعة</h1>
+              <p>أدخل بياناتك واختر الموعد المناسب. الأوقات المعروضة بتوقيت القاهرة.</p>
+            </header>
 
             {error && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.75rem 1rem',
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-                borderRadius: '8px',
-                color: '#ef4444',
-                fontSize: '0.85rem'
-              }}>
-                <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <div id="booking-error" className={styles.errorAlert} role="alert" aria-live="assertive">
+                <AlertCircle size={18} aria-hidden="true" />
                 <span>{error}</span>
+                {groups.length === 0 && (
+                  <button type="button" onClick={() => void fetchActiveGroups()}>
+                    <RefreshCw size={16} aria-hidden="true" /> إعادة المحاولة
+                  </button>
+                )}
               </div>
             )}
 
-            {groups.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '2rem 0', color: '#94a3b8' }}>
-                <Calendar size={40} style={{ opacity: 0.3, marginBottom: '0.5rem' }} />
-                <p style={{ fontSize: '0.9rem' }}>عذراً، لا تتوفر أي مجموعات نشطة للحجز حالياً.</p>
+            {groups.length === 0 && !error ? (
+              <div className={styles.emptyState}>
+                <Calendar size={36} aria-hidden="true" />
+                <h2>لا توجد مواعيد متاحة الآن</h2>
+                <p>يمكنك العودة لاحقًا أو تحديث القائمة.</p>
+                <button type="button" className={styles.secondaryButton} onClick={() => void fetchActiveGroups()}>
+                  <RefreshCw size={17} aria-hidden="true" /> تحديث المواعيد
+                </button>
               </div>
-            ) : (
-              <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                {/* Name */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8' }}>الاسم بالكامل</label>
-                  <div style={{ position: 'relative' }}>
-                    <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }}>
-                      <User size={16} />
-                    </span>
+            ) : groups.length > 0 && (
+              <form className={styles.form} onSubmit={handleSubmit} aria-busy={submitting} aria-describedby={error ? 'booking-error' : undefined}>
+                <div className={styles.field}>
+                  <label htmlFor="booking-name">الاسم بالكامل</label>
+                  <div className={styles.inputShell}>
+                    <User size={17} aria-hidden="true" />
                     <input
+                      id="booking-name"
+                      name="name"
                       type="text"
-                      placeholder="مثال: محمد أحمد"
+                      autoComplete="name"
                       value={customerName}
-                      onChange={(e) => setCustomerName(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem 2.5rem 0.75rem 1rem',
-                        backgroundColor: 'var(--surface-muted)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: '8px',
-                        color: 'var(--text-strong)',
-                        fontSize: '0.9rem',
-                        outline: 'none'
-                      }}
+                      onChange={(event) => setCustomerName(event.target.value)}
+                      placeholder="مثال: محمد أحمد"
                       required
+                      disabled={submitting}
                     />
                   </div>
                 </div>
 
-                {/* Phone */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8' }}>رقم واتساب (مع كود الدولة)</label>
-                  <div style={{ position: 'relative' }}>
-                    <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }}>
-                      <Smartphone size={16} />
-                    </span>
+                <div className={styles.field}>
+                  <label htmlFor="booking-phone">رقم واتساب مع كود الدولة</label>
+                  <div className={styles.inputShell} dir="ltr">
+                    <Smartphone size={17} aria-hidden="true" />
                     <input
+                      id="booking-phone"
+                      name="tel"
                       type="tel"
-                      placeholder="مثال: 201012345678"
+                      inputMode="tel"
+                      autoComplete="tel"
                       value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem 2.5rem 0.75rem 1rem',
-                        backgroundColor: 'var(--surface-muted)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: '8px',
-                        color: 'var(--text-strong)',
-                        fontSize: '0.9rem',
-                        outline: 'none',
-                        textAlign: 'left',
-                        direction: 'ltr'
-                      }}
+                      onChange={(event) => setCustomerPhone(event.target.value)}
+                      placeholder="201012345678"
+                      aria-describedby="booking-phone-help"
                       required
+                      disabled={submitting}
                     />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#64748b' }}>أدخل الأرقام فقط بدون رمز + أو مسافات</span>
+                  <small id="booking-phone-help">اكتب الأرقام فقط، من دون + أو مسافات.</small>
                 </div>
 
-                {/* Group Selector */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8' }}>المجموعات المتاحة</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <fieldset className={styles.groupFieldset}>
+                  <legend>المجموعات المتاحة</legend>
+                  <p id="booking-timezone" className={styles.timezoneNote}>كل المواعيد بتوقيت القاهرة (Africa/Cairo).</p>
+                  <div className={styles.groupList}>
                     {groups.map((group) => {
                       const isFull = group.slotsLeft <= 0;
                       const isSelected = selectedGroupId === group.id;
-
                       return (
-                        <div
-                          key={group.id}
-                          onClick={() => { if (!isFull) setSelectedGroupId(group.id); }}
-                          style={{
-                            border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border-subtle)',
-                            backgroundColor: isSelected ? 'var(--accent-soft)' : 'var(--surface-muted)',
-                            borderRadius: '8px',
-                            padding: '1rem',
-                            cursor: isFull ? 'not-allowed' : 'pointer',
-                            opacity: isFull ? 0.5 : 1,
-                            transition: 'all 0.2s',
-                            display: 'grid',
-                            gridTemplateColumns: '1fr auto',
-                            gap: '1rem',
-                            alignItems: 'start'
-                          }}
-                        >
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                            <span style={{ fontWeight: 700, fontSize: '0.925rem', color: isSelected ? 'var(--accent)' : 'var(--text-strong)' }}>
-                              {group.name || (group.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)')}
-                            </span>
-                            <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <Clock size={12} />
-                              أول سيشن للكورس: {formatDate(group.dateTime)}
-                            </span>
-                            {group.courseSecondDateTime && (
-                              <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <Clock size={12} />
-                                تاني سيشن للكورس: {formatDate(group.courseSecondDateTime)}
-                              </span>
-                            )}
-                            {group.freeSessionDateTime && (
-                              <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <Calendar size={12} />
-                                السيشن المجانية: {formatDate(group.freeSessionDateTime)} مع دكتور مصطفى
-                              </span>
-                            )}
-                            {group.instructorName && (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--accent)', fontWeight: 700 }}>
-                                إنستراكتور الكورس: {group.instructorName}
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
-                            <span style={{
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              color: isFull ? '#ef4444' : '#10b981',
-                              backgroundColor: isFull ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
-                              padding: '2px 8px',
-                              borderRadius: '4px'
-                            }}>
-                              {isFull ? 'مكتملة' : `متاح ${group.slotsLeft} مقاعد`}
-                            </span>
-                            <span style={{ fontSize: '0.7rem', color: '#64748b' }}>السعة الكلية: {group.capacity}</span>
-                          </div>
-                        </div>
+                        <label key={group.id} className={`${styles.groupOption} ${isSelected ? styles.groupOptionSelected : ''} ${isFull ? styles.groupOptionDisabled : ''}`}>
+                          <input
+                            className={styles.radioInput}
+                            type="radio"
+                            name="group"
+                            value={group.id}
+                            checked={isSelected}
+                            disabled={isFull || submitting}
+                            onChange={() => setSelectedGroupId(group.id)}
+                            aria-describedby={`group-${group.id}-details booking-timezone`}
+                          />
+                          <span className={styles.radioMark} aria-hidden="true" />
+                          <span id={`group-${group.id}-details`} className={styles.groupCopy}>
+                            <strong>{group.name || (group.mode === 'online' ? 'أونلاين' : 'في المركز')}</strong>
+                            <span><Clock size={14} aria-hidden="true" /> أول جلسة: <time dateTime={group.dateTime}>{formatDate(group.dateTime)}</time></span>
+                            {group.courseSecondDateTime && <span><Clock size={14} aria-hidden="true" /> الجلسة الثانية: <time dateTime={group.courseSecondDateTime}>{formatDate(group.courseSecondDateTime)}</time></span>}
+                            {group.freeSessionDateTime && <span><Calendar size={14} aria-hidden="true" /> الجلسة المجانية: <time dateTime={group.freeSessionDateTime}>{formatDate(group.freeSessionDateTime)}</time></span>}
+                            {group.instructorName && <span><User size={14} aria-hidden="true" /> المدرّب: {group.instructorName}</span>}
+                          </span>
+                          <span className={styles.capacity}>
+                            <b className={isFull ? styles.full : styles.available}>{isFull ? 'مكتملة' : `${group.slotsLeft} مقاعد متاحة`}</b>
+                            <small><Users size={13} aria-hidden="true" /> السعة {group.capacity}</small>
+                          </span>
+                        </label>
                       );
                     })}
                   </div>
-                </div>
+                </fieldset>
 
                 {selectedGroup && (
-                  <div style={{
-                    padding: '0.85rem 1rem',
-                    backgroundColor: 'rgba(245, 158, 11, 0.08)',
-                    border: '1px solid rgba(245, 158, 11, 0.22)',
-                    borderRadius: '8px',
-                    color: '#fbbf24',
-                    fontSize: '0.8rem',
-                    lineHeight: 1.7
-                  }}>
-                    قبل تأكيد الحجز تأكد أن ميعاد السيشن المجانية مناسب لك، وأن ميعادي الكورس الأسبوعيين مناسبين لك أيضا.
-                  </div>
+                  <p className={styles.confirmationNote} role="status">
+                    راجع مواعيد المجموعة المختارة قبل التأكيد. سيُرسل فريقنا تفاصيل الحجز عبر واتساب.
+                  </p>
                 )}
 
-                {/* Submit */}
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  style={{
-                    background: 'var(--accent)',
-                    color: 'var(--accent-ink)',
-                    border: 'none',
-                    padding: '0.85rem',
-                    borderRadius: '8px',
-                    fontWeight: 700,
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                    fontSize: '0.95rem',
-                    transition: 'all 0.2s',
-                    marginTop: '0.5rem',
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    gap: '8px'
-                  }}
-                  onMouseOver={(e) => { if (!submitting) e.currentTarget.style.boxShadow = 'var(--shadow-neon)'; }}
-                  onMouseOut={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
-                >
-                  {submitting && (
-                    <div style={{
-                      width: '16px',
-                      height: '16px',
-                      border: '2px solid var(--accent-ink)',
-                      borderTopColor: 'transparent',
-                      borderRadius: '50%',
-                      animation: 'spin 1s linear infinite'
-                    }}></div>
-                  )}
-                  {submitting ? 'جاري تسجيل الحجز...' : 'تأكيد الحجز الآن'}
+                <button type="submit" className={styles.primaryButton} disabled={submitting || !selectedGroupId}>
+                  {submitting ? 'جاري تأكيد الحجز...' : 'تأكيد الحجز'}
                 </button>
               </form>
             )}
-          </div>
+          </>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'موعد غير صالح';
+  return new Intl.DateTimeFormat('ar-EG', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: DISPLAY_TIMEZONE,
+  }).format(date);
+}
+
+function normalizePhone(value: string) {
+  return value
+    .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/\D/g, '');
+}
+
+function getBookingError(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as { error?: string; message?: string } | undefined;
+    if (error.response?.status && error.response.status >= 400 && error.response.status < 500) {
+      return data?.error || data?.message || 'تعذر تأكيد الحجز. راجع البيانات والمقاعد المتاحة ثم أعد المحاولة.';
+    }
+    return 'تعذر تأكيد الحجز. أعد المحاولة، ولن نسجل حجزًا مكررًا من هذه الشاشة.';
+  }
+  return 'تعذر تأكيد الحجز. أعد المحاولة.';
 }

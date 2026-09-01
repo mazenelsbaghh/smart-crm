@@ -1,15 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
+import '../../../core/widgets/async_state_view.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../bloc/inbox_bloc.dart';
 import '../data/models/chat_models.dart';
 import 'chat_thread_screen.dart';
 
 class InboxListScreen extends StatefulWidget {
-  const InboxListScreen({Key? key}) : super(key: key);
+  const InboxListScreen({super.key});
 
   @override
   State<InboxListScreen> createState() => _InboxListScreenState();
@@ -18,6 +22,7 @@ class InboxListScreen extends StatefulWidget {
 class _InboxListScreenState extends State<InboxListScreen> {
   final _searchController = TextEditingController();
   String _selectedStatus = 'All';
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -27,6 +32,7 @@ class _InboxListScreenState extends State<InboxListScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -35,12 +41,12 @@ class _InboxListScreenState extends State<InboxListScreen> {
     final authState = context.read<AuthBloc>().state;
     if (authState is AuthAuthenticated) {
       context.read<InboxBloc>().add(
-            InboxConversationsFetchRequested(
-              projectId: authState.activeProject.id,
-              status: _selectedStatus,
-              search: _searchController.text,
-            ),
-          );
+        InboxConversationsFetchRequested(
+          projectId: authState.activeProject.id,
+          status: _selectedStatus,
+          search: _searchController.text,
+        ),
+      );
     }
   }
 
@@ -58,6 +64,7 @@ class _InboxListScreenState extends State<InboxListScreen> {
         centerTitle: true,
         actions: [
           IconButton(
+            tooltip: 'تحديث المحادثات',
             icon: const Icon(Icons.refresh, color: AppColors.primary),
             onPressed: _fetchConversations,
           ),
@@ -70,57 +77,83 @@ class _InboxListScreenState extends State<InboxListScreen> {
             child: BlocBuilder<InboxBloc, InboxState>(
               builder: (context, state) {
                 if (state.conversations.isEmpty && state.loadingConvs) {
-                  return const Center(
-                    child: CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation(AppColors.primary),
-                    ),
+                  return const AppLoadingSkeleton(rows: 7);
+                }
+
+                if (state.conversations.isEmpty && state.error != null) {
+                  return AppStateView(
+                    icon: Icons.cloud_off_outlined,
+                    title: 'تعذر تحميل المحادثات',
+                    message: state.error!,
+                    actionLabel: 'إعادة المحاولة',
+                    onAction: _fetchConversations,
                   );
                 }
 
                 if (state.conversations.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.chat_bubble_outline,
-                          size: 48,
-                          color: AppColors.textMuted,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'لا توجد محادثات مطابقة',
-                          style: AppTypography.bodyMuted,
-                        ),
-                      ],
-                    ),
+                  return AppStateView(
+                    icon: Icons.chat_bubble_outline,
+                    title: 'لا توجد محادثات مطابقة',
+                    message:
+                        _searchController.text.trim().isNotEmpty ||
+                            _selectedStatus != 'All'
+                        ? 'غيّر كلمة البحث أو الفلتر لعرض نتائج أخرى.'
+                        : 'ستظهر المحادثات الجديدة هنا عند وصولها.',
+                    actionLabel:
+                        _searchController.text.trim().isNotEmpty ||
+                            _selectedStatus != 'All'
+                        ? 'مسح الفلاتر'
+                        : 'تحديث',
+                    onAction: () {
+                      _searchController.clear();
+                      setState(() => _selectedStatus = 'All');
+                      _fetchConversations();
+                    },
                   );
                 }
 
-                return NotificationListener<ScrollNotification>(
-                  onNotification: (ScrollNotification scrollInfo) {
-                    if (scrollInfo.metrics.pixels == scrollInfo.metrics.maxScrollExtent) {
-                      final authState = context.read<AuthBloc>().state;
-                      if (authState is AuthAuthenticated) {
-                        context.read<InboxBloc>().add(
-                              InboxConversationsLoadMoreRequested(
-                                projectId: authState.activeProject.id,
-                              ),
-                            );
+                return RefreshIndicator(
+                  onRefresh: () async => _fetchConversations(),
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (ScrollNotification scrollInfo) {
+                      if (scrollInfo.metrics.pixels >=
+                          scrollInfo.metrics.maxScrollExtent - 160) {
+                        final authState = context.read<AuthBloc>().state;
+                        if (authState is AuthAuthenticated) {
+                          context.read<InboxBloc>().add(
+                            InboxConversationsLoadMoreRequested(
+                              projectId: authState.activeProject.id,
+                            ),
+                          );
+                        }
                       }
-                    }
-                    return true;
-                  },
-                  child: ListView.separated(
-                    itemCount: state.conversations.length,
-                    separatorBuilder: (context, index) => const Divider(
-                      color: AppColors.border,
-                      height: 1,
-                    ),
-                    itemBuilder: (context, index) {
-                      final conversation = state.conversations[index];
-                      return _buildConversationCard(context, conversation);
+                      return false;
                     },
+                    child: ListView.separated(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      itemCount:
+                          state.conversations.length +
+                          (state.loadingConvs ? 1 : 0),
+                      separatorBuilder: (context, index) =>
+                          const Divider(color: AppColors.border, height: 1),
+                      itemBuilder: (context, index) {
+                        if (index == state.conversations.length) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(
+                              child: SizedBox.square(
+                                dimension: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+                        final conversation = state.conversations[index];
+                        return _buildConversationCard(context, conversation);
+                      },
+                    ),
                   ),
                 );
               },
@@ -142,6 +175,7 @@ class _InboxListScreenState extends State<InboxListScreen> {
             style: AppTypography.body,
             textAlign: TextAlign.right,
             decoration: InputDecoration(
+              labelText: 'البحث في المحادثات',
               hintText: 'ابحث عن عميل أو رقم هاتف...',
               hintStyle: AppTypography.bodyMuted,
               prefixIcon: const Icon(Icons.search, color: AppColors.textMuted),
@@ -161,7 +195,13 @@ class _InboxListScreenState extends State<InboxListScreen> {
                 borderSide: const BorderSide(color: AppColors.primary),
               ),
             ),
-            onChanged: (val) => _fetchConversations(),
+            onChanged: (_) {
+              _searchDebounce?.cancel();
+              _searchDebounce = Timer(
+                const Duration(milliseconds: 350),
+                _fetchConversations,
+              );
+            },
           ),
           const SizedBox(height: 12),
           SingleChildScrollView(
@@ -214,15 +254,26 @@ class _InboxListScreenState extends State<InboxListScreen> {
   }
 
   Widget _buildConversationCard(BuildContext context, Conversation conv) {
-    final format = DateFormat('hh:mm a');
+    final format = DateFormat('hh:mm a', 'ar');
     final timeStr = format.format(conv.lastMessageAt.toLocal());
 
     return InkWell(
       onTap: () {
         context.read<InboxBloc>().add(InboxActiveConversationSelected(conv));
+        final reduceMotion = MediaQuery.disableAnimationsOf(context);
         Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => const ChatThreadScreen(),
+          PageRouteBuilder<void>(
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                const ChatThreadScreen(),
+            transitionDuration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 180),
+            reverseTransitionDuration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 150),
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) =>
+                    FadeTransition(opacity: animation, child: child),
           ),
         );
       },
@@ -233,14 +284,14 @@ class _InboxListScreenState extends State<InboxListScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  timeStr,
-                  style: AppTypography.mono.copyWith(fontSize: 11),
-                ),
+                Text(timeStr, style: AppTypography.mono),
                 const SizedBox(height: 8),
                 if (conv.unreadCount > 0)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.secondary,
                       borderRadius: BorderRadius.circular(10),
@@ -264,25 +315,34 @@ class _InboxListScreenState extends State<InboxListScreen> {
                   children: [
                     if (conv.customer.label != null) ...[
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.12),
-                          border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.3),
+                          ),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
                           conv.customer.label!,
                           style: AppTypography.label.copyWith(
                             color: AppColors.primary,
-                            fontSize: 10,
+                            fontSize: 12,
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
                     ],
                     Text(
-                      conv.customer.name,
-                      style: AppTypography.title.copyWith(fontWeight: FontWeight.bold),
+                      conv.customer.name.isEmpty
+                          ? 'عميل بلا اسم'
+                          : conv.customer.name,
+                      style: AppTypography.title.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
@@ -291,6 +351,17 @@ class _InboxListScreenState extends State<InboxListScreen> {
                   conv.customer.phone,
                   style: AppTypography.bodyMuted.copyWith(fontSize: 12),
                 ),
+                if (conv.whatsAppAccountName != null &&
+                    conv.whatsAppAccountName!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    'عبر ${conv.whatsAppAccountName}',
+                    style: AppTypography.label.copyWith(
+                      color: AppColors.primary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(width: 16),
@@ -304,7 +375,13 @@ class _InboxListScreenState extends State<InboxListScreen> {
               ),
               child: Center(
                 child: Text(
-                  conv.customer.name.substring(0, 1).toUpperCase(),
+                  conv.customer.name.trim().isEmpty
+                      ? 'ع'
+                      : conv.customer.name
+                            .trim()
+                            .characters
+                            .first
+                            .toUpperCase(),
                   style: AppTypography.title.copyWith(
                     color: AppColors.primary,
                     fontWeight: FontWeight.bold,

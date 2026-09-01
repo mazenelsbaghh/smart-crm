@@ -1,306 +1,203 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Modules.QuranChallenge.Services;
 
 public sealed class TikTokApiClient
 {
-    private const string ApiBase = "https://open.tiktokapis.com";
+    private const string ApiBase = "https://zernio.com/api/v1";
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly string? _clientKey;
-    private readonly string? _clientSecret;
-    private readonly string? _redirectUri;
+    private readonly string? _apiKey;
 
     public TikTokApiClient(IHttpClientFactory httpClientFactory, IConfiguration configuration)
     {
         _httpClientFactory = httpClientFactory;
-        _clientKey = configuration["TIKTOK_CLIENT_KEY"];
-        _clientSecret = configuration["TIKTOK_CLIENT_SECRET"];
-        _redirectUri = configuration["TIKTOK_OAUTH_REDIRECT_URI"];
+        _apiKey = configuration["ZERNIO_API_KEY"];
     }
 
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(_clientKey)
-        && !string.IsNullOrWhiteSpace(_clientSecret)
-        && Uri.TryCreate(_redirectUri, UriKind.Absolute, out _);
+    public bool IsConfigured => _apiKey?.StartsWith("sk_", StringComparison.Ordinal) == true;
 
-    public string AuthorizationUrl(string state)
+    public async Task<TikTokCreatorInfo> CreatorInfoAsync(string accountId, CancellationToken cancellationToken)
     {
-        EnsureConfigured();
-        var query = new Dictionary<string, string?>
-        {
-            ["client_key"] = _clientKey,
-            ["redirect_uri"] = _redirectUri,
-            ["response_type"] = "code",
-            ["scope"] = "user.info.basic,video.publish",
-            ["state"] = state
-        };
-        return QueryString.Create(query).ToUriComponent()
-            .Insert(0, "https://www.tiktok.com/v2/auth/authorize/");
+        using var document = await SendAsync(HttpMethod.Get,
+            $"accounts/{Uri.EscapeDataString(accountId)}/tiktok/creator-info?mediaType=video", null, cancellationToken);
+        var root = document.RootElement;
+        var creator = FindObject(root, "creator");
+        var limits = FindObject(root, "postingLimits");
+        var privacyLevels = FindArray(root, "privacyLevels")
+            .Select(privacyOption => privacyOption.ValueKind == JsonValueKind.String
+                ? privacyOption.GetString()
+                : ReadString(privacyOption, "value"))
+            .Where(value => !string.IsNullOrWhiteSpace(value)).Cast<string>().ToArray();
+
+        return new TikTokCreatorInfo(
+            ReadString(creator, "avatarUrl", "avatar_url"),
+            ReadString(creator, "username", "creatorUsername"),
+            ReadString(creator, "nickname", "displayName", "creatorNickname"),
+            privacyLevels,
+            ReadBoolean(limits, "commentDisabled", "comment_disabled"),
+            ReadBoolean(limits, "duetDisabled", "duet_disabled"),
+            ReadBoolean(limits, "stitchDisabled", "stitch_disabled"),
+            ReadInt(limits, 600, "maxVideoPostDurationSeconds", "max_video_post_duration_sec"));
     }
 
-    public Task<TikTokTokens> ExchangeCodeAsync(string code, CancellationToken cancellationToken)
-    {
-        var fields = ClientFields();
-        fields["code"] = code;
-        fields["grant_type"] = "authorization_code";
-        fields["redirect_uri"] = _redirectUri!;
-        return RequestTokensAsync(fields, cancellationToken);
-    }
-
-    public Task<TikTokTokens> RefreshAsync(string refreshToken, CancellationToken cancellationToken)
-    {
-        var fields = ClientFields();
-        fields["grant_type"] = "refresh_token";
-        fields["refresh_token"] = refreshToken;
-        return RequestTokensAsync(fields, cancellationToken);
-    }
-
-    public async Task<TikTokUser> UserAsync(string accessToken, CancellationToken cancellationToken)
-    {
-        using var request = Authorized(HttpMethod.Get,
-            $"{ApiBase}/v2/user/info/?fields=open_id,display_name,avatar_url", accessToken);
-        var payload = await SendJsonAsync<TikTokUserResponse>(request, cancellationToken);
-        EnsureOk(payload.Error);
-        return payload.Data?.User
-            ?? throw new InvalidOperationException("لم يُرجع TikTok بيانات الحساب.");
-    }
-
-    public async Task<TikTokCreatorInfo> CreatorInfoAsync(
-        string accessToken,
+    public async Task<string> PublishVideoAsync(string accountId, TikTokPostRequest post, byte[] videoBytes,
         CancellationToken cancellationToken)
     {
-        using var request = Authorized(HttpMethod.Post,
-            $"{ApiBase}/v2/post/publish/creator_info/query/", accessToken);
-        request.Content = JsonContent.Create(new { });
-        var payload = await SendJsonAsync<TikTokCreatorInfoResponse>(request, cancellationToken);
-        EnsureOk(payload.Error);
-        return payload.Data
-            ?? throw new InvalidOperationException("لم يُرجع TikTok إعدادات النشر للحساب.");
-    }
+        using var upload = await SendAsync(HttpMethod.Post, "media/presign",
+            new { filename = $"quran-challenge-{Guid.NewGuid():N}.mp4", contentType = "video/mp4" }, cancellationToken);
+        var uploadUrl = ReadRequiredString(upload.RootElement, "uploadUrl");
+        var publicUrl = ReadRequiredString(upload.RootElement, "publicUrl");
 
-    public async Task<TikTokPostInitialization> InitializePostAsync(
-        string accessToken,
-        TikTokPostRequest post,
-        long videoSize,
-        CancellationToken cancellationToken)
-    {
-        var (chunkSize, chunkCount) = ChunkPlan(videoSize);
-        using var request = Authorized(HttpMethod.Post,
-            $"{ApiBase}/v2/post/publish/video/init/", accessToken);
-        request.Content = JsonContent.Create(new
+        using (var uploadRequest = new HttpRequestMessage(HttpMethod.Put, uploadUrl))
         {
-            post_info = new
+            uploadRequest.Content = new ByteArrayContent(videoBytes);
+            uploadRequest.Content.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+            using var uploadResponse = await _httpClientFactory.CreateClient().SendAsync(
+                uploadRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            await EnsureSuccessAsync(uploadResponse, cancellationToken);
+        }
+
+        using var created = await SendAsync(HttpMethod.Post, "posts", new
+        {
+            content = post.Title,
+            mediaItems = new[] { new { type = "video", url = publicUrl } },
+            platforms = new[] { new { platform = "tiktok", accountId } },
+            tiktokSettings = new
             {
-                title = post.Title,
                 privacy_level = post.PrivacyLevel,
-                disable_comment = !post.AllowComment,
-                disable_duet = !post.AllowDuet,
-                disable_stitch = !post.AllowStitch,
-                video_cover_timestamp_ms = 1000
+                allow_comment = post.AllowComment,
+                allow_duet = post.AllowDuet,
+                allow_stitch = post.AllowStitch,
+                content_preview_confirmed = true,
+                express_consent_given = true,
+                draft = false
             },
-            source_info = new
-            {
-                source = "FILE_UPLOAD",
-                video_size = videoSize,
-                chunk_size = chunkSize,
-                total_chunk_count = chunkCount
-            }
-        });
-        var payload = await SendJsonAsync<TikTokPostInitializationResponse>(request, cancellationToken);
-        EnsureOk(payload.Error);
-        return payload.Data is { PublishId.Length: > 0, UploadUrl.Length: > 0 }
-            ? payload.Data
-            : throw new InvalidOperationException("لم يُرجع TikTok رابط رفع صالحًا.");
+            publishNow = true
+        }, cancellationToken);
+        var createdPost = FindObject(created.RootElement, "post");
+        ThrowIfPublishingFailed(createdPost);
+        return ReadRequiredString(createdPost, "_id", "id");
     }
 
-    public async Task UploadAsync(
-        string uploadUrl,
-        byte[] video,
-        CancellationToken cancellationToken)
+    public async Task<TikTokPublishStatus> PublishStatusAsync(string postId, CancellationToken cancellationToken)
     {
-        var (chunkSize, chunkCount) = ChunkPlan(video.LongLength);
-        var offset = 0L;
-        for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
+        using var document = await SendAsync(HttpMethod.Get, $"posts/{Uri.EscapeDataString(postId)}", null,
+            cancellationToken);
+        var post = FindObject(document.RootElement, "post");
+        var rawStatus = ReadString(post, "status") ?? "unknown";
+        var status = rawStatus.ToLowerInvariant() switch
         {
-            var remaining = video.LongLength - offset;
-            var count = chunkIndex == chunkCount - 1
-                ? checked((int)remaining)
-                : checked((int)Math.Min(chunkSize, remaining));
-            using var content = new ByteArrayContent(video, checked((int)offset), count);
-            content.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
-            content.Headers.ContentLength = count;
-            content.Headers.TryAddWithoutValidation(
-                "Content-Range",
-                $"bytes {offset}-{offset + count - 1}/{video.LongLength}");
-            using var response = await _httpClientFactory.CreateClient()
-                .PutAsync(uploadUrl, content, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                var detail = await response.Content.ReadAsStringAsync(cancellationToken);
-                throw new HttpRequestException(
-                    $"رفض TikTok جزء الفيديو ({(int)response.StatusCode}): {detail[..Math.Min(detail.Length, 500)]}");
-            }
-            offset += count;
-        }
-    }
-
-    public async Task<TikTokPublishStatus> PublishStatusAsync(
-        string accessToken,
-        string publishId,
-        CancellationToken cancellationToken)
-    {
-        using var request = Authorized(HttpMethod.Post,
-            $"{ApiBase}/v2/post/publish/status/fetch/", accessToken);
-        request.Content = JsonContent.Create(new { publish_id = publishId });
-        var payload = await SendJsonAsync<TikTokPublishStatusResponse>(request, cancellationToken);
-        EnsureOk(payload.Error);
-        return payload.Data
-            ?? throw new InvalidOperationException("لم يُرجع TikTok حالة النشر.");
-    }
-
-    public async Task RevokeAsync(string accessToken, CancellationToken cancellationToken)
-    {
-        EnsureConfigured();
-        var fields = ClientFields();
-        fields["token"] = accessToken;
-        using var content = new FormUrlEncodedContent(fields);
-        using var response = await _httpClientFactory.CreateClient()
-            .PostAsync($"{ApiBase}/v2/oauth/revoke/", content, cancellationToken);
-        response.EnsureSuccessStatusCode();
-    }
-
-    private async Task<TikTokTokens> RequestTokensAsync(
-        Dictionary<string, string> fields,
-        CancellationToken cancellationToken)
-    {
-        EnsureConfigured();
-        using var content = new FormUrlEncodedContent(fields);
-        using var response = await _httpClientFactory.CreateClient()
-            .PostAsync($"{ApiBase}/v2/oauth/token/", content, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException(
-                $"فشل تسجيل TikTok ({(int)response.StatusCode}): {body[..Math.Min(body.Length, 500)]}");
-        }
-        return JsonSerializer.Deserialize<TikTokTokens>(body)
-            ?? throw new InvalidOperationException("استجابة TikTok لم تحتوِ على رموز الدخول.");
-    }
-
-    private async Task<T> SendJsonAsync<T>(
-        HttpRequestMessage request,
-        CancellationToken cancellationToken)
-    {
-        using var response = await _httpClientFactory.CreateClient().SendAsync(request, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException(
-                $"رفض TikTok الطلب ({(int)response.StatusCode}): {body[..Math.Min(body.Length, 500)]}");
-        }
-        return JsonSerializer.Deserialize<T>(body)
-            ?? throw new InvalidOperationException("استجابة TikTok غير صالحة.");
-    }
-
-    private static HttpRequestMessage Authorized(HttpMethod method, string url, string accessToken)
-    {
-        var request = new HttpRequestMessage(method, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        return request;
-    }
-
-    private Dictionary<string, string> ClientFields()
-    {
-        EnsureConfigured();
-        return new Dictionary<string, string>
-        {
-            ["client_key"] = _clientKey!,
-            ["client_secret"] = _clientSecret!
+            "published" => "PUBLISH_COMPLETE",
+            "failed" or "partial" => "FAILED",
+            "draft" or "scheduled" or "publishing" => "PROCESSING",
+            _ => rawStatus.ToUpperInvariant()
         };
+        var failure = PublishingFailure(post);
+        var urls = FindArray(post, "platforms")
+            .Select(platformTarget => ReadString(platformTarget, "platformPostUrl"))
+            .Where(value => !string.IsNullOrWhiteSpace(value)).Cast<string>().ToArray();
+        return new TikTokPublishStatus(status, failure, urls);
     }
 
-    private static (long ChunkSize, int ChunkCount) ChunkPlan(long videoSize)
+    private async Task<JsonDocument> SendAsync(HttpMethod method, string path, object? body,
+        CancellationToken cancellationToken)
     {
-        if (videoSize <= 0) throw new ArgumentOutOfRangeException(nameof(videoSize));
-        const long maxSingleChunk = 64L * 1024 * 1024;
-        if (videoSize <= maxSingleChunk) return (videoSize, 1);
-        const long regularChunk = 10L * 1024 * 1024;
-        return (regularChunk, checked((int)(videoSize / regularChunk)));
+        EnsureConfigured();
+        using var request = new HttpRequestMessage(method, $"{ApiBase}/{path}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        using var response = await _httpClientFactory.CreateClient().SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
     }
 
-    private static void EnsureOk(TikTokError? error)
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        if (error is null || error.Code == "ok") return;
-        throw new InvalidOperationException(
-            $"TikTok: {error.Message ?? error.Code} ({error.Code})");
+        if (response.IsSuccessStatusCode) return;
+        var detail = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new HttpRequestException(
+            $"رفض Zernio الطلب ({(int)response.StatusCode}): {detail[..Math.Min(detail.Length, 500)]}");
     }
 
     private void EnsureConfigured()
     {
-        if (!IsConfigured)
-        {
-            throw new InvalidOperationException("بيانات TikTok App غير مُعدّة على الخادم.");
-        }
+        if (!IsConfigured) throw new InvalidOperationException("مفتاح Zernio API غير مُعدّ على الخادم.");
+    }
+
+    private static JsonElement FindObject(JsonElement element, string property)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value)
+            && value.ValueKind == JsonValueKind.Object) return value;
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("data", out var data)
+            && data.ValueKind == JsonValueKind.Object) return FindObject(data, property);
+        return element;
+    }
+
+    private static IEnumerable<JsonElement> FindArray(JsonElement element, string property)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value)
+            && value.ValueKind == JsonValueKind.Array) return value.EnumerateArray().ToArray();
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("data", out var data))
+            return FindArray(data, property);
+        return [];
+    }
+
+    private static string ReadRequiredString(JsonElement element, params string[] properties) =>
+        ReadString(element, properties)
+        ?? throw new InvalidOperationException($"لم تُرجع استجابة Zernio الحقل {properties[0]}.");
+
+    private static string? ReadString(JsonElement element, params string[] properties)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        foreach (var property in properties)
+            if (element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
+                return value.GetString();
+        if (element.TryGetProperty("data", out var data)) return ReadString(data, properties);
+        return null;
+    }
+
+    private static bool ReadBoolean(JsonElement element, params string[] properties)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return false;
+        foreach (var property in properties)
+            if (element.TryGetProperty(property, out var value)
+                && value.ValueKind is JsonValueKind.True or JsonValueKind.False) return value.GetBoolean();
+        return false;
+    }
+
+    private static int ReadInt(JsonElement element, int fallback, params string[] properties)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return fallback;
+        foreach (var property in properties)
+            if (element.TryGetProperty(property, out var value) && value.TryGetInt32(out var result)) return result;
+        return fallback;
+    }
+
+    private static void ThrowIfPublishingFailed(JsonElement post)
+    {
+        if (!string.Equals(ReadString(post, "status"), "failed", StringComparison.OrdinalIgnoreCase)) return;
+        throw new InvalidOperationException(PublishingFailure(post) ?? "فشل النشر المباشر على TikTok.");
+    }
+
+    private static string? PublishingFailure(JsonElement post)
+    {
+        var postFailure = ReadString(post, "error", "errorMessage", "failReason");
+        if (!string.IsNullOrWhiteSpace(postFailure)) return postFailure;
+        return FindArray(post, "platforms")
+            .Select(platform => ReadString(platform, "errorMessage", "error", "failReason"))
+            .FirstOrDefault(message => !string.IsNullOrWhiteSpace(message));
     }
 }
 
-public sealed record TikTokPostRequest(
-    string Title,
-    string PrivacyLevel,
-    bool AllowComment,
-    bool AllowDuet,
+public sealed record TikTokPostRequest(string Title, string PrivacyLevel, bool AllowComment, bool AllowDuet,
     bool AllowStitch);
 
-public sealed record TikTokTokens(
-    [property: JsonPropertyName("access_token")] string AccessToken,
-    [property: JsonPropertyName("expires_in")] int ExpiresIn,
-    [property: JsonPropertyName("open_id")] string OpenId,
-    [property: JsonPropertyName("refresh_expires_in")] int RefreshExpiresIn,
-    [property: JsonPropertyName("refresh_token")] string RefreshToken,
-    [property: JsonPropertyName("scope")] string Scope);
+public sealed record TikTokCreatorInfo(string? CreatorAvatarUrl, string? CreatorUsername, string? CreatorNickname,
+    IReadOnlyList<string> PrivacyLevelOptions, bool CommentDisabled, bool DuetDisabled, bool StitchDisabled,
+    int MaxVideoPostDurationSeconds);
 
-public sealed record TikTokUser(
-    [property: JsonPropertyName("open_id")] string OpenId,
-    [property: JsonPropertyName("display_name")] string DisplayName,
-    [property: JsonPropertyName("avatar_url")] string? AvatarUrl);
-
-public sealed record TikTokCreatorInfo(
-    [property: JsonPropertyName("creator_avatar_url")] string? CreatorAvatarUrl,
-    [property: JsonPropertyName("creator_username")] string? CreatorUsername,
-    [property: JsonPropertyName("creator_nickname")] string CreatorNickname,
-    [property: JsonPropertyName("privacy_level_options")] string[] PrivacyLevelOptions,
-    [property: JsonPropertyName("comment_disabled")] bool CommentDisabled,
-    [property: JsonPropertyName("duet_disabled")] bool DuetDisabled,
-    [property: JsonPropertyName("stitch_disabled")] bool StitchDisabled,
-    [property: JsonPropertyName("max_video_post_duration_sec")] int MaxVideoPostDurationSeconds);
-
-public sealed record TikTokPostInitialization(
-    [property: JsonPropertyName("publish_id")] string PublishId,
-    [property: JsonPropertyName("upload_url")] string UploadUrl);
-
-public sealed record TikTokPublishStatus(
-    [property: JsonPropertyName("status")] string Status,
-    [property: JsonPropertyName("fail_reason")] string? FailReason,
-    [property: JsonPropertyName("publicaly_available_post_id")] long[]? PubliclyAvailablePostIds,
-    [property: JsonPropertyName("uploaded_bytes")] long UploadedBytes);
-
-public sealed record TikTokError(
-    [property: JsonPropertyName("code")] string Code,
-    [property: JsonPropertyName("message")] string? Message,
-    [property: JsonPropertyName("log_id")] string? LogId);
-
-file sealed record TikTokUserResponse(
-    [property: JsonPropertyName("data")] TikTokUserData? Data,
-    [property: JsonPropertyName("error")] TikTokError? Error);
-file sealed record TikTokUserData([property: JsonPropertyName("user")] TikTokUser? User);
-file sealed record TikTokCreatorInfoResponse(
-    [property: JsonPropertyName("data")] TikTokCreatorInfo? Data,
-    [property: JsonPropertyName("error")] TikTokError? Error);
-file sealed record TikTokPostInitializationResponse(
-    [property: JsonPropertyName("data")] TikTokPostInitialization? Data,
-    [property: JsonPropertyName("error")] TikTokError? Error);
-file sealed record TikTokPublishStatusResponse(
-    [property: JsonPropertyName("data")] TikTokPublishStatus? Data,
-    [property: JsonPropertyName("error")] TikTokError? Error);
+public sealed record TikTokPublishStatus(string Status, string? FailReason,
+    IReadOnlyList<string> PubliclyAvailablePostIds);

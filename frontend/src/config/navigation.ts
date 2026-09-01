@@ -1,8 +1,10 @@
 import {
   BarChart3,
+  CalendarSearch,
   BookOpen,
   GitFork,
   Home,
+  Images,
   ListTodo,
   Megaphone,
   MessageCircle,
@@ -10,6 +12,7 @@ import {
   MessageSquareMore,
   Settings,
   ShieldCheck,
+  TrendingUp,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -30,14 +33,16 @@ export const navigationItems: NavigationItem[] = [
   { name: 'العملاء CRM', path: '/crm', icon: Users, compact: true, shortcut: '5' },
   { name: 'المهام', path: '/management/follow-ups', icon: ListTodo, compact: true },
   { name: 'حملات واتساب', path: '/management/campaigns', icon: Megaphone, compact: true },
+  { name: 'المحتوى', path: '/management/content', icon: Images, compact: true, shortcut: '7' },
   { name: 'مدير الإعلانات', path: '/management/ad-manager', icon: BarChart3, compact: true, shortcut: '6' },
   { name: 'أتمتة العمليات', path: '/management/workflows', icon: GitFork },
   { name: 'قاعدة المعرفة', path: '/management/knowledge', icon: BookOpen, compact: true },
   { name: 'إدارة الموافقات', path: '/management/approvals', icon: ShieldCheck },
-  { name: 'التقارير والإحصائيات', path: '/management/reports', icon: BarChart3, compact: true },
+  { name: 'مدير المبيعات', path: '/management/reports', icon: TrendingUp, compact: true, shortcut: '8' },
+  { name: 'طلبات المواعيد', path: '/management/schedule-demand', icon: CalendarSearch, compact: true, shortcut: '9' },
   { name: 'إعدادات المشروع', path: '/settings', icon: Settings, compact: true },
 ];
 
-export const compactNavigationItems = navigationItems.filter((item) => item.compact);
-
-export const shortcutNavigationItems = navigationItems.filter((item) => item.shortcut);
+export const navigationItemsForRole = (role?: string) => navigationItems.filter((item) => (
+  item.path !== '/settings' || role === 'Owner' || role === 'Admin'
+));

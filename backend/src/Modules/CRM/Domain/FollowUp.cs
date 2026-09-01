@@ -8,6 +8,11 @@ namespace Modules.CRM.Domain
     {
         public Guid ProjectId { get; set; }
         public Guid CustomerId { get; set; }
+        public Guid? ConversationId { get; set; }
+        public Guid? DependsOnFollowUpId { get; set; }
+        public Guid? WhatsAppAccountId { get; set; }
+        public string? Channel { get; set; }
+        public string? ActiveAutomationSlotKey { get; set; }
         public DateTime DueDate { get; set; }
         public string Status { get; set; } = "Pending"; // Pending, Done, Missed
         public string Notes { get; set; }

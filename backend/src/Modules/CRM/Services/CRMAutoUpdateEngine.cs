@@ -5,6 +5,7 @@ using Modules.Conversations.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Shared.Events;
 using Shared.Infrastructure;
+using Shared.Queue;
 using System;
 using System.Linq;
 using System.Text.Json;
@@ -21,11 +22,16 @@ namespace Modules.CRM.Services
     {
         private readonly AppDbContext _context;
         private readonly IHubContext<NotificationHub> _hubContext;
+        private readonly AutomationFollowUpService _automationFollowUps;
 
-        public CRMAutoUpdateEngine(AppDbContext context, IHubContext<NotificationHub> hubContext)
+        public CRMAutoUpdateEngine(
+            AppDbContext context,
+            IHubContext<NotificationHub> hubContext,
+            AutomationFollowUpService automationFollowUps)
         {
             _context = context;
             _hubContext = hubContext;
+            _automationFollowUps = automationFollowUps;
         }
 
         public async Task ProcessSuggestionAsync(CRMUpdateSuggestedEvent @event)
@@ -154,8 +160,13 @@ namespace Modules.CRM.Services
                     customer.LeadScore = Math.Max(customer.LeadScore - 10, 0);
 
                     // Flag active conversation for immediate human attention
-                    var activeConversation = await _context.Conversations
-                        .FirstOrDefaultAsync(c => c.CustomerId == @event.CustomerId && c.Status == "Open");
+                    var activeConversation = @event.ConversationId.HasValue
+                        ? await _context.Conversations.FirstOrDefaultAsync(c =>
+                            c.Id == @event.ConversationId.Value
+                            && c.CustomerId == @event.CustomerId
+                            && c.Status == "Open")
+                        : await _context.Conversations.FirstOrDefaultAsync(c =>
+                            c.CustomerId == @event.CustomerId && c.Status == "Open");
                     
                     if (activeConversation != null)
                     {
@@ -335,11 +346,9 @@ namespace Modules.CRM.Services
                 @event.FollowUpNeeded = false;
             }
 
-            // Process Suggested Follow-up
-            var existingFollowUp = await _context.FollowUps
-                .Where(f => f.ProjectId == @event.ProjectId && f.CustomerId == @event.CustomerId && f.Status == "Pending")
-                .OrderByDescending(f => f.CreatedAt)
-                .FirstOrDefaultAsync();
+            // Process Suggested Follow-up. Webhook and CRM events share this stable
+            // slot so concurrent/live/recovery workers cannot create two reminders.
+            var activeAutomationSlotKey = AutomationSlotKey(@event);
 
             if (@event.FollowUpNeeded)
             {
@@ -360,31 +369,20 @@ namespace Modules.CRM.Services
 
                     string followUpType = !string.IsNullOrEmpty(@event.FollowUpType) ? @event.FollowUpType : "Nurturing";
 
-                    if (existingFollowUp != null)
-                    {
-                        existingFollowUp.Type = followUpType;
-                        existingFollowUp.AppointmentTime = appTime;
-                        existingFollowUp.DueDate = dueDate;
-                        existingFollowUp.Notes = @event.FollowUpNotes ?? string.Empty;
-                        _context.Entry(existingFollowUp).State = EntityState.Modified;
-                        Console.WriteLine($"[CRMAutoUpdateEngine] Updated existing pending follow-up {existingFollowUp.Id} with new context.");
-                    }
-                    else
-                    {
-                        var newFollowUp = new FollowUp
-                        {
-                            Id = Guid.NewGuid(),
-                            ProjectId = @event.ProjectId,
-                            CustomerId = @event.CustomerId,
-                            Type = followUpType,
-                            AppointmentTime = appTime,
-                            DueDate = dueDate,
-                            Notes = @event.FollowUpNotes ?? string.Empty,
-                            Status = "Pending"
-                        };
-                        _context.FollowUps.Add(newFollowUp);
-                        Console.WriteLine($"[CRMAutoUpdateEngine] Created new pending follow-up {newFollowUp.Id} for customer {@event.CustomerId}.");
-                    }
+                    var followUp = await _automationFollowUps
+                        .UpsertPendingAutomationFollowUpAsync(
+                            new PendingAutomationFollowUpRequest(
+                                @event.ProjectId,
+                                @event.CustomerId,
+                                activeAutomationSlotKey,
+                                dueDate,
+                                @event.FollowUpNotes ?? string.Empty,
+                                followUpType,
+                                @event.ConversationId,
+                                @event.WhatsAppAccountId,
+                                @event.Channel,
+                                appTime));
+                    Console.WriteLine($"[CRMAutoUpdateEngine] Upserted pending follow-up {followUp.Id} for customer {@event.CustomerId}.");
                 }
                 catch (Exception ex)
                 {
@@ -394,16 +392,54 @@ namespace Modules.CRM.Services
             else
             {
                 var pendingFollowUps = await _context.FollowUps
-                    .Where(f => f.CustomerId == @event.CustomerId && f.Status == "Pending")
+                    .Where(f => f.ProjectId == @event.ProjectId
+                        && f.CustomerId == @event.CustomerId
+                        && f.Status == "Pending"
+                        && (f.ActiveAutomationSlotKey == activeAutomationSlotKey
+                            || (f.ActiveAutomationSlotKey == null
+                                && (@event.ConversationId.HasValue
+                                    ? f.ConversationId == @event.ConversationId
+                                    : !f.ConversationId.HasValue
+                                        && f.Channel == @event.Channel
+                                        && (@event.Channel != "WhatsApp"
+                                            || (f.WhatsAppAccountId ?? f.ProjectId)
+                                                == (@event.WhatsAppAccountId ?? @event.ProjectId))))))
                     .ToListAsync();
                 if (pendingFollowUps.Any())
                 {
-                    _context.FollowUps.RemoveRange(pendingFollowUps);
-                    Console.WriteLine($"[CRMAutoUpdateEngine] Deleted {pendingFollowUps.Count} pending follow-ups because AI suggested no follow-up is needed or sentiment was negative.");
+                    foreach (var pendingFollowUp in pendingFollowUps)
+                        pendingFollowUp.Status = "Bypassed";
+                    Console.WriteLine($"[CRMAutoUpdateEngine] Bypassed {pendingFollowUps.Count} pending follow-ups because AI suggested no follow-up is needed or sentiment was negative.");
                 }
             }
 
-            // Save updates
+            // A Gateway conversation becomes a qualified advertising lead only when the
+            // existing sales classifier sees explicit purchase intent with high confidence.
+            // Inquiry/greeting/support messages remain ordinary leads and never inflate CPA.
+            if (@event.Confidence >= 0.85
+                && string.Equals(@event.Intent, "purchase", StringComparison.OrdinalIgnoreCase))
+            {
+                var salesConversationId = @event.ConversationId
+                    ?? await _context.Conversations.IgnoreQueryFilters()
+                        .Where(item => item.ProjectId == @event.ProjectId && item.CustomerId == @event.CustomerId)
+                        .OrderByDescending(item => item.LastMessageTimestamp)
+                        .Select(item => (Guid?)item.Id)
+                        .FirstOrDefaultAsync();
+                if (salesConversationId is not null)
+                {
+                    IntegrationOutbox.Enqueue(_context, new AdvertisingQualifiedMessageChanged
+                    {
+                        ProjectId = @event.ProjectId, ConversationId = salesConversationId.Value,
+                        CustomerId = @event.CustomerId, Classification = "PurchaseIntent",
+                        Confidence = (decimal)Math.Clamp(@event.Confidence, 0d, 1d),
+                        ClassifierVersion = "gemini-sales-intent-v1", ClassifiedAtUtc = DateTime.UtcNow,
+                        SourceAggregateType = nameof(Customer), SourceAggregateId = @event.CustomerId,
+                        SourceVersion = DateTime.UtcNow.Ticks
+                    });
+                }
+            }
+
+            // Save updates and the qualification event atomically.
             await _context.SaveChangesAsync();
             Console.WriteLine($"[CRMAutoUpdateEngine] CRM updates saved. High Confidence: {highConfidence}");
 
@@ -431,6 +467,22 @@ namespace Modules.CRM.Services
             {
                 Console.WriteLine($"[CRMAutoUpdateEngine] Failed to broadcast CustomerUpdated event: {ex.Message}");
             }
+        }
+
+        private static string AutomationSlotKey(CRMUpdateSuggestedEvent @event)
+        {
+            var channel = string.IsNullOrWhiteSpace(@event.Channel)
+                ? "WhatsApp"
+                : @event.Channel.Trim();
+            if (string.Equals(channel, "WhatsApp", StringComparison.OrdinalIgnoreCase)
+                && @event.ConversationId.HasValue)
+            {
+                var accountId = @event.WhatsAppAccountId ?? @event.ProjectId;
+                return $"whatsapp-ai-nurture:{accountId:N}:{@event.ConversationId.Value:N}";
+            }
+
+            var sourceId = @event.ConversationId ?? @event.CustomerId;
+            return $"{channel.ToLowerInvariant()}-ai-nurture:{sourceId:N}";
         }
     }
 }

@@ -1,0 +1,76 @@
+.page { display: flex; flex-direction: column; gap: var(--space-lg); width: 100%; padding-bottom: 6rem; color: var(--text-strong); }
+.pageHeader, .sectionHeader, .actionDock, .confirmPanel > div, .filters { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+.pageHeader { flex-wrap: wrap; }
+.pageHeader h1 { margin: .18rem 0 .35rem; font-size: clamp(1.55rem, 3vw, 2rem); line-height: 1.15; letter-spacing: -.035em; }
+.pageHeader p { max-width: 68ch; margin: 0; color: var(--text-soft); font-size: .88rem; line-height: 1.7; }
+.eyebrow { color: var(--accent); font-size: .68rem; font-weight: 800; letter-spacing: .04em; }
+.refreshButton, .selectAll, .actionDock button, .confirmActions button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: .45rem; border-radius: var(--radius-md); font-weight: 800; cursor: pointer; }
+.refreshButton { padding: .5rem .78rem; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-base); }
+.refreshButton:hover, .selectAll:hover { border-color: var(--accent); color: var(--accent); }
+.refreshButton:disabled, .selectAll:disabled, .actionDock button:disabled, .confirmActions button:disabled { cursor: not-allowed; opacity: .52; }
+.spin { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.errorBanner, .noticeBanner { padding: .72rem .85rem; border: 1px solid; border-radius: var(--radius-md); font-size: .82rem; }
+.errorBanner { border-color: color-mix(in oklch, hsl(var(--accent-danger)) 38%, transparent); background: var(--danger-soft); color: hsl(var(--accent-danger)); }
+.noticeBanner { border-color: color-mix(in oklch, hsl(var(--accent-success)) 35%, transparent); background: var(--success-soft); color: hsl(var(--accent-success)); }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-md); }
+.metric { display: flex; flex-direction: column; gap: .45rem; padding: var(--space-lg); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface); }
+.metric span { display: flex; align-items: center; gap: .45rem; color: var(--text-soft); font-size: .75rem; }
+.metric span svg { color: var(--accent); }
+.metric strong { font: 800 1.7rem var(--font-mono, monospace); }
+.openPanel, .demandPanel, .confirmPanel { padding: var(--space-lg); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface); }
+.sectionHeader h2 { margin: .2rem 0 0; font-size: 1.08rem; }
+.countBadge { min-width: 2.2rem; padding: .25rem .55rem; border-radius: var(--radius-full); background: var(--accent-soft); color: var(--accent); text-align: center; font: 800 .75rem var(--font-mono, monospace); }
+.appointmentGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .75rem; margin-top: 1rem; }
+.appointmentCard { display: flex; min-width: 0; flex-direction: column; gap: .5rem; padding: .85rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-muted); }
+.appointmentCard > div { display: flex; align-items: center; gap: .55rem; }
+.appointmentCard strong { overflow: hidden; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.appointmentCard time { font-size: .76rem; font-weight: 800; }
+.appointmentCard small { color: var(--text-soft); font-size: .66rem; }
+.modeBadge { display: inline-flex; align-items: center; gap: .25rem; padding: .2rem .42rem; border-radius: var(--radius-full); background: var(--warning-soft); color: hsl(var(--accent-warning)); font-size: .61rem; font-weight: 800; white-space: nowrap; }
+.modeBadge[data-online='true'] { background: var(--success-soft); color: hsl(var(--accent-success)); }
+.filters { flex-wrap: wrap; margin: 1rem 0; padding: .7rem; border-block: 1px solid var(--border-subtle); }
+.searchBox { display: flex; min-width: min(100%, 280px); flex: 1; align-items: center; gap: .45rem; padding: 0 .65rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-muted); color: var(--text-soft); }
+.searchBox input { width: 100%; min-height: 40px; border: 0; outline: 0; background: transparent; color: var(--text-strong); font: inherit; }
+.searchBox button { display: inline-grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-soft); cursor: pointer; }
+.filterSelect { display: flex; align-items: center; gap: .5rem; color: var(--text-soft); font-size: .7rem; }
+.filterSelect select { min-height: 40px; max-width: 220px; padding: .35rem .6rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-muted); color: var(--text-base); }
+.selectAll { padding: .45rem .7rem; border: 1px solid var(--border-strong); background: transparent; color: var(--text-base); font-size: .72rem; }
+.peopleList { display: flex; flex-direction: column; }
+.personRow { position: relative; display: grid; grid-template-columns: 22px minmax(140px, .8fr) minmax(220px, 1.5fr) auto; align-items: center; gap: .85rem; padding: .8rem .4rem; border-bottom: 1px solid var(--border-subtle); cursor: pointer; }
+.personRow:last-child { border-bottom: 0; }
+.personRow:hover, .personRow[data-selected='true'] { background: var(--surface-muted); }
+.personRow[data-selected='true'] { box-shadow: inset -2px 0 var(--accent); }
+.personRow > input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.customCheck { display: inline-grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--border-strong); border-radius: 5px; color: transparent; }
+.personRow input:checked + .customCheck { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.personRow input:focus-visible + .customCheck { box-shadow: var(--focus-ring); }
+.personIdentity, .requestText { display: flex; min-width: 0; flex-direction: column; gap: .2rem; }
+.personIdentity strong { overflow: hidden; font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
+.personIdentity span, .personRow time { color: var(--text-soft); font-size: .64rem; }
+.requestText b { color: var(--accent); font-size: .68rem; }
+.requestText p { overflow: hidden; margin: 0; color: var(--text-base); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.personRow time { white-space: nowrap; }
+.empty { margin-top: 1rem; padding: 1.2rem; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); background: var(--surface-muted); color: var(--text-soft); text-align: center; font-size: .78rem; }
+.actionDock { position: sticky; z-index: 20; bottom: 1rem; padding: .8rem 1rem; border: 1px solid color-mix(in oklch, var(--accent) 45%, var(--border-subtle)); border-radius: var(--radius-lg); background: color-mix(in oklch, var(--surface-raised) 94%, transparent); box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); }
+.actionDock > div { display: flex; flex-direction: column; gap: .18rem; }
+.actionDock strong { font-size: .82rem; }.actionDock span { color: var(--text-soft); font-size: .67rem; }
+.actionDock button, .sendButton { padding: .55rem .85rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); }
+.confirmPanel { position: fixed; z-index: 40; right: 50%; bottom: 1.25rem; width: min(620px, calc(100vw - 2rem)); transform: translateX(50%); box-shadow: var(--shadow-lg); }
+.confirmPanel > div:first-child { justify-content: flex-start; align-items: flex-start; }
+.confirmIcon { display: inline-grid; flex: 0 0 42px; height: 42px; place-items: center; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--accent); }
+.confirmPanel h2 { margin: 0 0 .25rem; font-size: 1rem; }.confirmPanel p { margin: 0; color: var(--text-soft); font-size: .75rem; line-height: 1.7; }
+.confirmActions { justify-content: flex-end !important; margin-top: 1rem; }
+.confirmActions button { padding: .5rem .8rem; }
+.cancelButton { border: 1px solid var(--border-strong); background: transparent; color: var(--text-base); }
+.skeletonHeader, .skeletonMetrics, .skeletonPanel { border-radius: var(--radius-lg); background: linear-gradient(90deg, var(--surface-muted), var(--surface-raised), var(--surface-muted)); background-size: 220% 100%; animation: shimmer 1.4s infinite; }
+.skeletonHeader { height: 78px; }.skeletonMetrics { height: 105px; }.skeletonPanel { height: 230px; }
+@keyframes shimmer { to { background-position: -220% 0; } }
+@media (max-width: 760px) {
+  .metrics { grid-template-columns: 1fr; gap: .65rem; }.metric { padding: .85rem; flex-direction: row; align-items: center; justify-content: space-between; }.metric strong { font-size: 1.3rem; }
+  .openPanel, .demandPanel { padding: .9rem; }.appointmentGrid { grid-template-columns: 1fr; }
+  .filters { align-items: stretch; }.filterSelect { justify-content: space-between; width: 100%; }.filterSelect select { flex: 1; }
+  .selectAll { width: 100%; }.personRow { grid-template-columns: 22px 1fr auto; gap: .6rem; }.requestText { grid-column: 2 / -1; }.personRow time { grid-column: 3; grid-row: 1; }
+  .actionDock { align-items: stretch; flex-direction: column; }.actionDock button { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .spin, .skeletonHeader, .skeletonMetrics, .skeletonPanel { animation: none; } }

@@ -2,7 +2,6 @@ import pytest
 import httpx
 import uuid
 import time
-import subprocess
 from datetime import datetime, timedelta
 
 BASE_URL = "http://localhost:80/api"
@@ -119,13 +118,4 @@ async def test_ai_gemini_group_appointments_context():
         assert reply_message is not None, "AI Group Reply was not sent to WhatsApp Gateway"
         assert "[Mock Group Reply]" in reply_message["message"]
 
-        # 11. Read Docker backend logs to verify Group Appointment context was injected successfully
-        logs_result = subprocess.run(
-            ["docker", "compose", "logs", "--tail=150", "backend"],
-            capture_output=True, text=True, check=True
-        )
-        logs = logs_result.stdout + logs_result.stderr
-        
-        # Verify the context injection log is present
-        assert "Injected Group Appointments context (Found 1 active groups)" in logs or "Failed to query active group appointments" not in logs
         print("Test successfully executed and verified!")

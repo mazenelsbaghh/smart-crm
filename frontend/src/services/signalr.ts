@@ -16,7 +16,7 @@ export class SignalRService {
   private onPresenceCallback?: (agentId: string, status: 'Online' | 'Offline') => void;
   private onAITypingCallback?: (convId: string, isTyping: boolean, estimatedSeconds?: number, stage?: 'generating' | 'typing') => void;
   private onAITypingErrorCallback?: (convId: string, message: string) => void;
-  private onCustomerCallback?: (customer: any) => void;
+  private onCustomerCallback?: (customer: unknown) => void;
 
   constructor(projectId: string, token: string) {
     this.projectId = projectId;
@@ -82,7 +82,7 @@ export class SignalRService {
       }
     });
 
-    this.connection.on('CustomerUpdated', (customer: any) => {
+    this.connection.on('CustomerUpdated', (customer: unknown) => {
       if (this.onCustomerCallback) {
         this.onCustomerCallback(customer);
       }
@@ -156,7 +156,7 @@ export class SignalRService {
     this.onAITypingErrorCallback = callback;
   }
 
-  public registerOnCustomerUpdate(callback: (customer: any) => void) {
+  public registerOnCustomerUpdate(callback: (customer: unknown) => void) {
     this.onCustomerCallback = callback;
   }
 }

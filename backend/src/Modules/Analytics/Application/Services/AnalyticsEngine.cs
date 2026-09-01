@@ -66,15 +66,16 @@ namespace Modules.Analytics.Application.Services
                     .Select(x => x.m)
                     .ToListAsync();
 
-                var aiMessages = messages.Count(m => m.Direction != null && m.Direction.Equals("Outgoing", StringComparison.OrdinalIgnoreCase));
+                var outgoingMessages = messages.Count(m => m.Direction != null && m.Direction.Equals("Outgoing", StringComparison.OrdinalIgnoreCase));
                 var totalMessages = messages.Count;
 
-                metricValue = totalMessages > 0 ? ((decimal)aiMessages / totalMessages) * 100 : 100;
+                metricValue = 0;
                 metadata = new
                 {
                     totalMessages,
-                    aiMessages,
-                    handoffRate = 0.15 // mock/default static handoff rate for analytics logs
+                    outgoingMessages,
+                    accuracyAvailable = false,
+                    unavailableReason = "Message records do not identify the reply author or contain reviewed accuracy labels."
                 };
             }
             else if (string.Equals(metricType, "Team_Performance", StringComparison.OrdinalIgnoreCase))
@@ -85,10 +86,12 @@ namespace Modules.Analytics.Application.Services
                     .Where(c => c.ProjectId == projectId && c.UpdatedAt >= startOfDay && c.UpdatedAt <= endOfDay)
                     .ToListAsync();
 
-                metricValue = conversations.Count > 0 ? 45.2m : 0.0m; // Average response time in seconds
+                metricValue = 0m;
                 metadata = new
                 {
                     totalConversations = conversations.Count,
+                    responseTimeAvailable = false,
+                    unavailableReason = "Legacy snapshots do not retain paired incoming and outgoing message timestamps.",
                     slaBreaches = conversations.Count(c => c.Status.ToString() == "Open" && (DateTime.UtcNow - c.UpdatedAt).TotalMinutes > 30)
                 };
             }

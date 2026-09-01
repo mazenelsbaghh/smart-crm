@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../features/auth/bloc/auth_bloc.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
 class AppShell extends StatelessWidget {
-  final StatefulNavigationShell navigationShell;
+  const AppShell({super.key, required this.navigationShell});
 
-  const AppShell({
-    Key? key,
-    required this.navigationShell,
-  }) : super(key: key ?? const ValueKey<String>('AppShell'));
+  final StatefulNavigationShell navigationShell;
 
   void _onTap(BuildContext context, int index) {
     navigationShell.goBranch(
@@ -20,35 +20,34 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
-    // Check if tablet or landscape for adaptive sidebar layout
     final isWide = MediaQuery.of(context).size.width >= 768;
+    final authState = context.watch<AuthBloc>().state;
+    final canManage =
+        authState is AuthAuthenticated && authState.user.canManageProject;
+    final visibleBranches = canManage
+        ? const [0, 1, 2, 3, 4]
+        : const [0, 1, 2, 3];
+    final visibleIndex = visibleBranches.indexOf(navigationShell.currentIndex);
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Row(
         children: [
           if (isWide) ...[
-            _buildSidebar(context),
+            _buildSidebar(context, canManage: canManage),
             const VerticalDivider(
               width: 1,
               thickness: 1,
               color: AppColors.border,
             ),
           ],
-          Expanded(
-            child: navigationShell,
-          ),
+          Expanded(child: navigationShell),
         ],
       ),
       bottomNavigationBar: isWide
           ? null
-          : Theme(
-              data: theme.copyWith(
-                splashColor: Colors.transparent,
-                highlightColor: Colors.transparent,
-              ),
+          : SafeArea(
+              top: false,
               child: Container(
                 decoration: const BoxDecoration(
                   border: Border(
@@ -56,9 +55,9 @@ class AppShell extends StatelessWidget {
                   ),
                 ),
                 child: BottomNavigationBar(
-                  currentIndex: navigationShell.currentIndex,
-                  onTap: (index) => _onTap(context, index),
-                  backgroundColor: AppColors.background,
+                  currentIndex: visibleIndex < 0 ? 0 : visibleIndex,
+                  onTap: (index) => _onTap(context, visibleBranches[index]),
+                  backgroundColor: AppColors.surface,
                   selectedItemColor: AppColors.primary,
                   unselectedItemColor: AppColors.textMuted,
                   selectedLabelStyle: AppTypography.label.copyWith(
@@ -68,7 +67,7 @@ class AppShell extends StatelessWidget {
                   unselectedLabelStyle: AppTypography.label,
                   type: BottomNavigationBarType.fixed,
                   elevation: 0,
-                  items: const [
+                  items: [
                     BottomNavigationBarItem(
                       icon: Icon(Icons.dashboard_outlined),
                       activeIcon: Icon(Icons.dashboard),
@@ -89,11 +88,12 @@ class AppShell extends StatelessWidget {
                       activeIcon: Icon(Icons.calendar_month),
                       label: 'المواعيد',
                     ),
-                    BottomNavigationBarItem(
-                      icon: Icon(Icons.settings_outlined),
-                      activeIcon: Icon(Icons.settings),
-                      label: 'الإعدادات',
-                    ),
+                    if (canManage)
+                      const BottomNavigationBarItem(
+                        icon: Icon(Icons.settings_outlined),
+                        activeIcon: Icon(Icons.settings),
+                        label: 'الإعدادات',
+                      ),
                   ],
                 ),
               ),
@@ -101,7 +101,7 @@ class AppShell extends StatelessWidget {
     );
   }
 
-  Widget _buildSidebar(BuildContext context) {
+  Widget _buildSidebar(BuildContext context, {required bool canManage}) {
     return Container(
       width: 250,
       color: AppColors.surface,
@@ -115,7 +115,7 @@ class AppShell extends StatelessWidget {
             ),
             child: Center(
               child: Text(
-                'SMART CRM',
+                'سمارت كاستمر',
                 style: AppTypography.headline.copyWith(
                   color: AppColors.primary,
                   letterSpacing: 2,
@@ -151,13 +151,14 @@ class AppShell extends StatelessWidget {
             label: 'حجز المواعيد',
             index: 3,
           ),
-          _buildSidebarItem(
-            context,
-            icon: Icons.settings_outlined,
-            activeIcon: Icons.settings,
-            label: 'إعدادات النظام',
-            index: 4,
-          ),
+          if (canManage)
+            _buildSidebarItem(
+              context,
+              icon: Icons.settings_outlined,
+              activeIcon: Icons.settings,
+              label: 'إعدادات النظام',
+              index: 4,
+            ),
         ],
       ),
     );

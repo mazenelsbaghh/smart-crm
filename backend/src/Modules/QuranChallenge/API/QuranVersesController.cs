@@ -47,6 +47,7 @@ namespace Modules.QuranChallenge.API
                 text,
                 words,
                 audioUrl,
+                source = "Al Quran Cloud / quran-simple",
                 selectableWordIndexes = Enumerable.Range(1, words.Length - 2)
             });
         }
