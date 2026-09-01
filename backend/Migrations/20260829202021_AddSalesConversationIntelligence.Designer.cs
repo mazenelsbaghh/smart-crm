@@ -13,7 +13,7 @@ using Shared.Infrastructure;
 namespace backend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260829194015_AddSalesConversationIntelligence")]
+    [Migration("20260829202021_AddSalesConversationIntelligence")]
     partial class AddSalesConversationIntelligence
     {
         /// <inheritdoc />
