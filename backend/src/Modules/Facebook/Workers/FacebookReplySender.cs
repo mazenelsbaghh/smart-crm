@@ -193,6 +193,7 @@ namespace Modules.Facebook.Workers
                         ConversationId = conversationId.Value,
                         ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = part,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow
@@ -376,6 +377,7 @@ namespace Modules.Facebook.Workers
                     ConversationId = commentConvId.Value,
                     ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
                     Direction = "Outgoing",
+                    SenderType = "AI",
                     Content = publicReply,
                     MessageType = "Text",
                     FacebookPostId = postId,
@@ -400,6 +402,7 @@ namespace Modules.Facebook.Workers
                         ConversationId = commentConvId.Value,
                         ExternalMessageId = $"msg_ai_react_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = $"[تفاعل] {reactionEmoji}",
                         MessageType = "Reaction",
                         Timestamp = DateTime.UtcNow
@@ -465,6 +468,7 @@ namespace Modules.Facebook.Workers
                         ConversationId = messengerConv.Id,
                         ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = @event.Content,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow

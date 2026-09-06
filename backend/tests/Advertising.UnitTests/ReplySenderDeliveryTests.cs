@@ -125,6 +125,7 @@ public sealed class ReplySenderDeliveryTests
             .Where(message => message.Direction == "Outgoing")
             .ToListAsync());
         Assert.Equal("الجزء الأول", sent.Content);
+        Assert.Equal("AI", sent.SenderType);
 
         var deferred = await verificationDb.FollowUps
             .OrderBy(followUp => followUp.DueDate)

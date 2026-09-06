@@ -1,3 +1,5 @@
+import { recentOutboundMessages } from './recent-outbound-messages.js';
+import { inboundMediaAttachment, uploadInboundMedia } from './inbound-media.js';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { randomUUID } from 'node:crypto';
 import path from 'path';
@@ -111,34 +113,17 @@ export function hasCredentials(projectId, whatsappAccountId) {
     return true;
 }
 
-async function downloadAndUploadMedia(projectId, messageKey, mInfo, type) {
+async function downloadAndUploadMedia(projectId, messageKey, mInfo) {
+    const attachment = inboundMediaAttachment(mInfo, messageKey.id);
+    if (!attachment) return null;
     try {
-        console.log(`[baileys-manager] Downloading media of type ${type}...`);
-        const messagePart = type === 'audio' ? mInfo.audioMessage : mInfo.imageMessage;
-        if (!messagePart) return null;
-
-        const stream = await downloadContentFromMessage(messagePart, type);
-        let buffer = Buffer.from([]);
-        for await (const chunk of stream) {
-            buffer = Buffer.concat([buffer, chunk]);
-        }
-
-        console.log(`[baileys-manager] Media downloaded. Size: ${buffer.length} bytes. Uploading to backend...`);
-        
-        const form = new FormData();
-        const extension = type === 'audio' ? 'ogg' : 'jpg';
-        const contentType = type === 'audio' ? 'audio/ogg' : 'image/jpeg';
-        const fileName = `media_${messageKey.id}.${extension}`;
-        
-        const fileBlob = new Blob([buffer], { type: contentType });
-        form.append('file', fileBlob, fileName);
-
-        const response = await backendClient.uploadMedia(projectId, form);
-
-        console.log(`[baileys-manager] Media uploaded successfully. AssetId: ${response.data.id}`);
-        return response.data.id;
-    } catch (err) {
-        console.error(`[baileys-manager] Failed to download or upload media: ${err.message}`);
+        return await uploadInboundMedia(attachment, {
+            download: downloadContentFromMessage,
+            upload: form => backendClient.uploadMedia(projectId, form)
+        });
+    } catch (error) {
+        // Retain the message with its media type so the inbox can explicitly report the unavailable attachment.
+        console.error(`[baileys-manager] Failed to store inbound media: ${error.message}`);
         return null;
     }
 }
@@ -417,7 +402,7 @@ async function initializeSession(identity, key) {
 
                     const { sender, senderJid, senderLid } = resolveIncomingSender(msg.key);
                     let content = '';
-                    let messageType = 'Text';
+                    let messageType = inboundMediaAttachment(mInfo, msg.key.id)?.messageType ?? 'Text';
 
                     if (mInfo.conversation) {
                         content = mInfo.conversation;
@@ -427,16 +412,12 @@ async function initializeSession(identity, key) {
                         messageType = 'Text';
                     } else if (mInfo.imageMessage) {
                         content = mInfo.imageMessage.caption || '[Image]';
-                        messageType = 'Image';
                     } else if (mInfo.audioMessage) {
                         content = '[Voice Note]';
-                        messageType = 'Voice';
                     } else if (mInfo.videoMessage) {
                         content = mInfo.videoMessage.caption || '[Video]';
-                        messageType = 'Text';
                     } else if (mInfo.documentMessage) {
-                        content = mInfo.documentMessage.title || mInfo.documentMessage.caption || '[Document]';
-                        messageType = 'Text';
+                        content = mInfo.documentMessage.fileName || mInfo.documentMessage.title || mInfo.documentMessage.caption || '[Document]';
                     } else if (mInfo.buttonsResponseMessage) {
                         content = mInfo.buttonsResponseMessage.selectedDisplayText || mInfo.buttonsResponseMessage.selectedButtonId || '';
                         messageType = 'Text';
@@ -453,6 +434,14 @@ async function initializeSession(identity, key) {
                     } else {
                         // Fallback text extraction
                         content = mInfo.conversation || '';
+                    }
+
+                    const senderAliases = new Set([remoteJid, senderJid, senderLid].filter(Boolean));
+                    const isOutboundEcho = msg.key.id && [...senderAliases]
+                        .some(senderAlias => recentOutboundMessages.consumeEcho(identity, senderAlias, msg.key.id));
+                    if (isOutboundEcho) {
+                        console.warn(`[baileys-manager] Suppressed outbound echo ${msg.key.id} from ${remoteJid}.`);
+                        continue;
                     }
 
                     const timestamp = msg.messageTimestamp;
@@ -474,10 +463,9 @@ async function initializeSession(identity, key) {
                     };
                     await inboundMessageOutbox.captureAndForward(inboundMessage, async () => {
                         let assetId = null;
-                        if (messageType === 'Image') {
-                            assetId = await downloadAndUploadMedia(identity.projectId, msg.key, mInfo, 'image');
-                        } else if (messageType === 'Voice') {
-                            assetId = await downloadAndUploadMedia(identity.projectId, msg.key, mInfo, 'audio');
+                        const attachment = inboundMediaAttachment(mInfo, msg.key.id);
+                        if (attachment) {
+                            assetId = await downloadAndUploadMedia(identity.projectId, msg.key, mInfo);
                         }
 
                         console.log(`Forwarding durable message from ${sender} (type=${messageType}) to backend webhook: "${content.substring(0, 50)}..."`);
@@ -596,6 +584,7 @@ export async function sendMessage(projectId, to, text, buttons, whatsappAccountI
             error);
     }
     const messageId = providerMessageId(sent, sock, 'send');
+    recentOutboundMessages.record(identity, jid, messageId);
     console.log(`[baileys-manager] sock.sendMessage success. returned messageId=${messageId}`);
     return { messageId, status: 'Sent' };
 }

@@ -197,8 +197,9 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         await using var verificationDb = postgres.CreateContext(Tenant(projectId));
         var customerAfterRetry = await verificationDb.Customers.SingleAsync();
         var bookingAfterRetry = await verificationDb.GroupAppointmentBookings.SingleAsync();
-        Assert.Equal("201012345678", customerAfterRetry.PhoneNumber);
-        Assert.Equal("201012345678", bookingAfterRetry.CustomerPhone);
+        // Anonymous retries resolve canonical identity without rewriting the existing profile.
+        Assert.Equal("٠١٠ ١٢٣٤ ٥٦٧٨", customerAfterRetry.PhoneNumber);
+        Assert.Equal("٠١٠ (١٢٣٤) ٥٦٧٨", bookingAfterRetry.CustomerPhone);
         Assert.Equal(customerAfterRetry.Id, bookingAfterRetry.CustomerId);
         Assert.Empty(await verificationDb.NotificationAlerts.ToListAsync());
     }

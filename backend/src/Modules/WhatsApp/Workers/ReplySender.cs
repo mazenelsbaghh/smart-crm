@@ -328,6 +328,7 @@ namespace Modules.WhatsApp.Workers
                                             ConversationId = conversation.Id,
                                             ExternalMessageId = externalMessageId,
                                             Direction = "Outgoing",
+                                            SenderType = "AI",
                                             Content = chunk,
                                             MessageType = "Text",
                                             Timestamp = DateTime.UtcNow

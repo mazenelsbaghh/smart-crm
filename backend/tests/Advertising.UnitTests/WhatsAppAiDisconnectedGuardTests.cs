@@ -97,7 +97,6 @@ public sealed class WhatsAppAiDisconnectedGuardTests
             publishedEvents,
             RejectingProxy.Create<IConnectionMultiplexer>(),
             CreateGateway("Connected", "201000000000", DateTimeOffset.UtcNow.AddMinutes(-1)),
-            new WhatsAppCustomerMergeService(db),
             NullLogger<WhatsAppLidContactRecoveryJob>.Instance);
 
         await job.ExecuteAsync();

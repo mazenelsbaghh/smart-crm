@@ -174,6 +174,12 @@ namespace Modules.CRM.Services
                 var deliveryAttempted = false;
                 try
                 {
+                    if (!await new GroupBookingFollowUpLifecycle(dbContext).CanDispatchAsync(followUp))
+                    {
+                        followUp.Status = "Cancelled";
+                        await dbContext.SaveChangesAsync();
+                        continue;
+                    }
                     var customer = await dbContext.Customers
                         .IgnoreQueryFilters()
                         .FirstOrDefaultAsync(c => c.Id == followUp.CustomerId);
@@ -499,6 +505,7 @@ namespace Modules.CRM.Services
                                 ConversationId = conversation.Id,
                                 ExternalMessageId = $"msg_fb_fu_{Guid.NewGuid():N}",
                                 Direction = "Outgoing",
+                                SenderType = "System",
                                 Content = messageContent,
                                 MessageType = "Text",
                                 Timestamp = DateTime.UtcNow
@@ -512,7 +519,7 @@ namespace Modules.CRM.Services
                             {
                                 id = message.Id,
                                 conversationId = message.ConversationId,
-                                senderType = "Agent",
+                                senderType = "System",
                                 content = message.Content,
                                 createdAt = message.Timestamp.ToString("o"),
                                 status = "Sent",
@@ -553,6 +560,12 @@ namespace Modules.CRM.Services
                         };
 
                         var jsonPayload = JsonSerializer.Serialize(payload);
+                        if (!await new GroupBookingFollowUpLifecycle(dbContext).CanDispatchAsync(followUp))
+                        {
+                            followUp.Status = "Cancelled";
+                            await dbContext.SaveChangesAsync();
+                            continue;
+                        }
                         deliveryAttempted = true;
                         var response = await Shared.Infrastructure.GatewayRetryHelper.PostOnceAsync(httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
                         var responseBody = await response.Content.ReadAsStringAsync();
@@ -604,6 +617,7 @@ namespace Modules.CRM.Services
                                     ConversationId = conversation.Id,
                                     ExternalMessageId = providerMessageId,
                                     Direction = "Outgoing",
+                                    SenderType = "System",
                                     Content = messageContent,
                                     MessageType = "Text",
                                     Timestamp = sentAt
@@ -618,7 +632,7 @@ namespace Modules.CRM.Services
                             {
                                 id = message.Id,
                                 conversationId = message.ConversationId,
-                                senderType = "Agent",
+                                senderType = "System",
                                 content = message.Content,
                                 createdAt = message.Timestamp.ToString("o"),
                                 status = "Sent",
@@ -938,7 +952,7 @@ namespace Modules.CRM.Services
                             .Replace("{waveName}", appointment.Name)
                             .Replace("{groupName}", appointment.Name);
 
-                        var reminderId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, "invite");
+                        var reminderId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, $"invite:{appointment.DateTime.Ticks}");
                         var reminderExists = await dbContext.FollowUps.IgnoreQueryFilters()
                             .AnyAsync(followUp => followUp.Id == reminderId
                                 || (followUp.ProjectId == appointment.ProjectId
@@ -951,6 +965,8 @@ namespace Modules.CRM.Services
                             Id = reminderId,
                             ProjectId = appointment.ProjectId,
                             CustomerId = booking.CustomerId,
+                            GroupAppointmentId = appointment.Id,
+                            GroupAppointmentBookingId = booking.Id,
                             WhatsAppAccountId = whatsAppAccountId,
                             Channel = "WhatsApp",
                             DueDate = DateTime.UtcNow,
@@ -962,7 +978,7 @@ namespace Modules.CRM.Services
                         });
 
                         // Schedule Post-Session 2-day FollowUp
-                        var postSessionId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, "post");
+                        var postSessionId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, $"post:{appointment.DateTime.Ticks}");
                         var postSessionExists = await dbContext.FollowUps.IgnoreQueryFilters()
                             .AnyAsync(followUp => followUp.Id == postSessionId
                                 || (followUp.ProjectId == appointment.ProjectId
@@ -975,6 +991,8 @@ namespace Modules.CRM.Services
                             Id = postSessionId,
                             ProjectId = appointment.ProjectId,
                             CustomerId = booking.CustomerId,
+                            GroupAppointmentId = appointment.Id,
+                            GroupAppointmentBookingId = booking.Id,
                             WhatsAppAccountId = whatsAppAccountId,
                             Channel = "WhatsApp",
                             DueDate = appointment.DateTime.AddDays(2),

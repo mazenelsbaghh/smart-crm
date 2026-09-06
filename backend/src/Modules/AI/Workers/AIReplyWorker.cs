@@ -1111,6 +1111,8 @@ namespace Modules.AI.Workers
                         var groupName = existingBooking.GroupAppointment?.Name ?? "المجموعة";
                         var groupId = existingBooking.GroupAppointmentId;
 
+                        await new GroupBookingFollowUpLifecycle(dbContext)
+                            .CancelForBookingAsync(existingBooking, existingBooking.GroupAppointment);
                         dbContext.GroupAppointmentBookings.Remove(existingBooking);
                         
                         // Update customer notes to document the cancellation
@@ -1487,6 +1489,7 @@ namespace Modules.AI.Workers
                 ConversationId = reaction.Conversation.Id,
                 ExternalMessageId = externalMessageId,
                 Direction = "Outgoing",
+                SenderType = "AI",
                 Content = $"[تفاعل] {reaction.Reaction}",
                 MessageType = "Reaction",
                 Timestamp = DateTime.UtcNow
@@ -1720,6 +1723,7 @@ namespace Modules.AI.Workers
                         ConversationId = whatsAppConversation.Id,
                         ExternalMessageId = providerMessageId,
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = whatsAppTransition.Message,
                         MessageType = "Text",
                         Timestamp = sentAt
@@ -1756,6 +1760,7 @@ namespace Modules.AI.Workers
                         ConversationId = messengerConvo.Id,
                         ExternalMessageId = $"msg_fb_fu_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = successMsg,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow
@@ -1840,6 +1845,7 @@ namespace Modules.AI.Workers
                         ConversationId = messengerConvo.Id,
                         ExternalMessageId = $"msg_fb_fu_err_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = failureMsg,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow

@@ -241,7 +241,9 @@ public sealed class GroupAppointmentsManualBookingTests
         });
 
         Assert.IsType<OkObjectResult>(firstResponse);
-        Assert.IsType<OkObjectResult>(retryResponse);
+        var retryBody = Body(Assert.IsType<OkObjectResult>(retryResponse));
+        Assert.False(retryBody.TryGetProperty("bookings", out _));
+        Assert.Equal(Body(Assert.IsType<OkObjectResult>(firstResponse)).GetProperty("bookingId").GetGuid(), retryBody.GetProperty("bookingId").GetGuid());
         var customer = await db.Customers.SingleAsync();
         var booking = await db.GroupAppointmentBookings.SingleAsync();
         Assert.Equal("201012345678", customer.PhoneNumber);
@@ -252,7 +254,7 @@ public sealed class GroupAppointmentsManualBookingTests
     }
 
     [Fact]
-    public async Task Public_booking_transfers_existing_booking_without_losing_payment_status()
+    public async Task Anonymous_public_booking_cannot_transfer_or_rename_an_existing_paid_booking()
     {
         var projectId = Guid.NewGuid();
         var (controller, db) = CreateController(projectId, "Owner", projectId);
@@ -271,6 +273,7 @@ public sealed class GroupAppointmentsManualBookingTests
         });
         await db.SaveChangesAsync();
 
+        controller.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity());
         var response = await controller.BookGroupSlot(new PublicBookRequest
         {
             ProjectId = projectId,
@@ -279,13 +282,14 @@ public sealed class GroupAppointmentsManualBookingTests
             CustomerPhone = "010 888 777 66"
         });
 
-        Assert.IsType<OkObjectResult>(response);
+        Assert.IsType<ConflictObjectResult>(response);
         db.ChangeTracker.Clear();
         var persistedBooking = Assert.Single(await db.GroupAppointmentBookings.AsNoTracking().ToListAsync());
-        Assert.Equal(targetGroup.Id, persistedBooking.GroupAppointmentId);
+        Assert.Equal(originalGroup.Id, persistedBooking.GroupAppointmentId);
         Assert.True(persistedBooking.IsPaid);
-        Assert.False(persistedBooking.IsAttended);
-        Assert.Equal("201088877766", persistedBooking.CustomerPhone);
+        Assert.True(persistedBooking.IsAttended);
+        Assert.Equal("اسم قديم", (await db.Customers.SingleAsync()).Name);
+        Assert.Equal("+201088877766", persistedBooking.CustomerPhone);
         Assert.Empty(await db.IntegrationOutboxMessages.AsNoTracking().ToListAsync());
     }
 
@@ -387,6 +391,71 @@ public sealed class GroupAppointmentsManualBookingTests
         Assert.Single(await db.GroupAppointmentBookings.AsNoTracking().ToListAsync());
         Assert.Contains("فاضل ٧ أماكن", reply, StringComparison.Ordinal);
         Assert.DoesNotContain("١٩", reply, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("delete-booking")]
+    [InlineData("delete-group")]
+    [InlineData("reschedule")]
+    [InlineData("deactivate")]
+    public async Task Booking_lifecycle_cancels_related_reminders_and_preserves_unrelated_followups(string operation)
+    {
+        var projectId = Guid.NewGuid();
+        var (controller, db) = CreateController(projectId, "Owner", projectId);
+        await using var ownedDb = db;
+        var group = ActiveGroup(projectId, 3);
+        var customer = Customer(projectId, "201012345678", "عميل");
+        var booking = Booking(projectId, group.Id, customer, customer.PhoneNumber);
+        var reminder = new FollowUp { ProjectId = projectId, CustomerId = customer.Id,
+            GroupAppointmentBookingId = booking.Id, GroupAppointmentId = group.Id,
+            AppointmentTime = group.DateTime, DueDate = group.DateTime.AddHours(-1), Notes = "تذكير الحجز" };
+        var unrelated = new FollowUp { ProjectId = projectId, CustomerId = customer.Id,
+            DueDate = group.DateTime, Notes = "متابعة مستقلة" };
+        db.AddRange(group, customer, booking, reminder, unrelated);
+        await db.SaveChangesAsync();
+
+        _ = operation switch
+        {
+            "delete-booking" => await controller.DeleteBooking(booking.Id),
+            "delete-group" => await controller.DeleteGroup(group.Id),
+            "reschedule" => await controller.UpdateGroup(group.Id, new UpdateGroupRequest { DateTime = group.DateTime.AddDays(1) }),
+            _ => await controller.ToggleGroup(group.Id)
+        };
+
+        Assert.Equal("Cancelled", reminder.Status);
+        Assert.Equal("Pending", unrelated.Status);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_booking_contact_number_does_not_replace_a_provisional_WhatsApp_identity(bool alreadyBookedByAnotherCustomer)
+    {
+        var projectId = Guid.NewGuid();
+        var (_, db) = CreateController(projectId, "Owner", projectId);
+        await using var ownedDb = db;
+        var group = ActiveGroup(projectId, 3);
+        var requester = Customer(projectId, "123456789@lid", "صاحب الشات");
+        db.AddRange(group, requester);
+        if (alreadyBookedByAnotherCustomer)
+        {
+            var other = Customer(projectId, "201012345678", "عميل آخر");
+            db.AddRange(other, Booking(projectId, group.Id, other, other.PhoneNumber));
+        }
+        await db.SaveChangesAsync();
+
+        var result = await new GroupBookingCoordinator(db).BookAsync(new GroupBookingCommand
+        {
+            ProjectId = projectId, GroupId = group.Id, KnownCustomerId = requester.Id,
+            CustomerName = requester.Name, CustomerPhone = "201012345678",
+            Origin = GroupBookingOrigin.Ai, ExistingBookingPolicy = ExistingGroupBookingPolicy.Transfer
+        });
+
+        Assert.Equal("123456789@lid", requester.PhoneNumber);
+        Assert.Equal(alreadyBookedByAnotherCustomer ? GroupBookingStatus.BookingAlreadyExists : GroupBookingStatus.Created, result.Status);
+        var booking = await db.GroupAppointmentBookings.SingleAsync();
+        if (alreadyBookedByAnotherCustomer) Assert.NotEqual(requester.Id, booking.CustomerId);
+        else Assert.Equal(requester.Id, booking.CustomerId);
     }
 
     private static (GroupAppointmentsController Controller, AppDbContext Db) CreateController(

@@ -102,7 +102,8 @@ namespace Modules.Conversations.API
                             && whatsAppAccountId == WhatsAppAccountService.LegacyAccountId(payload.ProjectId))));
             if (duplicate is not null)
             {
-                if (!duplicate.customer.IsBlacklisted
+                if (duplicate.message.Direction == "Incoming"
+                    && !duplicate.customer.IsBlacklisted
                     && duplicate.message.MessageType != "Reaction"
                     && payload.ConnectionOpenedAt.HasValue
                     && WhatsAppConnectionEpoch.Includes(
@@ -123,7 +124,9 @@ namespace Modules.Conversations.API
             var senderLid = !string.IsNullOrWhiteSpace(payload.SenderLid)
                 ? payload.SenderLid.Trim()
                 : normalizedSender.EndsWith("@lid", StringComparison.OrdinalIgnoreCase) ? normalizedSender : null;
-            var sharedContact = WhatsAppSharedContactParser.ExtractOwnContact(payload.Content);
+            // Message text is not proof of phone ownership. Only provider identity may route or merge a customer.
+            var sharedContact = WhatsAppSharedContactParser.ExtractVerifiedSenderContact(
+                payload.Content, normalizedSender);
             var sharedOwnPhone = sharedContact?.PhoneNumber;
             var sharedOwnName = sharedContact?.Name;
 
@@ -133,10 +136,9 @@ namespace Modules.Conversations.API
                 ?? (normalizedSender.EndsWith("@lid", StringComparison.OrdinalIgnoreCase)
                     ? normalizedSender
                     : null);
-            var resolvedPhone = sharedOwnPhone
-                ?? (!normalizedSender.EndsWith("@lid", StringComparison.OrdinalIgnoreCase)
-                    ? normalizedSender
-                    : null);
+            var resolvedPhone = !normalizedSender.EndsWith("@lid", StringComparison.OrdinalIgnoreCase)
+                ? normalizedSender
+                : null;
             var phoneCustomer = resolvedPhone is null
                 ? null
                 : await _customerMerge.ResolveByPhoneAsync(
@@ -595,7 +597,7 @@ namespace Modules.Conversations.API
                 createdAt = message.Timestamp.ToString("o"),
                 status = "Delivered",
                 mediaUrl = (string)null,
-                mediaType = message.MessageType == "Image" || message.MessageType == "Voice" ? message.MessageType : (string)null,
+                mediaType = message.MessageType is "Image" or "Voice" or "Video" or "Document" ? message.MessageType : (string)null,
                 assetId = message.AssetId,
                 transcription = message.Transcription
             });

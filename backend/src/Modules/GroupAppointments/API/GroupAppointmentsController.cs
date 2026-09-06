@@ -257,6 +257,9 @@ namespace Modules.GroupAppointments.API
                 group.WhatsAppAccountId = whatsAppAccount.Id;
             }
 
+            if ((request.DateTime.HasValue && request.DateTime.Value != group.DateTime)
+                || request.IsActive == false)
+                await new GroupBookingFollowUpLifecycle(_context).CancelForGroupAsync(group);
             group.Name = request.Name ?? group.Name;
             if (request.DateTime.HasValue)
             {
@@ -319,6 +322,7 @@ namespace Modules.GroupAppointments.API
             if (group == null) return NotFound();
             if (!_authorization.CanManageProject(User, group.ProjectId)) return Forbid();
 
+            await new GroupBookingFollowUpLifecycle(_context).CancelForGroupAsync(group);
             _context.GroupAppointments.Remove(group);
             await _context.SaveChangesAsync();
 
@@ -333,6 +337,8 @@ namespace Modules.GroupAppointments.API
             if (group == null) return NotFound();
             if (!_authorization.CanManageProject(User, group.ProjectId)) return Forbid();
 
+            if (group.IsActive)
+                await new GroupBookingFollowUpLifecycle(_context).CancelForGroupAsync(group);
             group.IsActive = !group.IsActive;
             _context.Entry(group).State = EntityState.Modified;
             await _context.SaveChangesAsync();
@@ -354,6 +360,7 @@ namespace Modules.GroupAppointments.API
             var groupId = booking.GroupAppointmentId;
             var projectId = booking.ProjectId;
 
+            await new GroupBookingFollowUpLifecycle(_context).CancelForBookingAsync(booking, group);
             _context.GroupAppointmentBookings.Remove(booking);
             await _context.SaveChangesAsync();
 
@@ -618,7 +625,7 @@ namespace Modules.GroupAppointments.API
                 GroupId = request.GroupAppointmentId,
                 CustomerName = customerName,
                 CustomerPhone = cleanPhone,
-                ExistingBookingPolicy = ExistingGroupBookingPolicy.Transfer,
+                ExistingBookingPolicy = ExistingGroupBookingPolicy.Reject,
                 Origin = GroupBookingOrigin.Public,
                 ExpirationPolicy = GroupBookingExpirationPolicy.RejectAfterTwentyFourHours,
                 Timezone = settings.Timezone
@@ -635,16 +642,10 @@ namespace Modules.GroupAppointments.API
             {
                 return BadRequest(new { error = "المجموعة ممتلئة" });
             }
+            if (bookingResult.Status == GroupBookingStatus.BookingAlreadyExists)
+                return Conflict(new { code = "BOOKING_CHANGE_REQUIRES_AUTHORIZATION", error = "لتعديل حجز موجود، تواصل مع فريق خدمة العملاء." });
             if (bookingResult.Status == GroupBookingStatus.AlreadyInGroup)
-            {
-                var currentGroup = await _context.GroupAppointments
-                    .AsNoTracking()
-                    .Include(candidate => candidate.Bookings)
-                    .FirstOrDefaultAsync(
-                        candidate => candidate.ProjectId == request.ProjectId && candidate.Id == request.GroupAppointmentId,
-                        cancellationToken);
-                return Ok(currentGroup ?? bookingResult.Group);
-            }
+                return Ok(new { message = "تم تسجيل طلب الحجز", bookingId = bookingResult.Booking!.Id });
             if (!bookingResult.Succeeded)
             {
                 return BadRequest(new { error = "يرجى إدخال اسم صحيح ورقم هاتف صالح." });

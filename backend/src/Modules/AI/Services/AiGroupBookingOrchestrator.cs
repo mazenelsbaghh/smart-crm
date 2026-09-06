@@ -231,7 +231,9 @@ public sealed class AiGroupBookingOrchestrator(
             CustomerName = candidate.Name,
             CustomerPhone = candidate.Phone,
             KnownCustomerId = candidate.CustomerId,
-            ExistingBookingPolicy = ExistingGroupBookingPolicy.Transfer,
+            ExistingBookingPolicy = candidate.CustomerId.HasValue
+                ? ExistingGroupBookingPolicy.Transfer
+                : ExistingGroupBookingPolicy.Reject,
             Origin = GroupBookingOrigin.Ai,
             ExpirationPolicy = GroupBookingExpirationPolicy.RejectAfterTwentyFourHours,
             Timezone = request.Timezone

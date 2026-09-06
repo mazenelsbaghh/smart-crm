@@ -8,6 +8,8 @@ namespace Modules.CRM.Domain
     {
         public Guid ProjectId { get; set; }
         public Guid CustomerId { get; set; }
+        public Guid? GroupAppointmentId { get; set; }
+        public Guid? GroupAppointmentBookingId { get; set; }
         public Guid? ConversationId { get; set; }
         public Guid? DependsOnFollowUpId { get; set; }
         public Guid? WhatsAppAccountId { get; set; }

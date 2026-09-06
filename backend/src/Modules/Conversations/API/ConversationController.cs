@@ -218,7 +218,8 @@ namespace Modules.Conversations.API
         public async Task<IActionResult> ListMessages(
             Guid conversationId,
             [FromQuery] DateTime? before = null,
-            [FromQuery] int limit = 10)
+            [FromQuery] int limit = 10,
+            [FromQuery] Guid? beforeId = null)
         {
             var projectId = await _context.Conversations
                 .IgnoreQueryFilters()
@@ -235,22 +236,26 @@ namespace Modules.Conversations.API
             if (before.HasValue)
             {
                 var beforeUtc = before.Value.ToUniversalTime();
-                query = query.Where(m => m.Timestamp < beforeUtc);
+                query = beforeId.HasValue
+                    ? query.Where(m => m.Timestamp < beforeUtc
+                        || (m.Timestamp == beforeUtc && m.Id.CompareTo(beforeId.Value) < 0))
+                    : query.Where(m => m.Timestamp < beforeUtc);
             }
 
             var messages = await query
                 .OrderByDescending(m => m.Timestamp)
-                .Take(limit)
+                .ThenByDescending(m => m.Id)
+                .Take(Math.Clamp(limit, 1, 100))
                 .Select(m => new
                 {
                     id = m.Id,
                     conversationId = m.ConversationId,
-                    senderType = m.Direction == "Incoming" ? "Customer" : (m.ExternalMessageId != null && m.ExternalMessageId.StartsWith("msg_ai_") ? "AI" : "Agent"),
+                    senderType = m.Direction == "Incoming" ? "Customer" : m.SenderType,
                     content = m.Content,
                     createdAt = m.Timestamp.ToString("o"),
                     status = m.Direction == "Incoming" ? "Delivered" : "Sent",
                     mediaUrl = (string)null,
-                    mediaType = m.MessageType == "Image" || m.MessageType == "Voice" ? m.MessageType : (string)null,
+                    mediaType = m.MessageType == "Image" || m.MessageType == "Voice" || m.MessageType == "Document" || m.MessageType == "Video" ? m.MessageType : (string)null,
                     messageType = m.MessageType,
                     assetId = m.AssetId,
                     transcription = m.Transcription,
@@ -419,6 +424,7 @@ namespace Modules.Conversations.API
                 ConversationId = conversation.Id,
                 ExternalMessageId = externalMessageId,
                 Direction = "Outgoing",
+                SenderType = "Agent",
                 Content = request.Content,
                 MessageType = "Text",
                 Timestamp = sentAt
@@ -549,6 +555,7 @@ namespace Modules.Conversations.API
                         ConversationId = id,
                         ExternalMessageId = $"msg_out_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "Agent",
                         Content = request.PublicComment,
                         MessageType = "Text",
                         FacebookPostId = lastComment.FacebookPostId,
@@ -615,6 +622,7 @@ namespace Modules.Conversations.API
                         ConversationId = messengerConv.Id,
                         ExternalMessageId = $"msg_out_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "Agent",
                         Content = request.PrivateDM,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow
@@ -667,6 +675,7 @@ namespace Modules.Conversations.API
                         ConversationId = id,
                         ExternalMessageId = $"msg_out_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "Agent",
                         Content = $"[تفاعل] {(mappedReaction == "LOVE" ? "❤️" : "👍")}",
                         MessageType = "Reaction",
                         Timestamp = DateTime.UtcNow
@@ -891,6 +900,7 @@ namespace Modules.Conversations.API
                     ConversationId = id,
                     ExternalMessageId = externalMessageId,
                     Direction = "Outgoing",
+                    SenderType = "Agent",
                     Content = $"[تفاعل] {request.ReactionText}",
                     MessageType = "Reaction",
                     Timestamp = DateTime.UtcNow

@@ -18,6 +18,7 @@ import {
   ShieldBan
 } from 'lucide-react';
 import styles from '../inbox.module.css';
+import MessageAttachment from './MessageAttachment';
 
 interface FollowUp {
   id: string;
@@ -392,7 +393,7 @@ export default function ChatWorkspace({
                     <div
                       key={msg.id}
                       className={`${styles.msgRow} ${isIncoming ? styles.msgRowIncoming : styles.msgRowOutgoing}`}
-                      aria-label={`${isIncoming ? customerName : msg.senderType === 'AI' ? 'المساعد الذكي' : 'الموظف'}، ${formatEgyptTime(msg.createdAt)}`}
+                      aria-label={`${isIncoming ? customerName : msg.senderType === 'AI' ? 'المساعد الذكي' : msg.senderType === 'Agent' ? 'الموظف' : msg.senderType === 'System' ? 'النظام' : 'رسالة صادرة، المصدر غير مسجل'}، ${formatEgyptTime(msg.createdAt)}`}
                     >
                       <div className={`${styles.msgBubble} ${
                         isIncoming 
@@ -407,7 +408,10 @@ export default function ChatWorkspace({
                             <span>مساعد ذكي</span>
                           </div>
                         )}
+                        {msg.senderType === 'Unknown' && <span className={styles.messageTime}>رسالة صادرة، المصدر غير مسجل</span>}
+                        {msg.senderType === 'System' && <span className={styles.messageTime}>النظام</span>}
                         <p className={styles.messageTextContent}>{msg.content}</p>
+                        {msg.mediaType && <MessageAttachment key={`${activeConv.id}:${msg.assetId}`} assetId={msg.assetId} mediaType={msg.mediaType} />}
                         <span className={styles.messageTime}>{formatEgyptTime(msg.createdAt)}</span>
                       </div>
                     </div>

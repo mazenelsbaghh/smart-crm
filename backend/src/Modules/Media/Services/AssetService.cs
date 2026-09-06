@@ -12,10 +12,13 @@ using Shared.Queue;
 
 namespace Modules.Media.Services
 {
+    public sealed record AssetDownload(Stream Content, string FileName);
+
     public interface IAssetService
     {
         Task<Asset> UploadAssetAsync(Guid projectId, string fileName, string contentType, Stream fileStream, Guid uploadedBy);
         Task<string> GetSignedUrlAsync(Guid assetId);
+        Task<AssetDownload> OpenDownloadAsync(Guid assetId);
         Task<Asset?> DeleteAssetAsync(Guid assetId);
         Task<string> GetThumbnailUrlAsync(Guid assetId);
     }
@@ -113,6 +116,17 @@ namespace Modules.Media.Services
             }
 
             return asset;
+        }
+
+        public async Task<AssetDownload> OpenDownloadAsync(Guid assetId)
+        {
+            var asset = await _context.Assets.IgnoreQueryFilters()
+                .SingleOrDefaultAsync(candidate => candidate.Id == assetId);
+            if (asset is null) throw new KeyNotFoundException("Attachment not found.");
+            if (asset.ProjectId != _tenantContext.ProjectId)
+                throw new UnauthorizedAccessException("Cross-project attachment access is forbidden.");
+            var content = await _storageService.DownloadFileAsync(asset.StoragePath);
+            return new AssetDownload(content, asset.FileName);
         }
 
         public async Task<string> GetSignedUrlAsync(Guid assetId)
