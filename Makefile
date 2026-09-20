@@ -5,12 +5,13 @@
 # ============================================================================
 -include .env.deploy
 
-.PHONY: help env up down restart logs ps clean health \
+.PHONY: help env up down restart deploy logs ps clean health \
         test-setup test-all test-phase-0 test-coverage \
         prod-logs prod-logs-all
 
 SHELL := /bin/bash
 COMPOSE := docker compose
+COMPOSE_PROD := docker compose -f docker-compose.yml -f docker-compose.production.yml
 PYTHON := python3
 VENV := .venv
 PIP := $(VENV)/bin/pip
@@ -238,8 +239,7 @@ system-health: ## Fetch system health status
 # === Phase 6 Deployment & Operations ===
 deploy: env ## Run the production stack with docker-compose.production.yml
 	@echo "🚀 Deploying Smart Customer Core in production mode..."
-	$(COMPOSE) -f docker-compose.yml -f docker-compose.production.yml up -d --build
-	$(COMPOSE) -f docker-compose.yml -f docker-compose.production.yml restart nginx
+	$(COMPOSE_PROD) up -d --build --remove-orphans --wait --wait-timeout 300
 	@echo "✅ Production stack deployed."
 
 backup: ## Run the automated backup utility script
@@ -300,6 +300,3 @@ prod-logs-all: ## Tail all production container logs from the server
 	fi
 	@sshpass -p "$(SSH_PASS)" ssh -t -o StrictHostKeyChecking=no "$(SSH_USER)@$(SSH_HOST)" \
 		"docker compose -f $(REMOTE_DIR)/docker-compose.yml -f $(REMOTE_DIR)/docker-compose.production.yml logs -f --tail=100"
-
-
-# sshpass -p "MazenElsbagh.12" ssh -o StrictHostKeyChecking=no root@147.93.86.206 "docker logs smartcustomercore-backend 2>&1 | grep -i -E 'exception|error|fail' | tail -n 100"

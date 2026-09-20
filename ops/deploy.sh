@@ -5,10 +5,23 @@
 set -e
 
 # Server configuration
-SSH_HOST="147.93.86.206"
-SSH_USER="root"
-SSH_PASS="MazenElsbagh.12"
-REMOTE_PATH="/root/smart-crm"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+if [ -f "$PROJECT_DIR/.env.deploy" ]; then
+    set -a
+    source "$PROJECT_DIR/.env.deploy"
+    set +a
+fi
+
+SSH_HOST="${SSH_HOST:-147.93.86.206}"
+SSH_USER="${SSH_USER:-root}"
+SSH_PASS="${SSH_PASS:-}"
+REMOTE_PATH="${REMOTE_PATH:-/root/smart-crm}"
+
+if [ -z "$SSH_PASS" ]; then
+    echo "❌ SSH_PASS is required. Load it from .env.deploy or your secret manager."
+    exit 1
+fi
 
 echo "🚀 Starting manual deployment to $SSH_HOST..."
 
