@@ -296,7 +296,7 @@ export interface ContentCardGameDetail {
     brandColors: string[];
     logoUrl: string;
     backImageUrl: string | null;
-    designStatus: 'Queued' | 'Generating' | 'Ready' | 'Failed';
+    designStatus: 'Draft' | 'Queued' | 'Generating' | 'Stopping' | 'Cancelled' | 'Ready' | 'Failed';
     designError: string | null;
     plannerModel: string;
   };

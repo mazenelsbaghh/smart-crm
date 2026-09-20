@@ -18,28 +18,57 @@ public sealed class ContentCardGameDesignService(
         var game = await dbContext.ContentCardGames.IgnoreQueryFilters()
             .SingleOrDefaultAsync(item => item.ProjectId == projectId && item.Id == gameId, cancellationToken)
             ?? throw new InvalidOperationException("اللعبة غير موجودة.");
-        if (game.DesignStatus == ContentCardGameDesignStatus.Generating) return;
-
-        try { await GenerateDeckArtworkAsync(game, cancellationToken); }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        var claimed = await dbContext.ContentCardGames.IgnoreQueryFilters()
+            .Where(item => item.ProjectId == projectId && item.Id == gameId && item.DesignStatus == ContentCardGameDesignStatus.Queued)
+            .ExecuteUpdateAsync(update => update.SetProperty(item => item.DesignStatus, ContentCardGameDesignStatus.Generating), cancellationToken);
+        if (claimed == 0) return;
+        try
+        {
+            await dbContext.Entry(game).ReloadAsync(cancellationToken);
+            await GenerateDeckArtworkAsync(game, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (!await StopRequestedAsync(game, CancellationToken.None))
+                await SetFinalStatusAsync(game, ContentCardGameDesignStatus.Queued, null);
+            throw;
+        }
         catch (Exception exception)
         {
+            if (await StopRequestedAsync(game, CancellationToken.None)) return;
             logger.LogError(exception, "Card-game design failed for game {GameId}", gameId);
-            game.DesignStatus = ContentCardGameDesignStatus.Failed;
-            game.DesignError = SafeError(exception, "تعذر توليد تصاميم اللعبة. راجع الإعدادات وحاول مرة أخرى.");
-            await dbContext.SaveChangesAsync(CancellationToken.None);
+            await SetFinalStatusAsync(game, ContentCardGameDesignStatus.Failed,
+                SafeError(exception, "تعذر توليد تصاميم اللعبة. راجع الإعدادات وحاول مرة أخرى."));
+            await StopRequestedAsync(game, CancellationToken.None);
         }
     }
 
     private async Task GenerateDeckArtworkAsync(ContentCardGame game, CancellationToken cancellationToken)
     {
         var resources = await LoadResourcesAsync(game, cancellationToken);
-        game.DesignStatus = ContentCardGameDesignStatus.Generating;
         game.DesignError = null;
         await dbContext.SaveChangesAsync(cancellationToken);
+        if (await StopRequestedAsync(game, cancellationToken)) return;
         await GenerateBackAsync(game, resources, cancellationToken);
-        foreach (var card in resources.Cards) await GenerateCardAsync(game, card, resources, cancellationToken);
+        foreach (var card in resources.Cards)
+        {
+            if (await StopRequestedAsync(game, cancellationToken)) return;
+            await GenerateCardAsync(game, card, resources, cancellationToken);
+        }
+        if (await StopRequestedAsync(game, cancellationToken)) return;
         await CompleteDesignAsync(game, resources.Cards, cancellationToken);
+    }
+
+    private async Task<bool> StopRequestedAsync(ContentCardGame game, CancellationToken cancellationToken)
+    {
+        var status = await dbContext.ContentCardGames.IgnoreQueryFilters().AsNoTracking()
+            .Where(item => item.ProjectId == game.ProjectId && item.Id == game.Id)
+            .Select(item => item.DesignStatus).SingleAsync(cancellationToken);
+        if (status != ContentCardGameDesignStatus.Stopping && status != ContentCardGameDesignStatus.Cancelled) return false;
+        await dbContext.ContentCardGames.IgnoreQueryFilters()
+            .Where(item => item.ProjectId == game.ProjectId && item.Id == game.Id && item.DesignStatus == ContentCardGameDesignStatus.Stopping)
+            .ExecuteUpdateAsync(update => update.SetProperty(item => item.DesignStatus, ContentCardGameDesignStatus.Cancelled), cancellationToken);
+        return true;
     }
 
     private async Task<DesignResources> LoadResourcesAsync(ContentCardGame game, CancellationToken cancellationToken)
@@ -58,7 +87,7 @@ public sealed class ContentCardGameDesignService(
 
     private async Task GenerateBackAsync(ContentCardGame game, DesignResources resources, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(game.BackImageObjectKey)) return;
+        if (ContentCardArtwork.IsCompleteImage(game.BackImageObjectKey)) return;
         var back = await imageClient.GenerateAsync(new GeminiImageRequest(
             ContentCardGameService.BuildCardBackImagePrompt(game), resources.ApiKey, resources.Logo, GeminiImageClient.PortraitAspectRatio), cancellationToken);
         game.BackImageObjectKey = await UploadAsync(game.ProjectId, game.Id, "back", back, cancellationToken);
@@ -69,7 +98,7 @@ public sealed class ContentCardGameDesignService(
 
     private async Task GenerateCardAsync(ContentCardGame game, ContentGameCard card, DesignResources resources, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(card.ImageObjectKey)) return;
+        if (ContentCardArtwork.IsCompleteImage(card.ImageObjectKey)) return;
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
@@ -90,16 +119,21 @@ public sealed class ContentCardGameDesignService(
 
     private async Task CompleteDesignAsync(ContentCardGame game, IReadOnlyList<ContentGameCard> cards, CancellationToken cancellationToken)
     {
-        var missingArtwork = string.IsNullOrWhiteSpace(game.BackImageObjectKey) || cards.Any(card => string.IsNullOrWhiteSpace(card.ImageObjectKey));
-        game.DesignStatus = missingArtwork ? ContentCardGameDesignStatus.Failed : ContentCardGameDesignStatus.Ready;
-        game.DesignError = missingArtwork ? "تعذر توليد بعض تصميمات الكروت. يمكنك إعادة المحاولة." : null;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        var missingArtwork = !ContentCardArtwork.IsCompleteImage(game.BackImageObjectKey) || cards.Any(card => !ContentCardArtwork.IsCompleteImage(card.ImageObjectKey));
+        await SetFinalStatusAsync(game, missingArtwork ? ContentCardGameDesignStatus.Failed : ContentCardGameDesignStatus.Ready,
+            missingArtwork ? "تعذر توليد بعض تصميمات الكروت. يمكنك إعادة المحاولة." : null);
+        await StopRequestedAsync(game, cancellationToken);
     }
+
+    private Task<int> SetFinalStatusAsync(ContentCardGame game, string status, string? error) =>
+        dbContext.ContentCardGames.IgnoreQueryFilters()
+            .Where(item => item.ProjectId == game.ProjectId && item.Id == game.Id && item.DesignStatus == ContentCardGameDesignStatus.Generating)
+            .ExecuteUpdateAsync(update => update.SetProperty(item => item.DesignStatus, status).SetProperty(item => item.DesignError, error));
 
     private async Task<string> UploadAsync(Guid projectId, Guid gameId, string name, GeneratedImage image, CancellationToken cancellationToken)
     {
         var extension = image.MimeType.Contains("webp", StringComparison.OrdinalIgnoreCase) ? "webp" : "png";
-        var objectKey = $"content/{projectId:N}/card-games/{gameId:N}/{name}-{Guid.NewGuid():N}.{extension}";
+        var objectKey = $"content/{projectId:N}/card-games/{gameId:N}/{ContentCardArtwork.Folder}/{name}-{Guid.NewGuid():N}.{extension}";
         await using var stream = new MemoryStream(image.Bytes);
         await objectStorage.UploadAsync(objectKey, stream, image.MimeType, cancellationToken);
         return objectKey;

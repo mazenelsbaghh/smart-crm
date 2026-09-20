@@ -4,6 +4,9 @@ namespace Modules.Content.Domain;
 
 public static class ContentCardGameDesignStatus
 {
+    public const string Draft = "Draft";
+    public const string Stopping = "Stopping";
+    public const string Cancelled = "Cancelled";
     public const string Queued = "Queued";
     public const string Generating = "Generating";
     public const string Ready = "Ready";
@@ -22,7 +25,7 @@ public sealed class ContentCardGame : AuditableEntity, ITenantEntity
     public string BrandColorsJson { get; set; } = "[]";
     public string BrandStylePrompt { get; set; } = string.Empty;
     public string PlannerModel { get; set; } = string.Empty;
-    public string DesignStatus { get; set; } = ContentCardGameDesignStatus.Queued;
+    public string DesignStatus { get; set; } = ContentCardGameDesignStatus.Draft;
     public string? DesignError { get; set; }
     public string? BackImageObjectKey { get; set; }
     public string? BackImageMimeType { get; set; }

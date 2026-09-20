@@ -2223,29 +2223,9 @@
 .alertError button { margin-inline-start: 8px; border: 1px solid currentColor; border-radius: var(--radius-sm); padding: 4px 8px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
 .gamePrintArea, .gameBackPrint { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 12px; }
 .gameBackPrint { display: none; }
-.gameCardFace, .gameBackSample { aspect-ratio: 7 / 10; min-width: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--game-accent) 42%, var(--game-ink)); border-radius: 0; }
-.gameCardFace { position: relative; display: grid; grid-template-rows: auto 1fr auto; padding: 15px; background: var(--game-surface); color: var(--game-ink); isolation: isolate; }
-.gameCardFace > header, .gameCardFace > div, .gameCardFace > footer { position: relative; z-index: 2; }
-.gameCardFace > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid color-mix(in srgb, var(--game-ink) 16%, transparent); color: var(--game-ink); }
-.gameCardFace > header span { overflow: hidden; font-size: .62rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-.gameCardFace > header b { color: var(--game-accent); font: 800 .72rem var(--font-mono, monospace); }
-.gameCardFace > div { display: grid; align-content: center; gap: 10px; }
-.gameCardFace h3 { margin: 0; color: var(--game-ink); font-size: .95rem; line-height: 1.35; }
-.gameCardFace p { margin: 0; color: var(--game-ink); font-size: .8rem; font-weight: 650; line-height: 1.75; }
-.gameCardFace footer { padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--game-ink) 16%, transparent); color: color-mix(in srgb, var(--game-ink) 72%, var(--game-surface)); font-size: .61rem; line-height: 1.6; }
-.gameFaceArtwork, .gameBackArtwork { position: absolute; z-index: 0; width: 100%; height: 100%; inset: 0; object-fit: cover; }
-.gameFaceScrim { position: absolute; z-index: 1; inset: 0; display: none; background: linear-gradient(180deg, rgb(8 14 30 / .78), rgb(8 14 30 / .33) 44%, rgb(8 14 30 / .82)); }
-.gameCardFaceVisual { color: #fff; }
-.gameCardFaceVisual .gameFaceScrim { display: block; }
-.gameCardFaceVisual > header { border-bottom-color: rgb(255 255 255 / .28); color: #fff; }
-.gameCardFaceVisual h3, .gameCardFaceVisual p { color: #fff; text-shadow: 0 1px 12px rgb(0 0 0 / .45); }
-.gameCardFaceVisual footer { border-top-color: rgb(255 255 255 / .25); color: rgb(255 255 255 / .88); }
-.gameBackSample { position: relative; display: grid; place-content: center; padding: 20px; background: var(--game-ink); color: var(--game-surface); text-align: center; isolation: isolate; }
-.gameBackSample::before { position: absolute; z-index: 1; content: ''; inset: 0; background: linear-gradient(145deg, rgb(5 11 29 / .33), rgb(5 11 29 / .7)); }
-.gameBackContent { position: relative; z-index: 2; display: grid; justify-items: center; gap: 10px; }
-.gameBackContent img, .gameBackContent svg { width: min(70%, 112px); height: auto; max-height: 78px; object-fit: contain; }
-.gameBackContent strong { font-size: .95rem; line-height: 1.4; text-shadow: 0 1px 12px rgb(0 0 0 / .45); }
-.gameBackContent span { color: var(--game-accent); font: 700 .55rem var(--font-mono, monospace); letter-spacing: .12em; }
+.gameCompleteCard { aspect-ratio: 3 / 4; min-width: 0; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 0; background: var(--surface); }
+.gameCompleteImage { display: block; width: 100%; height: 100%; object-fit: contain; }
+.gameImagePlaceholder { display: grid; height: 100%; place-items: center; color: var(--text-soft); font-size: .75rem; }
 .gameHistory { padding: 16px 9px; border-inline-start: 1px solid var(--border-subtle); background: var(--surface); }
 .gameHistory > button { display: grid; width: 100%; grid-template-columns: 24px minmax(0, 1fr); gap: 7px; margin-bottom: 5px; padding: 9px 8px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-base); text-align: right; cursor: pointer; }
 .gameHistory > button:hover, .gameHistory > .gameHistoryActive { border-color: var(--border-strong); background: var(--surface-muted); }
@@ -2363,8 +2343,8 @@
   .gamePrintArea, .gamePrintArea *, .gameBackPrint, .gameBackPrint * { visibility: visible !important; }
   .gamePrintArea, .gameBackPrint { position: static; display: grid !important; grid-template-columns: repeat(2, 70mm); justify-content: center; gap: 8mm; width: 100%; }
   .gameBackPrint { break-before: page; }
-  .gameCardFace, .gameBackSample { width: 70mm; height: 100mm; break-inside: avoid; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-  .gamePrintArea > .gameBackSample { display: none; }
+  .gameCompleteCard { width: 70mm; height: auto; aspect-ratio: 3 / 4; break-inside: avoid; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .gamePrintArea > .gameCompleteCard:first-child { display: none; }
   @page { size: A4 portrait; margin: 12mm; }
 }
 

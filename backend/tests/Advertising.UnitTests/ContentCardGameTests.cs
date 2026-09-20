@@ -66,7 +66,7 @@ public sealed class ContentCardGameTests
     }
 
     [Fact]
-    public void Image_prompts_require_text_free_art_and_preserve_the_real_logo_in_the_application()
+    public void Complete_image_prompts_include_every_printed_field_and_brand_reference()
     {
         var game = new ContentCardGame
         {
@@ -74,15 +74,26 @@ public sealed class ContentCardGameTests
             BrandColorsJson = "[\"#140D2E\",\"#22E9D4\"]",
             BrandStylePrompt = "Bold editorial identity"
         };
-        var card = new ContentGameCard { Category = "Role play", Title = "Difficult opener", Prompt = "Respond in 30 seconds." };
+        var card = new ContentGameCard { CardIndex = 3, Category = "Role play", Title = "Difficult opener", Prompt = "Respond in 30 seconds.", Instruction = "Tell a story." };
 
         var face = ContentCardGameService.BuildCardFaceImagePrompt(game, card);
         var back = ContentCardGameService.BuildCardBackImagePrompt(game);
 
-        Assert.Contains("no text, no glyphs, no numbers", face);
-        Assert.Contains("application will place the exact logo", face);
-        Assert.Contains("no logo recreation", back);
+        foreach (var copy in new[] { card.Category, card.Title, card.Prompt, card.Instruction, game.BrandColorsJson, game.BrandStylePrompt })
+            Assert.Contains(copy, face);
+        Assert.Contains("\"number\":4", face);
+        Assert.DoesNotContain("{{", face);
         Assert.Contains("Quick Response", back);
+        Assert.Contains(game.BrandColorsJson, back);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("content/project/card-games/game/back-old.png", false)]
+    [InlineData("content/project/card-games/game/full-card-v1/back-new.png", true)]
+    public void Legacy_backgrounds_are_not_exposed_as_complete_card_images(string? key, bool expected)
+    {
+        Assert.Equal(expected, ContentCardArtwork.IsCompleteImage(key));
     }
 
     private static ContentCardGameService.GenerationContext Context() => new(

@@ -58,7 +58,7 @@ public sealed class ContentCardGamesController(
                 cardCount = game.CardCount,
                 brandColors = DeserializeColors(game.BrandColorsJson),
                 logoUrl = LogoRoute(game.Id, game.UpdatedAt),
-                backImageUrl = string.IsNullOrWhiteSpace(game.BackImageObjectKey) ? null : BackImageRoute(game.Id, game.UpdatedAt),
+                backImageUrl = ContentCardArtwork.IsCompleteImage(game.BackImageObjectKey) ? BackImageRoute(game.Id, game.UpdatedAt) : null,
                 designStatus = game.DesignStatus,
                 designError = game.DesignError,
                 plannerModel = game.PlannerModel,
@@ -73,7 +73,7 @@ public sealed class ContentCardGamesController(
                 title = card.Title,
                 prompt = card.Prompt,
                 instruction = card.Instruction,
-                imageUrl = string.IsNullOrWhiteSpace(card.ImageObjectKey) ? null : CardImageRoute(game.Id, card.Id, card.UpdatedAt),
+                imageUrl = ContentCardArtwork.IsCompleteImage(card.ImageObjectKey) ? CardImageRoute(game.Id, card.Id, card.UpdatedAt) : null,
                 imageError = card.ImageError
             })
         });
@@ -138,13 +138,10 @@ public sealed class ContentCardGamesController(
             var game = await games.CreateAsync(projectId,
                 new CreateCardGameInput(request.Title, request.Brief ?? string.Empty, request.Mechanic, request.CardCount),
                 cancellationToken);
-            var queued = await QueueDesignAsync(game);
             return CreatedAtAction(nameof(Get), new { id = game.Id }, new
             {
                 id = game.Id,
-                message = queued
-                    ? $"تم إنشاء «{game.Title}» بعدد {game.CardCount} كارت بالإنجليزية. جارٍ تصميم الوجوه والظهر بهوية المشروع."
-                    : $"تم إنشاء «{game.Title}» بالإنجليزية. المحتوى محفوظ؛ يمكنك بدء التصميم مرة أخرى من اللعبة."
+                message = $"تم حفظ «{game.Title}» بعدد {game.CardCount} كارت. راجع القواعد ثم ابدأ تصميم الصور الكاملة."
             });
         }
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
@@ -158,14 +155,35 @@ public sealed class ContentCardGamesController(
         if (!authorization.CanManageProject(User, projectId)) return Forbid();
         var game = await FindGame(projectId, id, cancellationToken);
         if (game is null) return NotFound(new { error = "اللعبة غير موجودة." });
-        if (game.DesignStatus == ContentCardGameDesignStatus.Generating)
+        if (game.DesignStatus is ContentCardGameDesignStatus.Generating or ContentCardGameDesignStatus.Queued or ContentCardGameDesignStatus.Stopping)
             return Accepted(new { message = "تصاميم اللعبة قيد التنفيذ بالفعل." });
 
-        game.DesignStatus = ContentCardGameDesignStatus.Queued;
-        game.DesignError = null;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        var queuedCount = await dbContext.ContentCardGames.IgnoreQueryFilters()
+            .Where(item => item.ProjectId == projectId && item.Id == id
+                && item.DesignStatus != ContentCardGameDesignStatus.Queued
+                && item.DesignStatus != ContentCardGameDesignStatus.Generating
+                && item.DesignStatus != ContentCardGameDesignStatus.Stopping)
+            .ExecuteUpdateAsync(update => update.SetProperty(item => item.DesignStatus, ContentCardGameDesignStatus.Queued)
+                .SetProperty(item => item.DesignError, (string?)null), cancellationToken);
+        if (queuedCount == 0) return Accepted(new { message = "التصميم قيد التنفيذ أو الإيقاف بالفعل." });
+        await dbContext.Entry(game).ReloadAsync(cancellationToken);
         var queued = await QueueDesignAsync(game);
         return Accepted(new { message = queued ? "بدأنا تصميم الوجوه والظهر بالذكاء الاصطناعي." : "المحتوى محفوظ؛ تعذر بدء التصميم الآن. حاول مرة أخرى." });
+    }
+
+    [HttpPost("{id:guid}/design/stop")]
+    public async Task<IActionResult> StopDesign(Guid id, CancellationToken cancellationToken)
+    {
+        var projectId = ActiveProjectId();
+        if (!authorization.CanManageProject(User, projectId)) return Forbid();
+        if (await FindGame(projectId, id, cancellationToken) is null) return NotFound();
+        await dbContext.ContentCardGames.IgnoreQueryFilters()
+            .Where(game => game.ProjectId == projectId && game.Id == id && game.DesignStatus == ContentCardGameDesignStatus.Queued)
+            .ExecuteUpdateAsync(update => update.SetProperty(game => game.DesignStatus, ContentCardGameDesignStatus.Cancelled), cancellationToken);
+        await dbContext.ContentCardGames.IgnoreQueryFilters()
+            .Where(game => game.ProjectId == projectId && game.Id == id && game.DesignStatus == ContentCardGameDesignStatus.Generating)
+            .ExecuteUpdateAsync(update => update.SetProperty(game => game.DesignStatus, ContentCardGameDesignStatus.Stopping), cancellationToken);
+        return Ok(new { message = "تم طلب الإيقاف. قد يكتمل طلب الصورة الجاري، ولن تبدأ صور أخرى." });
     }
 
     private static object Summary(ContentCardGame game) => new
@@ -183,7 +201,7 @@ public sealed class ContentCardGamesController(
     {
         try
         {
-            jobs.Enqueue<ContentCardGameDesignJob>(job => job.GenerateAsync(game.ProjectId, game.Id));
+            jobs.Enqueue<ContentCardGameDesignJob>(job => job.GenerateAsync(game.ProjectId, game.Id, CancellationToken.None));
             return true;
         }
         catch (Exception)

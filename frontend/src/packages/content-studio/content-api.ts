@@ -68,6 +68,10 @@ export const contentApi = {
     return (await api.post<{ message: string }>(`/api/content/card-games/${id}/design`)).data;
   },
 
+  async stopCardGameDesign(id: string) {
+    return (await api.post<{ message: string }>(`/api/content/card-games/${id}/design/stop`)).data;
+  },
+
   async generateSample() {
     return (await api.post<{ message: string }>('/api/content/sample')).data;
   },
