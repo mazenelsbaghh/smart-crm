@@ -7,6 +7,16 @@ import type {
   ContentVideosData,
   CreateContentVideoPlan,
   UpdateContentSettings,
+  ContentDocumentDetail,
+  ContentDocumentKind,
+  ContentDocumentSummary,
+  ContentDocumentCountSuggestion,
+  ContentDocumentPreview,
+  ContentDocumentPreviewRequest,
+  CardGameIdea,
+  ContentCardGameDetail,
+  ContentCardGameSummary,
+  CreateContentCardGame,
 } from './types';
 
 export const contentApi = {
@@ -31,6 +41,26 @@ export const contentApi = {
       responseType: 'blob',
       signal,
       timeout: 300_000,
+    })).data;
+  },
+
+  async listCardGames() {
+    return (await api.get<{ games: ContentCardGameSummary[] }>('/api/content/card-games')).data;
+  },
+
+  async getCardGame(id: string) {
+    return (await api.get<ContentCardGameDetail>(`/api/content/card-games/${id}`)).data;
+  },
+
+  async suggestCardGames(workshopBrief: string) {
+    return (await api.post<{ ideas: CardGameIdea[] }>('/api/content/card-games/ideas', { workshopBrief }, {
+      timeout: 120_000,
+    })).data;
+  },
+
+  async createCardGame(input: CreateContentCardGame) {
+    return (await api.post<{ id: string; message: string }>('/api/content/card-games', input, {
+      timeout: 120_000,
     })).data;
   },
 
@@ -95,6 +125,46 @@ export const contentApi = {
 
   async retryVideoAssembly(videoId: string) {
     return (await api.post<{ message: string }>(`/api/content/videos/${videoId}/assembly/retry`)).data;
+  },
+
+  async getDocuments(signal?: AbortSignal) {
+    return (await api.get<{ documents: ContentDocumentSummary[] }>('/api/content/documents', { signal })).data;
+  },
+
+  async getDocument(documentId: string, signal?: AbortSignal) {
+    return (await api.get<ContentDocumentDetail>(`/api/content/documents/${documentId}`, { signal })).data;
+  },
+
+  async createDocument(request: ContentDocumentPreviewRequest & { previewFingerprint: string }) {
+    return (await api.post<{ id: string; ids?: string[]; status: ContentDocumentSummary['status']; message: string }>('/api/content/documents', request)).data;
+  },
+
+  async suggestDocumentPageCount(request: { kind: ContentDocumentKind; content: string }, signal?: AbortSignal) {
+    return (await api.post<ContentDocumentCountSuggestion>('/api/content/documents/suggest-page-count', request, { signal })).data;
+  },
+
+  async previewDocument(request: ContentDocumentPreviewRequest, signal?: AbortSignal) {
+    return (await api.post<ContentDocumentPreview>('/api/content/documents/preview', request, { signal, timeout: 60_000 })).data;
+  },
+
+  async updateDocumentPage(documentId: string, pageId: string, title: string, body: string) {
+    await api.put(`/api/content/documents/${documentId}/pages/${pageId}`, { title, body });
+  },
+
+  async addDocumentPage(documentId: string, page: { title: string; body: string; beforePageId: string | null }) {
+    return (await api.post<{ id: string; pageIndex: number; message: string }>(`/api/content/documents/${documentId}/pages`, page)).data;
+  },
+
+  async reorderDocumentPages(documentId: string, pageIds: string[]) {
+    await api.put(`/api/content/documents/${documentId}/pages/order`, { pageIds });
+  },
+
+  async regenerateDocumentPageImage(documentId: string, pageId: string) {
+    return (await api.post<{ message: string }>(`/api/content/documents/${documentId}/pages/${pageId}/regenerate-image`)).data;
+  },
+
+  async regenerateDocumentImages(documentId: string) {
+    return (await api.post<{ message: string }>(`/api/content/documents/${documentId}/regenerate-images`)).data;
   },
 };
 

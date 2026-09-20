@@ -28,6 +28,14 @@ interface FollowUp {
   tone?: string;
 }
 
+type ScheduleTimeWindow = '12-16' | '16-20' | '20-24';
+type ScheduleHorizon = 'NextWeek' | 'NextMonth' | 'NextThreeMonths' | 'AnyTime';
+
+interface ScheduleAvailabilityPreference {
+  timeWindow?: ScheduleTimeWindow;
+  availabilityHorizon: ScheduleHorizon;
+}
+
 export default function CustomerDetail({ customerId, projectId, onClose, onUpdate, isInline = false }: CustomerDetailProps) {
   const { showToast } = useToast();
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -57,9 +65,11 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   const [newFollowUpDate, setNewFollowUpDate] = useState('');
   const [newFollowUpNotes, setNewFollowUpNotes] = useState('');
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
-  const [newFollowUpType, setNewFollowUpType] = useState<'Nurturing' | 'AppointmentReminder'>('Nurturing');
+  const [newFollowUpType, setNewFollowUpType] = useState<'Nurturing' | 'AppointmentReminder' | 'AvailabilityAlert'>('Nurturing');
   const [newAppointmentTime, setNewAppointmentTime] = useState('');
   const [newFollowUpTone, setNewFollowUpTone] = useState<string>('Default');
+  const [scheduleTimeWindow, setScheduleTimeWindow] = useState<ScheduleTimeWindow>('12-16');
+  const [scheduleHorizon, setScheduleHorizon] = useState<ScheduleHorizon>('AnyTime');
 
   // New tag field
   const [newTag, setNewTag] = useState('');
@@ -87,9 +97,16 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       setIsBlacklisted(data.isBlacklisted || false);
 
       // Fetch followups
-      const fuResp = await api.get<FollowUp[]>(`/api/projects/${projectId}/follow-ups`);
-      const filtered = fuResp.data.filter(f => f.customerId === customerId);
-      setFollowUps(filtered);
+      const fuResp = await api.get<FollowUp[]>(`/api/projects/${projectId}/follow-ups`, {
+        params: { customerId },
+      });
+      setFollowUps(fuResp.data);
+
+      const preferenceResponse = await api.get<ScheduleAvailabilityPreference>(
+        `/api/customers/${customerId}/schedule-availability-preference`,
+      );
+      setScheduleTimeWindow(preferenceResponse.data.timeWindow ?? '12-16');
+      setScheduleHorizon(preferenceResponse.data.availabilityHorizon ?? 'AnyTime');
 
       // Fetch AI Customer Memory
       try {
@@ -253,6 +270,23 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
   const handleAddFollowUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (newFollowUpType === 'AvailabilityAlert') {
+      if (creatingFollowUp) return;
+      setCreatingFollowUp(true);
+      try {
+        await api.put(`/api/customers/${customerId}/schedule-availability-preference`, {
+          timeWindow: scheduleTimeWindow,
+          availabilityHorizon: scheduleHorizon,
+        });
+        showToast('تم حفظ فترة انتظار الموعد، وسنرسل تنبيهًا عند توفره.', 'success');
+      } catch (err) {
+        console.error('Failed to save schedule availability preference', err);
+        showToast('تعذر حفظ تفضيل الموعد. حاول مرة أخرى.', 'error');
+      } finally {
+        setCreatingFollowUp(false);
+      }
+      return;
+    }
     if (newFollowUpType === 'Nurturing' && !newFollowUpDate) return;
     if (newFollowUpType === 'AppointmentReminder' && !newAppointmentTime) return;
     if (creatingFollowUp) return;
@@ -279,9 +313,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       setNewFollowUpType('Nurturing');
       
       // Reload follow-ups
-      const fuResp = await api.get<FollowUp[]>(`/api/projects/${projectId}/follow-ups`);
-      const filtered = fuResp.data.filter(f => f.customerId === customerId);
-      setFollowUps(filtered);
+      const fuResp = await api.get<FollowUp[]>(`/api/projects/${projectId}/follow-ups`, {
+        params: { customerId },
+      });
+      setFollowUps(fuResp.data);
       showToast('تمت جدولة المتابعة.', 'success');
     } catch (err) {
       console.error('Failed to create follow-up', err);
@@ -607,11 +642,12 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   <select
                     id="customer-follow-up-type"
                     value={newFollowUpType}
-                    onChange={(e) => setNewFollowUpType(e.target.value as 'Nurturing' | 'AppointmentReminder')}
+                    onChange={(e) => setNewFollowUpType(e.target.value as 'Nurturing' | 'AppointmentReminder' | 'AvailabilityAlert')}
                     className={styles.select}
                   >
                     <option value="Nurturing">متابعة لتنشيط العميل</option>
                     <option value="AppointmentReminder">تذكير بموعد أو كورس</option>
+                    <option value="AvailabilityAlert">تنبيه عند توفر موعد</option>
                   </select>
                 </div>
 
@@ -627,7 +663,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                       required
                     />
                   </div>
-                ) : (
+                ) : newFollowUpType === 'AppointmentReminder' ? (
                   <div className={styles.formGroup}>
                     <label htmlFor="customer-appointment-date" className={styles.label}>تاريخ ووقت الكورس أو الموعد</label>
                     <input 
@@ -642,9 +678,40 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                       سيتم إرسال رسالة التذكير تلقائياً قبل هذا الموعد بـ 24 ساعة.
                     </span>
                   </div>
+                ) : (
+                  <div className={styles.availabilityFields}>
+                    <div className={styles.formGroup}>
+                      <label htmlFor="customer-schedule-window" className={styles.label}>فترة الساعة المناسبة</label>
+                      <select
+                        id="customer-schedule-window"
+                        value={scheduleTimeWindow}
+                        onChange={(event) => setScheduleTimeWindow(event.target.value as ScheduleTimeWindow)}
+                        className={styles.select}
+                      >
+                        <option value="12-16">من ١٢ ظهرًا إلى ٤ عصرًا</option>
+                        <option value="16-20">من ٤ عصرًا إلى ٨ مساءً</option>
+                        <option value="20-24">من ٨ مساءً إلى ١٢ منتصف الليل</option>
+                      </select>
+                    </div>
+                    <div className={styles.formGroup}>
+                      <label htmlFor="customer-schedule-horizon" className={styles.label}>الفترة المطلوبة</label>
+                      <select
+                        id="customer-schedule-horizon"
+                        value={scheduleHorizon}
+                        onChange={(event) => setScheduleHorizon(event.target.value as ScheduleHorizon)}
+                        className={styles.select}
+                      >
+                        <option value="NextWeek">الأسبوع الجاي</option>
+                        <option value="NextMonth">الشهر الجاي</option>
+                        <option value="NextThreeMonths">خلال ٣ شهور</option>
+                        <option value="AnyTime">أي وقت</option>
+                      </select>
+                    </div>
+                    <p className={styles.availabilityHint}>بدون تاريخ محدد. سيصل للعميل تنبيه تلقائي عند فتح موعد مناسب.</p>
+                  </div>
                 )}
 
-                <div className={styles.formGroup}>
+                {newFollowUpType !== 'AvailabilityAlert' && <div className={styles.formGroup}>
                   <label htmlFor="customer-follow-up-tone" className={styles.label}>نبرة المتابعة</label>
                   <select
                     id="customer-follow-up-tone"
@@ -656,9 +723,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     <option value="Creative">إبداعية</option>
                     <option value="Salesy">مبيعات مباشرة</option>
                   </select>
-                </div>
+                </div>}
 
-                <div className={styles.formGroup}>
+                {newFollowUpType !== 'AvailabilityAlert' && <div className={styles.formGroup}>
                   <label htmlFor="customer-follow-up-notes" className={styles.label}>نص الرسالة أو الملاحظات</label>
                   <input 
                     id="customer-follow-up-notes"
@@ -668,11 +735,11 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     onChange={(e) => setNewFollowUpNotes(e.target.value)}
                     className={styles.input}
                   />
-                </div>
+                </div>}
 
                 <button type="submit" disabled={creatingFollowUp} className={styles.scheduleBtn} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                   <Calendar size={16} />
-                  جدولة المهمة
+                  {newFollowUpType === 'AvailabilityAlert' ? 'حفظ انتظار الموعد' : 'جدولة المهمة'}
                 </button>
               </form>
             </div>

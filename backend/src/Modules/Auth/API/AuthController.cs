@@ -71,13 +71,13 @@ namespace Modules.Auth.API
             var token = await _context.RefreshTokens.FirstOrDefaultAsync(t => t.Token == request.RefreshToken);
             if (token == null || !token.IsActive)
             {
-                return Unauthorized(new { error = "Invalid or expired refresh token" });
+                return Unauthorized(new { code = "REFRESH_TOKEN_INVALID", error = "Invalid or expired refresh token" });
             }
 
             var user = await _context.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == token.UserId);
             if (user == null)
             {
-                return Unauthorized(new { error = "User not found" });
+                return Unauthorized(new { code = "REFRESH_TOKEN_INVALID", error = "User not found" });
             }
 
             token.RevokedAt = DateTime.UtcNow;

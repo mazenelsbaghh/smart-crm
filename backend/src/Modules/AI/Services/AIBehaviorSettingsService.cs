@@ -220,6 +220,12 @@ namespace Modules.AI.Services
             }
 
             instructions.Add("Protected JSON format, CRM schema, pricing guard, booking rules, and safety rules remain higher priority than all admin instructions above.");
+            if (channel == "Messenger")
+            {
+                instructions.Add(settings.MessengerWhatsAppTransitionEnabled
+                    ? "Messenger booking route: WhatsApp. Answer the customer's question here, then invite them to continue booking on WhatsApp. Ask for their own WhatsApp number when appropriate. Do not create or claim a new booking on Messenger; set suggestedGroupBookingId to null."
+                    : "Messenger booking route: Messenger. Answer and complete eligible bookings in this conversation using the existing booking rules. Ask for the customer's real name and mobile number when missing; a Messenger ID is not a phone number. Receiving a mobile number is booking information, not a request to switch channels. Do not insist on WhatsApp or claim that you sent a WhatsApp message. Provide the verified business WhatsApp link only if the customer asks for it.");
+            }
             return string.Join("\n", instructions);
         }
 
@@ -264,6 +270,7 @@ namespace Modules.AI.Services
 
         private static void MergeInto(AIBehaviorSettings target, AIBehaviorSettings source)
         {
+            target.MessengerWhatsAppTransitionEnabled = source.MessengerWhatsAppTransitionEnabled;
             if (source.Identity != null) target.Identity = MergeIdentity(target.Identity, source.Identity);
             if (source.Tone != null) target.Tone = MergeTone(target.Tone, source.Tone);
             if (source.Cta != null) target.Cta = MergeCta(target.Cta, source.Cta);

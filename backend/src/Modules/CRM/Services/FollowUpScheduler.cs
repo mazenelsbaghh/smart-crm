@@ -39,6 +39,11 @@ namespace Modules.CRM.Services
                 "check-overdue-followups",
                 s => s.CheckOverdueFollowUpsJobAsync(),
                 Cron.Minutely); // Check every minute for overdue follow-ups
+
+            RecurringJob.AddOrUpdate<FollowUpScheduler>(
+                "match-schedule-availability-preferences",
+                s => s.MatchScheduleAvailabilityPreferencesJobAsync(),
+                Cron.Minutely);
             
             RecurringJob.AddOrUpdate<FollowUpScheduler>(
                 "recalculate-lead-scores",
@@ -60,8 +65,20 @@ namespace Modules.CRM.Services
             return Task.CompletedTask;
         }
 
+        [DisableConcurrentExecution(timeoutInSeconds: 120)]
+        public async Task MatchScheduleAvailabilityPreferencesJobAsync()
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await new ScheduleAvailabilityMatcher(db).MatchAsync();
+        }
+
         [DisableConcurrentExecution(timeoutInSeconds: 600)]
-        public async Task CheckOverdueFollowUpsJobAsync()
+        public Task CheckOverdueFollowUpsJobAsync() => DispatchDueFollowUpsAsync(null);
+
+        public Task SendPlannedFollowUpJobAsync(Guid followUpId) => DispatchDueFollowUpsAsync(followUpId);
+
+        private async Task DispatchDueFollowUpsAsync(Guid? targetFollowUpId)
         {
             using var scope = _serviceProvider.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -98,6 +115,7 @@ namespace Modules.CRM.Services
             }
             var overdueIds = await dbContext.FollowUps
                 .IgnoreQueryFilters()
+                .Where(f => !targetFollowUpId.HasValue || f.Id == targetFollowUpId.Value)
                 .Where(f => (f.Status == "Pending" && f.DueDate < now)
                     || (f.Status == "Processing"
                         && f.UpdatedAt < leaseExpiredBefore
@@ -174,6 +192,12 @@ namespace Modules.CRM.Services
                 var deliveryAttempted = false;
                 try
                 {
+                    if (!await new GroupBookingFollowUpLifecycle(dbContext).CanDispatchAsync(followUp))
+                    {
+                        followUp.Status = "Cancelled";
+                        await dbContext.SaveChangesAsync();
+                        continue;
+                    }
                     var customer = await dbContext.Customers
                         .IgnoreQueryFilters()
                         .FirstOrDefaultAsync(c => c.Id == followUp.CustomerId);
@@ -192,12 +216,17 @@ namespace Modules.CRM.Services
                             .FirstOrDefaultAsync(candidate =>
                                 candidate.ProjectId == followUp.ProjectId
                                 && candidate.Id == followUp.DependsOnFollowUpId.Value);
-                        if (predecessor is null)
+                        if (followUp.DispatchIntervalSeconds.HasValue)
+                        {
+                            if (PlannedFollowUpTiming.DeferUntilPredecessor(followUp, predecessor, DateTime.UtcNow))
+                                continue;
+                        }
+                        else if (predecessor is null)
                         {
                             followUp.Status = "Cancelled";
                             continue;
                         }
-                        if (predecessor.Status != "Completed")
+                        else if (predecessor.Status != "Completed")
                         {
                             if (predecessor.Status == "DeliveryUnknown")
                             {
@@ -297,11 +326,9 @@ namespace Modules.CRM.Services
                         var session = await gatewaySessionClient.GetAsync(followUp.ProjectId, whatsAppAccountId);
                         if (!CanDispatchInCurrentConnection(followUp, session))
                         {
-                            var deferred = TryDeferToNextDailySlot(followUp, DateTime.UtcNow, projectTimezone);
+                            BypassFollowUpFromPreviousConnection(followUp, DateTime.UtcNow);
                             await dbContext.SaveChangesAsync();
-                            Console.WriteLine(deferred
-                                ? $"[Hangfire Job] Deferred WhatsApp follow-up {followUp.Id} to {followUp.DueDate:O} because it was due before the current connection was available."
-                                : $"[Hangfire Job] Expired appointment reminder {followUp.Id} instead of sending it after the appointment.");
+                            Console.WriteLine($"[Hangfire Job] Bypassed WhatsApp follow-up {followUp.Id} because it became due outside the current connection.");
                             continue;
                         }
                     }
@@ -430,11 +457,6 @@ namespace Modules.CRM.Services
                             : "مرحباً، أردنا فقط المتابعة معك لمعرفة ما إذا كان لديك أي استفسار آخر.";
                     }
 
-                    if (!string.IsNullOrWhiteSpace(talkTipsTrialInstructions))
-                    {
-                        messageContent = Modules.TalkTips.Services.TalkTipsTrialCtaInstructions.EnsureCta(messageContent);
-                    }
-
                     messageContent = Modules.WhatsApp.Services.OutgoingMessageText.Normalize(messageContent);
 
                     if (isMessenger)
@@ -452,6 +474,12 @@ namespace Modules.CRM.Services
 
                         var facebookGraphService = scope.ServiceProvider.GetRequiredService<Modules.Facebook.Services.IFacebookGraphService>();
                         bool fbSent = false;
+                        if (await IsHumanHandoffPendingAsync(dbContext, followUp))
+                        {
+                            followUp.Status = "Cancelled";
+                            await dbContext.SaveChangesAsync();
+                            continue;
+                        }
                         try
                         {
                             await facebookGraphService.SendMessageAsync(
@@ -499,12 +527,17 @@ namespace Modules.CRM.Services
                                 ConversationId = conversation.Id,
                                 ExternalMessageId = $"msg_fb_fu_{Guid.NewGuid():N}",
                                 Direction = "Outgoing",
+                                SenderType = "System",
                                 Content = messageContent,
                                 MessageType = "Text",
                                 Timestamp = DateTime.UtcNow
                             };
                             dbContext.Messages.Add(message);
 
+                            followUp.SentAtUtc = message.Timestamp;
+                            followUp.SentForDueAtUtc = followUp.DueDate;
+                            followUp.SentMessageId = message.Id;
+                            followUp.ConversationId = conversation.Id;
                             followUp.Status = "Completed";
                             await dbContext.SaveChangesAsync();
 
@@ -512,7 +545,7 @@ namespace Modules.CRM.Services
                             {
                                 id = message.Id,
                                 conversationId = message.ConversationId,
-                                senderType = "Agent",
+                                senderType = "System",
                                 content = message.Content,
                                 createdAt = message.Timestamp.ToString("o"),
                                 status = "Sent",
@@ -534,11 +567,9 @@ namespace Modules.CRM.Services
                         var liveSession = await gatewaySessionClient.GetAsync(followUp.ProjectId, whatsAppAccountId);
                         if (!CanDispatchInCurrentConnection(followUp, liveSession))
                         {
-                            var deferred = TryDeferToNextDailySlot(followUp, DateTime.UtcNow, projectTimezone);
+                            BypassFollowUpFromPreviousConnection(followUp, DateTime.UtcNow);
                             await dbContext.SaveChangesAsync();
-                            Console.WriteLine(deferred
-                                ? $"[Hangfire Job] Deferred WhatsApp follow-up {followUp.Id} to {followUp.DueDate:O} because the connection changed before delivery."
-                                : $"[Hangfire Job] Expired appointment reminder {followUp.Id} instead of sending it after the appointment.");
+                            Console.WriteLine($"[Hangfire Job] Bypassed WhatsApp follow-up {followUp.Id} because the connection changed before delivery.");
                             continue;
                         }
 
@@ -553,6 +584,13 @@ namespace Modules.CRM.Services
                         };
 
                         var jsonPayload = JsonSerializer.Serialize(payload);
+                        if (await IsHumanHandoffPendingAsync(dbContext, followUp)
+                            || !await new GroupBookingFollowUpLifecycle(dbContext).CanDispatchAsync(followUp))
+                        {
+                            followUp.Status = "Cancelled";
+                            await dbContext.SaveChangesAsync();
+                            continue;
+                        }
                         deliveryAttempted = true;
                         var response = await Shared.Infrastructure.GatewayRetryHelper.PostOnceAsync(httpClient, $"{gatewayUrl}/api/whatsapp/send", jsonPayload);
                         var responseBody = await response.Content.ReadAsStringAsync();
@@ -604,6 +642,7 @@ namespace Modules.CRM.Services
                                     ConversationId = conversation.Id,
                                     ExternalMessageId = providerMessageId,
                                     Direction = "Outgoing",
+                                    SenderType = "System",
                                     Content = messageContent,
                                     MessageType = "Text",
                                     Timestamp = sentAt
@@ -611,6 +650,10 @@ namespace Modules.CRM.Services
                                 dbContext.Messages.Add(message);
                             }
 
+                            followUp.SentAtUtc = message.Timestamp;
+                            followUp.SentForDueAtUtc = followUp.DueDate;
+                            followUp.SentMessageId = message.Id;
+                            followUp.ConversationId = conversation.Id;
                             followUp.Status = "Completed";
                             await dbContext.SaveChangesAsync();
 
@@ -618,7 +661,7 @@ namespace Modules.CRM.Services
                             {
                                 id = message.Id,
                                 conversationId = message.ConversationId,
-                                senderType = "Agent",
+                                senderType = "System",
                                 content = message.Content,
                                 createdAt = message.Timestamp.ToString("o"),
                                 status = "Sent",
@@ -640,11 +683,9 @@ namespace Modules.CRM.Services
                         {
                             if ((int)response.StatusCode == 412)
                             {
-                                var deferred = TryDeferToNextDailySlot(followUp, DateTime.UtcNow, projectTimezone);
+                                BypassFollowUpFromPreviousConnection(followUp, DateTime.UtcNow);
                                 await dbContext.SaveChangesAsync();
-                                Console.WriteLine(deferred
-                                    ? $"[Hangfire Job] Deferred WhatsApp follow-up {followUp.Id} to {followUp.DueDate:O} because the connection changed at the delivery boundary."
-                                    : $"[Hangfire Job] Expired appointment reminder {followUp.Id} instead of sending it after the appointment.");
+                                Console.WriteLine($"[Hangfire Job] Bypassed WhatsApp follow-up {followUp.Id} because the connection changed at the delivery boundary.");
                             }
                             else if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
                             {
@@ -691,6 +732,17 @@ namespace Modules.CRM.Services
                     else
                     {
                         followUp.Status = "Missed";
+                    }
+                }
+                finally
+                {
+                    if (followUp.DispatchIntervalSeconds.HasValue)
+                    {
+                        await dbContext.SaveChangesAsync();
+                        if (followUp.Status == "Pending" && followUp.DueDate > DateTime.UtcNow)
+                            scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>()
+                                .Schedule<FollowUpScheduler>(job => job.SendPlannedFollowUpJobAsync(followUp.Id),
+                                    new DateTimeOffset(followUp.DueDate));
                     }
                 }
             }
@@ -938,7 +990,7 @@ namespace Modules.CRM.Services
                             .Replace("{waveName}", appointment.Name)
                             .Replace("{groupName}", appointment.Name);
 
-                        var reminderId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, "invite");
+                        var reminderId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, $"invite:{appointment.DateTime.Ticks}");
                         var reminderExists = await dbContext.FollowUps.IgnoreQueryFilters()
                             .AnyAsync(followUp => followUp.Id == reminderId
                                 || (followUp.ProjectId == appointment.ProjectId
@@ -951,6 +1003,8 @@ namespace Modules.CRM.Services
                             Id = reminderId,
                             ProjectId = appointment.ProjectId,
                             CustomerId = booking.CustomerId,
+                            GroupAppointmentId = appointment.Id,
+                            GroupAppointmentBookingId = booking.Id,
                             WhatsAppAccountId = whatsAppAccountId,
                             Channel = "WhatsApp",
                             DueDate = DateTime.UtcNow,
@@ -962,7 +1016,7 @@ namespace Modules.CRM.Services
                         });
 
                         // Schedule Post-Session 2-day FollowUp
-                        var postSessionId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, "post");
+                        var postSessionId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, $"post:{appointment.DateTime.Ticks}");
                         var postSessionExists = await dbContext.FollowUps.IgnoreQueryFilters()
                             .AnyAsync(followUp => followUp.Id == postSessionId
                                 || (followUp.ProjectId == appointment.ProjectId
@@ -975,6 +1029,8 @@ namespace Modules.CRM.Services
                             Id = postSessionId,
                             ProjectId = appointment.ProjectId,
                             CustomerId = booking.CustomerId,
+                            GroupAppointmentId = appointment.Id,
+                            GroupAppointmentBookingId = booking.Id,
                             WhatsAppAccountId = whatsAppAccountId,
                             Channel = "WhatsApp",
                             DueDate = appointment.DateTime.AddDays(2),
@@ -1021,12 +1077,28 @@ namespace Modules.CRM.Services
             return new Guid(bytes.AsSpan(0, 16));
         }
 
+        private static Task<bool> IsHumanHandoffPendingAsync(AppDbContext dbContext, FollowUp followUp) =>
+            dbContext.Conversations.IgnoreQueryFilters().AnyAsync(conversation =>
+                conversation.ProjectId == followUp.ProjectId && conversation.CustomerId == followUp.CustomerId
+                && conversation.HumanHandoffReplyId != null
+                && (followUp.ConversationId.HasValue
+                    ? conversation.Id == followUp.ConversationId.Value
+                    : (followUp.Channel == null || conversation.Channel == followUp.Channel)
+                        && (!followUp.WhatsAppAccountId.HasValue || conversation.WhatsAppAccountId == followUp.WhatsAppAccountId)));
+
         private static bool CanDispatchInCurrentConnection(
             FollowUp followUp,
             Modules.Advertising.Services.WhatsAppGatewaySessionStatus session) =>
             session.Connected
             && session.ConnectedAt.HasValue
+            && followUp.CreatedAt >= session.ConnectedAt.Value.UtcDateTime
             && followUp.DueDate >= session.ConnectedAt.Value.UtcDateTime;
+
+        private static void BypassFollowUpFromPreviousConnection(FollowUp followUp, DateTime nowUtc)
+        {
+            followUp.Status = "Bypassed";
+            followUp.UpdatedAt = nowUtc;
+        }
 
         private static bool TryDeferToNextDailySlot(
             FollowUp followUp,

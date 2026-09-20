@@ -27,7 +27,7 @@ const dashboard = {
     dropOffCount: 33, conversionRate: 56, dropOffRate: 44, needsFollowUp: 12,
     reasons: [{ reason: 'ScheduleMismatch', label: 'المواعيد غير مناسبة', count: 22, percentage: 66.7, needsFollowUp: 9 }],
   }],
-  daily: [{ date: '2026-08-28', newConversations: 40, responded: 38, qualified: 25, bookingIntent: 18, booked: 9, paid: 6, attended: 4 }],
+  daily: [{ date: '2026-08-28', newConversations: 40, responded: 38, qualified: 25, bookingIntent: 18, booked: 9, bookedOnDate: 14, paid: 6, attended: 4 }],
   reasons: [{ reason: 'ScheduleMismatch', label: 'المواعيد غير مناسبة', count: 22, percentage: 28 }],
   followUpPlan: {
     sendNow: 12,
@@ -104,7 +104,7 @@ describe('Sales intelligence reports', () => {
     expect(within(commentCard as HTMLElement).queryByRole('button')).not.toBeInTheDocument();
     expect(within(messengerCard as HTMLElement).getByText('المقترح: افتح المحادثة ورد يدويًا')).toBeInTheDocument();
     expect(screen.getByLabelText('خطة المتابعات لكل الفرص')).toHaveTextContent('يتبعت الآن١٢');
-    expect(screen.getByLabelText('خطة المتابعات لكل الفرص')).toHaveTextContent('يتجدول 24 ساعة٧');
+    expect(screen.getByLabelText('خطة المتابعات لكل الفرص')).toHaveTextContent('جدولة على أيام٧');
     expect(screen.getByText(/النتائج تُتبع حتى 30 يومًا/)).toBeInTheDocument();
   });
 
@@ -200,7 +200,7 @@ describe('Sales intelligence reports', () => {
       if (String(url) !== '/api/projects/project-1/reports/sales-intelligence/follow-ups') {
         throw new Error(`Unexpected POST: ${String(url)}`);
       }
-      expect(body).toEqual({ ...reportWindow, action: 'SendNow', planToken: 'send-plan-token' });
+      expect(body).toEqual({ ...reportWindow, action: 'SendNow', planToken: 'send-plan-token', dispatchOptions: { count: 12, minIntervalSeconds: 30, maxIntervalSeconds: 60, scheduleDays: 1 } });
       return { data: { queued: 12 } } as never;
     });
     renderReports();
@@ -211,10 +211,10 @@ describe('Sales intelligence reports', () => {
     expect(post).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /تأكيد إرسال ١٢/ }));
 
-    expect(await screen.findByText('بدأ إرسال المتابعة إلى 12 عميل.')).toBeInTheDocument();
+    expect(await screen.findByText('بدأ إرسال المتابعة إلى 12 عميل بفاصل 30–60 ثانية بين كل رسالة.')).toBeInTheDocument();
     expect(post).toHaveBeenCalledWith(
       '/api/projects/project-1/reports/sales-intelligence/follow-ups',
-      { ...reportWindow, action: 'SendNow', planToken: 'send-plan-token' },
+      { ...reportWindow, action: 'SendNow', planToken: 'send-plan-token', dispatchOptions: { count: 12, minIntervalSeconds: 30, maxIntervalSeconds: 60, scheduleDays: 1 } },
     );
   });
 
@@ -257,7 +257,7 @@ describe('Sales intelligence reports', () => {
     expect(within(secondCard).getByRole('button', { name: 'جدولة 24 ساعة' })).toBeDisabled();
     expect(within(secondCard).getByRole('button', { name: 'إرسال الآن' })).toBeDisabled();
     await act(async () => resolveBulk({ data: { queued: 12 } }));
-    await screen.findByText('بدأ إرسال المتابعة إلى 12 عميل.');
+    await screen.findByText('بدأ إرسال المتابعة إلى 12 عميل بفاصل 30–60 ثانية بين كل رسالة.');
   });
 
   it('يبقي إجراءات المتابعة معطلة إذا فشل تحميل فترة تقرير جديدة', async () => {

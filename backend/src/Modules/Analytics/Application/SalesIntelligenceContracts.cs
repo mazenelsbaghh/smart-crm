@@ -11,7 +11,10 @@ public sealed record DailySalesMetric(
     int BookingIntent,
     int Booked,
     int Paid,
-    int Attended);
+    int Attended)
+{
+    public int BookedOnDate { get; init; }
+}
 public sealed record ReasonMetric(string Reason, string Label, int Count, decimal Percentage);
 public sealed record FunnelDropOffReason(
     string Reason,
@@ -44,8 +47,20 @@ public sealed record QueueFollowUpPlan(
     DateTime ToUtc,
     FollowUpPlanAction Action,
     Guid? ConversationId = null,
-    string? PlanToken = null);
-public sealed record QueueFollowUpPlanResult(int Queued, bool PlanChanged = false);
+    string? PlanToken = null)
+{
+    public FollowUpDispatchOptions? DispatchOptions { get; init; }
+}
+public sealed record FollowUpDispatchOptions(int? Count = null, int MinIntervalSeconds = 30,
+    int MaxIntervalSeconds = 50, int ScheduleDays = 1);
+public sealed record FollowUpDispatch(Guid Id, DateTime DueAtUtc);
+public sealed record QueueFollowUpPlanResult(int Queued, bool PlanChanged = false)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ValidationError { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<FollowUpDispatch> Dispatches { get; init; } = [];
+}
 public sealed record OpportunityItem(
     Guid ConversationId,
     Guid CustomerId,
@@ -135,7 +150,11 @@ public sealed record ScheduleDemandRow(
     string RequestedScheduleText,
     string RequestedScheduleLabel,
     DateTime LastMessageAtUtc,
-    decimal Confidence);
+    decimal Confidence)
+{
+    public string RequestKind { get; init; } = "SchedulePreference";
+    public string AttendanceMode { get; init; } = "Unknown";
+}
 public sealed record OpenScheduleAppointment(
     Guid GroupId,
     string Name,
@@ -180,6 +199,7 @@ public sealed class QueueFollowUpPlanRequest
     public DateTime? ToUtc { get; set; }
     public Guid? ConversationId { get; set; }
     public string? PlanToken { get; set; }
+    public FollowUpDispatchOptions? DispatchOptions { get; set; }
 }
 
 public sealed class SendScheduleAvailabilityRequest

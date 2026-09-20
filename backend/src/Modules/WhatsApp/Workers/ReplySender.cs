@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
 using Modules.Conversations.Hubs;
 using Modules.Conversations.Domain;
+using Modules.Conversations.Services;
 using Shared.Events;
 using Shared.Infrastructure;
 using Shared.Queue;
@@ -113,12 +114,12 @@ namespace Modules.WhatsApp.Workers
                             }
 
                             int totalTypingDelay = 0;
-                            for (int idx = 0; !queuedTooLong && idx < chunks.Count; idx++)
+                            for (int idx = 0; idx < chunks.Count; idx++)
                             {
                                 totalTypingDelay += _messagingEngine.CalculateTypingDelay(chunks[idx], @event.ProjectId);
                                 if (idx > 0)
                                 {
-                                    totalTypingDelay += 3000; // Average stagger delay
+                                    totalTypingDelay += ReplyMessagePacing.AverageDelayMs;
                                 }
                             }
 
@@ -161,7 +162,7 @@ namespace Modules.WhatsApp.Workers
                     var chunk = chunks[i];
 
                     // Smart typing delay occurs BEFORE sending the chunk!
-                    int delayMs = queuedTooLong ? 0 : _messagingEngine.CalculateTypingDelay(chunk, @event.ProjectId);
+                    int delayMs = _messagingEngine.CalculateTypingDelay(chunk, @event.ProjectId);
                     if (delayMs > 0) Console.WriteLine($"[ReplySender] Simulating human typing delay of {delayMs}ms...");
 
                     // Broadcast remaining typing delay before delaying
@@ -183,12 +184,12 @@ namespace Modules.WhatsApp.Workers
                             if (conversation != null)
                             {
                                 int remainingTypingMs = 0;
-                                for (int j = i; !queuedTooLong && j < chunks.Count; j++)
+                                for (int j = i; j < chunks.Count; j++)
                                 {
                                     remainingTypingMs += _messagingEngine.CalculateTypingDelay(chunks[j], @event.ProjectId);
                                     if (j > i)
                                     {
-                                        remainingTypingMs += 3000; // Average stagger delay
+                                        remainingTypingMs += ReplyMessagePacing.AverageDelayMs;
                                     }
                                 }
                                  int estSec = (int)Math.Ceiling(remainingTypingMs / 1000.0);
@@ -234,7 +235,8 @@ namespace Modules.WhatsApp.Workers
                             Console.WriteLine($"[ReplySender] Originating WhatsApp conversation for {@event.Id} no longer has a live account-scoped target. Delivery stopped.");
                             return;
                         }
-                        if (currentTarget.Value.Customer.IsBlacklisted
+                        if (ConversationHumanHandoff.BlocksReply(currentTarget.Value.Conversation, @event)
+                            || currentTarget.Value.Customer.IsBlacklisted
                             || await HasPaidBookingAsync(targetDbContext, currentTarget.Value.Customer.Id))
                         {
                             Console.WriteLine($"[ReplySender] Delivery target {currentTarget.Value.Customer.Id} is no longer eligible. Delivery stopped.");
@@ -242,6 +244,15 @@ namespace Modules.WhatsApp.Workers
                         }
 
                         @event.ConversationId = currentTarget.Value.Conversation.Id;
+                        if (@event.SourceMessageTimestampUtc.HasValue
+                            && await HasNewerIncomingAsync(
+                                targetDbContext,
+                                currentTarget.Value.Conversation.Id,
+                                @event.SourceMessageTimestampUtc.Value))
+                        {
+                            Console.WriteLine($"[ReplySender] Stopping stale reply {@event.Id}; a newer customer message arrived.");
+                            return;
+                        }
                         recipient = currentTarget.Value.Customer.PhoneNumber;
                         if (string.IsNullOrWhiteSpace(recipient))
                         {
@@ -328,6 +339,7 @@ namespace Modules.WhatsApp.Workers
                                             ConversationId = conversation.Id,
                                             ExternalMessageId = externalMessageId,
                                             Direction = "Outgoing",
+                                            SenderType = "AI",
                                             Content = chunk,
                                             MessageType = "Text",
                                             Timestamp = DateTime.UtcNow
@@ -412,7 +424,7 @@ namespace Modules.WhatsApp.Workers
                         break;
                     }
 
-                    // Stagger delay between consecutive message chunks to feel human-like
+                    // Keep pacing during queue backlogs to avoid bursts of delayed replies.
                     if (i < chunks.Count - 1)
                     {
                         bool isTest = false;
@@ -433,7 +445,7 @@ namespace Modules.WhatsApp.Workers
                             // Fallback
                         }
 
-                        int staggerDelayMs = queuedTooLong ? 0 : isTest ? 100 : new Random().Next(2, 5) * 1000;
+                        int staggerDelayMs = isTest ? 100 : ReplyMessagePacing.NextDelayMs();
                         if (staggerDelayMs > 0)
                         {
                             Console.WriteLine($"[ReplySender] Waiting {staggerDelayMs}ms stagger delay between message chunks...");
@@ -495,6 +507,17 @@ namespace Modules.WhatsApp.Workers
             dbContext.GroupAppointmentBookings
                 .IgnoreQueryFilters()
                 .AnyAsync(booking => booking.CustomerId == customerId && booking.IsPaid);
+
+        private static Task<bool> HasNewerIncomingAsync(
+            AppDbContext dbContext,
+            Guid conversationId,
+            DateTime sourceMessageTimestampUtc) =>
+            dbContext.Messages
+                .IgnoreQueryFilters()
+                .AnyAsync(message => message.ConversationId == conversationId
+                    && message.Direction == "Incoming"
+                    && message.MessageType != "Reaction"
+                    && message.Timestamp > sourceMessageTimestampUtc);
 
         private async Task MarkDeliveryUnknownAsync(
             AIReplyGeneratedEvent @event,

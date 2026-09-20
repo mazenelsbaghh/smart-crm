@@ -409,6 +409,18 @@
   padding: var(--space-md);
 }
 
+.availabilityFields {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.availabilityHint {
+  margin: 0;
+  color: hsl(var(--text-muted));
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
 .scheduleBtn {
   min-height: 44px;
   background-color: var(--surface);

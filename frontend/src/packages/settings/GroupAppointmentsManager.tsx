@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../../services/api';
+import { SignalRService } from '../../services/signalr';
 import { useAuth } from '../../context/auth-context';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { 
@@ -217,6 +218,8 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
   const { activeProject } = useAuth();
   const projectTimezone = validTimezone(timezone);
   const [groups, setGroups] = useState<GroupAppointment[]>([]);
+  const [instructorFilter, setInstructorFilter] = useState('');
+  const [groupStatusFilter, setGroupStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -310,6 +313,21 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
       setLoading(false);
     }
   }, [activeProject]);
+
+  useEffect(() => {
+    if (!activeProject) return;
+    const token = localStorage.getItem('accessToken');
+    if (!token) return;
+
+    const signalR = new SignalRService(activeProject.id, token);
+    signalR.registerOnGroupBookingUpdate(() => void fetchGroups());
+    void signalR.start().catch(error => {
+      console.error('Group booking live updates failed to start:', error);
+    });
+    return () => {
+      void signalR.stop();
+    };
+  }, [activeProject, fetchGroups]);
 
   const fetchInstructors = useCallback(async () => {
     if (!activeProject) return;
@@ -864,7 +882,12 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
     return days.split(',').filter(Boolean).map(d => DAY_NAMES_SHORT[parseInt(d)] || '').join(' · ');
   };
 
-  const sortedGroups = [...groups].sort((a, b) => {
+  const groupInstructors = [...new Set(groups.map(group => group.instructorName?.trim()).filter((name): name is string => Boolean(name)))].sort((a, b) => a.localeCompare(b, 'ar'));
+  const filteredGroups = groups.filter(group =>
+    (!instructorFilter || group.instructorName?.trim() === instructorFilter)
+    && (groupStatusFilter === 'all' || group.isActive === (groupStatusFilter === 'active')),
+  );
+  const sortedGroups = [...filteredGroups].sort((a, b) => {
     const getRank = (g: GroupAppointment) => {
       if (g.bookedCount >= g.capacity) return 2;
       if (!g.isActive) return 3;
@@ -1220,7 +1243,31 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
           {/* List of Groups */}
           <div className="glass-panel" style={{ padding: 'var(--space-lg)' }}>
             <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 'var(--space-md)', color: 'hsl(var(--text-primary))' }}>المجموعات الحالية</h3>
-            
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'end', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+              <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+                <label className={styles.label} htmlFor="group-instructor-filter">الإنستراكتور</label>
+                <select id="group-instructor-filter" className={styles.select} value={instructorFilter} onChange={event => setInstructorFilter(event.target.value)}>
+                  <option value="">كل الإنستراكتورز</option>
+                  {groupInstructors.map(instructor => <option key={instructor} value={instructor}>{instructor}</option>)}
+                </select>
+              </div>
+              <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                <label className={styles.label} htmlFor="group-status-filter">حالة المجموعة</label>
+                <select id="group-status-filter" className={styles.select} value={groupStatusFilter} onChange={event => setGroupStatusFilter(event.target.value)}>
+                  <option value="all">كل الحالات</option>
+                  <option value="active">مفتوحة (نشطة)</option>
+                  <option value="inactive">مقفولة (معطلة)</option>
+                </select>
+              </div>
+              <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={!instructorFilter && groupStatusFilter === 'all'} onClick={() => { setInstructorFilter(''); setGroupStatusFilter('all'); }}>
+                مسح الفلاتر
+              </button>
+            </div>
+            <p aria-live="polite" aria-atomic="true" style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', marginBottom: 'var(--space-md)' }}>
+              عرض {filteredGroups.length} من {groups.length} مجموعة
+            </p>
+
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'right' }}>
                 <caption className={styles.tableCaption}>المجموعات الحالية ومواعيدها وسعتها وحالتها</caption>
@@ -1234,6 +1281,9 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
                   </tr>
                 </thead>
                 <tbody>
+                  {sortedGroups.length === 0 && (
+                    <tr><td colSpan={5} style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'hsl(var(--text-secondary))' }}>لا توجد مجموعات مطابقة. جرّب تغيير الإنستراكتور أو الحالة، أو امسح الفلاتر.</td></tr>
+                  )}
                   {sortedGroups.map((group) => {
                     const percent = Math.min(100, Math.round((group.bookedCount / group.capacity) * 100));
                     const isFull = group.bookedCount >= group.capacity;
@@ -1632,7 +1682,7 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
                           <td style={{ padding: '12px 6px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'wrap' }}>
                               <a 
-                                href={`/inbox?customerId=${booking.customerId}`}
+                                href={`/inbox?customerId=${booking.customerId}&startConversation=1`}
                                 className={`${styles.btn} ${styles.btnSecondary}`}
                                 style={{ padding: '4px 10px', fontSize: '0.75rem', backgroundColor: 'var(--accent-soft)' }}
                               >

@@ -17,6 +17,7 @@ export class SignalRService {
   private onAITypingCallback?: (convId: string, isTyping: boolean, estimatedSeconds?: number, stage?: 'generating' | 'typing') => void;
   private onAITypingErrorCallback?: (convId: string, message: string) => void;
   private onCustomerCallback?: (customer: unknown) => void;
+  private onGroupBookingCallback?: () => void;
 
   constructor(projectId: string, token: string) {
     this.projectId = projectId;
@@ -86,6 +87,10 @@ export class SignalRService {
       if (this.onCustomerCallback) {
         this.onCustomerCallback(customer);
       }
+    });
+
+    this.connection.on('GroupBookingUpdated', () => {
+      this.onGroupBookingCallback?.();
     });
 
     try {
@@ -158,5 +163,9 @@ export class SignalRService {
 
   public registerOnCustomerUpdate(callback: (customer: unknown) => void) {
     this.onCustomerCallback = callback;
+  }
+
+  public registerOnGroupBookingUpdate(callback: () => void) {
+    this.onGroupBookingCallback = callback;
   }
 }

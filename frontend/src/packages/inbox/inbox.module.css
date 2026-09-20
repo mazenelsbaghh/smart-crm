@@ -3158,3 +3158,17 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+.attachmentLink {
+  display: block;
+  padding-block: 8px;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.attachmentLink:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}

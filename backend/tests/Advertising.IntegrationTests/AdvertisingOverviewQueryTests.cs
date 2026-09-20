@@ -24,6 +24,10 @@ public sealed class AdvertisingOverviewQueryTests(PostgresFixture postgres)
 
         SeedOverviewRows(db, projectId, window);
         await db.SaveChangesAsync();
+        // SaveChanges assigns audit timestamps; restore the historical fixture dates after persistence.
+        await db.ManagedAdvertisements.Where(advertisement => advertisement.ProjectId == projectId)
+            .ExecuteUpdateAsync(update => update.SetProperty(advertisement => advertisement.CreatedAt,
+                advertisement => advertisement.LastSyncedAtUtc ?? DateTime.UnixEpoch));
         db.ChangeTracker.Clear();
 
         var insights = await AdvertisingOverviewQuery.InsightsAsync(db, projectId, window, default);

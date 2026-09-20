@@ -749,3 +749,33 @@
     transition: none !important;
   }
 }
+
+.exportBar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.exportControls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+.exportControls select {
+  width: auto;
+  max-width: 100%;
+  padding: var(--space-sm);
+}
+.exportControls button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.exportControls button:disabled { cursor: wait; opacity: 0.6; }
+.exportBar p {
+  margin: 0;
+  max-width: 75ch;
+  color: hsl(var(--text-secondary));
+  font-size: 0.85rem;
+  line-height: 1.6;
+}

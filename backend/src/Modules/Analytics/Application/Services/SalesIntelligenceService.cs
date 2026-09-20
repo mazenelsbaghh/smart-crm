@@ -32,15 +32,33 @@ public sealed class SalesIntelligenceService(
     {
         var timezone = await ResolveTimezoneAsync(projectId, cancellationToken);
         var sources = await ReportSourcesAsync(projectId, fromUtc, toUtc, cancellationToken);
-        if (sources.Conversations.Count == 0) return EmptyDashboard(projectId, fromUtc, toUtc, timezone.Id);
-        var dashboardContext = new DashboardContext(
-            projectId,
-            fromUtc,
-            toUtc,
-            timezone,
-            sources,
-            BuildFacts(sources));
-        return await ComposeDashboardAsync(dashboardContext, cancellationToken);
+        var dashboard = sources.Conversations.Count == 0
+            ? EmptyDashboard(projectId, fromUtc, toUtc, timezone.Id)
+            : await ComposeDashboardAsync(new DashboardContext(
+                projectId, fromUtc, toUtc, timezone, sources, BuildFacts(sources)), cancellationToken);
+        return await WithDailyBookingActivityAsync(dashboard, timezone, cancellationToken);
+    }
+
+    private async Task<SalesIntelligenceDashboard> WithDailyBookingActivityAsync(
+        SalesIntelligenceDashboard dashboard,
+        TimeZoneInfo timezone,
+        CancellationToken cancellationToken)
+    {
+        var bookingTimes = await db.GroupAppointmentBookings.IgnoreQueryFilters()
+            .Where(booking => booking.ProjectId == dashboard.ProjectId
+                && booking.CreatedAt >= dashboard.WindowStartUtc
+                && booking.CreatedAt < dashboard.WindowEndUtc)
+            .Select(booking => booking.CreatedAt)
+            .ToListAsync(cancellationToken);
+        var daily = dashboard.Daily.ToDictionary(day => day.Date);
+        foreach (var bookings in bookingTimes.GroupBy(time =>
+            TimeZoneInfo.ConvertTimeFromUtc(AsUtc(time), timezone).ToString("yyyy-MM-dd")))
+        {
+            var day = daily.GetValueOrDefault(bookings.Key)
+                ?? new DailySalesMetric(bookings.Key, 0, 0, 0, 0, 0, 0, 0);
+            daily[bookings.Key] = day with { BookedOnDate = bookings.Count() };
+        }
+        return dashboard with { Daily = daily.Values.OrderBy(day => day.Date).ToArray() };
     }
 
     public async Task<ScheduleDemandOverview> GetScheduleDemandAsync(
@@ -59,7 +77,9 @@ public sealed class SalesIntelligenceService(
         var pendingLegacyExtraction = await PendingScheduleExtractionAsync(
             projectId, fromUtc, toUtc, cancellationToken);
         var openAppointments = await OpenScheduleAppointmentsAsync(projectId, cancellationToken);
-        return new(fromUtc, toUtc, rows.Length, groups.Length, pendingLegacyExtraction, groups, rows, openAppointments);
+        var distinctSchedules = rows.Where(row => row.RequestKind == "SchedulePreference")
+            .Select(row => row.RequestedScheduleLabel).Distinct().Count();
+        return new(fromUtc, toUtc, rows.Length, distinctSchedules, pendingLegacyExtraction, groups, rows, openAppointments);
     }
 
     public async Task<SendScheduleAvailabilityResult> QueueScheduleAvailabilityAsync(
@@ -75,10 +95,8 @@ public sealed class SalesIntelligenceService(
             : null;
         await AcquireFollowUpPlanLockAsync(projectId, cancellationToken);
 
-        var scheduleDemandCustomerIds = await db.ConversationSalesAnalyses.IgnoreQueryFilters()
-            .Where(analysis => analysis.ProjectId == projectId
-                && customerIds.Contains(analysis.CustomerId)
-                && analysis.RequestedScheduleText != string.Empty)
+        var scheduleDemandCustomerIds = await ScheduleDemandAnalyses(projectId)
+            .Where(analysis => customerIds.Contains(analysis.CustomerId))
             .Select(analysis => analysis.CustomerId)
             .Distinct()
             .ToListAsync(cancellationToken);
@@ -214,22 +232,42 @@ public sealed class SalesIntelligenceService(
 
     private enum ScheduleAvailabilityOutcome { Queued, Duplicate, NoContact, NoAppointments }
 
-    private Task<List<ScheduleDemandRow>> ScheduleDemandRowsAsync(
+    private async Task<List<ScheduleDemandRow>> ScheduleDemandRowsAsync(
         Guid projectId,
         DateTime fromUtc,
         DateTime toUtc,
-        CancellationToken cancellationToken) => (
-        from analysis in db.ConversationSalesAnalyses.IgnoreQueryFilters()
+        CancellationToken cancellationToken)
+    {
+        var rows = await (
+        from analysis in ScheduleDemandAnalyses(projectId)
         join conversation in db.Conversations.IgnoreQueryFilters() on analysis.ConversationId equals conversation.Id
         join customer in db.Customers.IgnoreQueryFilters() on analysis.CustomerId equals customer.Id
         where analysis.ProjectId == projectId && conversation.ProjectId == projectId && customer.ProjectId == projectId
             && analysis.ConversationStartedAtUtc >= fromUtc && analysis.ConversationStartedAtUtc < toUtc
-            && analysis.RequestedScheduleText != string.Empty
         orderby analysis.LastMessageAtUtc descending
         select new ScheduleDemandRow(
             analysis.ConversationId, analysis.CustomerId, customer.Name, customer.PhoneNumber,
             conversation.Channel, analysis.RequestedScheduleText, analysis.RequestedScheduleLabel,
-            analysis.LastMessageAtUtc, analysis.Confidence)).ToListAsync(cancellationToken);
+            analysis.LastMessageAtUtc, analysis.Confidence)
+        {
+            RequestKind = analysis.RequestedScheduleText == string.Empty ? "InquiryOnly" : "SchedulePreference",
+            AttendanceMode = analysis.RequestedAttendanceMode
+        }).ToListAsync(cancellationToken);
+        return rows.Select(row => row with
+        {
+            RequestedScheduleLabel = row.RequestKind == "InquiryOnly" ? "بيسألوا بس" : ScheduleDemandLabelNormalizer.Normalize(
+                row.RequestedScheduleText,
+                row.RequestedScheduleLabel)
+        }).ToList();
+    }
+
+    private IQueryable<ConversationSalesAnalysis> ScheduleDemandAnalyses(Guid projectId) =>
+        db.ConversationSalesAnalyses.IgnoreQueryFilters().Where(analysis => analysis.ProjectId == projectId
+            && (analysis.RequestedScheduleText != string.Empty
+                || (analysis.VerifiedStage >= SalesConversationStage.Engaged
+                    && analysis.VerifiedStage <= SalesConversationStage.Qualified
+                    && analysis.Outcome != SalesConversationOutcome.NotApplicable
+                    && (analysis.ManualPrimaryReason ?? analysis.AiPrimaryReason) != SalesLossReason.SpamOrSupport)));
 
     private static ScheduleDemandGroup[] ScheduleDemandGroups(IEnumerable<ScheduleDemandRow> rows) => rows
         .GroupBy(row => row.RequestedScheduleLabel)
@@ -291,11 +329,27 @@ public sealed class SalesIntelligenceService(
             }
             candidates = actionCandidates;
         }
-        var dueAt = plan.Action == FollowUpPlanAction.SendNow ? DateTime.UtcNow.AddSeconds(-1) : DateTime.UtcNow.AddHours(24);
-        db.FollowUps.AddRange(candidates.Select(candidate => NewFollowUp(plan.ProjectId, candidate, dueAt)));
+        if (candidates.Length == 0) return new(0);
+        var options = plan.DispatchOptions ?? new FollowUpDispatchOptions();
+        var validationError = SalesFollowUpSchedule.ValidationError(options, candidates.Length, plan.Action);
+        if (validationError is not null) return new(0) { ValidationError = validationError };
+        options = options with { Count = options.Count ?? candidates.Length };
+        candidates = candidates.OrderByDescending(candidate => candidate.Row.Analysis!.FollowUpPriority)
+            .ThenByDescending(candidate => candidate.Row.Conversation.LastMessageTimestamp)
+            .ThenBy(candidate => candidate.Row.Conversation.Id)
+            .Take(options.Count.Value).ToArray();
+        var timezone = await db.ProjectSettings.IgnoreQueryFilters()
+            .Where(settings => settings.ProjectId == plan.ProjectId)
+            .Select(settings => settings.Timezone).SingleOrDefaultAsync(cancellationToken);
+        var slots = SalesFollowUpSchedule.Slots(options, plan.Action, DateTime.UtcNow, timezone);
+        var followUps = BuildFollowUps(plan.ProjectId, candidates, slots);
+        db.FollowUps.AddRange(followUps);
         await db.SaveChangesAsync(cancellationToken);
         if (transaction is not null) await transaction.CommitAsync(cancellationToken);
-        return new(candidates.Length);
+        return new(followUps.Count)
+        {
+            Dispatches = followUps.Select(followUp => new FollowUpDispatch(followUp.Id, followUp.DueDate)).ToArray()
+        };
     }
 
     private async Task AcquireFollowUpPlanLockAsync(Guid projectId, CancellationToken cancellationToken)
@@ -304,6 +358,26 @@ public sealed class SalesIntelligenceService(
         var lockKey = $"sales-follow-up-plan:{projectId:N}";
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock(hashtext({lockKey}))", cancellationToken);
+    }
+
+    private static IReadOnlyList<FollowUp> BuildFollowUps(
+        Guid projectId,
+        IReadOnlyList<OpportunityCandidate> candidates,
+        IReadOnlyList<FollowUpSendSlot> slots)
+    {
+        var followUps = new List<FollowUp>(candidates.Count);
+        FollowUp? predecessor = null;
+
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            var followUp = NewFollowUp(projectId, candidates[index], slots[index].DueAtUtc);
+            followUp.DependsOnFollowUpId = predecessor?.Id;
+            followUp.DispatchIntervalSeconds = slots[index].IntervalSeconds;
+            followUps.Add(followUp);
+            predecessor = followUp;
+        }
+
+        return followUps;
     }
 
     private static FollowUp NewFollowUp(Guid projectId, OpportunityCandidate candidate, DateTime dueAt) => new()
@@ -316,7 +390,7 @@ public sealed class SalesIntelligenceService(
         Status = "Pending",
         Notes = candidate.Row.Analysis!.Recommendation,
         Type = "Nurturing",
-        Tone = "Salesy"
+        Tone = "Default"
     };
 
     private async Task<ReportSources> ReportSourcesAsync(

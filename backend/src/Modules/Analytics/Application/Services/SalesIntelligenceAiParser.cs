@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Modules.Analytics.Application;
 using Modules.Analytics.Domain;
+using Shared.Domain;
 
 namespace Modules.Analytics.Application.Services;
 
@@ -19,7 +20,15 @@ public sealed record ParsedConversationAnalysis(
     int ReplyQualityScore,
     int FollowUpPriority,
     bool NeedsFollowUp,
-    bool MissedOpportunity);
+    bool MissedOpportunity)
+{
+    public string RequestedAttendanceMode { get; init; } = AttendanceModes.Unknown;
+    public string AttendanceModeEvidence { get; init; } = string.Empty;
+    public bool? HasUnresolvedReplyIssue { get; init; }
+    public IReadOnlyList<ParsedReplyLesson> ReplyLessons { get; init; } = [];
+}
+
+public sealed record ParsedReplyLesson(string Code, Guid MessageId, string Quote);
 
 public sealed record ParsedDigest(
     string ExecutiveSummary,
@@ -76,7 +85,15 @@ public static class SalesIntelligenceAiParser
             Math.Clamp(dto.ReplyQualityScore, 0, 100),
             Math.Clamp(dto.FollowUpPriority, 0, 100),
             dto.NeedsFollowUp,
-            dto.MissedOpportunity);
+            dto.MissedOpportunity)
+        {
+            RequestedAttendanceMode = AttendanceModes.Normalize(dto.RequestedAttendanceMode),
+            AttendanceModeEvidence = Clean(dto.AttendanceModeEvidence, 240),
+            HasUnresolvedReplyIssue = dto.HasUnresolvedReplyIssue,
+            ReplyLessons = (dto.ReplyLessons ?? []).Where(l => l is not null && Modules.AI.Services.ReplyLearningService.Lessons.ContainsKey(l.Code ?? "")
+                    && Guid.TryParse(l.MessageId, out _) && !string.IsNullOrWhiteSpace(l.Quote))
+                .Select(l => new ParsedReplyLesson(l.Code!, Guid.Parse(l.MessageId!), Clean(l.Quote, 240))).DistinctBy(l => l.Code).Take(3).ToArray()
+        };
     }
 
     public static ParsedDigest ParseDigest(string raw)
@@ -156,11 +173,22 @@ public static class SalesIntelligenceAiParser
         public string? LastCustomerIntent { get; set; }
         public string? RequestedScheduleText { get; set; }
         public string? RequestedScheduleLabel { get; set; }
+        public string? RequestedAttendanceMode { get; set; }
+        public string? AttendanceModeEvidence { get; set; }
         public decimal Confidence { get; set; }
         public int ReplyQualityScore { get; set; }
+        public bool? HasUnresolvedReplyIssue { get; set; }
+        public LessonPayload[]? ReplyLessons { get; set; }
         public int FollowUpPriority { get; set; }
         public bool NeedsFollowUp { get; set; }
         public bool MissedOpportunity { get; set; }
+    }
+
+    private sealed class LessonPayload
+    {
+        public string? Code { get; set; }
+        public string? MessageId { get; set; }
+        public string? Quote { get; set; }
     }
 
     private sealed class EvidencePayload

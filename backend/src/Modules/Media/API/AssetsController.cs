@@ -125,6 +125,21 @@ namespace Modules.Media.API
             }
         }
 
+        [HttpGet("{id}/content")]
+        [Authorize]
+        public async Task<IActionResult> DownloadContent(Guid id)
+        {
+            var authorization = HttpContext.RequestServices.GetRequiredService<IProjectAuthorizationService>();
+            if (!authorization.CanRead(User, _tenantContext.ProjectId)) return Forbid();
+            try
+            {
+                var download = await _assetService.OpenDownloadAsync(id);
+                return File(download.Content, "application/octet-stream", download.FileName);
+            }
+            catch (KeyNotFoundException) { return NotFound(); }
+            catch (UnauthorizedAccessException) { return Forbid(); }
+        }
+
         [HttpGet("{id}/download")]
         [Authorize]
         public async Task<IActionResult> GetDownloadUrl(Guid id)

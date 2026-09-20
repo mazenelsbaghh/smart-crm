@@ -74,6 +74,21 @@ public sealed class AuthRegistrationSecurityTests
         Assert.False(returnedUser.TryGetProperty("passwordHash", out _));
     }
 
+    [Fact]
+    public async Task Refresh_rejects_an_unknown_token_with_an_explicit_session_code()
+    {
+        var (controller, db) = CreateController(Guid.NewGuid());
+        await using var ownedDb = db;
+
+        var response = Assert.IsType<UnauthorizedObjectResult>(await controller.Refresh(new RefreshRequest
+        {
+            RefreshToken = "unknown-refresh-token"
+        }));
+        var errorBody = JsonSerializer.SerializeToElement(response.Value);
+
+        Assert.Equal("REFRESH_TOKEN_INVALID", errorBody.GetProperty("code").GetString());
+    }
+
     private static (AuthController Controller, AppDbContext Db) CreateController(Guid projectId)
     {
         var tenant = new TenantContext();

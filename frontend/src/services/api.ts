@@ -88,11 +88,10 @@ const parseRefreshResponse = (payload: unknown): RefreshedSession => {
   return { accessToken: response.accessToken, refreshToken: response.refreshToken };
 };
 
-const isDefinitiveRefreshRejection = (error: unknown) => {
-  if (!axios.isAxiosError(error)) return false;
-  const status = error.response?.status;
-  return status === 400 || status === 401 || status === 403;
-};
+const isInvalidRefreshTokenResponse = (error: unknown) =>
+  axios.isAxiosError(error)
+  && error.response?.status === 401
+  && (error.response.data as { code?: unknown } | undefined)?.code === 'REFRESH_TOKEN_INVALID';
 
 const newerSessionAccessToken = ({ storage, refreshToken, principalId }: RefreshAttempt) => {
   const currentRefreshToken = storage.getItem('refreshToken');
@@ -135,7 +134,7 @@ const refreshAccessToken = async (): Promise<string> => {
   } catch (error) {
     const newerAccessToken = newerSessionAccessToken(refreshAttempt);
     if (newerAccessToken) return newerAccessToken;
-    if (isDefinitiveRefreshRejection(error) && refreshAttemptIsCurrent(refreshAttempt))
+    if (isInvalidRefreshTokenResponse(error) && refreshAttemptIsCurrent(refreshAttempt))
       clearSession(refreshAttempt.storage);
     throw error;
   }

@@ -12,6 +12,7 @@ export interface DailySalesMetric {
   qualified: number;
   bookingIntent: number;
   booked: number;
+  bookedOnDate: number;
   paid: number;
   attended: number;
 }
@@ -75,6 +76,13 @@ export interface FollowUpPlanSummary {
 }
 
 export type FollowUpPlanAction = 'SendNow' | 'Schedule';
+
+export interface FollowUpDispatchOptions {
+  count: number;
+  minIntervalSeconds: number;
+  maxIntervalSeconds: number;
+  scheduleDays: number;
+}
 
 export interface ConversationAnalysisItem {
   conversationId: string;

@@ -8,12 +8,18 @@ namespace Modules.CRM.Domain
     {
         public Guid ProjectId { get; set; }
         public Guid CustomerId { get; set; }
+        public Guid? GroupAppointmentId { get; set; }
+        public Guid? GroupAppointmentBookingId { get; set; }
         public Guid? ConversationId { get; set; }
         public Guid? DependsOnFollowUpId { get; set; }
+        public int? DispatchIntervalSeconds { get; set; }
         public Guid? WhatsAppAccountId { get; set; }
         public string? Channel { get; set; }
         public string? ActiveAutomationSlotKey { get; set; }
         public DateTime DueDate { get; set; }
+        public DateTime? SentAtUtc { get; set; }
+        public DateTime? SentForDueAtUtc { get; set; }
+        public Guid? SentMessageId { get; set; }
         public string Status { get; set; } = "Pending"; // Pending, Done, Missed
         public string Notes { get; set; }
         public string Type { get; set; } = "Nurturing"; // Nurturing, AppointmentReminder

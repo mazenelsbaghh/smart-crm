@@ -24,6 +24,80 @@ namespace backend.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "vector");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Modules.AI.Domain.ReplyLesson", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Channel", "Code")
+                        .IsUnique();
+
+                    b.ToTable("ReplyLessons");
+                });
+
+            modelBuilder.Entity("Modules.AI.Domain.ReplyLessonEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("LessonId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("LessonId");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("ProjectId", "LessonId", "ConversationId")
+                        .IsUnique();
+
+                    b.ToTable("ReplyLessonEvidence");
+                });
+
             modelBuilder.Entity("Modules.Advertising.Domain.AdvertisingAiWorkItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4351,6 +4425,9 @@ namespace backend.Migrations
                     b.Property<int>("FollowUpPriority")
                         .HasColumnType("integer");
 
+                    b.Property<bool?>("HasUnresolvedReplyIssue")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("LastCustomerIntent")
                         .IsRequired()
                         .HasColumnType("text");
@@ -4387,6 +4464,10 @@ namespace backend.Migrations
                     b.Property<int>("ReplyQualityScore")
                         .HasColumnType("integer");
 
+                    b.Property<string>("RequestedAttendanceMode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("RequestedScheduleLabel")
                         .IsRequired()
                         .HasColumnType("text");
@@ -4419,6 +4500,197 @@ namespace backend.Migrations
                     b.HasIndex("ProjectId", "NeedsFollowUp", "FollowUpPriority");
 
                     b.ToTable("ConversationSalesAnalyses");
+                });
+
+            modelBuilder.Entity("Modules.Analytics.Domain.ReplyReviewCase", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DispatchUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DraftBasedOnMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DraftContent")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("DraftGeneratedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastReviewedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("LeaseUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("NeedsResolution")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("NextRunAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("QualityScore")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Recommendation")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("SourceFollowUpAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("SourceMessageAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("SourceMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("VerifyAfterMessageAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("ProjectId", "ConversationId")
+                        .IsUnique();
+
+                    b.HasIndex("State", "NextRunAtUtc");
+
+                    b.ToTable("ReplyReviewCases");
+                });
+
+            modelBuilder.Entity("Modules.Analytics.Domain.ReplyReviewRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("CaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("FinishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("QualityScore")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SourceMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CaseId");
+
+                    b.HasIndex("ProjectId", "CaseId", "FinishedAtUtc");
+
+                    b.ToTable("ReplyReviewRuns");
+                });
+
+            modelBuilder.Entity("Modules.Analytics.Domain.ReplyReviewSchedule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("BatchSize")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("IntervalMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastScanAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("NextScanAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("PrepareDrafts")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("QuietMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("VerifyAfterMinutes")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId")
+                        .IsUnique();
+
+                    b.ToTable("ReplyReviewSchedules");
                 });
 
             modelBuilder.Entity("Modules.Analytics.Domain.SalesIntelligenceDigest", b =>
@@ -4833,14 +5105,32 @@ namespace backend.Migrations
                     b.Property<Guid?>("DependsOnFollowUpId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("DispatchIntervalSeconds")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("DueDate")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("GroupAppointmentBookingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("GroupAppointmentId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Notes")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("SentAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("SentForDueAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("SentMessageId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Status")
@@ -4899,6 +5189,63 @@ namespace backend.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("PipelineStages");
+                });
+
+            modelBuilder.Entity("Modules.CRM.Domain.ScheduleAvailabilityPreference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AvailabilityHorizon")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("MatchedGroupAppointmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("NotificationFollowUpId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("TimeWindow")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("WhatsAppAccountId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "CustomerId", "Status");
+
+                    b.ToTable("ScheduleAvailabilityPreferences");
                 });
 
             modelBuilder.Entity("Modules.CRM.Domain.Segment", b =>
@@ -5111,6 +5458,246 @@ namespace backend.Migrations
                         .IsUnique();
 
                     b.ToTable("ContentAutomationSettings");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentCardGame", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BrandColorsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BrandLogoObjectKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("BrandStylePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Brief")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<int>("CardCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Instructions")
+                        .IsRequired()
+                        .HasMaxLength(3000)
+                        .HasColumnType("character varying(3000)");
+
+                    b.Property<string>("Mechanic")
+                        .IsRequired()
+                        .HasMaxLength(600)
+                        .HasColumnType("character varying(600)");
+
+                    b.Property<string>("PlannerModel")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "CreatedAt");
+
+                    b.ToTable("ContentCardGames");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentDocument", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BrandColorsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BrandLogoObjectKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("BrandStylePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PlannerModel")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("RequestedPageCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SourceContent")
+                        .IsRequired()
+                        .HasMaxLength(60000)
+                        .HasColumnType("character varying(60000)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "CreatedAt");
+
+                    b.ToTable("ContentDocuments");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentDocumentPage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("ImageMimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ImageObjectKey")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("ImagePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("PageIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId", "PageIndex")
+                        .IsUnique();
+
+                    b.HasIndex("DocumentId", "ProjectId");
+
+                    b.ToTable("ContentDocumentPages");
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentGameCard", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CardIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("GameId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Instruction")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GameId", "CardIndex")
+                        .IsUnique();
+
+                    b.HasIndex("GameId", "ProjectId");
+
+                    b.ToTable("ContentGameCards");
                 });
 
             modelBuilder.Entity("Modules.Content.Domain.ContentPost", b =>
@@ -5544,6 +6131,9 @@ namespace backend.Migrations
                     b.Property<Guid>("CustomerId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("HumanHandoffReplyId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime>("LastMessageTimestamp")
                         .HasColumnType("timestamp with time zone");
 
@@ -5784,6 +6374,10 @@ namespace backend.Migrations
                         .HasColumnType("text");
 
                     b.Property<string>("ParentCommentId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SenderType")
+                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<DateTime>("Timestamp")
@@ -6933,6 +7527,27 @@ namespace backend.Migrations
                     b.ToTable("IntegrationProjectionWatermarks");
                 });
 
+            modelBuilder.Entity("Modules.AI.Domain.ReplyLessonEvidence", b =>
+                {
+                    b.HasOne("Modules.Conversations.Domain.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Modules.AI.Domain.ReplyLesson", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Modules.Conversations.Domain.Message", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Advertising.Domain.AuthorizedWhatsAppDestination", b =>
                 {
                     b.HasOne("Modules.WhatsApp.Domain.WhatsAppAccount", null)
@@ -6940,6 +7555,24 @@ namespace backend.Migrations
                         .HasForeignKey("WhatsAppAccountId", "ProjectId")
                         .HasPrincipalKey("Id", "ProjectId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Analytics.Domain.ReplyReviewCase", b =>
+                {
+                    b.HasOne("Modules.Conversations.Domain.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Analytics.Domain.ReplyReviewRun", b =>
+                {
+                    b.HasOne("Modules.Analytics.Domain.ReplyReviewCase", null)
+                        .WithMany()
+                        .HasForeignKey("CaseId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Brain.Domain.KnowledgeChunk", b =>
@@ -6969,6 +7602,26 @@ namespace backend.Migrations
                         .HasForeignKey("WhatsAppAccountId", "ProjectId")
                         .HasPrincipalKey("Id", "ProjectId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentDocumentPage", b =>
+                {
+                    b.HasOne("Modules.Content.Domain.ContentDocument", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Content.Domain.ContentGameCard", b =>
+                {
+                    b.HasOne("Modules.Content.Domain.ContentCardGame", null)
+                        .WithMany()
+                        .HasForeignKey("GameId", "ProjectId")
+                        .HasPrincipalKey("Id", "ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Content.Domain.ContentVideoScene", b =>

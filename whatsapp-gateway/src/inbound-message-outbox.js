@@ -46,6 +46,20 @@ function assertProviderMessageId(message) {
     }
 }
 
+export function normalizeProviderTimestamp(timestamp) {
+    if (Number.isSafeInteger(timestamp)) return timestamp;
+    if (timestamp && Number.isInteger(timestamp.low) && Number.isInteger(timestamp.high)) {
+        const seconds = (BigInt(timestamp.high >>> 0) << 32n) | BigInt(timestamp.low >>> 0);
+        const normalized = Number(seconds);
+        if (Number.isSafeInteger(normalized)) return normalized;
+    }
+    throw new TypeError('Inbound provider timestamp must be a safe integer');
+}
+
+function normalizeInboundMessage(message) {
+    return { ...message, timestamp: normalizeProviderTimestamp(message.timestamp) };
+}
+
 export function inboundOutboxDirectory(sessionsDirectory) {
     return path.join(sessionsDirectory, OUTBOX_DIRECTORY);
 }
@@ -112,7 +126,7 @@ class InboundMessageOutbox {
         }
 
         try {
-            await this.#forwardMessage(envelope.message);
+            await this.#forwardMessage(normalizeInboundMessage(envelope.message));
         } catch (error) {
             await this.#deferEnvelope(filePath, envelope, error);
             return;

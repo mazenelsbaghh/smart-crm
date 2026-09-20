@@ -5,7 +5,6 @@ import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { handleDialogKeyDown } from './dialog-accessibility';
-import { crmService, Customer } from '../../services/crm';
 import { 
   Calendar, 
   CheckCircle2, 
@@ -25,12 +24,24 @@ import styles from './management.module.css';
 interface FollowUp {
   id: string;
   customerId: string;
+  customerName?: string;
+  customerPhoneNumber: string;
   dueDate: string;
   status: 'Pending' | 'Completed' | 'Missed' | 'Bypassed';
   notes: string;
   type?: 'Nurturing' | 'AppointmentReminder';
   appointmentTime?: string;
   tone?: string;
+}
+
+interface FollowUpPage {
+  items: FollowUp[];
+  filteredCount: number;
+  totalCount: number;
+  pendingCount: number;
+  completedCount: number;
+  missedCount: number;
+  bypassedCount: number;
 }
 
 const statusMapAr: Record<string, string> = {
@@ -62,7 +73,14 @@ export default function FollowUps() {
   const { activeProject } = useAuth();
   
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [counts, setCounts] = useState<Omit<FollowUpPage, 'items' | 'filteredCount'>>({
+    totalCount: 0,
+    pendingCount: 0,
+    completedCount: 0,
+    missedCount: 0,
+    bypassedCount: 0,
+  });
+  const [filteredCount, setFilteredCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reEvaluating, setReEvaluating] = useState(false);
@@ -96,7 +114,6 @@ export default function FollowUps() {
     const requestId = ++loadRequestIdRef.current;
     if (!activeProject) {
       setFollowUps([]);
-      setCustomers([]);
       setLoading(false);
       setLoadError('تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.');
       return;
@@ -104,16 +121,20 @@ export default function FollowUps() {
     try {
       setLoading(true);
       setLoadError(null);
-      setFollowUps([]);
-      setCustomers([]);
-      const [fuRes, custData] = await Promise.all([
-        api.get<FollowUp[]>(`/api/projects/${activeProject.id}/follow-ups`),
-        crmService.getCustomers(activeProject.id),
-      ]);
+      const response = await api.get<FollowUpPage>(`/api/projects/${activeProject.id}/follow-ups/page`, {
+        params: { status: filter, search: searchQuery.trim() || undefined, page: currentPage, pageSize },
+      });
       if (requestId !== loadRequestIdRef.current) return;
       
-      setFollowUps(fuRes.data);
-      setCustomers(custData);
+      setFollowUps(response.data.items);
+      setFilteredCount(response.data.filteredCount);
+      setCounts({
+        totalCount: response.data.totalCount,
+        pendingCount: response.data.pendingCount,
+        completedCount: response.data.completedCount,
+        missedCount: response.data.missedCount,
+        bypassedCount: response.data.bypassedCount,
+      });
     } catch (e) {
       if (requestId !== loadRequestIdRef.current) return;
       console.error('Failed to load follow-ups', e);
@@ -148,21 +169,18 @@ export default function FollowUps() {
   };
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchData();
-    setCurrentPage(1);
+    const timeoutId = window.setTimeout(() => void fetchData(), searchQuery ? 250 : 0);
+    return () => window.clearTimeout(timeoutId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProject]);
+  }, [activeProject, filter, currentPage, pageSize, searchQuery]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCurrentPage(1);
   }, [filter, searchQuery]);
 
-  const getCustomerName = (customerId: string) => {
-    const customer = customers.find(c => c.id === customerId);
-    return customer ? customer.name || customer.phoneNumber : 'عميل غير مسجل في بيانات العملاء المحملة';
-  };
+  const getCustomerName = (followUp: FollowUp) =>
+    followUp.customerName || followUp.customerPhoneNumber || 'عميل غير مسجل';
 
   const handleSend = async (id: string) => {
     try {
@@ -263,35 +281,8 @@ export default function FollowUps() {
     }
   };
 
-  const filteredFollowUps = followUps.filter(f => {
-    // 1. Filter by status tab
-    if (filter !== 'All' && f.status !== filter) return false;
-    
-    // 2. Filter by search query (customer name or phone number)
-    if (searchQuery.trim() !== '') {
-      const q = searchQuery.toLowerCase();
-      const customer = customers.find(c => c.id === f.customerId);
-      const name = customer?.name?.toLowerCase() || '';
-      const phone = customer?.phoneNumber || '';
-      if (!name.includes(q) && !phone.includes(q)) {
-        return false;
-      }
-    }
-    
-    return true;
-  });
-
-  const totalCount = followUps.length;
-  const pendingCount = followUps.filter(f => f.status === 'Pending').length;
-  const completedCount = followUps.filter(f => f.status === 'Completed').length;
-  const missedCount = followUps.filter(f => f.status === 'Missed').length;
-  const bypassedCount = followUps.filter(f => f.status === 'Bypassed').length;
-
-  const totalPages = Math.ceil(filteredFollowUps.length / pageSize) || 1;
-  const paginatedFollowUps = filteredFollowUps.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+  const { totalCount, pendingCount, completedCount, missedCount, bypassedCount } = counts;
+  const totalPages = Math.ceil(filteredCount / pageSize) || 1;
 
   return (
     <div className={styles.container}>
@@ -479,7 +470,7 @@ export default function FollowUps() {
             <p className={styles.emptyStateDesc}>{loadError}</p>
             {activeProject && <button type="button" onClick={() => void fetchData()} className={`${styles.btn} ${styles.btnPrimary}`}>إعادة المحاولة</button>}
           </div>
-        ) : filteredFollowUps.length === 0 ? (
+        ) : followUps.length === 0 ? (
           <div className={styles.emptyState}>
             <Calendar size={48} style={{ color: 'hsl(var(--text-muted))' }} />
             <h3 className={styles.emptyStateTitle}>لم يتم العثور على متابعات</h3>
@@ -500,7 +491,7 @@ export default function FollowUps() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedFollowUps.map(fu => {
+                {followUps.map(fu => {
                   const dueDate = new Date(fu.dueDate);
                   const isOverdue = !Number.isNaN(dueDate.getTime()) && dueDate.getTime() < referenceNow && fu.status === 'Pending';
                   return (
@@ -520,10 +511,10 @@ export default function FollowUps() {
                             color: 'var(--accent)',
                             fontWeight: 700
                           }}>
-                            {getCustomerName(fu.customerId).charAt(0).toUpperCase()}
+                            {getCustomerName(fu).charAt(0).toUpperCase()}
                           </div>
                           <span style={{ fontWeight: 600, color: 'var(--text-strong)' }}>
-                            {getCustomerName(fu.customerId)}
+                            {getCustomerName(fu)}
                           </span>
                         </div>
                       </td>
@@ -626,7 +617,7 @@ export default function FollowUps() {
             </table>
 
             {/* Pagination Controls */}
-            {filteredFollowUps.length > 0 && (
+            {followUps.length > 0 && (
               <div className={styles.pagination}>
                 <div className={styles.paginationInfo}>
                   <span>عرض السطور:</span>
@@ -646,7 +637,7 @@ export default function FollowUps() {
                     ))}
                   </select>
                   <span style={{ marginRight: '12px', marginLeft: '12px' }}>
-                    عرض {Math.min((currentPage - 1) * pageSize + 1, filteredFollowUps.length)} - {Math.min(currentPage * pageSize, filteredFollowUps.length)} من {filteredFollowUps.length}
+                    عرض {Math.min((currentPage - 1) * pageSize + 1, filteredCount)} - {Math.min(currentPage * pageSize, filteredCount)} من {filteredCount}
                   </span>
                 </div>
 
@@ -829,7 +820,7 @@ export default function FollowUps() {
       <ConfirmDialog
         isOpen={followUpToSend !== null}
         title="إرسال المتابعة الآن"
-        message={followUpToSend ? `سيتم إرسال متابعة العميل «${getCustomerName(followUpToSend.customerId)}» الآن بالنص المسجل.` : ''}
+        message={followUpToSend ? `سيتم إرسال متابعة العميل «${getCustomerName(followUpToSend)}» الآن بالنص المسجل.` : ''}
         confirmLabel="إرسال الآن"
         onConfirm={() => {
           const followUp = followUpToSend;

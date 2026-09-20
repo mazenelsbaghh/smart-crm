@@ -1,0 +1,33 @@
+import { test, expect } from './fixtures';
+import { messagesFixture, processingFixture, reviewFixture } from '../../src/packages/management/reply-review/__tests__/fixtures';
+
+test('daily review supports a full RTL workflow at desktop and mobile sizes', async ({ page }) => {
+  await page.route('**/reports/daily-review**', route => route.fulfill({ json: route.request().url().includes('/processing') ? processingFixture : reviewFixture }));
+  await page.route('**/conversations/conversation-1/messages**', route => route.fulfill({ json: messagesFixture }));
+  await page.goto('/management/reply-review');
+  await expect(page.getByRole('heading', { name: 'مراجعة الردود اليومية' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'المراجعة والمعالجة المجدولة' })).toBeVisible();
+  await page.getByText('إعدادات الجدولة والمعالجة').click();
+  await expect(page.getByLabel('فحص المحادثات كل (دقيقة)')).toBeVisible();
+  const processing = page.locator('section').filter({ has: page.getByRole('heading', { name: 'المراجعة والمعالجة المجدولة' }) }).last();
+  await page.getByRole('heading', { name: 'المراجعة والمعالجة المجدولة' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/tmp/reply-review-schedule-desktop.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await processing.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.getByRole('heading', { name: 'المراجعة والمعالجة المجدولة' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/tmp/reply-review-schedule-mobile.png' });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('button', { name: /عميلة اختبار — سهيلة/ }).click();
+  await expect(page.getByText('بعد ١٧ دقيقة')).toBeVisible();
+  await expect(page.getByText('مكتملة بلا دليل إرسال')).toBeVisible();
+  await page.getByRole('heading', { name: 'سجل المحادثة' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/tmp/daily-reply-review-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('button', { name: 'الرجوع للقائمة' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+  await page.getByRole('heading', { name: 'سجل المحادثة' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/tmp/daily-reply-review-mobile-detail.png', fullPage: true });
+  await page.getByRole('button', { name: 'الرجوع للقائمة' }).click();
+  await expect(page.getByRole('button', { name: /عميلة اختبار — سهيلة/ })).toBeVisible();
+  await page.screenshot({ path: '/tmp/daily-reply-review-mobile-list.png', fullPage: true });
+});

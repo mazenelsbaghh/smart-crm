@@ -7,6 +7,7 @@ namespace Modules.Conversations.Domain
     {
         public Guid ConversationId { get; set; }
         public string ExternalMessageId { get; set; }
+        public string SenderType { get; set; } = "Unknown";
         public string Direction { get; set; } // Incoming, Outgoing
         public string Content { get; set; }
         public string MessageType { get; set; } // Text, Image, Voice, Document

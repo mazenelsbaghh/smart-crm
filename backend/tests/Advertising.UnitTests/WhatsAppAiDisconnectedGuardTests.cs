@@ -97,7 +97,6 @@ public sealed class WhatsAppAiDisconnectedGuardTests
             publishedEvents,
             RejectingProxy.Create<IConnectionMultiplexer>(),
             CreateGateway("Connected", "201000000000", DateTimeOffset.UtcNow.AddMinutes(-1)),
-            new WhatsAppCustomerMergeService(db),
             NullLogger<WhatsAppLidContactRecoveryJob>.Instance);
 
         await job.ExecuteAsync();
@@ -161,10 +160,10 @@ public sealed class WhatsAppAiDisconnectedGuardTests
     }
 
     [Theory]
-    [InlineData(-10, -5, 0)]
+    [InlineData(-10, -5, 1)]
     [InlineData(-10, -15, 1)]
     [InlineData(-1442, -5, 1)]
-    public async Task WhatsApp_recovery_only_requeues_messages_from_the_current_connection_2026_09_01(
+    public async Task WhatsApp_recovery_requeues_messages_due_for_the_current_connection_2026_09_01(
         int messageAgeMinutes,
         int connectionAgeMinutes,
         int expectedEvents)
@@ -242,7 +241,7 @@ public sealed class WhatsAppAiDisconnectedGuardTests
     }
 
     [Fact]
-    public async Task Offline_message_due_just_after_reconnect_waits_for_the_next_daily_occurrence()
+    public async Task Offline_message_waits_until_the_reconnected_session_is_stable()
     {
         var now = DateTime.UtcNow;
         var projectId = Guid.NewGuid();

@@ -145,6 +145,11 @@ builder.Services.AddHangfireServer(options =>
 {
     options.SchedulePollingInterval = TimeSpan.FromSeconds(5);
 });
+builder.Services.AddHangfireServer(options =>
+{
+    options.Queues = ["reply-review"];
+    options.WorkerCount = 2;
+});
 
 // Dependency Injection registrations
 builder.Services.AddScoped<ITenantContext, TenantContext>();
@@ -299,7 +304,9 @@ builder.Services.AddScoped<Modules.SystemHealth.Services.ISystemHealthService, M
 builder.Services.AddSingleton<Modules.AI.Services.IGeminiMockHandler, Modules.AI.Services.GeminiMockHandler>();
 
 // Register Gemini Client
-builder.Services.AddSingleton<Modules.AI.Services.IGeminiClient, Modules.AI.Services.GeminiClient>();
+// Gemini currently authenticates through query parameters; never log its request URLs.
+builder.Services.AddHttpClient<Modules.AI.Services.IGeminiClient, Modules.AI.Services.GeminiClient>().RemoveAllLoggers();
+builder.Services.AddSingleton<Modules.AI.Services.AiGenerationCache>();
 
 // Keep customer chat generation isolated from Gemini-backed content and automation.
 builder.Services.AddHttpClient<Modules.AI.Services.OpenAiResponsesClient>(client =>
@@ -334,6 +341,10 @@ builder.Services.AddScoped<Modules.Content.Services.ContentVideoPlanningService>
 builder.Services.AddScoped<Modules.Content.Services.ContentVideoMediaService>();
 builder.Services.AddScoped<Modules.Content.Jobs.ContentVideoDispatchService>();
 builder.Services.AddScoped<Modules.Content.Jobs.ContentVideoJob>();
+builder.Services.AddScoped<Modules.Content.Services.ContentDocumentPlanningService>();
+builder.Services.AddScoped<Modules.Content.Services.ContentDocumentGenerationService>();
+builder.Services.AddScoped<Modules.Content.Jobs.ContentDocumentJob>();
+builder.Services.AddScoped<Modules.Content.Services.ContentCardGameService>();
 builder.Services.AddHttpClient<Modules.Content.Services.GeminiImageClient>(client =>
 {
     client.BaseAddress = new Uri("https://generativelanguage.googleapis.com/");
@@ -364,7 +375,12 @@ builder.Services.AddScoped<Modules.Analytics.Application.Services.IAnalyticsEngi
 builder.Services.AddScoped<Modules.Analytics.Jobs.DailyAnalyticsJob>();
 builder.Services.AddScoped<Modules.Analytics.Application.Services.ConversationSalesAnalyzer>();
 builder.Services.AddScoped<Modules.Analytics.Application.Services.SalesIntelligenceService>();
+builder.Services.AddScoped<Modules.Analytics.Application.Services.DailyReplyReviewService>();
+builder.Services.AddScoped<Modules.Analytics.Application.Services.CorrectiveReplyDraftService>();
 builder.Services.AddScoped<Modules.Analytics.Jobs.SalesIntelligenceJob>();
+builder.Services.AddScoped<Modules.Analytics.Application.Services.ReplyReviewQueue>();
+builder.Services.AddScoped<Modules.Analytics.Jobs.ReplyReviewScheduler>();
+builder.Services.AddScoped<Modules.Analytics.Jobs.ReplyReviewWorker>();
 
 // Register Integrations Services
 builder.Services.AddScoped<Modules.Integrations.Services.IProjectIntegrationService, Modules.Integrations.Services.ProjectIntegrationService>();
@@ -570,7 +586,9 @@ using (var scope = app.Services.CreateScope())
     manager.AddOrUpdate<Modules.Analytics.Jobs.DailyAnalyticsJob>("daily-analytics-snapshot", job => job.ExecuteAsync(), Cron.Daily);
     manager.RemoveIfExists("sales-ai-analyze-stale");
     manager.RemoveIfExists("sales-ai-daily-digest");
-    manager.AddOrUpdate<Modules.Analytics.Jobs.SalesIntelligenceJob>("sales-ai-analyze-recent", job => job.AnalyzeRecentAsync(CancellationToken.None), "*/15 * * * *");
+    manager.RemoveIfExists("sales-ai-analyze-recent");
+    manager.RemoveIfExists("sales-ai-daily-review");
+    manager.AddOrUpdate<Modules.Analytics.Jobs.ReplyReviewScheduler>("reply-review-scheduler", job => job.TickAsync(CancellationToken.None), Cron.Minutely);
     manager.AddOrUpdate<Modules.Conversations.Jobs.UnansweredConversationRecoveryJob>("recover-unanswered-conversations", job => job.ExecuteAsync(CancellationToken.None), Cron.Minutely);
     manager.AddOrUpdate<Modules.Conversations.Jobs.ConversationReplyWindowDispatcher>("dispatch-conversation-reply-windows", job => job.DispatchAsync(CancellationToken.None), Cron.Minutely);
     manager.AddOrUpdate<Modules.Conversations.Jobs.WhatsAppLidContactRecoveryJob>("recover-whatsapp-lid-contacts", job => job.ExecuteAsync(CancellationToken.None), Cron.Minutely);

@@ -13,7 +13,8 @@ namespace Modules.GroupAppointments.Services;
 public enum ExistingGroupBookingPolicy
 {
     Reject,
-    Transfer
+    Transfer,
+    UpdateSameGroup
 }
 
 public enum GroupBookingOrigin
@@ -207,7 +208,19 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
             canonicalPhone,
             customer?.Id ?? command.KnownCustomerId,
             cancellationToken);
-        if (existingBooking != null && command.ExistingBookingPolicy == ExistingGroupBookingPolicy.Reject)
+        if (existingBooking != null && command.Origin == GroupBookingOrigin.Public)
+        {
+            await RollbackAsync(transaction, cancellationToken);
+            return new(
+                existingBooking.GroupAppointmentId == group.Id
+                    ? GroupBookingStatus.AlreadyInGroup
+                    : GroupBookingStatus.BookingAlreadyExists,
+                canonicalPhone, group, existingBooking, customer, bookedCountBeforeWrite);
+        }
+        if (existingBooking != null &&
+            (command.ExistingBookingPolicy == ExistingGroupBookingPolicy.Reject ||
+             command.ExistingBookingPolicy == ExistingGroupBookingPolicy.UpdateSameGroup &&
+             existingBooking.GroupAppointmentId != group.Id))
         {
             await RollbackAsync(transaction, cancellationToken);
             return new(
@@ -218,6 +231,12 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
                 ExistingBooking: existingBooking);
         }
 
+        if (existingBooking != null && customer != null
+            && command.KnownCustomerId == customer.Id && existingBooking.CustomerId != customer.Id)
+        {
+            await RollbackAsync(transaction, cancellationToken);
+            return new(GroupBookingStatus.BookingAlreadyExists, canonicalPhone, group);
+        }
         var alreadyInGroup = existingBooking?.GroupAppointmentId == group.Id;
         if (!alreadyInGroup && bookedCountBeforeWrite >= group.Capacity)
         {
@@ -259,6 +278,9 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
         {
             ProjectId = command.ProjectId
         };
+        if (existingBooking != null)
+            await new Modules.CRM.Services.GroupBookingFollowUpLifecycle(_context)
+                .CancelForBookingAsync(existingBooking, existingBooking.GroupAppointment);
         booking.GroupAppointmentId = group.Id;
         booking.CustomerId = customer.Id;
         booking.CustomerName = customerName;
@@ -353,7 +375,11 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
                 cancellationToken);
             if (knownCustomer != null)
             {
-                return knownCustomer;
+                var knownPhone = GroupBookingPhone.Normalize(knownCustomer.PhoneNumber);
+                if (knownPhone == null || knownPhone == canonicalPhone)
+                {
+                    return knownCustomer;
+                }
             }
         }
 
@@ -434,8 +460,11 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
         GroupAppointmentBooking? existingBooking,
         bool alreadyInGroup)
     {
-        customer.Name = customerName;
-        customer.PhoneNumber = canonicalPhone;
+        if (command.Origin != GroupBookingOrigin.Public || string.IsNullOrWhiteSpace(customer.Name))
+            customer.Name = customerName;
+        if (string.IsNullOrWhiteSpace(customer.PhoneNumber)
+            || GroupBookingPhone.Normalize(customer.PhoneNumber) == canonicalPhone)
+            customer.PhoneNumber = canonicalPhone;
         customer.Tags = (customer.Tags ?? Array.Empty<string>())
             .Append("حجز مجموعة")
             .Where(tag => !string.IsNullOrWhiteSpace(tag))

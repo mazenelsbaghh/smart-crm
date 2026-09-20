@@ -103,6 +103,14 @@ public sealed class ConversationReplyWindowDispatcher(
     {
         foreach (var window in windows)
         {
+            if (await dbContext.Conversations.IgnoreQueryFilters().AnyAsync(conversation =>
+                    conversation.Id == window.ConversationId && conversation.ProjectId == window.ProjectId
+                    && conversation.HumanHandoffReplyId != null, cancellationToken))
+            {
+                window.DispatchedEventId = window.EventId;
+                window.DispatchedAtUtc = dispatchedAtUtc;
+                continue;
+            }
             var latestSource = await dbContext.Messages.IgnoreQueryFilters()
                 .Where(message => message.ConversationId == window.ConversationId)
                 .Where(message => message.MessageType != "Reaction")
@@ -124,6 +132,7 @@ public sealed class ConversationReplyWindowDispatcher(
             var lastOutgoingAtUtc = await dbContext.Messages.IgnoreQueryFilters()
                 .Where(message => message.ConversationId == window.ConversationId
                     && message.Direction == "Outgoing"
+                    && message.MessageType != "Reaction"
                     && message.Timestamp <= window.LatestIncomingAtUtc)
                 .MaxAsync(message => (DateTime?)message.Timestamp, cancellationToken);
             var incoming = await dbContext.Messages.IgnoreQueryFilters()

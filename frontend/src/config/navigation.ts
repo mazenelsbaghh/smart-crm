@@ -39,6 +39,8 @@ export const navigationItems: NavigationItem[] = [
   { name: 'قاعدة المعرفة', path: '/management/knowledge', icon: BookOpen, compact: true },
   { name: 'إدارة الموافقات', path: '/management/approvals', icon: ShieldCheck },
   { name: 'مدير المبيعات', path: '/management/reports', icon: TrendingUp, compact: true, shortcut: '8' },
+  { name: 'مراجعة الردود', path: '/management/reply-review', icon: ShieldCheck, compact: true },
+  { name: 'تحليل الأيام', path: '/management/reports/funnel', icon: BarChart3, compact: true },
   { name: 'طلبات المواعيد', path: '/management/schedule-demand', icon: CalendarSearch, compact: true, shortcut: '9' },
   { name: 'إعدادات المشروع', path: '/settings', icon: Settings, compact: true },
 ];

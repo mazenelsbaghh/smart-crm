@@ -95,12 +95,17 @@ public sealed class ReportsController(
         if (!Enum.TryParse<FollowUpPlanAction>(request?.Action, true, out var action) || !Enum.IsDefined(action))
             return BadRequest(new { error = "إجراء المتابعة غير مدعوم." });
         var queued = await intelligence.QueueFollowUpPlanAsync(
-            new(projectId, window.FromUtc, window.ToUtc, action, request?.ConversationId, request?.PlanToken),
+            new(projectId, window.FromUtc, window.ToUtc, action, request?.ConversationId, request?.PlanToken)
+            { DispatchOptions = request?.DispatchOptions },
             cancellationToken);
+        if (queued.ValidationError is not null)
+            return BadRequest(new { error = queued.ValidationError });
         if (queued.PlanChanged)
             return Conflict(new { error = "تغيّرت قائمة العملاء منذ عرض التقرير. راجع الأرقام وحدّث التقرير قبل التأكيد." });
-        if (action == FollowUpPlanAction.SendNow && queued.Queued > 0)
-            BackgroundJob.Enqueue<FollowUpScheduler>(scheduler => scheduler.CheckOverdueFollowUpsJobAsync());
+        foreach (var dispatch in queued.Dispatches)
+            BackgroundJob.Schedule<FollowUpScheduler>(
+                scheduler => scheduler.SendPlannedFollowUpJobAsync(dispatch.Id),
+                new DateTimeOffset(dispatch.DueAtUtc));
         return Ok(queued);
     }
 

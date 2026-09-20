@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpLeft, CalendarPlus, Check, Clock4, LoaderCircle, Send, UsersRound } from 'lucide-react';
-import type { FollowUpPlanAction, FollowUpPlanSummary, OpportunityItem } from './types';
+import type { FollowUpDispatchOptions, FollowUpPlanAction, FollowUpPlanSummary, OpportunityItem } from './types';
+import { FollowUpPlanEditor } from './FollowUpPlanEditor';
 import styles from './reports.module.css';
 
 type ActionState = 'idle' | 'scheduling' | 'scheduled' | 'sending' | 'sent';
@@ -13,7 +14,7 @@ interface OpportunityQueueProps {
   actionsDisabled?: boolean;
   onSchedule: (opportunity: OpportunityItem) => Promise<void>;
   onSend: (opportunity: OpportunityItem) => Promise<void>;
-  onQueuePlan: (action: FollowUpPlanAction) => Promise<boolean>;
+  onQueuePlan: (action: FollowUpPlanAction, options: FollowUpDispatchOptions) => Promise<boolean>;
 }
 
 const inboxPaths: Partial<Record<string, string>> = {
@@ -78,18 +79,13 @@ export function OpportunityQueue({ opportunities, plan, canManage, actionsDisabl
     void runAction(opportunity, 'sending', 'sent', onSend);
   };
 
-  const queuePlan = async (action: FollowUpPlanAction) => {
-    if (armedPlanAction !== action) {
-      setArmedPlanAction(action);
-      return;
-    }
+  const queuePlan = async (action: FollowUpPlanAction, options: FollowUpDispatchOptions) => {
     if (mutationLockRef.current) return;
     mutationLockRef.current = true;
-    setArmedPlanAction(null);
     setRunningPlanAction(action);
     try {
-      const completed = await onQueuePlan(action);
-      if (!completed) setArmedPlanAction(action);
+      const completed = await onQueuePlan(action, options);
+      if (completed) setArmedPlanAction(null);
     } finally {
       mutationLockRef.current = false;
       setRunningPlanAction(null);
@@ -103,10 +99,19 @@ export function OpportunityQueue({ opportunities, plan, canManage, actionsDisabl
         <span className={styles.countPill}>{opportunities.length.toLocaleString('ar-EG')}</span>
       </div>
       <div className={styles.followUpPlan} aria-label="خطة المتابعات لكل الفرص">
-        <button type="button" data-action="send" disabled={!canManage || actionsDisabled || sendNowCount === 0 || runningPlanAction !== null || itemMutationRunning} onClick={() => void queuePlan('SendNow')}><Send size={16} aria-hidden="true" /><span>{runningPlanAction === 'SendNow' ? 'جاري تجهيز الإرسال…' : armedPlanAction === 'SendNow' ? `تأكيد إرسال ${sendNowCount.toLocaleString('ar-EG')}` : 'يتبعت الآن'}</span><strong>{sendNowCount.toLocaleString('ar-EG')}</strong></button>
-        <button type="button" data-action="schedule" disabled={!canManage || actionsDisabled || scheduleCount === 0 || runningPlanAction !== null || itemMutationRunning} onClick={() => void queuePlan('Schedule')}><CalendarPlus size={16} aria-hidden="true" /><span>{runningPlanAction === 'Schedule' ? 'جاري الجدولة…' : armedPlanAction === 'Schedule' ? `تأكيد جدولة ${scheduleCount.toLocaleString('ar-EG')}` : 'يتجدول 24 ساعة'}</span><strong>{scheduleCount.toLocaleString('ar-EG')}</strong></button>
+        <button type="button" data-action="send" disabled={!canManage || actionsDisabled || sendNowCount === 0 || runningPlanAction !== null || itemMutationRunning} aria-expanded={armedPlanAction === 'SendNow'} onClick={() => setArmedPlanAction('SendNow')}><Send size={16} aria-hidden="true" /><span>{runningPlanAction === 'SendNow' ? 'جاري تجهيز الإرسال…' : 'يتبعت الآن'}</span><strong>{sendNowCount.toLocaleString('ar-EG')}</strong></button>
+        <button type="button" data-action="schedule" disabled={!canManage || actionsDisabled || scheduleCount === 0 || runningPlanAction !== null || itemMutationRunning} aria-expanded={armedPlanAction === 'Schedule'} onClick={() => setArmedPlanAction('Schedule')}><CalendarPlus size={16} aria-hidden="true" /><span>{runningPlanAction === 'Schedule' ? 'جاري الجدولة…' : 'جدولة على أيام'}</span><strong>{scheduleCount.toLocaleString('ar-EG')}</strong></button>
         <div data-action="done"><UsersRound size={16} aria-hidden="true" /><span>مجدول بالفعل</span><strong>{scheduledCount.toLocaleString('ar-EG')}</strong></div>
       </div>
+      {armedPlanAction && <FollowUpPlanEditor
+        key={`${armedPlanAction}:${plan.sendNowToken}:${plan.scheduleToken}`}
+        action={armedPlanAction}
+        available={armedPlanAction === 'SendNow' ? sendNowCount : scheduleCount}
+        disabled={!canManage || actionsDisabled || itemMutationRunning}
+        running={runningPlanAction !== null}
+        onConfirm={options => void queuePlan(armedPlanAction, options)}
+        onCancel={() => setArmedPlanAction(null)}
+      />}
       {opportunities.length === 0 ? (
         <div className={styles.emptyInline}><p>لا توجد فرص متابعة مؤكدة حاليًا.</p><span>القائمة تظهر بعد تحليل المحادثات غير المحولة.</span></div>
       ) : (

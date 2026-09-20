@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Modules.Conversations.Domain;
 using Modules.CRM.Domain;
 using Modules.CRM.Services;
+using Modules.GroupAppointments.Domain;
+using Modules.GroupAppointments.Services;
 using Shared.Infrastructure;
 using Shared.Events;
 using Shared.Queue;
@@ -455,6 +457,63 @@ namespace Modules.CRM.API
             return CreatedAtAction(nameof(GetFollowUp), new { id = followUp.Id }, followUp);
         }
 
+        [HttpGet("customers/{customerId}/schedule-availability-preference")]
+        public async Task<IActionResult> GetScheduleAvailabilityPreference(Guid customerId)
+        {
+            var customer = await _context.Customers.FindAsync(customerId);
+            if (customer == null) return NotFound("Customer not found");
+            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
+            var preference = await _context.ScheduleAvailabilityPreferences
+                .Where(candidate => candidate.CustomerId == customerId && candidate.Status == "Waiting")
+                .OrderByDescending(candidate => candidate.UpdatedAt)
+                .FirstOrDefaultAsync();
+            return Ok(new
+            {
+                timeWindow = preference?.TimeWindow,
+                availabilityHorizon = preference?.AvailabilityHorizon
+                    ?? ScheduleAvailabilityHorizons.AnyTime,
+                status = preference?.Status
+            });
+        }
+
+        [HttpPut("customers/{customerId}/schedule-availability-preference")]
+        public async Task<IActionResult> SaveScheduleAvailabilityPreference(
+            Guid customerId,
+            [FromBody] SaveScheduleAvailabilityPreferenceRequest request)
+        {
+            var customer = await _context.Customers.FindAsync(customerId);
+            if (customer == null) return NotFound("Customer not found");
+            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
+            if (!ScheduleAvailabilityWindows.IsValid(request.TimeWindow)
+                || !ScheduleAvailabilityHorizons.IsValid(request.AvailabilityHorizon))
+                return BadRequest(new { code = "INVALID_SCHEDULE_AVAILABILITY_PREFERENCE" });
+
+            var activePreferences = await _context.ScheduleAvailabilityPreferences
+                .Where(candidate => candidate.CustomerId == customerId && candidate.Status == "Waiting")
+                .ToListAsync();
+            foreach (var activePreference in activePreferences) activePreference.Status = "Replaced";
+            var conversation = await _context.Conversations
+                .Where(candidate => candidate.CustomerId == customerId
+                    && candidate.Channel == "WhatsApp"
+                    && candidate.WhatsAppAccountId != null)
+                .OrderByDescending(candidate => candidate.LastMessageTimestamp)
+                .FirstOrDefaultAsync();
+            var preference = new ScheduleAvailabilityPreference
+            {
+                ProjectId = customer.ProjectId,
+                CustomerId = customerId,
+                ConversationId = conversation?.Id,
+                WhatsAppAccountId = conversation?.WhatsAppAccountId,
+                Channel = "WhatsApp",
+                TimeWindow = request.TimeWindow!,
+                AvailabilityHorizon = request.AvailabilityHorizon!,
+                Status = "Waiting"
+            };
+            _context.ScheduleAvailabilityPreferences.Add(preference);
+            await _context.SaveChangesAsync();
+            return Ok(preference);
+        }
+
         [HttpGet("follow-ups/{id}")]
         public async Task<IActionResult> GetFollowUp(Guid id)
         {
@@ -471,18 +530,111 @@ namespace Modules.CRM.API
         }
 
         [HttpGet("projects/{projectId}/follow-ups")]
-        public async Task<IActionResult> GetFollowUps(Guid projectId, [FromQuery] string status = null)
+        public async Task<IActionResult> GetFollowUps(
+            Guid projectId,
+            [FromQuery] string status = null,
+            [FromQuery] Guid? customerId = null)
         {
             if (!_authorization.CanRead(User, projectId)) return Forbid();
-            var query = _context.FollowUps.Where(followUp => followUp.ProjectId == projectId);
+            var query = _context.FollowUps
+                .AsNoTracking()
+                .Where(followUp => followUp.ProjectId == projectId);
 
             if (!string.IsNullOrEmpty(status))
             {
                 query = query.Where(f => f.Status == status);
             }
 
-            var followUps = await query.ToListAsync();
+            if (customerId.HasValue)
+            {
+                query = query.Where(followUp => followUp.CustomerId == customerId.Value);
+            }
+
+            var followUps = await query
+                .OrderByDescending(followUp => followUp.DueDate)
+                .ToListAsync();
             return Ok(followUps);
+        }
+
+        [HttpGet("projects/{projectId}/follow-ups/page")]
+        public async Task<IActionResult> GetFollowUpsPage(
+            Guid projectId,
+            [FromQuery] string? status = "Pending",
+            [FromQuery] string? search = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10)
+        {
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
+
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 5, 50);
+            var projectFollowUps = _context.FollowUps
+                .AsNoTracking()
+                .Where(followUp => followUp.ProjectId == projectId);
+            var statusCounts = await projectFollowUps
+                .GroupBy(followUp => followUp.Status)
+                .Select(group => new { Status = group.Key, Count = group.Count() })
+                .ToDictionaryAsync(entry => entry.Status, entry => entry.Count);
+
+            var filteredFollowUps = projectFollowUps;
+            if (!string.IsNullOrWhiteSpace(status) && status != "All")
+            {
+                filteredFollowUps = filteredFollowUps.Where(followUp => followUp.Status == status);
+            }
+
+            var followUpsWithCustomers = filteredFollowUps.Join(
+                _context.Customers.AsNoTracking().Where(customer => customer.ProjectId == projectId),
+                followUp => followUp.CustomerId,
+                customer => customer.Id,
+                (followUp, customer) => new { FollowUp = followUp, Customer = customer });
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var searchTerm = search.Trim().ToLower();
+                var canonicalPhone = GroupBookingPhone.Normalize(search);
+                followUpsWithCustomers = followUpsWithCustomers.Where(entry =>
+                    (entry.Customer.Name != null && entry.Customer.Name.ToLower().Contains(searchTerm))
+                    || entry.Customer.PhoneNumber.Contains(searchTerm)
+                    || (canonicalPhone != null
+                        && EF.Property<string>(entry.Customer, GroupBookingPhoneFields.CustomerCanonical) == canonicalPhone)
+                    || (canonicalPhone != null && _context.WhatsAppPhoneCustomerIdentities.Any(identity =>
+                        identity.ProjectId == projectId
+                        && identity.CustomerId == entry.Customer.Id
+                        && identity.NormalizedPhone == canonicalPhone))
+                    || _context.GroupAppointmentBookings.Any(booking =>
+                        booking.ProjectId == projectId
+                        && booking.CustomerId == entry.Customer.Id
+                        && (booking.CustomerPhone.Contains(searchTerm)
+                            || (canonicalPhone != null
+                                && EF.Property<string>(booking, GroupBookingPhoneFields.BookingCanonical) == canonicalPhone))));
+            }
+
+            var totalFiltered = await followUpsWithCustomers.CountAsync();
+            var items = await followUpsWithCustomers
+                .OrderByDescending(entry => entry.FollowUp.DueDate)
+                .ThenBy(entry => entry.FollowUp.Id)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(entry => new FollowUpListItem(
+                    entry.FollowUp.Id,
+                    entry.FollowUp.CustomerId,
+                    entry.Customer.Name,
+                    entry.Customer.PhoneNumber,
+                    entry.FollowUp.DueDate,
+                    entry.FollowUp.Status,
+                    entry.FollowUp.Notes,
+                    entry.FollowUp.Type,
+                    entry.FollowUp.AppointmentTime,
+                    entry.FollowUp.Tone))
+                .ToListAsync();
+
+            return Ok(new FollowUpPage(
+                items,
+                totalFiltered,
+                statusCounts.Values.Sum(),
+                statusCounts.GetValueOrDefault("Pending"),
+                statusCounts.GetValueOrDefault("Completed"),
+                statusCounts.GetValueOrDefault("Missed"),
+                statusCounts.GetValueOrDefault("Bypassed")));
         }
 
         [HttpPost("follow-ups/{id}/complete")]
@@ -726,11 +878,6 @@ namespace Modules.CRM.API
                     : "مرحباً، أردنا فقط المتابعة معك لمعرفة ما إذا كان لديك أي استفسار آخر.";
             }
 
-            if (!string.IsNullOrWhiteSpace(talkTipsTrialInstructions))
-            {
-                messageContent = Modules.TalkTips.Services.TalkTipsTrialCtaInstructions.EnsureCta(messageContent);
-            }
-
             messageContent = Modules.WhatsApp.Services.OutgoingMessageText.Normalize(messageContent);
 
             var claimed = _context.Database.IsRelational()
@@ -844,6 +991,10 @@ namespace Modules.CRM.API
             }
 
             // Mark this specific follow-up as Completed
+            followUp.SentAtUtc = message.Timestamp;
+            followUp.SentForDueAtUtc = followUp.DueDate;
+            followUp.SentMessageId = message.Id;
+            followUp.ConversationId = conversation.Id;
             followUp.Status = "Completed";
             _context.Entry(followUp).State = EntityState.Modified;
 
@@ -1566,6 +1717,12 @@ JSON:";
         public Guid? WhatsAppAccountId { get; set; }
     }
 
+    public sealed class SaveScheduleAvailabilityPreferenceRequest
+    {
+        public string? TimeWindow { get; set; }
+        public string? AvailabilityHorizon { get; set; }
+    }
+
     public class UpdateFollowUpRequest
     {
         public DateTime? DueDate { get; set; }
@@ -1575,5 +1732,26 @@ JSON:";
         public string? Status { get; set; }
         public string? Tone { get; set; }
     }
+
+    public sealed record FollowUpListItem(
+        Guid Id,
+        Guid CustomerId,
+        string? CustomerName,
+        string CustomerPhoneNumber,
+        DateTime DueDate,
+        string Status,
+        string Notes,
+        string Type,
+        DateTime? AppointmentTime,
+        string Tone);
+
+    public sealed record FollowUpPage(
+        IReadOnlyList<FollowUpListItem> Items,
+        int FilteredCount,
+        int TotalCount,
+        int PendingCount,
+        int CompletedCount,
+        int MissedCount,
+        int BypassedCount);
 
 }

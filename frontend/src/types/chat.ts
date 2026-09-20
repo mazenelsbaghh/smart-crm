@@ -31,12 +31,12 @@ export interface Conversation {
 export interface Message {
   id: string;
   conversationId: string;
-  senderType: 'Customer' | 'Agent' | 'System' | 'AI';
+  senderType: 'Customer' | 'Agent' | 'System' | 'AI' | 'Unknown';
   content: string;
   createdAt: string;
   status: 'Sent' | 'Delivered' | 'Read';
   mediaUrl: string | null;
-  mediaType: 'Image' | 'Voice' | 'Document' | null;
+  mediaType: 'Image' | 'Voice' | 'Document' | 'Video' | null;
   assetId?: string | null;
   transcription?: string | null;
   facebookPostId?: string | null;

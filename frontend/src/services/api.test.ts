@@ -21,9 +21,9 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function unauthorized(config: InternalAxiosRequestConfig): AxiosError {
+function unauthorized(config: InternalAxiosRequestConfig, code = 'UNAUTHORIZED'): AxiosError {
   const response: AxiosResponse = {
-    data: { code: 'UNAUTHORIZED' },
+    data: { code },
     status: 401,
     statusText: 'Unauthorized',
     headers: new axiosModule.AxiosHeaders(),
@@ -31,6 +31,23 @@ function unauthorized(config: InternalAxiosRequestConfig): AxiosError {
   };
   return new axiosModule.AxiosError(
     'Unauthorized',
+    axiosModule.AxiosError.ERR_BAD_REQUEST,
+    config,
+    undefined,
+    response,
+  );
+}
+
+function refreshFailure(status: number, config: InternalAxiosRequestConfig): AxiosError {
+  const response: AxiosResponse = {
+    data: { code: 'REFRESH_REQUEST_FAILED' },
+    status,
+    statusText: 'Refresh request failed',
+    headers: new axiosModule.AxiosHeaders(),
+    config,
+  };
+  return new axiosModule.AxiosError(
+    'Refresh request failed',
     axiosModule.AxiosError.ERR_BAD_REQUEST,
     config,
     undefined,
@@ -238,7 +255,7 @@ describe('API session refresh', () => {
     await vi.waitFor(() => expect(adapterCalls).toBe(2));
     await vi.waitFor(() => expect(refreshSpy).toHaveBeenCalledTimes(1));
     const refreshConfig = { headers: new axiosModule.AxiosHeaders() } as InternalAxiosRequestConfig;
-    const rejectedToken = unauthorized(refreshConfig);
+    const rejectedToken = unauthorized(refreshConfig, 'REFRESH_TOKEN_INVALID');
     refreshFailure.reject(rejectedToken);
     const outcomes = await Promise.allSettled(requests);
 
@@ -250,6 +267,24 @@ describe('API session refresh', () => {
     expect(localStorage.getItem('refreshToken')).toBeNull();
     expect(localStorage.getItem('user')).toBeNull();
     expect(localStorage.getItem('activeProject')).toBeNull();
+  });
+
+  it.each([400, 401, 403])('keeps the session after a non-auth refresh failure (%i)', async (status) => {
+    localStorage.setItem('accessToken', 'expired-access');
+    localStorage.setItem('refreshToken', 'current-refresh');
+    localStorage.setItem('user', '{"id":"user-1"}');
+    localStorage.setItem('activeProject', '{"id":"project-1"}');
+    api.defaults.adapter = async (config) => { throw unauthorized(config); };
+    const refreshConfig = { headers: new axiosModule.AxiosHeaders() } as InternalAxiosRequestConfig;
+    const failedRefresh = refreshFailure(status, refreshConfig);
+    vi.spyOn(axiosClient, 'post').mockRejectedValue(failedRefresh);
+
+    await expect(api.get('/protected')).rejects.toBe(failedRefresh);
+
+    expect(localStorage.getItem('accessToken')).toBe('expired-access');
+    expect(localStorage.getItem('refreshToken')).toBe('current-refresh');
+    expect(localStorage.getItem('user')).toBe('{"id":"user-1"}');
+    expect(localStorage.getItem('activeProject')).toBe('{"id":"project-1"}');
   });
 
   it('does not overwrite a newer session when an older tab finishes refreshing', async () => {

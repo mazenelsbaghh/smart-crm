@@ -20,6 +20,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import styles from './crm.module.css';
+import CustomerExport from './CustomerExport';
 
 const formatCount = (value: number) => Number.isFinite(value) ? value.toLocaleString('ar-EG') : 'غير متاح';
 const formatPhone = (value: string) => value.startsWith('+') ? value : `+${value}`;
@@ -309,6 +310,8 @@ export default function CustomerList() {
           استيراد الطلاب المدفوعة (Excel)
         </button>
       </div>
+
+      {activeProject && <CustomerExport key={activeProject.id} projectId={activeProject.id} />}
 
       {/* Import Blacklist Panel */}
       {showImportPanel && (

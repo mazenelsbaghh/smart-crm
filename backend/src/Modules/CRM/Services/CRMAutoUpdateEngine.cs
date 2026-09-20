@@ -311,6 +311,35 @@ namespace Modules.CRM.Services
 
             // Get resolved stage name to return
             string resolvedStageName = "New";
+
+            if (ScheduleAvailabilityWindows.IsValid(@event.ScheduleAvailabilityWindow)
+                && ScheduleAvailabilityHorizons.IsValid(@event.ScheduleAvailabilityHorizon))
+            {
+                var waitingPreferences = await _context.ScheduleAvailabilityPreferences
+                    .Where(preference => preference.ProjectId == @event.ProjectId
+                        && preference.CustomerId == @event.CustomerId
+                        && preference.Status == "Waiting")
+                    .ToListAsync();
+                var currentPreference = waitingPreferences.FirstOrDefault(preference =>
+                    preference.TimeWindow == @event.ScheduleAvailabilityWindow);
+                foreach (var preference in waitingPreferences.Where(preference => preference != currentPreference))
+                    preference.Status = "Replaced";
+
+                currentPreference ??= new ScheduleAvailabilityPreference
+                {
+                    ProjectId = @event.ProjectId,
+                    CustomerId = @event.CustomerId,
+                    TimeWindow = @event.ScheduleAvailabilityWindow!,
+                    AvailabilityHorizon = @event.ScheduleAvailabilityHorizon!,
+                    Status = "Waiting"
+                };
+                currentPreference.ConversationId = @event.ConversationId;
+                currentPreference.WhatsAppAccountId = @event.WhatsAppAccountId;
+                currentPreference.Channel = string.IsNullOrWhiteSpace(@event.Channel) ? "WhatsApp" : @event.Channel;
+                currentPreference.AvailabilityHorizon = @event.ScheduleAvailabilityHorizon!;
+                if (_context.Entry(currentPreference).State == EntityState.Detached)
+                    _context.ScheduleAvailabilityPreferences.Add(currentPreference);
+            }
             var activeOrLastDeal = await _context.Deals
                 .Where(d => d.CustomerId == customer.Id)
                 .OrderByDescending(d => d.ClosedAt ?? d.CreatedAt)

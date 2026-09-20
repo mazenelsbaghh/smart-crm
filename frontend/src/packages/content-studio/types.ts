@@ -197,3 +197,110 @@ export interface ContentVideoPlanAccepted {
   status: 'Planning';
   message: string;
 }
+
+export type ContentDocumentKind = 'Presentation' | 'A4';
+export type ContentDocumentStatus = 'Planning' | 'GeneratingImages' | 'Ready' | 'Failed' | 'AwaitingDesign';
+export type ContentDocumentPageStatus = 'Planned' | 'GeneratingImage' | 'Ready' | 'ImageFailed' | 'Queued';
+
+export interface ContentDocumentCountSuggestion {
+  pageCount: number;
+  minPageCount: number;
+  maxPageCount: number;
+  sessionCount?: number;
+  sections?: { section: number; title: string; pageCount: number; minPageCount: number; maxPageCount: number }[];
+  fileSections?: ContentDocumentCountSuggestion['sections'];
+}
+
+export interface ContentDocumentSessionRange {
+  section: number;
+  minPageCount: number;
+  maxPageCount: number;
+}
+
+export interface ContentDocumentPreviewRequest {
+  kind: ContentDocumentKind;
+  content: string;
+  pageCount: number;
+  coverTitle: string;
+  sessionRanges?: ContentDocumentSessionRange[];
+  pagesPerSession?: number;
+}
+
+export interface ContentDocumentPreview {
+  title: string;
+  pageCount: number;
+  pages: { pageIndex: number; title: string; body: string; blocks: { type: 'heading' | 'paragraph' | 'bullets'; items: string[] }[] }[];
+  fingerprint: string;
+  sessions?: { section: number; title: string; pageCount: number; fromPage: number; toPage: number }[];
+  documents?: { section: number; title: string; pageCount: number; pages: ContentDocumentPreview['pages'] }[];
+}
+
+export interface ContentDocumentSummary {
+  id: string;
+  kind: ContentDocumentKind;
+  status: ContentDocumentStatus;
+  title: string;
+  requestedPageCount: number;
+  error?: string;
+  logoUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContentDocumentPage {
+  id: string;
+  pageIndex: number;
+  status: ContentDocumentPageStatus;
+  title: string;
+  body: string;
+  error?: string;
+  imageUrl?: string;
+}
+
+export interface ContentDocumentDetail {
+  document: ContentDocumentSummary;
+  pages: ContentDocumentPage[];
+}
+
+export interface CardGameIdea {
+  title: string;
+  summary: string;
+  mechanic: string;
+  recommendedCardCount: number;
+}
+
+export interface ContentCardGameSummary {
+  id: string;
+  title: string;
+  mechanic: string;
+  cardCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContentGameCard {
+  id: string;
+  cardIndex: number;
+  category: string;
+  title: string;
+  prompt: string;
+  instruction: string;
+}
+
+export interface ContentCardGameDetail {
+  game: ContentCardGameSummary & {
+    brief: string;
+    instructions: string;
+    brandColors: string[];
+    logoUrl: string;
+    plannerModel: string;
+  };
+  cards: ContentGameCard[];
+}
+
+export interface CreateContentCardGame {
+  title?: string;
+  brief: string;
+  mechanic?: string;
+  cardCount: number;
+}

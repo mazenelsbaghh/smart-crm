@@ -74,7 +74,7 @@ public sealed class WhatsAppDisconnectedAiGuardTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Scheduled_follow_up_2026_09_01_regression_moves_to_the_next_day_and_waits_after_reconnect(
+    public async Task Stale_follow_up_2026_09_05_regression_is_bypassed_after_a_long_disconnect(
         bool alreadyReconnected)
     {
         var projectId = Guid.NewGuid();
@@ -99,8 +99,8 @@ public sealed class WhatsAppDisconnectedAiGuardTests
 
         await new FollowUpScheduler(services).CheckOverdueFollowUpsJobAsync();
 
-        Assert.Equal("Pending", followUp.Status);
-        Assert.Equal(originalDueDate.AddDays(1), followUp.DueDate);
+        Assert.Equal("Bypassed", followUp.Status);
+        Assert.Equal(originalDueDate, followUp.DueDate);
 
         using var reconnectedServices = new ServiceCollection()
             .AddSingleton(db)
@@ -115,8 +115,8 @@ public sealed class WhatsAppDisconnectedAiGuardTests
 
         await new FollowUpScheduler(reconnectedServices).CheckOverdueFollowUpsJobAsync();
 
-        Assert.Equal("Pending", followUp.Status);
-        Assert.Equal(originalDueDate.AddDays(1), followUp.DueDate);
+        Assert.Equal("Bypassed", followUp.Status);
+        Assert.Equal(originalDueDate, followUp.DueDate);
         Assert.Empty(db.Messages);
     }
 
@@ -139,10 +139,12 @@ public sealed class WhatsAppDisconnectedAiGuardTests
     }
 
     [Theory]
-    [InlineData(412)]
-    [InlineData(503)]
-    public async Task Scheduled_follow_up_defers_when_the_gateway_cannot_safely_accept_delivery(
-        int gatewayStatusCode)
+    [InlineData(412, "Bypassed", 0)]
+    [InlineData(503, "Pending", 1)]
+    public async Task Scheduled_follow_up_fails_safely_when_the_gateway_rejects_delivery(
+        int gatewayStatusCode,
+        string expectedStatus,
+        int expectedDeferredDays)
     {
         var projectId = Guid.NewGuid();
         await using var db = Context(projectId);
@@ -167,13 +169,63 @@ public sealed class WhatsAppDisconnectedAiGuardTests
 
         await new FollowUpScheduler(services).CheckOverdueFollowUpsJobAsync();
 
-        Assert.Equal("Pending", followUp.Status);
-        Assert.Equal(originalDueDate.AddDays(1), followUp.DueDate);
+        Assert.Equal(expectedStatus, followUp.Status);
+        Assert.Equal(originalDueDate.AddDays(expectedDeferredDays), followUp.DueDate);
         Assert.Empty(db.Messages);
         using var payload = JsonDocument.Parse(Assert.IsType<string>(sendHandler.RequestBody));
         Assert.Equal(
             connectedAt,
             payload.RootElement.GetProperty("expectedConnectedAt").GetDateTimeOffset());
+    }
+
+    [Fact]
+    public async Task Planned_dispatch_waits_for_the_actual_previous_send_and_only_claims_its_target()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = Context(projectId);
+        var customer = Customer(projectId);
+        var predecessor = FollowUp(projectId, customer.Id);
+        predecessor.Status = "Completed";
+        predecessor.SentAtUtc = DateTime.UtcNow.AddSeconds(-5);
+        var target = FollowUp(projectId, customer.Id);
+        target.DispatchIntervalSeconds = 90;
+        target.DependsOnFollowUpId = predecessor.Id;
+        var unrelated = FollowUp(projectId, customer.Id);
+        db.AddRange(customer, predecessor, target, unrelated);
+        await db.SaveChangesAsync();
+        var sendHandler = new DeferredGatewaySendHandler(HttpStatusCode.ServiceUnavailable);
+        var jobs = new PlannedJobs();
+        using var services = new ServiceCollection()
+            .AddSingleton(db)
+            .AddSingleton<IConfiguration>(Configuration())
+            .AddSingleton(DisconnectedSessionClient())
+            .AddSingleton(new WhatsAppAccountService(db))
+            .AddSingleton(new WhatsAppConversationService(db))
+            .AddSingleton<IHttpClientFactory>(new TestHttpClientFactory(sendHandler))
+            .AddSingleton(RejectingProxy.Create<IHubContext<NotificationHub>>())
+            .AddSingleton<IProjectSecretVault, PlaintextTestVault>()
+            .AddSingleton<IBackgroundJobClient>(jobs)
+            .BuildServiceProvider();
+
+        await new FollowUpScheduler(services).SendPlannedFollowUpJobAsync(target.Id);
+
+        Assert.Equal(0, sendHandler.RequestCount);
+        Assert.Equal("Pending", target.Status);
+        Assert.Equal(predecessor.SentAtUtc.Value.AddSeconds(90), target.DueDate);
+        Assert.Equal(target.DueDate, Assert.Single(jobs.DueDates));
+        Assert.Equal("Pending", unrelated.Status);
+        Assert.True(unrelated.DueDate < DateTime.UtcNow);
+    }
+
+    private sealed class PlannedJobs : IBackgroundJobClient
+    {
+        public List<DateTime> DueDates { get; } = [];
+        public string Create(Hangfire.Common.Job job, Hangfire.States.IState state)
+        {
+            DueDates.Add(Assert.IsType<Hangfire.States.ScheduledState>(state).EnqueueAt);
+            return Guid.NewGuid().ToString();
+        }
+        public bool ChangeState(string jobId, Hangfire.States.IState state, string expectedState) => throw new NotSupportedException();
     }
 
     [Fact]
@@ -260,6 +312,10 @@ public sealed class WhatsAppDisconnectedAiGuardTests
         var message = Assert.Single(db.Messages);
         Assert.Equal(conversation.Id, message.ConversationId);
         Assert.Equal("provider-followup-message", message.ExternalMessageId);
+        Assert.Equal(message.Id, followUp.SentMessageId);
+        Assert.Equal(message.Timestamp, followUp.SentAtUtc);
+        Assert.Equal(followUp.DueDate, followUp.SentForDueAtUtc);
+        Assert.Equal(conversation.Id, followUp.ConversationId);
         Assert.NotEmpty(gateway.StatusRequestUris);
         Assert.All(gateway.StatusRequestUris, uri =>
             Assert.Contains($"whatsappAccountId={accountId}", uri.Query, StringComparison.Ordinal));
@@ -309,6 +365,32 @@ public sealed class WhatsAppDisconnectedAiGuardTests
 
         Assert.IsType<OkObjectResult>(response);
         Assert.Equal("Pending", followUp.Status);
+    }
+
+    [Fact]
+    public async Task Follow_up_page_2026_09_03_production_regression_returns_only_the_requested_page()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = Context(projectId);
+        var customer = Customer(projectId);
+        db.Customers.Add(customer);
+        for (var index = 0; index < 60; index++)
+        {
+            var followUp = FollowUp(projectId, customer.Id);
+            followUp.DueDate = DateTime.UtcNow.AddMinutes(index);
+            db.FollowUps.Add(followUp);
+        }
+        await db.SaveChangesAsync();
+        var controller = Controller(db, new ServiceCollection().BuildServiceProvider());
+
+        var response = Assert.IsType<OkObjectResult>(
+            await controller.GetFollowUpsPage(projectId, "Pending", null, 2, 10));
+        var page = Assert.IsType<FollowUpPage>(response.Value);
+
+        Assert.Equal(10, page.Items.Count);
+        Assert.Equal(60, page.FilteredCount);
+        Assert.Equal(60, page.PendingCount);
+        Assert.All(page.Items, item => Assert.Equal(customer.PhoneNumber, item.CustomerPhoneNumber));
     }
 
     [Fact]

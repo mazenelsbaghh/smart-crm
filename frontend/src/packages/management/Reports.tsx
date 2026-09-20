@@ -13,7 +13,8 @@ import { MetricStrip } from './reports/MetricStrip';
 import { OpportunityQueue } from './reports/OpportunityQueue';
 import { ReasonBreakdown } from './reports/ReasonBreakdown';
 import { reportsApi, type ReportWindow } from './reports/reports-api';
-import type { FollowUpPlanAction, OpportunityItem, ReportPreset, SalesIntelligenceDashboard } from './reports/types';
+import { reportDateWindow } from './reports/report-window';
+import type { FollowUpDispatchOptions, FollowUpPlanAction, OpportunityItem, ReportPreset, SalesIntelligenceDashboard } from './reports/types';
 import styles from './reports/reports.module.css';
 
 const presets: { value: ReportPreset; label: string; days: number }[] = [
@@ -33,14 +34,6 @@ const inputDate = (date: Date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-};
-
-const customWindow = (fromDate: string, toDate: string): ReportWindow | null => {
-  if (!fromDate || !toDate || fromDate > toDate) return null;
-  const from = new Date(`${fromDate}T00:00:00`);
-  const to = new Date(`${toDate}T00:00:00`);
-  to.setDate(to.getDate() + 1);
-  return { fromUtc: from.toISOString(), toUtc: to.toISOString() };
 };
 
 const reportRequestError = (error: unknown, fallback: string) => {
@@ -111,7 +104,7 @@ export default function Reports() {
   };
 
   const applyCustomRange = (fromDate = customFromDate, toDate = customToDate) => {
-    const nextWindow = customWindow(fromDate, toDate);
+    const nextWindow = reportDateWindow(fromDate, toDate);
     if (!nextWindow) {
       setError('اختر تاريخ بداية ونهاية صحيحين؛ تاريخ النهاية لا يسبق البداية.');
       return;
@@ -190,9 +183,7 @@ export default function Reports() {
       const result = await reportsApi.queueFollowUpPlan(
         activeProject.id,
         windowRange,
-        'Schedule',
-        opportunity.conversationId,
-        opportunity.actionToken,
+        { action: 'Schedule', conversationId: opportunity.conversationId, planToken: opportunity.actionToken },
       );
       if (reportIntentKeyRef.current === mutationReportKey) {
         setNotice(result.queued > 0
@@ -218,9 +209,7 @@ export default function Reports() {
       const result = await reportsApi.queueFollowUpPlan(
         activeProject.id,
         windowRange,
-        'SendNow',
-        opportunity.conversationId,
-        opportunity.actionToken,
+        { action: 'SendNow', conversationId: opportunity.conversationId, planToken: opportunity.actionToken },
       );
       if (reportIntentKeyRef.current === mutationReportKey) {
         setNotice(result.queued > 0
@@ -236,7 +225,7 @@ export default function Reports() {
     }
   };
 
-  const queueFollowUpPlan = async (action: FollowUpPlanAction) => {
+  const queueFollowUpPlan = async (action: FollowUpPlanAction, dispatchOptions: FollowUpDispatchOptions) => {
     if (!activeProject) return false;
     const mutationReportKey = reportRequestKey;
     const planToken = action === 'SendNow'
@@ -247,14 +236,12 @@ export default function Reports() {
       const queued = await reportsApi.queueFollowUpPlan(
         activeProject.id,
         windowRange,
-        action,
-        undefined,
-        planToken,
+        { action, planToken, dispatchOptions },
       );
       if (reportIntentKeyRef.current === mutationReportKey) {
         setNotice(action === 'SendNow'
-          ? `بدأ إرسال المتابعة إلى ${queued.queued} عميل.`
-          : `تمت جدولة ${queued.queued} عميل بعد 24 ساعة.`);
+          ? `بدأ إرسال المتابعة إلى ${queued.queued} عميل بفاصل ${dispatchOptions.minIntervalSeconds}–${dispatchOptions.maxIntervalSeconds} ثانية بين كل رسالة.`
+          : `تمت جدولة ${queued.queued} عميل على ${dispatchOptions.scheduleDays} أيام، الأعلى أولوية أولًا، بداية من بكرة.`);
         await load();
       }
       return true;

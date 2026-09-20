@@ -8,6 +8,26 @@ namespace Advertising.UnitTests;
 
 public sealed class CustomerReplyRoutingTests
 {
+    [Theory]
+    [InlineData("angry", "Complaint", false)]
+    [InlineData("negative", "Support", false)]
+    [InlineData("neutral", "Support", true)]
+    public async Task Production_2026_09_08_complaints_and_handoffs_do_not_send_playful_reactions(
+        string sentiment, string replyStyle, bool requestHuman)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            replyContent = "حقك عليا، هراجع المشكلة", sentiment, replyStyle, requestHuman, suggestedReaction = "❤️"
+        });
+        var brain = CreateMarketingBrain(new RejectingHttpMessageHandler("Unexpected provider"), new JsonReplyHttpMessageHandler(json));
+
+        var analysis = await brain.AnalyzeAndGenerateReplyAsync("مفيش حد أتكلم معاه؟", "test-key",
+            customerReply: new CustomerReplyRuntime("xAI", "grok-4.6"));
+
+        Assert.Null(analysis.SuggestedReaction);
+        Assert.Equal(requestHuman, analysis.RequestHuman);
+    }
+
     [Fact]
     public async Task OpenAI_runtime_routes_customer_reply_away_from_Gemini()
     {

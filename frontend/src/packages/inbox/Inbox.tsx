@@ -33,6 +33,7 @@ export default function Inbox() {
   const searchParams = useSearchParams();
   const requestedConversationId = searchParams.get('conversationId');
   const requestedCustomerId = searchParams.get('customerId');
+  const shouldStartMissingConversation = searchParams.get('startConversation') === '1';
   const deepLink = React.useMemo<InboxDeepLink>(() => ({
     conversationId: requestedConversationId,
     customerId: requestedCustomerId,
@@ -203,7 +204,7 @@ export default function Inbox() {
         let nextConversations = response.data;
 
         if (shouldResolveDeepLink) {
-          const deepLinkResolution = await resolveConversationDeepLink({
+          let deepLinkResolution = await resolveConversationDeepLink({
             projectId: activeProjectId,
             channel: 'WhatsApp',
             conversationPage: nextConversations,
@@ -211,6 +212,24 @@ export default function Inbox() {
             customerId: deepLink.customerId,
             signal: controller.signal,
           });
+          if (!deepLinkResolution.conversation
+            && shouldStartMissingConversation
+            && deepLink.customerId
+            && !deepLink.conversationId) {
+            const started = await api.post<{ conversationId: string }>(
+              `/api/projects/${activeProjectId}/conversations/whatsapp`,
+              { customerId: deepLink.customerId },
+              { signal: controller.signal, timeout: 15_000 },
+            );
+            deepLinkResolution = await resolveConversationDeepLink({
+              projectId: activeProjectId,
+              channel: 'WhatsApp',
+              conversationPage: nextConversations,
+              conversationId: started.data.conversationId,
+              customerId: deepLink.customerId,
+              signal: controller.signal,
+            });
+          }
           nextConversations = deepLinkResolution.conversationPage;
           handledDeepLinkRef.current = deepLinkKey;
           if (deepLinkResolution.conversation) {
@@ -239,7 +258,7 @@ export default function Inbox() {
       controller.abort();
       conversationPaginationControllerRef.current?.abort();
     };
-  }, [activeProjectId, authLoading, deepLink, filterStatus, debouncedSearchQuery, reloadToken, resetConversationWorkspace, selectConversation, showToast]);
+  }, [activeProjectId, authLoading, deepLink, filterStatus, debouncedSearchQuery, reloadToken, resetConversationWorkspace, selectConversation, shouldStartMissingConversation, showToast]);
 
   const retryConversations = async () => {
     setLoadError(null);
@@ -346,7 +365,7 @@ export default function Inbox() {
     setLoadingOlderMessages(true);
     try {
       const response = await api.get<Message[]>(`/api/conversations/${conversationId}/messages`, {
-        params: { before: oldestMessage.createdAt, limit: MESSAGE_PAGE_SIZE },
+        params: { before: oldestMessage.createdAt, beforeId: oldestMessage.id, limit: MESSAGE_PAGE_SIZE },
         signal: controller.signal,
       });
       if (controller.signal.aborted || activeConvRef.current?.id !== conversationId

@@ -82,6 +82,7 @@ type ChannelName = 'WhatsApp' | 'Messenger' | 'FacebookComment';
 type CustomerReplyProvider = 'Gemini' | 'OpenAI' | 'xAI';
 
 interface AIBehaviorSettings {
+  messengerWhatsAppTransitionEnabled: boolean;
   identity: {
     agentNames: string[];
     nameSelectionMode: string;
@@ -134,6 +135,7 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
 };
 
 const defaultAiBehavior = (): AIBehaviorSettings => ({
+  messengerWhatsAppTransitionEnabled: true,
   identity: {
     agentNames: ['فريق خدمة العملاء'],
     nameSelectionMode: 'First',
@@ -815,6 +817,12 @@ function SettingsProjectView() {
       console.error(e);
       throw e;
     }
+  };
+
+  const handleMessengerBookingRouteChange = async (enabled: boolean) => {
+    const nextBehavior = { ...aiBehavior, messengerWhatsAppTransitionEnabled: enabled };
+    await updateProjectSettings({ aiBehavior: nextBehavior });
+    setAiBehavior(nextBehavior);
   };
 
   const handleToggleWhatsAppGroupAutomation = async (enabled: boolean) => {
@@ -1850,6 +1858,8 @@ function SettingsProjectView() {
             <GroupAppointmentsManager onBack={() => setViewMode('list')} timezone={timezone} />
           ) : (
             <Addons 
+              messengerWhatsAppTransitionEnabled={aiBehavior.messengerWhatsAppTransitionEnabled ?? true}
+              onMessengerBookingRouteChange={handleMessengerBookingRouteChange}
               isGroupAppointmentsEnabled={isGroupAppointmentsEnabled} 
               onToggleGroupAppointments={handleToggleGroupAppointments} 
               isWhatsAppGroupAutomationEnabled={isWhatsAppGroupAutomationEnabled}

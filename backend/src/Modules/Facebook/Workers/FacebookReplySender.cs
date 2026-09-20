@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Modules.AI.Services;
 using Modules.Facebook.Services;
+using Modules.Conversations.Services;
 using Shared.Events;
 using Shared.Infrastructure;
 using Shared.Queue;
@@ -48,6 +49,7 @@ namespace Modules.Facebook.Workers
 
             try
             {
+                if (await new ConversationHumanHandoff(_context).BlocksReplyAsync(@event)) return;
                 var isBlacklisted = await _context.Customers
                     .IgnoreQueryFilters()
                     .AnyAsync(customer => customer.ProjectId == @event.ProjectId
@@ -177,6 +179,7 @@ namespace Modules.Facebook.Workers
 
             for (int i = 0; i < parts.Count; i++)
             {
+                if (await new ConversationHumanHandoff(_context).BlocksReplyAsync(@event)) return;
                 var part = parts[i];
 
                 // Send via Graph API
@@ -193,6 +196,7 @@ namespace Modules.Facebook.Workers
                         ConversationId = conversationId.Value,
                         ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = part,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow
@@ -213,10 +217,9 @@ namespace Modules.Facebook.Workers
                     });
                 }
 
-                // If there are more parts, wait a brief delay (e.g. 1.5 seconds) to make it feel natural
                 if (i < parts.Count - 1)
                 {
-                    await Task.Delay(1500);
+                    await Task.Delay(ReplyMessagePacing.NextDelayMs());
                 }
             }
 
@@ -376,6 +379,7 @@ namespace Modules.Facebook.Workers
                     ConversationId = commentConvId.Value,
                     ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
                     Direction = "Outgoing",
+                    SenderType = "AI",
                     Content = publicReply,
                     MessageType = "Text",
                     FacebookPostId = postId,
@@ -400,6 +404,7 @@ namespace Modules.Facebook.Workers
                         ConversationId = commentConvId.Value,
                         ExternalMessageId = $"msg_ai_react_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = $"[تفاعل] {reactionEmoji}",
                         MessageType = "Reaction",
                         Timestamp = DateTime.UtcNow
@@ -465,6 +470,7 @@ namespace Modules.Facebook.Workers
                         ConversationId = messengerConv.Id,
                         ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = @event.Content,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow

@@ -6,7 +6,15 @@ public sealed record WhatsAppSharedContact(string PhoneNumber, string? Name);
 
 public static class WhatsAppSharedContactParser
 {
-    public static WhatsAppSharedContact? ExtractOwnContact(string? content)
+    public static WhatsAppSharedContact? ExtractVerifiedSenderContact(string? content, string sender)
+    {
+        var providerPhone = Modules.GroupAppointments.Services.GroupBookingPhone.Normalize(sender);
+        if (providerPhone is null) return null;
+        var contact = ExtractOwnContact(content);
+        return contact?.PhoneNumber == providerPhone ? contact : null;
+    }
+
+    private static WhatsAppSharedContact? ExtractOwnContact(string? content)
     {
         if (string.IsNullOrWhiteSpace(content) || ClearlyReferencesAnotherPerson(content)) return null;
         var phoneNumber = EgyptianPhoneNumber.Extract(content);

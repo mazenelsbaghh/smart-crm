@@ -27,6 +27,7 @@ namespace Shared.Infrastructure
         public DbSet<Modules.WhatsApp.Domain.WhatsAppCustomerIdentity> WhatsAppCustomerIdentities { get; set; }
         public DbSet<Modules.WhatsApp.Domain.WhatsAppPhoneCustomerIdentity> WhatsAppPhoneCustomerIdentities { get; set; }
         public DbSet<Modules.CRM.Domain.FollowUp> FollowUps { get; set; }
+        public DbSet<Modules.CRM.Domain.ScheduleAvailabilityPreference> ScheduleAvailabilityPreferences { get; set; }
         public DbSet<Modules.CRM.Domain.CustomerTask> CustomerTasks { get; set; }
         public DbSet<Modules.CRM.Domain.CRMUpdateProposal> CRMUpdateProposals { get; set; }
         public DbSet<Modules.Conversations.Domain.NotificationAlert> NotificationAlerts { get; set; }
@@ -44,7 +45,12 @@ namespace Shared.Infrastructure
         public DbSet<Modules.Campaigns.Domain.Campaign> Campaigns { get; set; }
         public DbSet<Modules.Campaigns.Domain.CampaignRecipient> CampaignRecipients { get; set; }
         public DbSet<Modules.Analytics.Domain.AnalyticsSnapshot> AnalyticsSnapshots { get; set; }
+        public DbSet<Modules.AI.Domain.ReplyLesson> ReplyLessons { get; set; }
+        public DbSet<Modules.AI.Domain.ReplyLessonEvidence> ReplyLessonEvidence { get; set; }
         public DbSet<Modules.Analytics.Domain.ConversationSalesAnalysis> ConversationSalesAnalyses { get; set; }
+        public DbSet<Modules.Analytics.Domain.ReplyReviewSchedule> ReplyReviewSchedules { get; set; }
+        public DbSet<Modules.Analytics.Domain.ReplyReviewCase> ReplyReviewCases { get; set; }
+        public DbSet<Modules.Analytics.Domain.ReplyReviewRun> ReplyReviewRuns { get; set; }
         public DbSet<Modules.Analytics.Domain.SalesIntelligenceDigest> SalesIntelligenceDigests { get; set; }
         public DbSet<Modules.Media.Domain.Asset> Assets { get; set; }
         public DbSet<Modules.Media.Domain.AssetVariant> AssetVariants { get; set; }
@@ -124,6 +130,10 @@ namespace Shared.Infrastructure
         public DbSet<Modules.Content.Domain.ContentWeekPlanItem> ContentWeekPlanItems { get; set; }
         public DbSet<Modules.Content.Domain.ContentVideo> ContentVideos { get; set; }
         public DbSet<Modules.Content.Domain.ContentVideoScene> ContentVideoScenes { get; set; }
+        public DbSet<Modules.Content.Domain.ContentDocument> ContentDocuments { get; set; }
+        public DbSet<Modules.Content.Domain.ContentDocumentPage> ContentDocumentPages { get; set; }
+        public DbSet<Modules.Content.Domain.ContentCardGame> ContentCardGames { get; set; }
+        public DbSet<Modules.Content.Domain.ContentGameCard> ContentGameCards { get; set; }
 
         public Guid CurrentProjectId => _tenantContext.ProjectId;
 
@@ -208,6 +218,16 @@ namespace Shared.Infrastructure
                 .OnDelete(DeleteBehavior.Restrict);
 
             var salesAnalysisEntity = modelBuilder.Entity<Modules.Analytics.Domain.ConversationSalesAnalysis>();
+            Modules.Analytics.Infrastructure.ReplyReviewModel.Configure(modelBuilder);
+            var lessons = modelBuilder.Entity<Modules.AI.Domain.ReplyLesson>();
+            lessons.HasIndex(l => new { l.ProjectId, l.Channel, l.Code }).IsUnique();
+            lessons.Property(l => l.Channel).HasMaxLength(30);
+            lessons.Property(l => l.Code).HasMaxLength(80);
+            var lessonEvidence = modelBuilder.Entity<Modules.AI.Domain.ReplyLessonEvidence>();
+            lessonEvidence.HasIndex(e => new { e.ProjectId, e.LessonId, e.ConversationId }).IsUnique();
+            lessonEvidence.HasOne<Modules.AI.Domain.ReplyLesson>().WithMany().HasForeignKey(e => e.LessonId).OnDelete(DeleteBehavior.Cascade);
+            lessonEvidence.HasOne<Modules.Conversations.Domain.Conversation>().WithMany().HasForeignKey(e => e.ConversationId).OnDelete(DeleteBehavior.Cascade);
+            lessonEvidence.HasOne<Modules.Conversations.Domain.Message>().WithMany().HasForeignKey(e => e.MessageId).OnDelete(DeleteBehavior.Cascade);
             salesAnalysisEntity.HasIndex(analysis => new { analysis.ProjectId, analysis.ConversationId }).IsUnique();
             salesAnalysisEntity.HasIndex(analysis => new { analysis.ProjectId, analysis.ConversationStartedAtUtc });
             salesAnalysisEntity.HasIndex(analysis => new { analysis.ProjectId, analysis.NeedsFollowUp, analysis.FollowUpPriority });
@@ -292,6 +312,14 @@ namespace Shared.Infrastructure
 
             var bookingEntity = modelBuilder.Entity<Modules.GroupAppointments.Domain.GroupAppointmentBooking>();
             bookingEntity.HasIndex(booking => new { booking.ProjectId, booking.CustomerId });
+
+            var schedulePreferenceEntity = modelBuilder.Entity<Modules.CRM.Domain.ScheduleAvailabilityPreference>();
+            schedulePreferenceEntity.HasIndex(preference => new
+                { preference.ProjectId, preference.CustomerId, preference.Status });
+            schedulePreferenceEntity.Property(preference => preference.TimeWindow).HasMaxLength(8);
+            schedulePreferenceEntity.Property(preference => preference.AvailabilityHorizon).HasMaxLength(24);
+            schedulePreferenceEntity.Property(preference => preference.Status).HasMaxLength(16);
+            schedulePreferenceEntity.Property(preference => preference.Channel).HasMaxLength(32);
 
             if (string.Equals(Database.ProviderName, "Npgsql.EntityFrameworkCore.PostgreSQL", StringComparison.Ordinal))
             {
@@ -421,6 +449,49 @@ namespace Shared.Infrastructure
                 .WithMany(video => video.Scenes)
                 .HasForeignKey(scene => new { scene.ContentVideoId, scene.ProjectId })
                 .HasPrincipalKey(video => new { video.Id, video.ProjectId })
+                .OnDelete(DeleteBehavior.Cascade);
+
+            var contentDocument = modelBuilder.Entity<Modules.Content.Domain.ContentDocument>();
+            contentDocument.HasIndex(document => new { document.ProjectId, document.CreatedAt });
+            contentDocument.Property(document => document.Title).HasMaxLength(300);
+            contentDocument.Property(document => document.SourceContent).HasMaxLength(60_000);
+            contentDocument.Property(document => document.BrandLogoObjectKey).HasMaxLength(1_024);
+            contentDocument.Property(document => document.PlannerModel).HasMaxLength(100);
+            contentDocument.Property(document => document.Error).HasMaxLength(1_000);
+            contentDocument.HasAlternateKey(document => new { document.Id, document.ProjectId });
+
+            var contentDocumentPage = modelBuilder.Entity<Modules.Content.Domain.ContentDocumentPage>();
+            contentDocumentPage.HasIndex(page => new { page.DocumentId, page.PageIndex }).IsUnique();
+            contentDocumentPage.Property(page => page.Title).HasMaxLength(300);
+            contentDocumentPage.Property(page => page.ImageObjectKey).HasMaxLength(1_024);
+            contentDocumentPage.Property(page => page.ImageMimeType).HasMaxLength(100);
+            contentDocumentPage.Property(page => page.Error).HasMaxLength(1_000);
+            contentDocumentPage.HasOne<Modules.Content.Domain.ContentDocument>()
+                .WithMany()
+                .HasForeignKey(page => new { page.DocumentId, page.ProjectId })
+                .HasPrincipalKey(document => new { document.Id, document.ProjectId })
+                .OnDelete(DeleteBehavior.Cascade);
+
+            var contentCardGame = modelBuilder.Entity<Modules.Content.Domain.ContentCardGame>();
+            contentCardGame.HasIndex(game => new { game.ProjectId, game.CreatedAt });
+            contentCardGame.HasAlternateKey(game => new { game.Id, game.ProjectId });
+            contentCardGame.Property(game => game.Title).HasMaxLength(200);
+            contentCardGame.Property(game => game.Brief).HasMaxLength(2_000);
+            contentCardGame.Property(game => game.Mechanic).HasMaxLength(600);
+            contentCardGame.Property(game => game.Instructions).HasMaxLength(3_000);
+            contentCardGame.Property(game => game.BrandLogoObjectKey).HasMaxLength(1_024);
+            contentCardGame.Property(game => game.PlannerModel).HasMaxLength(100);
+
+            var contentGameCard = modelBuilder.Entity<Modules.Content.Domain.ContentGameCard>();
+            contentGameCard.HasIndex(card => new { card.GameId, card.CardIndex }).IsUnique();
+            contentGameCard.Property(card => card.Category).HasMaxLength(80);
+            contentGameCard.Property(card => card.Title).HasMaxLength(160);
+            contentGameCard.Property(card => card.Prompt).HasMaxLength(1_000);
+            contentGameCard.Property(card => card.Instruction).HasMaxLength(500);
+            contentGameCard.HasOne<Modules.Content.Domain.ContentCardGame>()
+                .WithMany()
+                .HasForeignKey(card => new { card.GameId, card.ProjectId })
+                .HasPrincipalKey(game => new { game.Id, game.ProjectId })
                 .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<Modules.Advertising.Domain.AdvertisingConnection>()

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -46,7 +47,15 @@ namespace Modules.WhatsApp.Services
             if (string.IsNullOrWhiteSpace(content))
                 yield break;
 
-            var initialBlocks = content.Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+            var initialBlocks = content.Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(block => block.Trim()).Where(block => block.Length > 0).ToArray();
+            // Respect an intentional three-message answer. Splitting its explanation again
+            // at 250 characters can turn details + price + next step into extra bubbles.
+            if (initialBlocks.Length == 3 && Array.TrueForAll(initialBlocks, block => block.Length <= 600 && !IsSignature(block)))
+            {
+                foreach (var block in initialBlocks) yield return block;
+                yield break;
+            }
             var rawChunks = new List<string>();
 
             foreach (var block in initialBlocks)
@@ -55,7 +64,7 @@ namespace Modules.WhatsApp.Services
                 if (string.IsNullOrEmpty(trimmed)) continue;
 
                 // Handle signature grouping
-                bool isSignature = (trimmed.StartsWith("-") || trimmed.StartsWith("–") || trimmed.StartsWith("—")) && trimmed.Length <= 40;
+                bool isSignature = IsSignature(trimmed);
                 if (isSignature && rawChunks.Count > 0)
                 {
                     rawChunks[rawChunks.Count - 1] += "\n" + trimmed;
@@ -138,6 +147,9 @@ namespace Modules.WhatsApp.Services
                 yield return chunk;
             }
         }
+
+        private static bool IsSignature(string text) => text.Length <= 40 &&
+            (text.StartsWith("-") || text.StartsWith("–") || text.StartsWith("—"));
 
         public int CalculateTypingDelay(string chunk, Guid projectId)
         {

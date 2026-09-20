@@ -51,6 +51,8 @@ public sealed class ConversationReplyWindowService(AppDbContext dbContext)
         }
 
         await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+            SELECT pg_advisory_xact_lock(hashtextextended({request.ConversationId.ToString("N")}, 0));
+
             INSERT INTO "ConversationReplyWindows"
                 ("Id", "ProjectId", "ConversationId", "WhatsAppAccountId", "Channel",
                  "LatestIncomingMessageId", "LatestIncomingVersion", "LatestIncomingAtUtc",

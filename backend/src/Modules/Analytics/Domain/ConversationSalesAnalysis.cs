@@ -66,8 +66,10 @@ public sealed class ConversationSalesAnalysis : AuditableEntity, ITenantEntity
     public string LastCustomerIntent { get; set; } = string.Empty;
     public string RequestedScheduleText { get; set; } = string.Empty;
     public string RequestedScheduleLabel { get; set; } = string.Empty;
+    public string RequestedAttendanceMode { get; set; } = AttendanceModes.Unknown;
     public decimal Confidence { get; set; }
     public int ReplyQualityScore { get; set; }
+    public bool? HasUnresolvedReplyIssue { get; set; }
     public int FollowUpPriority { get; set; }
     public bool NeedsFollowUp { get; set; }
     public bool MissedOpportunity { get; set; }

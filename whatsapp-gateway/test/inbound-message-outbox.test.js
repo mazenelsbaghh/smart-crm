@@ -138,6 +138,27 @@ test('a retained inbound message retries while the gateway remains running', asy
     assert.equal(jsonFileCount(directory), 0);
 });
 
+test('a retained Baileys long timestamp is normalized before backend delivery', async context => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-inbound-timestamp-'));
+    context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const forwarded = [];
+    const outbox = createInboundMessageOutbox({
+        directory,
+        forwardMessage: async message => forwarded.push(message),
+        logger: silentLogger
+    });
+    context.after(() => outbox.close());
+    const message = {
+        ...inboundMessage('account-a', 'provider-long-timestamp'),
+        timestamp: { low: 1_788_225_600, high: 0, unsigned: true }
+    };
+
+    await outbox.captureAndForward(message, async captured => captured);
+
+    assert.equal(forwarded[0].timestamp, 1_788_225_600);
+    assert.equal(jsonFileCount(directory), 0);
+});
+
 test('duplicate upsert waits for media enrichment and forwards one complete envelope', async context => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-inbound-duplicate-'));
     context.after(() => fs.rmSync(directory, { recursive: true, force: true }));

@@ -16,6 +16,36 @@ public sealed class SalesIntelligenceJob(
 
     [DisableConcurrentExecution(timeoutInSeconds: 300)]
     [AutomaticRetry(Attempts = 0)]
+    public async Task AnalyzeDailyBacklogAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var cutoff = now.AddDays(-2);
+        var settledBefore = now.AddMinutes(-2);
+        var reanalysisBefore = now.AddMinutes(-10);
+        var candidates = await db.Conversations.IgnoreQueryFilters()
+            .Where(conversation => conversation.LastMessageTimestamp >= cutoff && conversation.LastMessageTimestamp <= settledBefore
+                && !db.ConversationSalesAnalyses.IgnoreQueryFilters().Any(analysis => analysis.ProjectId == conversation.ProjectId
+                    && analysis.ConversationId == conversation.Id && analysis.AnalyzedAtUtc > reanalysisBefore)
+                && db.ProjectSettings.IgnoreQueryFilters().Any(settings => settings.ProjectId == conversation.ProjectId
+                    && settings.GeminiApiKey != null && settings.GeminiApiKey != "")
+                && !db.ConversationSalesAnalyses.IgnoreQueryFilters().Any(analysis => analysis.ProjectId == conversation.ProjectId
+                    && analysis.ConversationId == conversation.Id && analysis.AnalysisVersion >= ConversationSalesAnalyzer.CurrentAnalysisVersion
+                    && analysis.AnalyzedThroughMessageAtUtc >= conversation.LastMessageTimestamp))
+            .OrderBy(conversation => conversation.LastMessageTimestamp).ThenBy(conversation => conversation.Id)
+            .Take(20).Select(conversation => new RecentAnalysisCandidate(conversation.ProjectId, conversation.Id, conversation.LastMessageTimestamp))
+            .ToListAsync(cancellationToken);
+        try
+        {
+            foreach (var candidate in candidates) await AnalyzeCandidateAsync(candidate, cancellationToken);
+        }
+        catch (AiEngineUnavailableException exception)
+        {
+            logger.LogWarning(exception, "Daily conversation review will resume when the AI provider is available.");
+        }
+    }
+
+    [DisableConcurrentExecution(timeoutInSeconds: 300)]
+    [AutomaticRetry(Attempts = 0)]
     public Task AnalyzeRecentAsync(CancellationToken cancellationToken) =>
         AnalyzeRecentAsync(DateTime.UtcNow, cancellationToken);
 
@@ -40,9 +70,14 @@ public sealed class SalesIntelligenceJob(
         CancellationToken cancellationToken)
     {
         var cutoff = SalesAnalysisRecencyPolicy.Cutoff(nowUtc);
+        var settledBefore = nowUtc.AddMinutes(-2);
+        var reanalysisBefore = nowUtc.AddMinutes(-10);
         var candidates = db.Conversations.IgnoreQueryFilters()
             .Where(conversation => conversation.LastMessageTimestamp >= cutoff
-                && conversation.LastMessageTimestamp <= nowUtc
+                && conversation.LastMessageTimestamp <= settledBefore
+                && !db.ConversationSalesAnalyses.IgnoreQueryFilters().Any(analysis =>
+                    analysis.ProjectId == conversation.ProjectId && analysis.ConversationId == conversation.Id
+                    && analysis.AnalyzedAtUtc > reanalysisBefore)
                 && !db.ConversationSalesAnalyses.IgnoreQueryFilters().Any(analysis =>
                     analysis.ProjectId == conversation.ProjectId
                     && analysis.ConversationId == conversation.Id

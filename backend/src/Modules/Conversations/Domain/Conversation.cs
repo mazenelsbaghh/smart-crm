@@ -10,6 +10,7 @@ namespace Modules.Conversations.Domain
         public Guid? WhatsAppAccountId { get; set; }
         public Guid? WhatsAppDestinationId { get; set; }
         public Guid? AssignedUserId { get; set; }
+        public Guid? HumanHandoffReplyId { get; set; }
         public string Status { get; set; } = "Open"; // Open, Pending, Resolved, Closed
         public string Channel { get; set; } = "WhatsApp"; // WhatsApp, Messenger, FacebookComment
         public DateTime LastMessageTimestamp { get; set; } = DateTime.UtcNow;

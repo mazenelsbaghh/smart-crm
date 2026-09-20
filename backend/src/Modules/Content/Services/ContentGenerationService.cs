@@ -152,8 +152,8 @@ public sealed class ContentGenerationService
                 new GeminiImageRequest(
                     imagePrompt,
                     apiKey,
-                    logoBytes,
-                    settings.LogoMimeType ?? "image/png"),
+                    new GeminiReferenceImage(logoBytes, settings.LogoMimeType ?? "image/png"),
+                    GeminiImageClient.SquareAspectRatio),
                 cancellationToken);
 
             var currentBrand = await _dbContext.ContentAutomationSettings.IgnoreQueryFilters()

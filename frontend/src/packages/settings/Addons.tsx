@@ -53,6 +53,8 @@ interface HumanTransferOverview {
 }
 
 interface AddonsProps {
+  messengerWhatsAppTransitionEnabled: boolean;
+  onMessengerBookingRouteChange: (enabled: boolean) => Promise<void>;
   onManageGroups: () => void;
   isGroupAppointmentsEnabled: boolean;
   onToggleGroupAppointments: (enabled: boolean) => Promise<void>;
@@ -82,6 +84,8 @@ const isValidOperationalPhone = (phone: string, allowEmpty: boolean) => {
 };
 
 export default function Addons({
+  messengerWhatsAppTransitionEnabled,
+  onMessengerBookingRouteChange,
   onManageGroups,
   isGroupAppointmentsEnabled,
   onToggleGroupAppointments,
@@ -346,6 +350,19 @@ export default function Addons({
     }
   };
 
+  const changeMessengerBookingRoute = async (enabled: boolean) => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      await onMessengerBookingRouteChange(enabled);
+      setMessage({ type: 'success', text: 'تم حفظ طريقة حجز عملاء الماسنجر.' });
+    } catch {
+      setMessage({ type: 'error', text: 'تعذر حفظ طريقة الحجز. حاول مرة أخرى.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', width: '100%' }}>
       {message && (
@@ -360,6 +377,27 @@ export default function Addons({
           {message.text}
         </div>
       )}
+
+      <section className={styles.card} aria-labelledby="messenger-booking-title">
+        <h2 id="messenger-booking-title" className={styles.cardTitle}>حجز عملاء الماسنجر</h2>
+        <label className={styles.label} htmlFor="messenger-booking-route">مكان إكمال الحجز</label>
+        <select
+          id="messenger-booking-route"
+          className={styles.input}
+          value={messengerWhatsAppTransitionEnabled ? 'WhatsApp' : 'Messenger'}
+          disabled={loading}
+          aria-describedby="messenger-booking-help"
+          onChange={(event) => void changeMessengerBookingRoute(event.target.value === 'WhatsApp')}
+        >
+          <option value="Messenger">إكمال الحجز من الماسنجر</option>
+          <option value="WhatsApp">التحويل للواتساب لإكمال الحجز</option>
+        </select>
+        <p id="messenger-booking-help" className={styles.accountsHint}>
+          {messengerWhatsAppTransitionEnabled
+            ? 'يرد على الاستفسارات في الماسنجر، ثم يطلب رقم العميل للانتقال إلى واتساب وإكمال الحجز.'
+            : 'يجمع الاسم ورقم الموبايل ويكمل الحجز في الماسنجر، حسب المواعيد المتاحة وإعدادات الحجز.'}
+        </p>
+      </section>
 
       <div style={{
         display: 'grid',

@@ -5,6 +5,7 @@ import type {
   ConversationAnalysisItem,
   SalesIntelligenceDashboard,
   FollowUpPlanAction,
+  FollowUpDispatchOptions,
 } from './types';
 
 export interface ReportWindow {
@@ -53,15 +54,16 @@ export const reportsApi = {
   async queueFollowUpPlan(
     projectId: string,
     window: ReportWindow,
-    action: FollowUpPlanAction,
-    conversationId?: string,
-    planToken?: string,
+    command: {
+      action: FollowUpPlanAction;
+      conversationId?: string;
+      planToken?: string;
+      dispatchOptions?: FollowUpDispatchOptions;
+    },
   ) {
     const response = await api.post<{ queued: number }>(`${base(projectId)}/sales-intelligence/follow-ups`, {
       ...window,
-      action,
-      ...(conversationId ? { conversationId } : {}),
-      ...(planToken ? { planToken } : {}),
+      ...command,
     });
     return response.data;
   },

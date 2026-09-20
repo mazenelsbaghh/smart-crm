@@ -49,6 +49,8 @@
 .personIdentity strong { overflow: hidden; font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
 .personIdentity span, .personRow time { color: var(--text-soft); font-size: .64rem; }
 .requestText b { color: var(--accent); font-size: .68rem; }
+.requestLabels { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; }
+.attendanceBadge { padding: .15rem .4rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--text-base); font-size: .67rem; }
 .requestText p { overflow: hidden; margin: 0; color: var(--text-base); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .personRow time { white-space: nowrap; }
 .empty { margin-top: 1rem; padding: 1.2rem; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); background: var(--surface-muted); color: var(--text-soft); text-align: center; font-size: .78rem; }
@@ -56,6 +58,10 @@
 .actionDock > div { display: flex; flex-direction: column; gap: .18rem; }
 .actionDock strong { font-size: .82rem; }.actionDock span { color: var(--text-soft); font-size: .67rem; }
 .actionDock button, .sendButton { padding: .55rem .85rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); }
+.actionDock > .dockActions { flex-direction: row; flex-wrap: wrap; gap: .5rem; }
+.actionDock .exportButton { border-color: var(--border-strong); background: var(--surface); color: var(--text-base); }
+.actionDock .exportButton:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.actionDock button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .confirmPanel { position: fixed; z-index: 40; right: 50%; bottom: 1.25rem; width: min(620px, calc(100vw - 2rem)); transform: translateX(50%); box-shadow: var(--shadow-lg); }
 .confirmPanel > div:first-child { justify-content: flex-start; align-items: flex-start; }
 .confirmIcon { display: inline-grid; flex: 0 0 42px; height: 42px; place-items: center; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--accent); }

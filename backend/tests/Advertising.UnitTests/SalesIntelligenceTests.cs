@@ -355,13 +355,13 @@ public sealed class SalesIntelligenceTests
         var setup = CreateDatabase();
         await using var db = setup.Db;
         var conversation = SeedConversation(db, setup.ProjectId);
-        db.Messages.Local.Single().Content = "المواعيد دي مش مناسبة، أنا ينفع الجمعة بعد الساعة 6";
+        db.Messages.Local.Single().Content = "عايز أونلاين، المواعيد دي مش مناسبة، أنا ينفع الجمعة بعد الساعة 6";
         await db.SaveChangesAsync();
         var gemini = new FakeGemini("""
             {"stage":"BookingIntent","outcome":"Lost","primaryReason":"ScheduleMismatch","secondaryReasons":[],
             "summary":"العميل طلب موعدًا بديلًا.","recommendation":"تواصل عند فتح الموعد.","evidence":[],
             "lastCustomerIntent":"طلب موعد بديل","requestedScheduleText":"الجمعة بعد الساعة 6",
-            "requestedScheduleLabel":"الجمعة مساءً","confidence":0.95,"replyQualityScore":70,
+            "requestedScheduleLabel":"الجمعة مساءً","requestedAttendanceMode":"Online","attendanceModeEvidence":"عايز أونلاين","confidence":0.95,"replyQualityScore":70,
             "followUpPriority":90,"needsFollowUp":true,"missedOpportunity":true}
             """);
         var analyzer = new ConversationSalesAnalyzer(db, gemini, new PassthroughVault());
@@ -372,10 +372,36 @@ public sealed class SalesIntelligenceTests
             setup.ProjectId, DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(1), CancellationToken.None);
 
         Assert.Equal("الجمعة بعد الساعة 6", analysis.RequestedScheduleText);
-        Assert.Equal("الجمعة مساءً", analysis.RequestedScheduleLabel);
+        Assert.Equal("من ٤ إلى ٨", analysis.RequestedScheduleLabel);
         Assert.Equal(1, sheet.TotalPeople);
-        Assert.Equal("الجمعة مساءً", Assert.Single(sheet.Groups).Label);
+        Assert.Equal("من ٤ إلى ٨", Assert.Single(sheet.Groups).Label);
         Assert.Equal(conversation.Id, Assert.Single(sheet.Rows).ConversationId);
+        Assert.Equal("Online", Assert.Single(sheet.Rows).AttendanceMode);
+        Assert.Equal("SchedulePreference", Assert.Single(sheet.Rows).RequestKind);
+    }
+
+    [Theory]
+    [InlineData("Incoming", "عايز أحضر في السنتر", "Offline")]
+    [InlineData("Outgoing", "عايز أحضر في السنتر", "Unknown")]
+    [InlineData("Incoming", "عايز أحضر أونلاين", "Unknown")]
+    public async Task Attendance_mode_requires_literal_customer_evidence(string direction, string content, string expectedMode)
+    {
+        var setup = CreateDatabase();
+        await using var db = setup.Db;
+        var conversation = SeedConversation(db, setup.ProjectId);
+        db.Messages.Local.Single().Content = content;
+        db.Messages.Local.Single().Direction = direction;
+        await db.SaveChangesAsync();
+        var gemini = new FakeGemini("""
+            {"stage":"Engaged","outcome":"Active","primaryReason":"None","secondaryReasons":[],
+            "summary":"استفسار عن الحضور","recommendation":"وضّح المواعيد","evidence":[],
+            "requestedAttendanceMode":"Offline","attendanceModeEvidence":"عايز أحضر في السنتر"}
+            """);
+        var analyzer = new ConversationSalesAnalyzer(db, gemini, new PassthroughVault());
+
+        var analysis = await analyzer.ReanalyzeAsync(setup.ProjectId, conversation.Id, CancellationToken.None);
+
+        Assert.Equal(expectedMode, analysis.RequestedAttendanceMode);
     }
 
     [Fact]
@@ -431,6 +457,38 @@ public sealed class SalesIntelligenceTests
         var followUp = await db.FollowUps.SingleAsync();
         Assert.True(followUp.DueDate <= DateTime.UtcNow);
         Assert.Equal("Pending", followUp.Status);
+        Assert.Equal("Default", followUp.Tone);
+    }
+
+    [Fact]
+    public async Task Bulk_send_plan_staggers_customers_by_thirty_to_fifty_seconds()
+    {
+        var setup = CreateDatabase();
+        await using var db = setup.Db;
+        var firstConversation = SeedConversation(db, setup.ProjectId);
+        var secondConversation = SeedConversation(db, setup.ProjectId);
+        await db.SaveChangesAsync();
+        var analyzer = new ConversationSalesAnalyzer(db, new FakeGemini(), new PassthroughVault());
+        await analyzer.ReanalyzeAsync(setup.ProjectId, firstConversation.Id, CancellationToken.None);
+        await analyzer.ReanalyzeAsync(setup.ProjectId, secondConversation.Id, CancellationToken.None);
+        var service = new SalesIntelligenceService(db, new FakeGemini(), new PassthroughVault());
+        var fromUtc = firstConversation.CreatedAt.AddMinutes(-1);
+        var toUtc = DateTime.UtcNow.AddMinutes(1);
+        var dashboard = await service.GetDashboardAsync(setup.ProjectId, fromUtc, toUtc, CancellationToken.None);
+
+        var result = await service.QueueFollowUpPlanAsync(new(
+            setup.ProjectId,
+            fromUtc,
+            toUtc,
+            FollowUpPlanAction.SendNow,
+            PlanToken: dashboard.FollowUpPlan.SendNowToken), CancellationToken.None);
+
+        Assert.Equal(2, result.Queued);
+        var followUps = await db.FollowUps.OrderBy(item => item.DueDate).ToListAsync();
+        var delay = followUps[1].DueDate - followUps[0].DueDate;
+        Assert.InRange(delay, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(50));
+        Assert.Null(followUps[0].DependsOnFollowUpId);
+        Assert.Equal(followUps[0].Id, followUps[1].DependsOnFollowUpId);
     }
 
     [Fact]

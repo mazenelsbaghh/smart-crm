@@ -22,6 +22,8 @@ public sealed class UnansweredConversationRecoveryJob(
     private const int BatchSize = 25;
     private const int WhatsAppCandidateScanSize = BatchSize * 20;
     private static readonly TimeSpan MinimumMessageAge = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ConnectionStabilizationDelay = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ImmediateOfflineRecoveryLookback = TimeSpan.FromHours(24);
     private static readonly TimeSpan MessengerReplyWindow = TimeSpan.FromHours(23);
     private static readonly TimeSpan RecoveryLookback = TimeSpan.FromDays(30);
 
@@ -177,6 +179,14 @@ public sealed class UnansweredConversationRecoveryJob(
         var eligibleDueUtc = originalDueUtc;
         if (conversation.LastMessageTimestamp < connectedAt.UtcDateTime)
         {
+            // A disconnect can leave a valid inbound message without an AI reply. Once
+            // the new connection has remained stable, recover recent messages promptly
+            // instead of waiting for the same wall-clock time on the following day.
+            // Older backlog keeps the daily schedule to avoid surprising customers.
+            var stableAtUtc = connectedAt.UtcDateTime.Add(ConnectionStabilizationDelay);
+            if (conversation.LastMessageTimestamp >= nowUtc.Subtract(ImmediateOfflineRecoveryLookback))
+                return nowUtc >= stableAtUtc;
+
             var boundaryUtc = originalDueUtc > connectedAt.UtcDateTime
                 ? originalDueUtc
                 : connectedAt.UtcDateTime;
@@ -219,6 +229,7 @@ public sealed class UnansweredConversationRecoveryJob(
         DateTime cutoff) => dbContext.Conversations
         .IgnoreQueryFilters()
         .Where(conversation => (conversation.Status == "Open" || conversation.Status == "Pending")
+            && conversation.HumanHandoffReplyId == null
             && conversation.LastMessageTimestamp >= recoveryStart
             && conversation.LastMessageTimestamp <= cutoff
             && conversation.WhatsAppDeliveryUnknownAt == null

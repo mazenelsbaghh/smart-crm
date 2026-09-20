@@ -28,6 +28,133 @@ namespace Advertising.IntegrationTests;
 [Collection(PostgresCollection.Name)]
 public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task Production_2026_09_13_attendee_name_correction_updates_existing_booking_even_when_full(int capacity)
+    {
+        var projectId = Guid.NewGuid();
+        var group = await SeedAvailableGroupAsync(projectId, capacity);
+        await using var db = postgres.CreateContext(Tenant(projectId));
+        var coordinator = new GroupBookingCoordinator(db);
+        var original = await coordinator.BookAsync(new GroupBookingCommand
+        {
+            ProjectId = projectId, GroupId = group.Id, CustomerName = "سعد جاد",
+            CustomerPhone = "01012345678", Origin = GroupBookingOrigin.Ai,
+            ExistingBookingPolicy = ExistingGroupBookingPolicy.Reject
+        });
+        var bookingId = original.Booking!.Id;
+        var createdAt = original.Booking.CreatedAt;
+        original.Booking.IsPaid = true;
+        original.Booking.IsAttended = true;
+        await db.SaveChangesAsync();
+        var (hub, _) = CommitObservingHub(projectId);
+        var orchestrator = new AiGroupBookingOrchestrator(db, coordinator, hub,
+            NullLogger<AiGroupBookingOrchestrator>.Instance);
+        var correction = new AiGroupBookingRequest
+        {
+            ProjectId = projectId, GroupId = group.Id,
+            SuggestedPeople = [new() { Name = "ايه سعد جاد", PhoneNumber = "+201012345678", IsRequester = false }]
+        };
+
+        var corrected = await orchestrator.BookSuggestedPeopleAsync(correction);
+        var repeated = await orchestrator.BookSuggestedPeopleAsync(correction);
+
+        Assert.True(corrected.Succeeded);
+        Assert.Null(corrected.CustomerReplyOverride);
+        Assert.True(repeated.Succeeded);
+        Assert.Null(repeated.CustomerReplyOverride);
+        Assert.Equal(capacity - 1, repeated.DisplayedRemainingPlaces);
+        await using var verification = postgres.CreateContext(Tenant(projectId));
+        var booking = Assert.Single(await verification.GroupAppointmentBookings.AsNoTracking().ToListAsync());
+        Assert.Equal(bookingId, booking.Id);
+        Assert.Equal(createdAt, booking.CreatedAt);
+        Assert.Equal("ايه سعد جاد", booking.CustomerName);
+        Assert.True(booking.IsPaid);
+        Assert.True(booking.IsAttended);
+        var customer = Assert.Single(await verification.Customers.AsNoTracking().ToListAsync());
+        Assert.Equal("ايه سعد جاد", customer.Name);
+        Assert.Equal(customer.Id, booking.CustomerId);
+        var outcomes = await verification.IntegrationOutboxMessages
+            .Where(message => message.EventType == "BookingChanged.v2").ToListAsync();
+        Assert.Single(outcomes, message =>
+            JsonSerializer.Deserialize<AdvertisingBookingOutcomeChanged>(message.PayloadJson)!.BookingId == bookingId);
+    }
+
+    [Fact]
+    public async Task Ai_booking_for_other_person_in_another_group_reports_conflict_without_moving_or_renaming_them()
+    {
+        var projectId = Guid.NewGuid();
+        var group = await SeedAvailableGroupAsync(projectId, capacity: 2);
+        await using var db = postgres.CreateContext(Tenant(projectId));
+        var otherGroup = new GroupAppointment
+        {
+            ProjectId = projectId, Name = "مجموعة أخرى", Capacity = 2,
+            IsActive = true, DateTime = DateTime.UtcNow.AddDays(3)
+        };
+        var customer = Customer(projectId, "01012345678");
+        var existingBooking = Booking(projectId, group.Id, customer, customer.PhoneNumber);
+        db.AddRange(otherGroup, customer, existingBooking);
+        await db.SaveChangesAsync();
+        var (hub, _) = CommitObservingHub(projectId);
+        var orchestrator = new AiGroupBookingOrchestrator(db, new GroupBookingCoordinator(db), hub,
+            NullLogger<AiGroupBookingOrchestrator>.Instance);
+
+        var conflict = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
+        {
+            ProjectId = projectId, GroupId = otherGroup.Id,
+            SuggestedPeople = [new() { Name = "اسم بديل", PhoneNumber = "01012345678" }]
+        });
+
+        Assert.False(conflict.Succeeded);
+        Assert.Equal(AiGroupBookingFailure.BookingAlreadyExists, conflict.Failure);
+        Assert.DoesNotContain("مشكلة مؤقتة", conflict.CustomerReplyOverride);
+        await using var verification = postgres.CreateContext(Tenant(projectId));
+        var booking = Assert.Single(await verification.GroupAppointmentBookings.AsNoTracking().ToListAsync());
+        Assert.Equal(group.Id, booking.GroupAppointmentId);
+        Assert.Equal(customer.Name, booking.CustomerName);
+        Assert.Equal(customer.Name, (await verification.Customers.SingleAsync()).Name);
+    }
+
+    [Theory]
+    [InlineData("01123456789")]
+    [InlineData(null)]
+    public async Task Production_2026_09_08_lid_requester_books_with_supplied_phone_without_changing_whatsapp_identity(string? modelPhone)
+    {
+        var projectId = Guid.NewGuid();
+        var group = await SeedAvailableGroupAsync(projectId, capacity: 3);
+        await using var db = postgres.CreateContext(Tenant(projectId));
+        var customer = new Customer { ProjectId = projectId, Name = "عميل", PhoneNumber = "synthetic@lid", City = "" };
+        db.Customers.Add(customer);
+        await db.SaveChangesAsync();
+        var analysis = new MarketingAnalysisResult
+        {
+            SuggestedGroupBookingId = group.Id.ToString(),
+            SuggestedGroupBookingPeople = [new() { IsRequester = true, PhoneNumber = modelPhone }]
+        };
+        var suppliedPhone = AiRequesterBookingPhone.FromConversation(
+            [new Message { Direction = "Outgoing", Content = "ممكن تبعت رقم موبايلك؟" }], "01123456789");
+        AiRequesterBookingPhone.Apply(suppliedPhone, analysis, ["01123456789", "الاتنين والتلات الساعة ٨"]);
+        Assert.NotNull(analysis.SuggestedGroupBookingId);
+        var (hub, _) = CommitObservingHub(projectId);
+        var orchestrator = new AiGroupBookingOrchestrator(db, new GroupBookingCoordinator(db), hub,
+            NullLogger<AiGroupBookingOrchestrator>.Instance);
+
+        var booked = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
+        {
+            ProjectId = projectId, GroupId = group.Id, RequesterCustomerId = customer.Id,
+            SuggestedPeople = analysis.SuggestedGroupBookingPeople, Timezone = "Africa/Cairo"
+        });
+
+        Assert.True(booked.Succeeded);
+        await using var verification = postgres.CreateContext(Tenant(projectId));
+        var booking = Assert.Single(await verification.GroupAppointmentBookings.AsNoTracking().ToListAsync());
+        Assert.Equal(customer.Id, booking.CustomerId);
+        Assert.Equal("201123456789", booking.CustomerPhone);
+        var persistedCustomer = Assert.Single(await verification.Customers.AsNoTracking().ToListAsync());
+        Assert.Equal("synthetic@lid", persistedCustomer.PhoneNumber);
+    }
+
     [Fact]
     public async Task Public_and_manual_booking_competing_for_final_slot_cannot_overbook()
     {
@@ -197,8 +324,9 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         await using var verificationDb = postgres.CreateContext(Tenant(projectId));
         var customerAfterRetry = await verificationDb.Customers.SingleAsync();
         var bookingAfterRetry = await verificationDb.GroupAppointmentBookings.SingleAsync();
-        Assert.Equal("201012345678", customerAfterRetry.PhoneNumber);
-        Assert.Equal("201012345678", bookingAfterRetry.CustomerPhone);
+        // Anonymous retries resolve canonical identity without rewriting the existing profile.
+        Assert.Equal("٠١٠ ١٢٣٤ ٥٦٧٨", customerAfterRetry.PhoneNumber);
+        Assert.Equal("٠١٠ (١٢٣٤) ٥٦٧٨", bookingAfterRetry.CustomerPhone);
         Assert.Equal(customerAfterRetry.Id, bookingAfterRetry.CustomerId);
         Assert.Empty(await verificationDb.NotificationAlerts.ToListAsync());
     }

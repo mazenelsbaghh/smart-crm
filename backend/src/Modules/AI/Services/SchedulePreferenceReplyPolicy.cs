@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Shared.Domain;
 
 namespace Modules.AI.Services;
 
@@ -28,14 +29,40 @@ public static partial class SchedulePreferenceReplyPolicy
         string channel,
         string agentName)
     {
-        if (!SupportsPrivateReply(channel) || !NeedsSchedulePreference(customerMessage)) return;
+        if (!SupportsPrivateReply(channel)) return;
+        if (!NeedsSchedulePreference(customerMessage))
+        {
+            AskForUnknownAttendanceMode(customerMessage, analysis);
+            return;
+        }
         analysis.ReplyStyle = "Support";
         analysis.Label = "موعد بديل";
         analysis.ReplyContent =
-            $"أكيد يا فندم، قولي إيه المواعيد المناسبة مع حضرتك، الأيام والأوقات، علشان أسجل طلبك ونبلغك أول ما يتوفر موعد مناسب.\n\n- {agentName} ✨";
+            $"أكيد يا فندم، اختار الفترة الأنسب لحضرتك:\nمن ١٢ ظهرًا لـ٤ عصرًا\nمن ٤ عصرًا لـ٨ مساءً\nمن ٨ مساءً لـ١٢ منتصف الليل\n\nوكمان تحب الموعد يكون الأسبوع الجاي، الشهر الجاي، خلال ٣ شهور، ولا أي وقت؟\n{AttendancePreferenceText(analysis.AttendanceMode)}\nهنبلغك أول ما يتوفر موعد مناسب.\n\n- {agentName} ✨";
         analysis.SuggestedGroupBookingId = null;
         analysis.SuggestedGroupBookingPeople = [];
         if (analysis.SuggestedFollowUp is not null) analysis.SuggestedFollowUp.Needed = false;
+    }
+
+    private static string AttendancePreferenceText(string mode) => AttendanceModes.Normalize(mode) switch
+    {
+        AttendanceModes.Online => "الحضور المطلوب: أونلاين.",
+        AttendanceModes.Offline => "الحضور المطلوب: أوفلاين في السنتر.",
+        AttendanceModes.Either => "الحضور المناسب لحضرتك: أونلاين أو أوفلاين في السنتر.",
+        _ => "تحب الحضور أونلاين ولا أوفلاين في السنتر؟"
+    };
+
+    private static void AskForUnknownAttendanceMode(string message, MarketingAnalysisResult analysis)
+    {
+        var normalized = Normalize(message);
+        if (AttendanceModes.Normalize(analysis.AttendanceMode) != AttendanceModes.Unknown
+            || analysis.RequestHuman || analysis.IsFallbackResponse || analysis.SuggestedGroupBookingId is not null
+            || !analysis.Intent.Equals("inquiry", StringComparison.OrdinalIgnoreCase)
+            || !ScheduleWords.Any(normalized.Contains)
+            || !new[] { "ايه", "امتي", "متي", "هل", "؟", "?", "عايز اعرف", "ممكن اعرف" }.Any(normalized.Contains)) return;
+        var reply = Normalize(analysis.ReplyContent);
+        if (reply.Contains("اونلاين ولا") || reply.Contains("اوفلاين ولا")) return;
+        analysis.ReplyContent += $"\n\n{AttendancePreferenceText(AttendanceModes.Unknown)}";
     }
 
     private static bool NeedsSchedulePreference(string message)

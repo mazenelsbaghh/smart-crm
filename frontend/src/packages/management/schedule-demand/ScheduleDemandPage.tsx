@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import {
-  CalendarCheck2, CalendarClock, CheckCheck, MapPin, RefreshCw, Search, Send,
+  CalendarCheck2, CalendarClock, CheckCheck, Download, MapPin, RefreshCw, Search, Send,
   UsersRound, X,
 } from 'lucide-react';
 import { useAuth } from '../../../context/auth-context';
@@ -18,6 +18,8 @@ interface DemandRow {
   requestedScheduleText: string;
   requestedScheduleLabel: string;
   lastMessageAtUtc: string;
+  requestKind?: 'SchedulePreference' | 'InquiryOnly';
+  attendanceMode?: string;
 }
 
 interface OpenAppointment {
@@ -50,14 +52,24 @@ const errorText = (error: unknown, fallback: string) => axios.isAxiosError<{ err
   ? error.response?.data?.error || fallback
   : fallback;
 
+const attendanceLabels: Record<string, string> = {
+  Online: 'أونلاين',
+  Offline: 'أوفلاين (في السنتر)',
+  Either: 'أونلاين أو أوفلاين',
+  Unknown: 'غير محدد',
+};
+const attendanceLabel = (mode?: string) => attendanceLabels[mode ?? 'Unknown'] ?? attendanceLabels.Unknown;
+
 export default function ScheduleDemandPage() {
   const { activeProject, user } = useAuth();
   const [overview, setOverview] = useState<DemandOverview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
   const [scheduleFilter, setScheduleFilter] = useState('all');
+  const [attendanceFilter, setAttendanceFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -94,12 +106,14 @@ export default function ScheduleDemandPage() {
   const visibleRows = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase('ar');
     return (overview?.rows ?? []).filter((row) => {
-      const matchesSchedule = scheduleFilter === 'all' || row.requestedScheduleLabel === scheduleFilter;
+      const matchesSchedule = scheduleFilter === 'all'
+        || (scheduleFilter === 'inquiry' ? row.requestKind === 'InquiryOnly' : row.requestedScheduleLabel === scheduleFilter);
+      const matchesAttendance = attendanceFilter === 'all' || (row.attendanceMode ?? 'Unknown') === attendanceFilter;
       const matchesQuery = !normalized || [row.customerName, row.phoneNumber, row.requestedScheduleText]
         .some((value) => value?.toLocaleLowerCase('ar').includes(normalized));
-      return matchesSchedule && matchesQuery;
+      return matchesSchedule && matchesAttendance && matchesQuery;
     });
-  }, [overview, query, scheduleFilter]);
+  }, [overview, query, scheduleFilter, attendanceFilter]);
 
   const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selected.has(row.customerId));
   const toggleAll = () => setSelected((current) => {
@@ -113,6 +127,22 @@ export default function ScheduleDemandPage() {
     if (next.has(customerId)) next.delete(customerId); else next.add(customerId);
     return next;
   });
+
+  const exportSelected = async () => {
+    const selectedRows = (overview?.rows ?? []).filter((row) => selected.has(row.customerId));
+    if (!selectedRows.length || exporting || loading) return;
+    setExporting(true);
+    setError('');
+    setNotice('');
+    try {
+      await downloadDemandRows(selectedRows, timezone);
+      setNotice(`بدأ تنزيل شيت يضم ${selectedRows.length.toLocaleString('ar-EG')} طالب.`);
+    } catch {
+      setError('تعذّر تنزيل الشيت. حاول مرة أخرى.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const sendAvailable = async () => {
     if (!activeProject || selected.size === 0 || sending) return;
@@ -145,7 +175,7 @@ export default function ScheduleDemandPage() {
       <div>
         <span className={styles.eyebrow}>متابعة فرص الحجز</span>
         <h1>طلبات المواعيد</h1>
-        <p>كل العملاء الذين ذكروا موعدًا مناسبًا لهم، مع المجموعات المفتوحة التي يمكن إرسالها الآن.</p>
+        <p>الطلاب اللي طلبوا موعدًا مناسبًا أو بيسألوا بس، مع نوع الحضور المطلوب والمجموعات المفتوحة.</p>
       </div>
       <button type="button" className={styles.refreshButton} disabled={loading} onClick={() => void load()}>
         <RefreshCw size={17} className={loading ? styles.spin : ''} /> تحديث
@@ -156,7 +186,7 @@ export default function ScheduleDemandPage() {
     {notice && <div className={styles.noticeBanner} role="status">{notice}</div>}
 
     <section className={styles.metrics} aria-label="ملخص طلبات المواعيد">
-      <Metric icon={UsersRound} label="أشخاص طلبوا مواعيد" value={overview?.totalPeople ?? 0} />
+      <Metric icon={UsersRound} label="طلاب مهتمون بالمواعيد" value={overview?.totalPeople ?? 0} />
       <Metric icon={CalendarClock} label="مواعيد مطلوبة مختلفة" value={overview?.distinctSchedules ?? 0} />
       <Metric icon={CalendarCheck2} label="مجموعات مفتوحة الآن" value={overview?.openAppointments.length ?? 0} />
     </section>
@@ -176,8 +206,15 @@ export default function ScheduleDemandPage() {
         </label>
         <label className={styles.filterSelect}><span>الموعد المطلوب</span>
           <select value={scheduleFilter} onChange={(event) => setScheduleFilter(event.target.value)}>
-            <option value="all">كل المواعيد</option>
-            {(overview?.groups ?? []).map((group) => <option key={group.label} value={group.label}>{group.label} ({group.peopleCount})</option>)}
+            <option value="all">كل الطلاب</option>
+            <option value="inquiry">بيسألوا بس</option>
+            {(overview?.groups ?? []).filter((group) => group.label !== 'بيسألوا بس').map((group) => <option key={group.label} value={group.label}>{group.label} ({group.peopleCount})</option>)}
+          </select>
+        </label>
+        <label className={styles.filterSelect}><span>نوع الحضور</span>
+          <select value={attendanceFilter} onChange={(event) => setAttendanceFilter(event.target.value)}>
+            <option value="all">كل الأنواع</option>
+            {Object.entries(attendanceLabels).map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}
           </select>
         </label>
         <button type="button" className={styles.selectAll} onClick={toggleAll} disabled={visibleRows.length === 0}>
@@ -191,11 +228,16 @@ export default function ScheduleDemandPage() {
         />)}</div>}
     </section>
 
-    {canManage && selected.size > 0 && <div className={styles.actionDock} role="region" aria-label="إجراءات العملاء المحددين">
-      <div><strong>{selected.size.toLocaleString('ar-EG')} عميل محدد</strong><span>سيصل لكل عميل المواعيد المتاحة المناسبة لمكانه فقط.</span></div>
-      <button type="button" onClick={() => setConfirming(true)} disabled={!overview?.openAppointments.length}>
-        <Send size={17} /> إرسال المواعيد المفتوحة
-      </button>
+    {selected.size > 0 && <div className={styles.actionDock} role="region" aria-label="إجراءات العملاء المحددين">
+      <div><strong>{selected.size.toLocaleString('ar-EG')} عميل محدد</strong><span>الشيت يشمل كل المحددين، حتى المخفيين بالفلتر.</span></div>
+      <div className={styles.dockActions}>
+        <button type="button" className={styles.exportButton} onClick={() => void exportSelected()} disabled={exporting || loading}>
+          <Download size={17} aria-hidden="true" />{exporting ? 'جاري تجهيز الشيت…' : 'تنزيل المحددين (Excel)'}
+        </button>
+        {canManage && <button type="button" onClick={() => setConfirming(true)} disabled={!overview?.openAppointments.length}>
+          <Send size={17} /> إرسال المواعيد المفتوحة
+        </button>}
+      </div>
     </div>}
 
     {confirming && <section className={styles.confirmPanel} aria-labelledby="confirm-title">
@@ -209,6 +251,27 @@ export default function ScheduleDemandPage() {
       </div>
     </section>}
   </main>;
+}
+
+async function downloadDemandRows(rows: DemandRow[], timezone: string) {
+  const XLSX = await import('xlsx');
+  const worksheet = XLSX.utils.json_to_sheet(rows.map((row) => ({
+    'اسم الطالب': row.customerName || 'عميل بدون اسم',
+    'رقم الهاتف': row.phoneNumber,
+    'قناة التواصل': row.channel,
+    'نوع الحضور': attendanceLabel(row.attendanceMode),
+    'نوع الطلب': row.requestKind === 'InquiryOnly' ? 'بيسألوا بس' : 'موعد مطلوب',
+    'الموعد المطلوب': row.requestedScheduleLabel,
+    'تفاصيل طلب الموعد': row.requestedScheduleText,
+    [`آخر رسالة (${timezone})`]: new Date(row.lastMessageAtUtc).toLocaleString('ar-EG', { timeZone: timezone }),
+  })));
+  worksheet['!cols'] = [26, 22, 18, 24, 20, 30, 65, 32].map((wch) => ({ wch }));
+  worksheet['!autofilter'] = { ref: worksheet['!ref']! };
+  const workbook = XLSX.utils.book_new();
+  workbook.Workbook = { Views: [{ RTL: true }] };
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'طلبات مواعيد الطلاب');
+  const date = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+  XLSX.writeFileXLSX(workbook, `schedule-demand-students-${date}.xlsx`);
 }
 
 function Metric({ icon: Icon, label, value }: { icon: typeof UsersRound; label: string; value: number }) {
@@ -244,7 +307,10 @@ function DemandPerson({ row, timezone, checked, onToggle }: {
     <input type="checkbox" checked={checked} onChange={() => onToggle(row.customerId)} />
     <span className={styles.customCheck} aria-hidden="true"><CheckCheck size={13} /></span>
     <div className={styles.personIdentity}><strong>{row.customerName || 'عميل بدون اسم'}</strong><span dir="ltr">{row.phoneNumber || row.channel}</span></div>
-    <div className={styles.requestText}><b>{row.requestedScheduleLabel}</b><p>«{row.requestedScheduleText}»</p></div>
+    <div className={styles.requestText}>
+      <div className={styles.requestLabels}><b>{row.requestedScheduleLabel}</b><span className={styles.attendanceBadge}>{attendanceLabel(row.attendanceMode)}</span></div>
+      <p>{row.requestKind === 'InquiryOnly' ? 'استفسار بدون تحديد موعد أو طلب حجز.' : `«${row.requestedScheduleText}»`}</p>
+    </div>
     <time dateTime={row.lastMessageAtUtc}>{lastMessage}</time>
   </label>;
 }

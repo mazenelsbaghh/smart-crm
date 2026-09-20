@@ -60,6 +60,8 @@ namespace Modules.AI.Workers
             string SenderPsid,
             string DeliveryIdempotencyKey);
 
+        private sealed record CachedReplyAnalysis(MarketingAnalysisResult Analysis, bool IsFallbackResponse);
+
         private readonly IServiceProvider _serviceProvider;
         private readonly IAIMarketingBrain _aiMarketingBrain;
         private readonly IEventBus _eventBus;
@@ -79,7 +81,10 @@ namespace Modules.AI.Workers
 
         private async Task ApplyKnowledgePricingGuardAsync(AppDbContext dbContext, Guid projectId, string customerMessage, MarketingAnalysisResult analysisResult)
         {
-            if (analysisResult.IsFallbackResponse || !PricingGuard.IsPricingQuestion(customerMessage))
+            if (analysisResult.IsFallbackResponse || analysisResult.RequestHuman
+                || string.Equals(analysisResult.Sentiment, "negative", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(analysisResult.Sentiment, "angry", StringComparison.OrdinalIgnoreCase)
+                || !PricingGuard.RequiresExactPriceAnswer(customerMessage))
             {
                 return;
             }
@@ -93,7 +98,9 @@ namespace Modules.AI.Workers
                 .Select(d => d.Content)
                 .ToListAsync();
 
-            var pricingReply = PricingGuard.BuildPricingReplyFromKnowledge(string.Join("\n\n", knowledgeText));
+            var pricingReply = PricingGuard.BuildPricingReplyFromKnowledge(
+                customerMessage,
+                string.Join("\n\n", knowledgeText));
             if (string.IsNullOrWhiteSpace(pricingReply))
             {
                 return;
@@ -104,7 +111,6 @@ namespace Modules.AI.Workers
             analysisResult.ReplyStyle = "Sales";
             analysisResult.ReplyContent = pricingReply;
             analysisResult.Confidence = Math.Max(analysisResult.Confidence, 0.99);
-            analysisResult.SuggestedReaction ??= "😮";
             _logger.LogInformation("Applied knowledge pricing guard to prevent hallucinated pricing.");
         }
 
@@ -193,6 +199,18 @@ namespace Modules.AI.Workers
                         .FirstOrDefaultAsync(c => c.FacebookPSID == @event.Sender);
                 }
 
+                Conversation conversation = await ResolveConversationAsync(dbContext, @event, customer?.Id);
+                if (conversation == null || conversation.HumanHandoffReplyId.HasValue) return;
+                customer = await dbContext.Customers.FirstAsync(c =>
+                    c.Id == conversation.CustomerId && c.ProjectId == @event.ProjectId);
+                if (await HasNewerConversationTurnAsync(dbContext, conversation.Id, @event.SourceMessageTimestampUtc)) return;
+
+                var knownBookingPhone = NormalizeBookingPhone(customer.PhoneNumber)
+                    ?? await dbContext.GroupAppointmentBookings
+                        .Where(booking => booking.ProjectId == @event.ProjectId && booking.CustomerId == customer.Id)
+                        .OrderByDescending(booking => booking.CreatedAt)
+                        .Select(booking => booking.CustomerPhone).FirstOrDefaultAsync();
+
             // Query ProjectSettings
             var settings = await dbContext.ProjectSettings
                 .FirstOrDefaultAsync(s => s.ProjectId == @event.ProjectId);
@@ -203,6 +221,7 @@ namespace Modules.AI.Workers
                 return;
             }
 
+            var learnedInstructions = await new ReplyLearningService(dbContext).InstructionsAsync(@event.ProjectId, channel);
             var systemPromptForReply = settings.SystemPrompt;
             if (settings.HumanTransferEnabled && !string.IsNullOrEmpty(settings.HumanTransferPhone))
             {
@@ -281,7 +300,7 @@ namespace Modules.AI.Workers
             }
 
             // Intercept Messenger message for phone number transition
-            if (channel == "Messenger" && customer != null)
+            if (channel == "Messenger" && aiBehaviorSettings.MessengerWhatsAppTransitionEnabled && customer != null)
             {
                 var extractedPhone = EgyptianPhoneNumber.Extract(@event.Content);
                 if (!string.IsNullOrEmpty(extractedPhone))
@@ -360,7 +379,7 @@ namespace Modules.AI.Workers
                     .Select(c => c.ChunkText)
                     .ToListAsync();
 
-                var approvedChunksText = string.Join("\n\n", approvedChunksList.Select(text => $"- {text}"));
+                var approvedChunksText = string.Join("\n\n", approvedChunksList.Distinct(StringComparer.Ordinal).Select(text => $"- {text}"));
                 var agentName = aiBehaviorSettingsService.GetAgentName(aiBehaviorSettings);
                 var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText, systemPromptForReply, aiBehaviorSettings, channel);
 
@@ -380,24 +399,13 @@ namespace Modules.AI.Workers
 
                     try
                     {
-                        var redis = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
-                        string redisKey = $"gemini:cache:{@event.ProjectId}:{customerReplyModel}:{contentHash}";
-                        cachedContentId = await redis.StringGetAsync(redisKey);
-
-                        if (string.IsNullOrEmpty(cachedContentId))
-                        {
-                            Console.WriteLine($"[AIReplyWorker] Context cache not found/expired in Redis. Creating new cache on Gemini API...");
-                            // Create cache with 3600 seconds (1 hour) TTL
-                            cachedContentId = await geminiClient.CreateContextCacheAsync(staticPrompt, customerReplyModel, 3600, apiKeyOverride);
-                            
-                            // Store in Redis for 55 minutes
-                            await redis.StringSetAsync(redisKey, cachedContentId, TimeSpan.FromMinutes(55));
-                            Console.WriteLine($"[AIReplyWorker] Successfully cached static context. ID: {cachedContentId}");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"[AIReplyWorker] Found active Context Cache in Redis: {cachedContentId}");
-                        }
+                        var generationCache = scope.ServiceProvider.GetRequiredService<AiGenerationCache>();
+                        var credentialHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                            Encoding.UTF8.GetBytes(apiKeyOverride ?? string.Empty)));
+                        string redisKey = $"gemini:context:v2:{@event.ProjectId}:{customerReplyModel}:{credentialHash}:{contentHash}";
+                        cachedContentId = await generationCache.GetOrCreateAsync(redisKey,
+                            () => geminiClient.CreateContextCacheAsync(staticPrompt, customerReplyModel, 3600, apiKeyOverride),
+                            TimeSpan.FromMinutes(55));
                     }
                     catch (Exception cacheEx)
                     {
@@ -449,7 +457,7 @@ namespace Modules.AI.Workers
 
                     if (allChunks.Any())
                     {
-                        brainContext = string.Join("\n\n", allChunks.Select(c => $"- {c.ChunkText}"));
+                        brainContext = string.Join("\n\n", allChunks.Select(c => c.ChunkText).Distinct(StringComparer.Ordinal).Select(text => $"- {text}"));
                         Console.WriteLine($"[AIReplyWorker] Injected {allChunks.Count} knowledge chunks (with pricing/location guards) into AI prompt context.");
                     }
                 }
@@ -649,10 +657,7 @@ namespace Modules.AI.Workers
                     string cityInstruction = "";
                     if (!isCityKnown)
                     {
-                        cityInstruction = "قانون هام وصارم بشأن مدينة العميل وموقع المجموعات:\n" +
-                                          "بما أن مدينة العميل غير مسجلة في ملفه الشخصي (City: Missing)، يجب عليك أولاً معرفة المدينة أو المحافظة التي يعيش فيها قبل تقديم أي مواعيد للعميل.\n" +
-                                          "إذا سأل العميل عن المواعيد أو المجموعات أو تفاصيل الحجز، لا تذكر له أي مواعيد أو أوقات في ردك إطلاقاً، بل اسأله بلطف أولاً عن أين يعيش أو ما هي محافظته (مثال: 'علشان ننسق المواعيد المناسبة لحضرتك، ساكن في الإسكندرية ولا محافظة تانية؟').\n" +
-                                          "يُمنع منعاً باتاً عرض المواعيد أو ذكرها للعميل إلا بعد أن يخبرك صراحةً بمدينته.\n";
+                        cityInstruction = "أجب عن سؤال العميل أولاً من البيانات المتاحة. المدينة ليست شرطاً لعرض التفاصيل أو مواعيد الأونلاين. إذا لم يحدد طريقة الحضور وكانت ضرورية لاختيار المجموعة، اسأله أونلاين أم في السنتر. اسأل عن المدينة فقط لو اختار السنتر ولم يحدد مدينته من قبل.\n";
                     }
                     else if (!isFromAlexandria)
                     {
@@ -667,9 +672,9 @@ namespace Modules.AI.Workers
                     }
 
                     var bookingPhoneInstruction =
-                        NormalizeBookingPhone(customer?.PhoneNumber) == null
+                        NormalizeBookingPhone(knownBookingPhone) == null
                             ? "قانون إلزامي لرقم صاحب الحجز:\n" +
-                              "رقم الموبايل الحقيقي للشخص الذي يرسل الرسائل غير مسجل بعد. إذا كان يريد الحجز لنفسه، لا تضع suggestedGroupBookingId ولا تؤكد أن حجزه تم، واطلب رقم موبايله أولاً. أما إذا كان يحجز فقط لشخص آخر وقد أعطاك اسم هذا الشخص ورقمه الحقيقيين، فيمكنك حجز الشخص الآخر وحده داخل suggestedGroupBookingPeople مع isRequester=false. أي username أو @lid أو Messenger ID هو معرف داخلي وليس رقم هاتف، ويُمنع استخدامه أو ذكره كرقم للحجز.\n"
+                              "رقم الحجز غير محفوظ في الملف. راجع رسائل العميل أولاً: إذا أعطى رقم موبايله للحجز، ضعه في suggestedGroupBookingPeople مع isRequester=true وphoneNumber=الرقم الذي كتبه، وأكمل اقتراح الحجز دون طلب الرقم مرة أخرى. اطلب الرقم فقط إذا لم يقدمه. إذا كان يحجز لشخص آخر استخدم اسم ورقم هذا الشخص مع isRequester=false. لا تعتبر الرقم المكتوب إثباتاً لهوية واتساب ولا تستخدم username أو @lid كرقم هاتف.\n"
                             : string.Empty;
 
                     var groupsContextText = "معلومات مواعيد المجموعات المتاحة للحجز (Group Appointments):\n" +
@@ -731,7 +736,8 @@ namespace Modules.AI.Workers
                 channelAwarenessContext += $"\nتوجيه CTA لقناة ({channel}):\n" +
                                            "- أضف CTA واحداً فقط عندما يكون مناسباً لآخر اهتمام واضح للعميل، وليس في كل رد. اختر موضوع CTA من الإعدادات، ولا تستخدم وعوداً أو عروضاً غير موجودة فيها.\n";
 
-                if (channel == "Messenger" && (customer == null || string.IsNullOrEmpty(customer.PhoneNumber)))
+                if (channel == "Messenger" && aiBehaviorSettings.MessengerWhatsAppTransitionEnabled
+                    && (customer == null || string.IsNullOrEmpty(customer.PhoneNumber)))
                 {
                     channelAwarenessContext += "- يجب عليك دائمًا وبأسلوب لطيف ومقنع (سيلزجي بالعامية المصرية) محاولة طلب رقم الواتساب الخاص بالعميل لنقل المحادثة إلى الواتساب (مثال بالعامية: 'يا ريت تبعتلي رقم الواتساب بتاعك عشان نبعتلك التفاصيل عليه ونكمل كلامنا هناك').\n";
                 }
@@ -750,35 +756,29 @@ namespace Modules.AI.Workers
 
             // Fetch chat history for context
             string chatHistory = null;
-            Conversation conversation = null;
+            var customerMessages = new List<string> { @event.Content };
             if (customerId != Guid.Empty)
             {
                 try
                 {
-                    conversation = @event.ConversationId.HasValue
-                        ? await dbContext.Conversations.FirstOrDefaultAsync(c =>
-                            c.Id == @event.ConversationId.Value
-                            && c.CustomerId == customerId
-                            && c.Channel == channel
-                            && c.Status != "Closed")
-                        : await dbContext.Conversations.FirstOrDefaultAsync(c =>
-                            c.CustomerId == customerId
-                            && c.Channel == channel
-                            && (channel != "WhatsApp" || c.WhatsAppAccountId == @event.WhatsAppAccountId)
-                            && c.Status != "Closed");
-
                     if (conversation != null)
                     {
                         var historyMessages = await dbContext.Messages
-                            .Where(m => m.ConversationId == conversation.Id)
+                            .Where(m => m.ConversationId == conversation.Id && m.MessageType != "Reaction"
+                                && (!@event.SourceMessageTimestampUtc.HasValue || m.Timestamp <= @event.SourceMessageTimestampUtc.Value))
                             .OrderByDescending(m => m.Timestamp)
-                            .Take(15) // Limit history to last 15 messages
+                            .ThenByDescending(m => m.Id)
+                            .Take(40)
                             .ToListAsync();
 
                         historyMessages.Reverse(); // Chronological order
 
-                        chatHistory = string.Join("\n", historyMessages.Select(m => 
-                            $"{(m.Direction == "Incoming" ? "Customer" : "Agent/AI")}: {m.Content}"));
+                        knownBookingPhone ??= AiRequesterBookingPhone.FromConversation(historyMessages, @event.Content);
+
+                        chatHistory = string.Join("\n", historyMessages.TakeLast(20).Select(m =>
+                            $"{(m.Direction == "Incoming" ? "Customer" : "Agent/AI")}: {m.Transcription ?? m.Content}"));
+                        customerMessages.AddRange(historyMessages.Where(m => m.Direction == "Incoming")
+                            .Select(m => m.Transcription ?? m.Content));
                         
                         Console.WriteLine($"[AIReplyWorker] Injected {historyMessages.Count} history messages into AI prompt context.");
                     }
@@ -834,7 +834,10 @@ namespace Modules.AI.Workers
 
             // Construct customer profile description to probe for missing data
             string customerProfile = $"Name: {(string.IsNullOrEmpty(customer?.Name) ? "Missing" : customer.Name)}\n" +
-                                     $"City: {(string.IsNullOrEmpty(customer?.City) ? "Missing" : customer.City)}";
+                                     $"City: {(string.IsNullOrEmpty(customer?.City) ? "Missing" : customer.City)}\n" +
+                                     $"Booking phone: {knownBookingPhone ?? "Not stored; check the customer's messages before asking"}";
+            if (knownBookingPhone != null)
+                customerProfile += "\nThe requester's booking phone is already supplied above. Do not ask for it again; use it for isRequester=true when completing their chosen booking.";
             if (!string.IsNullOrEmpty(bookedGroupInfo))
             {
                 customerProfile += $"\nCurrent Booking:\n{bookedGroupInfo}";
@@ -884,7 +887,10 @@ namespace Modules.AI.Workers
 
             Console.WriteLine(
                 $"[AIReplyWorker] Generating customer reply with {customerReplyProvider}/{customerReplyModel}...");
-            var analysisResult = await _aiMarketingBrain.AnalyzeAndGenerateReplyAsync(
+            if (await HasNewerConversationTurnAsync(dbContext, conversation.Id, @event.SourceMessageTimestampUtc)) return;
+            async Task<string> GenerateAnalysisAsync()
+            {
+                var generated = await _aiMarketingBrain.AnalyzeAndGenerateReplyAsync(
                 @event.Content, 
                 apiKeyOverride, 
                 brainContext, 
@@ -896,13 +902,35 @@ namespace Modules.AI.Workers
                 mimeType,
                 tonePref,
                 targetAud,
-                new CustomerReplyRuntime(customerReplyProvider, customerReplyModel, cachedContentId),
+                new CustomerReplyRuntime(customerReplyProvider, customerReplyModel, cachedContentId, learnedInstructions),
                 systemPromptForReply,
                 aiBehaviorSettings,
                 channel);
+                return JsonSerializer.Serialize(new CachedReplyAnalysis(generated, generated.IsFallbackResponse));
+            }
+            // The event identifies one aggregated customer turn, including queue redelivery.
+            var replyCache = scope.ServiceProvider.GetRequiredService<AiGenerationCache>();
+            var replyConfigHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { customerReplyProvider, customerReplyModel,
+                    apiKeyOverride, systemPromptForReply, aiBehaviorSettings, learnedInstructions }))));
+            var cachedAnalysis = customerReplyProvider == CustomerReplyProviders.Gemini
+                ? await replyCache.GetOrGenerateReplyAsync(
+                    $"ai:reply:v1:{@event.ProjectId}:{conversation.Id}:{@event.Id}:{replyConfigHash}",
+                    GenerateAnalysisAsync, TimeSpan.FromMinutes(10))
+                : await GenerateAnalysisAsync();
+            var cachedReply = JsonSerializer.Deserialize<CachedReplyAnalysis>(cachedAnalysis)!;
+            var analysisResult = cachedReply.Analysis;
+            analysisResult.IsFallbackResponse = cachedReply.IsFallbackResponse;
+            MessengerBookingPolicy.Apply(aiBehaviorSettings, channel, analysisResult);
 
+            await dbContext.Entry(conversation).ReloadAsync();
+            if (conversation.HumanHandoffReplyId.HasValue ||
+                await HasNewerConversationTurnAsync(dbContext, conversation.Id, @event.SourceMessageTimestampUtc)) return;
+
+            if (!string.IsNullOrWhiteSpace(analysisResult.Transcription))
+                customerMessages.Add(analysisResult.Transcription);
+            AiRequesterBookingPhone.Apply(knownBookingPhone, analysisResult, customerMessages);
             EnforceDistinctBookingPhones(customer, analysisResult);
-            EnforceRequesterBookingPhoneRequirement(channel, customer, analysisResult);
             ApplyFollowUpPolicy(aiBehaviorSettings, analysisResult);
             await ApplyKnowledgePricingGuardAsync(dbContext, @event.ProjectId, @event.Content, analysisResult);
             SchedulePreferenceReplyPolicy.Apply(
@@ -921,6 +949,90 @@ namespace Modules.AI.Workers
                 dbContext.Entry(latestMediaMsg).State = EntityState.Modified;
                 await dbContext.SaveChangesAsync();
                 Console.WriteLine($"[AIReplyWorker] Saved voice note transcription: {latestMediaMsg.Transcription}");
+            }
+
+            // 2.6. Process AI Auto-Cancellation if CancelGroupBooking is set to true
+            if (analysisResult.CancelGroupBooking)
+            {
+                analysisResult.SuggestedGroupBookingId = null;
+                try
+                {
+                    var bookingCustomerId = customer?.Id ?? Guid.Empty;
+                    var bookingCustomerPhone = customer?.PhoneNumber ?? @event.Sender;
+
+                    var existingBooking = await dbContext.GroupAppointmentBookings
+                        .Include(b => b.GroupAppointment)
+                        .FirstOrDefaultAsync(b => b.ProjectId == @event.ProjectId && (b.CustomerPhone == bookingCustomerPhone || b.CustomerId == bookingCustomerId));
+
+                    if (existingBooking != null)
+                    {
+                        var groupName = existingBooking.GroupAppointment?.Name ?? "المجموعة";
+                        var groupId = existingBooking.GroupAppointmentId;
+
+                        await new GroupBookingFollowUpLifecycle(dbContext)
+                            .CancelForBookingAsync(existingBooking, existingBooking.GroupAppointment);
+                        dbContext.GroupAppointmentBookings.Remove(existingBooking);
+
+                        // Update customer notes to document the cancellation
+                        if (customer != null)
+                        {
+                            TimeZoneInfo projectZone = TimezoneHelper.GetTimeZone(settings?.Timezone);
+                            var localTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
+                            customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم إلغاء حجز الطالب من مجموعة {groupName} (تلقائياً بالـ AI) بتاريخ {localTime:yyyy-MM-dd HH:mm}";
+                            dbContext.Entry(customer).State = EntityState.Modified;
+                        }
+
+                        await dbContext.SaveChangesAsync();
+                        Console.WriteLine($"[AIReplyWorker] ❌ Auto-cancelled booking for customer {bookingCustomerPhone} from group '{groupName}'.");
+
+                        // Broadcast update via SignalR to refresh dashboard
+                        try
+                        {
+                            var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                            await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("GroupBookingUpdated", new
+                            {
+                                groupId = groupId,
+                                groupName = groupName,
+                                customerPhone = bookingCustomerPhone,
+                                customerName = customer?.Name ?? bookingCustomerPhone,
+                                newBookedCount = existingBooking.GroupAppointment != null ? Math.Max(0, existingBooking.GroupAppointment.Bookings.Count - 1) : 0,
+                                isCancelled = true
+                            });
+                        }
+                        catch (Exception signalREx)
+                        {
+                            Console.WriteLine($"[AIReplyWorker] SignalR broadcast for group booking cancellation failed: {signalREx.Message}");
+                        }
+                    }
+                }
+                catch (Exception cancelEx)
+                {
+                    Console.WriteLine($"[AIReplyWorker] Auto-cancellation failed: {cancelEx.Message}");
+                }
+            }
+
+            if (analysisResult.RequestHuman)
+            {
+                var contact = settings.HumanTransferEnabled && !string.IsNullOrWhiteSpace(settings.HumanTransferPhone)
+                    ? $" ولو تحب تتواصل مباشرة، رقم المسؤول: {settings.HumanTransferPhone.Trim()}."
+                    : string.Empty;
+                var acknowledgement = new AIReplyGeneratedEvent
+                {
+                    ProjectId = @event.ProjectId,
+                    ConversationId = conversation.Id,
+                    WhatsAppAccountId = @event.WhatsAppAccountId,
+                    Sender = @event.Sender,
+                    Content = "تم تحويل المحادثة لمراجعة موظف، والرد الآلي هيتوقف هنا." + contact,
+                    Channel = channel,
+                    ChannelMetadata = @event.ChannelMetadata,
+                    RequiredWhatsAppConnectedAt = whatsAppSession?.ConnectedAt,
+                    WhatsAppDeliveryIdempotencyKey = $"handoff:{@event.Id:N}"
+                };
+                await new ConversationHumanHandoff(dbContext).RequestAsync(conversation, acknowledgement);
+                if (conversation.HumanHandoffReplyId == acknowledgement.Id
+                    && settings.HumanTransferEnabled && !string.IsNullOrWhiteSpace(settings.HumanTransferPhone))
+                    await NotifyHumanTransferAsync(scope.ServiceProvider, settings, @event, customer);
+                return;
             }
 
             // Publishing second prevents a failed database booking from leaking a false confirmation or trial link.
@@ -997,6 +1109,8 @@ namespace Modules.AI.Workers
                 FollowUpAppointmentTime = analysisResult.SuggestedFollowUp?.AppointmentTime,
                 FollowUpDueDate = analysisResult.SuggestedFollowUp?.DueDate,
                 FollowUpNotes = analysisResult.SuggestedFollowUp?.Notes,
+                ScheduleAvailabilityWindow = analysisResult.ScheduleAvailabilityWindow,
+                ScheduleAvailabilityHorizon = analysisResult.ScheduleAvailabilityHorizon,
                 AIInsights = analysisResult.AIInsights
             };
             await _eventBus.PublishAsync(crmSuggestion);
@@ -1014,6 +1128,7 @@ namespace Modules.AI.Workers
                 ChannelMetadata = @event.ChannelMetadata,
                 Reaction = analysisResult.SuggestedReaction,
                 PublicCommentReply = analysisResult.PublicCommentReply,
+                SourceMessageTimestampUtc = @event.SourceMessageTimestampUtc,
                 RequiredWhatsAppConnectedAt = whatsAppSession?.ConnectedAt,
                 WhatsAppDeliveryIdempotencyKey = string.Equals(channel, "WhatsApp", StringComparison.OrdinalIgnoreCase)
                     ? @event.WhatsAppDeliveryIdempotencyKey ?? $"message_{@event.Id:N}"
@@ -1022,134 +1137,6 @@ namespace Modules.AI.Workers
 
             await _eventBus.PublishAsync(replyGeneratedEvent);
             Console.WriteLine($"[AIReplyWorker] Published AIReplyGeneratedEvent for {@event.Sender}");
-
-            // Intercept Human Request
-            if (analysisResult.RequestHuman && settings.HumanTransferEnabled && !string.IsNullOrWhiteSpace(settings.HumanTransferPhone))
-            {
-                try
-                {
-                    var managerPhone = settings.HumanTransferPhone.Trim();
-                    var customerName = customer?.Name ?? "عميل غير معروف";
-                    var customerPhone = customer?.PhoneNumber ?? @event.Sender;
-
-                    var managerMsg = $"العميل {customerName} ({customerPhone}) طلب التحدث مع شخص طبيعي.";
-                    dbContext.NotificationAlerts.Add(new NotificationAlert
-                    {
-                        ProjectId = @event.ProjectId,
-                        UserId = Guid.Empty,
-                        Type = "HumanTransferRequest",
-                        Message = managerMsg,
-                        IsRead = false
-                    });
-                    await dbContext.SaveChangesAsync();
-
-                    var notificationAccountId = @event.WhatsAppAccountId
-                        ?? (await scope.ServiceProvider
-                            .GetRequiredService<WhatsAppAccountService>()
-                            .GetDefaultAsync(@event.ProjectId)).Id;
-
-                    var deliveryOutcome = await SendWhatsAppTransitionMessageAsync(
-                        scope.ServiceProvider,
-                        new WhatsAppTransitionMessage(
-                            @event.ProjectId,
-                            notificationAccountId,
-                            managerPhone,
-                            managerMsg,
-                            $"human-transfer:{@event.Id:N}"));
-                    if (deliveryOutcome == WhatsAppTransitionDeliveryOutcome.Sent)
-                    {
-                        Console.WriteLine($"[AIReplyWorker] Sent human request notification to manager: {managerPhone}");
-                    }
-                    else if (deliveryOutcome == WhatsAppTransitionDeliveryOutcome.DeliveryUnknown)
-                    {
-                        _logger.LogWarning(
-                            "WhatsApp delivery outcome is unknown for human-transfer notification {EventId}.",
-                            @event.Id);
-                    }
-                    else
-                    {
-                        _logger.LogInformation(
-                            "WhatsApp human-transfer notification {EventId} was definitely not sent.",
-                            @event.Id);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[AIReplyWorker] Failed to send human request notification: {ex.Message}");
-                }
-            }
-
-            if (analysisResult.BlacklistCustomer && customer != null)
-            {
-                try
-                {
-                    customer.IsBlacklisted = true;
-                    dbContext.Entry(customer).State = EntityState.Modified;
-                    await dbContext.SaveChangesAsync();
-                    Console.WriteLine($"[AIReplyWorker] Automatically blacklisted customer {customer.Id} ({customer.PhoneNumber}) as they subscribed.");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[AIReplyWorker] Failed to auto-blacklist customer: {ex.Message}");
-                }
-            }
-
-            // 2.6. Process AI Auto-Cancellation if CancelGroupBooking is set to true
-            if (analysisResult.CancelGroupBooking)
-            {
-                try
-                {
-                    var bookingCustomerId = customer?.Id ?? Guid.Empty;
-                    var bookingCustomerPhone = customer?.PhoneNumber ?? @event.Sender;
-
-                    var existingBooking = await dbContext.GroupAppointmentBookings
-                        .Include(b => b.GroupAppointment)
-                        .FirstOrDefaultAsync(b => b.ProjectId == @event.ProjectId && (b.CustomerPhone == bookingCustomerPhone || b.CustomerId == bookingCustomerId));
-
-                    if (existingBooking != null)
-                    {
-                        var groupName = existingBooking.GroupAppointment?.Name ?? "المجموعة";
-                        var groupId = existingBooking.GroupAppointmentId;
-
-                        dbContext.GroupAppointmentBookings.Remove(existingBooking);
-                        
-                        // Update customer notes to document the cancellation
-                        if (customer != null)
-                        {
-                            TimeZoneInfo projectZone = TimezoneHelper.GetTimeZone(settings?.Timezone);
-                            var localTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
-                            customer.Notes = (customer.Notes ?? string.Empty) + $"\nتم إلغاء حجز الطالب من مجموعة {groupName} (تلقائياً بالـ AI) بتاريخ {localTime:yyyy-MM-dd HH:mm}";
-                            dbContext.Entry(customer).State = EntityState.Modified;
-                        }
-
-                        await dbContext.SaveChangesAsync();
-                        Console.WriteLine($"[AIReplyWorker] ❌ Auto-cancelled booking for customer {bookingCustomerPhone} from group '{groupName}'.");
-
-                        // Broadcast update via SignalR to refresh dashboard
-                        try
-                        {
-                            var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
-                            await hubContext.Clients.Group($"project_{@event.ProjectId}").SendAsync("GroupBookingUpdated", new
-                            {
-                                groupId = groupId,
-                                groupName = groupName,
-                                customerPhone = bookingCustomerPhone,
-                                customerName = customer?.Name ?? bookingCustomerPhone,
-                                newBookedCount = existingBooking.GroupAppointment != null ? Math.Max(0, existingBooking.GroupAppointment.Bookings.Count - 1) : 0,
-                                isCancelled = true
-                            });
-                        }
-                        catch (Exception signalREx)
-                        {
-                            Console.WriteLine($"[AIReplyWorker] SignalR broadcast for group booking cancellation failed: {signalREx.Message}");
-                        }
-                    }
-                }
-                catch (Exception cancelEx)
-                {
-                    Console.WriteLine($"[AIReplyWorker] Auto-cancellation failed: {cancelEx.Message}");
-                }
-            }
 
             // 3. Process AI Auto-Reaction if suggested (WhatsApp only)
             if (channel == "WhatsApp" && aiBehaviorSettingsService.IsReactionAllowed(aiBehaviorSettings, analysisResult.SuggestedReaction))
@@ -1300,6 +1287,36 @@ namespace Modules.AI.Workers
         private static string? NormalizeBookingPhone(string? phone) =>
             GroupBookingPhone.Normalize(phone);
 
+        private async Task NotifyHumanTransferAsync(
+            IServiceProvider services, ProjectSettings settings, MessageAggregatedEvent source, Customer customer)
+        {
+            var accountId = source.WhatsAppAccountId
+                ?? (await services.GetRequiredService<WhatsAppAccountService>().GetDefaultAsync(source.ProjectId)).Id;
+            var notification = new WhatsAppTransitionMessage(
+                source.ProjectId, accountId, settings.HumanTransferPhone!.Trim(),
+                $"محادثة العميل {customer.Name} ({customer.PhoneNumber}) محتاجة متابعة من موظف. الرد الآلي متوقف في محادثته.",
+                $"human-transfer:{source.Id:N}");
+            var outcome = await SendWhatsAppTransitionMessageAsync(services, notification);
+            if (outcome != WhatsAppTransitionDeliveryOutcome.Sent)
+                _logger.LogWarning("Human-transfer notification {EventId} was not confirmed delivered: {Outcome}.", source.Id, outcome);
+        }
+
+        internal static async Task<Conversation?> ResolveConversationAsync(
+            AppDbContext dbContext, MessageAggregatedEvent source, Guid? customerId)
+        {
+            var channel = source.Channel ?? "WhatsApp";
+            var conversations = dbContext.Conversations.Where(conversation =>
+                conversation.ProjectId == source.ProjectId && conversation.Channel == channel && conversation.Status != "Closed");
+            if (channel == "WhatsApp")
+            {
+                var accountId = source.WhatsAppAccountId ?? source.ProjectId;
+                conversations = conversations.Where(conversation => (conversation.WhatsAppAccountId ?? conversation.ProjectId) == accountId);
+            }
+            if (source.ConversationId is { } conversationId)
+                return await conversations.FirstOrDefaultAsync(conversation => conversation.Id == conversationId);
+            return await conversations.FirstOrDefaultAsync(conversation => conversation.CustomerId == customerId);
+        }
+
         private static void ApplyFollowUpPolicy(AIBehaviorSettings settings, MarketingAnalysisResult analysisResult)
         {
             var followUp = analysisResult.SuggestedFollowUp;
@@ -1320,28 +1337,12 @@ namespace Modules.AI.Workers
             followUp.Notes = null;
         }
 
-        private static void EnforceRequesterBookingPhoneRequirement(
-            string channel,
-            Customer? customer,
-            MarketingAnalysisResult analysisResult)
+        private static async Task<bool> HasNewerConversationTurnAsync(
+            AppDbContext dbContext, Guid conversationId, DateTime? sourceTimestamp)
         {
-            var booksRequester = analysisResult.SuggestedGroupBookingPeople.Length == 0 ||
-                                 analysisResult.SuggestedGroupBookingPeople.Any(person => person.IsRequester);
-            if (string.IsNullOrWhiteSpace(analysisResult.SuggestedGroupBookingId) ||
-                !booksRequester ||
-                NormalizeBookingPhone(customer?.PhoneNumber) != null)
-            {
-                return;
-            }
-
-            analysisResult.SuggestedGroupBookingId = null;
-            analysisResult.ReplyContent = string.Equals(channel, "Messenger", StringComparison.OrdinalIgnoreCase)
-                ? "علشان أتمم الحجز، ابعتلي رقم موبايلك الأول لو سمحت."
-                : "علشان أتمم الحجز، ابعتلي رقم موبايلك الأول لو سمحت لأن رقمك مش ظاهر عندي.";
-            if (analysisResult.SuggestedFollowUp?.Type == "AppointmentReminder")
-            {
-                analysisResult.SuggestedFollowUp.Needed = false;
-            }
+            if (!sourceTimestamp.HasValue) return false;
+            return await dbContext.Messages.AnyAsync(message => message.ConversationId == conversationId
+                && message.MessageType != "Reaction" && message.Timestamp > sourceTimestamp.Value);
         }
 
         private static void EnforceDistinctBookingPhones(Customer? requester, MarketingAnalysisResult analysisResult)
@@ -1487,6 +1488,7 @@ namespace Modules.AI.Workers
                 ConversationId = reaction.Conversation.Id,
                 ExternalMessageId = externalMessageId,
                 Direction = "Outgoing",
+                SenderType = "AI",
                 Content = $"[تفاعل] {reaction.Reaction}",
                 MessageType = "Reaction",
                 Timestamp = DateTime.UtcNow
@@ -1720,6 +1722,7 @@ namespace Modules.AI.Workers
                         ConversationId = whatsAppConversation.Id,
                         ExternalMessageId = providerMessageId,
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = whatsAppTransition.Message,
                         MessageType = "Text",
                         Timestamp = sentAt
@@ -1756,6 +1759,7 @@ namespace Modules.AI.Workers
                         ConversationId = messengerConvo.Id,
                         ExternalMessageId = $"msg_fb_fu_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = successMsg,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow
@@ -1840,6 +1844,7 @@ namespace Modules.AI.Workers
                         ConversationId = messengerConvo.Id,
                         ExternalMessageId = $"msg_fb_fu_err_{Guid.NewGuid():N}",
                         Direction = "Outgoing",
+                        SenderType = "AI",
                         Content = failureMsg,
                         MessageType = "Text",
                         Timestamp = DateTime.UtcNow

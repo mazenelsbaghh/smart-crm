@@ -4,16 +4,19 @@ using System.Text.Json;
 namespace Modules.Content.Services;
 
 public sealed record GeneratedImage(byte[] Bytes, string MimeType, string Model, string Size);
-public sealed record GeminiImageRequest(string Prompt, string ApiKey, byte[] LogoBytes, string LogoMimeType);
+public sealed record GeminiReferenceImage(byte[] Bytes, string MimeType);
+public sealed record GeminiImageRequest(string Prompt, string ApiKey, GeminiReferenceImage Logo, string AspectRatio);
 
 public sealed class GeminiImageClient
 {
     public const string HighestQualityModel = "gemini-3-pro-image";
     public const string OutputSize = "4K";
     public const string AspectRatio = "1:1";
+    public const string SquareAspectRatio = "ASPECT_RATIO_ONE_BY_ONE";
+    public const string PresentationAspectRatio = "ASPECT_RATIO_SIXTEEN_BY_NINE";
+    public const string PortraitAspectRatio = "ASPECT_RATIO_THREE_BY_FOUR";
     private const string GenerateContentApiVersion = "v1beta";
     private const string ApiOutputSize = "IMAGE_SIZE_FOUR_K";
-    private const string ApiAspectRatio = "ASPECT_RATIO_ONE_BY_ONE";
 
     private readonly HttpClient _httpClient;
 
@@ -26,6 +29,18 @@ public sealed class GeminiImageClient
         GeminiImageRequest imageRequest,
         CancellationToken cancellationToken)
     {
+        object[] parts =
+        [
+            new { text = imageRequest.Prompt },
+            new
+            {
+                inlineData = new
+                {
+                    mimeType = imageRequest.Logo.MimeType,
+                    data = Convert.ToBase64String(imageRequest.Logo.Bytes)
+                }
+            }
+        ];
         if (string.IsNullOrWhiteSpace(imageRequest.ApiKey))
             throw new InvalidOperationException("مفتاح Gemini غير موجود في إعدادات المشروع.");
 
@@ -39,18 +54,7 @@ public sealed class GeminiImageClient
             {
                 new
                 {
-                    parts = new object[]
-                    {
-                        new { text = imageRequest.Prompt },
-                        new
-                        {
-                            inlineData = new
-                            {
-                                mimeType = imageRequest.LogoMimeType,
-                                data = Convert.ToBase64String(imageRequest.LogoBytes)
-                            }
-                        }
-                    }
+                    parts
                 }
             },
             generationConfig = new
@@ -60,7 +64,7 @@ public sealed class GeminiImageClient
                 {
                     image = new
                     {
-                        aspectRatio = ApiAspectRatio,
+                        aspectRatio = imageRequest.AspectRatio,
                         imageSize = ApiOutputSize
                     }
                 }
@@ -76,11 +80,11 @@ public sealed class GeminiImageClient
         }
 
         using var document = JsonDocument.Parse(responseJson);
-        var parts = document.RootElement
+        var responseParts = document.RootElement
             .GetProperty("candidates")[0]
             .GetProperty("content")
             .GetProperty("parts");
-        foreach (var part in parts.EnumerateArray())
+        foreach (var part in responseParts.EnumerateArray())
         {
             if (!part.TryGetProperty("inlineData", out var inlineData)) continue;
             var base64Image = inlineData.GetProperty("data").GetString();

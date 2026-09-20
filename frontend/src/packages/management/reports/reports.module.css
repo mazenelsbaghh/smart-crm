@@ -53,6 +53,10 @@
 .section, .askPanel { padding: var(--space-lg); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface); }
 .sectionHeading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .contextNote { color: var(--text-soft); font-size: .68rem; }
+.funnelHeadingActions { display: flex; align-items: flex-end; flex-direction: column; gap: .35rem; }
+.openFunnelPage, .backLink { display: inline-flex; align-items: center; gap: .35rem; color: var(--accent); font-size: .72rem; font-weight: 700; text-decoration: none; }
+.openFunnelPage:hover, .backLink:hover { text-decoration: underline; text-underline-offset: 3px; }
+.openFunnelPage:focus-visible, .backLink:focus-visible { border-radius: var(--radius-sm); outline: none; box-shadow: var(--focus-ring); }
 .countPill { display: inline-flex; min-width: 2rem; justify-content: center; padding: .2rem .55rem; border-radius: var(--radius-full); background: var(--warning-soft); color: hsl(var(--accent-warning)); font: 700 .72rem var(--font-mono, monospace); }
 .funnel { display: flex; flex-direction: column; gap: .65rem; }
 .funnelRow { display: grid; grid-template-columns: 8rem 1fr 3.2rem; align-items: center; gap: .65rem; }
@@ -62,12 +66,34 @@
 .track, .reasonTrack { height: 8px; overflow: hidden; border-radius: var(--radius-full); background: var(--surface-muted); }
 .track span, .reasonTrack span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width var(--transition-normal); }
 .rate { color: var(--text-soft); text-align: end; font-size: .7rem; }
+.dailyBookingNote { margin: 0 0 .75rem; color: var(--text-soft); font-size: .72rem; line-height: 1.7; }
 .tableScroll { overflow-x: auto; margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--border-subtle); }
 .dailyTable { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: .7rem; text-align: center; }
 .dailyTable th { color: var(--text-soft); font-weight: 600; }
 .dailyTable th, .dailyTable td { padding: .5rem .45rem; border-bottom: 1px solid var(--border-subtle); }
 .dailyTable tbody tr:last-child td { border-bottom: 0; }
 .dayDrillButton { min-height: 32px; padding: .25rem .5rem; white-space: nowrap; }
+
+.funnelAnalyticsPage { max-width: 96rem; margin-inline: auto; }
+.funnelPageHeader h1 { margin: .55rem 0 .25rem; font-size: 1.75rem; letter-spacing: -.025em; }
+.funnelPageHeader p { margin: 0; color: var(--text-soft); font-size: .88rem; }
+.analyticsHeading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: .8rem; }
+.analyticsHeading h2 { margin: .15rem 0 0; font-size: 1.05rem; }
+.analyticsHeading > span { color: var(--text-soft); font-size: .68rem; }
+.bestDaysGrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface); }
+.bestDay { display: flex; min-width: 0; flex-direction: column; gap: .35rem; padding: 1rem; border-inline-end: 1px solid var(--border-subtle); }
+.bestDay:last-child { border-inline-end: 0; }
+.bestDay > div { display: flex; align-items: center; gap: .35rem; color: var(--text-soft); font-size: .7rem; }
+.bestDay svg { color: hsl(var(--accent-warning)); }
+.bestDay strong { font: 800 1.45rem var(--font-mono, monospace); }
+.bestDay > span { overflow: hidden; color: var(--text-soft); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
+.dailyBreakdown { padding: var(--space-lg); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface); }
+.dailyBreakdown .tableScroll { margin-top: 0; padding-top: 0; border-top: 0; }
+.expandedDailyTable { font-size: .78rem; }
+.expandedDailyTable th, .expandedDailyTable td { height: 3.1rem; padding-inline: .75rem; }
+.expandedDailyTable tbody th { color: var(--text-base); text-align: start; font-weight: 700; }
+.leadingValue { background: var(--accent-soft); color: var(--accent); font-weight: 800; }
+.funnelPageLoading { min-height: 18rem; padding: 5rem 1rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface); color: var(--text-soft); text-align: center; }
 
 .transitionSection { overflow: hidden; }
 .transitionGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md); }
@@ -118,6 +144,27 @@
 .followUpPlan strong { color: var(--text-strong); font: 800 .95rem var(--font-mono, 'JetBrains Mono', monospace); }
 .followUpPlan [data-action='send'] svg { color: hsl(var(--accent-success)); }
 .followUpPlan [data-action='schedule'] svg { color: hsl(var(--accent-warning)); }
+.planEditor { margin-block: .8rem 1.3rem; padding-block: .6rem 1rem; border-bottom: 1px solid var(--border-subtle); }
+.planEditorHeading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; margin-bottom: .85rem; }
+.planEditorHeading strong { font-size: .95rem; color: var(--text-strong); }
+.planEditorHeading span, .planEstimate > span { color: var(--text-soft); font-size: .75rem; }
+.planFields { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: .8rem; border: 0; padding: 0; margin: 0; }
+.planFields label { display: flex; flex-direction: column; gap: .4rem; font-size: .78rem; color: var(--text-base); }
+.planFields input { width: 100%; min-width: 0; min-height: 42px; padding: .6rem .7rem; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--text-strong); font: inherit; }
+.planFields input:focus-visible, .planEditorActions button:focus-visible, .planDistribution summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.planEstimate { margin-block: .85rem; max-width: 72ch; line-height: 1.8; }
+.planEstimate p { margin: 0; font-size: .84rem; }
+.planEstimate [role='alert'] { color: hsl(var(--accent-danger)); }
+.planDistribution { margin-block: .7rem 1rem; font-size: .78rem; }
+.planDistribution summary { cursor: pointer; padding-block: .3rem; color: var(--text-base); }
+.planDistribution ol { max-height: 230px; overflow: auto; list-style: none; padding: 0; margin: .5rem 0; }
+.planDistribution li { display: flex; flex-wrap: wrap; gap: .5rem 1.4rem; padding-block: .5rem; border-bottom: 1px solid var(--border-subtle); }
+.planDistribution li > span:last-child { color: var(--text-soft); }
+.planEditorActions { display: flex; gap: .6rem; }
+.planEditorActions button { min-height: 42px; padding: .55rem .9rem; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--text-base); cursor: pointer; font: inherit; font-size: .8rem; }
+.planEditorActions button[type='submit'] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.planEditorActions button:hover { border-color: var(--accent); }
+.planEditorActions button:disabled, .planFields:disabled { opacity: .6; cursor: not-allowed; }
 .opportunityList, .analysisList { display: flex; flex-direction: column; }
 .opportunity { display: grid; grid-template-columns: 4rem minmax(0, 1fr) auto; gap: .8rem; align-items: center; padding: .85rem 0; border-bottom: 1px solid var(--border-subtle); }
 .opportunity:last-child { border-bottom: 0; }
@@ -213,6 +260,9 @@
   .transitionGrid { grid-template-columns: 1fr; }
   .analysisSummary { grid-template-columns: minmax(8rem, 1.3fr) .7fr 1fr .55fr auto; }
   .confidence { display: none; }
+  .bestDaysGrid { grid-template-columns: repeat(3, 1fr); }
+  .bestDay:nth-child(3) { border-inline-end: 0; }
+  .bestDay:nth-child(-n+3) { border-bottom: 1px solid var(--border-subtle); }
 }
 @media (max-width: 720px) {
   .page { gap: .85rem; }
@@ -228,6 +278,14 @@
   .briefList { border-inline-end: 0; border-bottom: 1px solid var(--border-subtle); padding: .8rem 0; }
   .briefList:last-child { border-bottom: 0; }
   .funnelRow { grid-template-columns: 6.5rem 1fr 2.7rem; }
+  .sectionHeading { align-items: flex-start; }
+  .funnelHeadingActions { align-items: flex-start; }
+  .contextNote { display: none; }
+  .bestDaysGrid { grid-template-columns: repeat(2, 1fr); }
+  .bestDay:nth-child(3) { border-inline-end: 1px solid var(--border-subtle); }
+  .bestDay:nth-child(even) { border-inline-end: 0; }
+  .bestDay:nth-child(-n+4) { border-bottom: 1px solid var(--border-subtle); }
+  .analyticsHeading { align-items: flex-start; flex-direction: column; gap: .3rem; }
   .reasonRow { grid-template-columns: 1fr 3rem; }
   .reasonTrack { grid-column: 1 / -1; grid-row: 2; }
   .opportunity { grid-template-columns: 3.7rem 1fr; }

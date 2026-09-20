@@ -22,10 +22,12 @@ namespace Modules.AI.Services
         private readonly string _defaultApiKey;
         private readonly string _defaultModel;
         private readonly IGeminiMockHandler _mockHandler;
+        private readonly ILogger<GeminiClient> _logger;
 
-        public GeminiClient(IConfiguration configuration, IGeminiMockHandler mockHandler)
+        public GeminiClient(IConfiguration configuration, IGeminiMockHandler mockHandler, ILogger<GeminiClient> logger, HttpClient httpClient)
         {
-            _httpClient = new HttpClient();
+            _httpClient = httpClient;
+            _logger = logger;
             _defaultApiKey = configuration["Gemini:ApiKey"];
             _defaultModel = NormalizeModel(configuration["Gemini:Model"]);
             _mockHandler = mockHandler;
@@ -123,7 +125,7 @@ namespace Modules.AI.Services
                 requestBody = new
                 {
                     cachedContent = cachedContentId,
-                    generationConfig = new { responseMimeType = "application/json" },
+                    generationConfig = CreateGenerationConfig(model),
                     contents = new[]
                     {
                         new
@@ -140,7 +142,7 @@ namespace Modules.AI.Services
             {
                 requestBody = new
                 {
-                    generationConfig = new { responseMimeType = "application/json" },
+                    generationConfig = CreateGenerationConfig(model),
                     contents = new[]
                     {
                         new
@@ -163,14 +165,8 @@ namespace Modules.AI.Services
 
                 var responseString = await response.Content.ReadAsStringAsync();
                 using var doc = JsonDocument.Parse(responseString);
-                var reply = doc.RootElement
-                    .GetProperty("candidates")[0]
-                    .GetProperty("content")
-                    .GetProperty("parts")[0]
-                    .GetProperty("text")
-                    .GetString();
-
-                return reply?.Trim();
+                LogUsage(doc.RootElement, model);
+                return ReadReply(doc.RootElement);
             }
             catch (Exception ex)
             {
@@ -198,7 +194,7 @@ namespace Modules.AI.Services
                 requestBody = new
                 {
                     cachedContent = cachedContentId,
-                    generationConfig = new { responseMimeType = "application/json" },
+                    generationConfig = CreateGenerationConfig(model),
                     contents = new[]
                     {
                         new
@@ -223,7 +219,7 @@ namespace Modules.AI.Services
             {
                 requestBody = new
                 {
-                    generationConfig = new { responseMimeType = "application/json" },
+                    generationConfig = CreateGenerationConfig(model),
                     contents = new[]
                     {
                         new
@@ -254,20 +250,58 @@ namespace Modules.AI.Services
 
                 var responseString = await response.Content.ReadAsStringAsync();
                 using var doc = JsonDocument.Parse(responseString);
-                var reply = doc.RootElement
-                    .GetProperty("candidates")[0]
-                    .GetProperty("content")
-                    .GetProperty("parts")[0]
-                    .GetProperty("text")
-                    .GetString();
-
-                return reply?.Trim();
+                LogUsage(doc.RootElement, model);
+                return ReadReply(doc.RootElement);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error calling Gemini Multimodal API: {ex.Message}");
                 return "[AI_ERROR] Unable to reach AI engine.";
             }
+        }
+
+        private object CreateGenerationConfig(string model)
+        {
+            var config = new System.Collections.Generic.Dictionary<string, object>
+            {
+                ["responseMimeType"] = "application/json"
+            };
+            if (model.StartsWith("gemini-3.", StringComparison.Ordinal))
+                config["thinkingConfig"] = new { thinkingLevel = model.EndsWith("-lite", StringComparison.Ordinal) ? "minimal" : "low" };
+            else if (model == "gemini-2.5-flash-lite")
+                config["thinkingConfig"] = new { thinkingBudget = 0 };
+            return config;
+        }
+
+        private void LogUsage(JsonElement root, string model)
+        {
+            if (!root.TryGetProperty("usageMetadata", out var usage)) return;
+            _logger.LogInformation(
+                "Gemini usage Model={Model} InputTokens={InputTokens} OutputTokens={OutputTokens} ThinkingTokens={ThinkingTokens} CachedTokens={CachedTokens} TotalTokens={TotalTokens}",
+                model, TokenCount(usage, "promptTokenCount"), TokenCount(usage, "candidatesTokenCount"),
+                TokenCount(usage, "thoughtsTokenCount"), TokenCount(usage, "cachedContentTokenCount"),
+                TokenCount(usage, "totalTokenCount"));
+        }
+
+        private static int? TokenCount(JsonElement usage, string name) =>
+            usage.TryGetProperty(name, out var count) && count.TryGetInt32(out var tokens) ? tokens : null;
+
+        private string ReadReply(JsonElement root)
+        {
+            if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
+                return "[AI_ERROR] Gemini returned no candidate.";
+            var candidate = candidates[0];
+            if (candidate.TryGetProperty("finishReason", out var reason) && reason.GetString() != "STOP")
+            {
+                _logger.LogWarning("Gemini response rejected: FinishReason={FinishReason}", reason.GetString());
+                return "[AI_ERROR] Gemini response was incomplete or blocked.";
+            }
+            var text = new StringBuilder();
+            foreach (var part in candidate.GetProperty("content").GetProperty("parts").EnumerateArray())
+                if ((!part.TryGetProperty("thought", out var thought) || !thought.GetBoolean())
+                    && part.TryGetProperty("text", out var partText))
+                    text.Append(partText.GetString());
+            return text.Length == 0 ? "[AI_ERROR] Gemini returned no text." : text.ToString().Trim();
         }
 
         public async Task<int> CountTokensAsync(string messageContent, string apiKeyOverride = null, string modelOverride = null)

@@ -23,7 +23,8 @@ public enum AiGroupBookingFailure
     GroupUnavailable,
     GroupExpired,
     GroupFull,
-    TemporaryFailure
+    TemporaryFailure,
+    BookingAlreadyExists
 }
 
 public sealed record AiGroupBookingResult(
@@ -49,6 +50,8 @@ public sealed record AiGroupBookingResult(
                     "ابعت الاسم ورقم الموبايل الصحيح علشان نكمل الحجز.",
                 AiGroupBookingFailure.GroupFull =>
                     "المجموعة اكتملت؛ اختار معاد تاني للباقي.",
+                AiGroupBookingFailure.BookingAlreadyExists =>
+                    "في حجز موجود بالفعل للرقم ده؛ محتاج مراجعة المسؤول قبل تغييره.",
                 AiGroupBookingFailure.GroupUnavailable or AiGroupBookingFailure.GroupExpired =>
                     "المجموعة مش متاحة حاليًا؛ اختار معاد تاني.",
                 _ => "حصلت مشكلة مؤقتة؛ حاول تاني بعد شوية من فضلك."
@@ -61,6 +64,8 @@ public sealed record AiGroupBookingResult(
                         "محتاج الاسم ورقم موبايل صحيح علشان أقدر أسجل الحجز. ابعتهُم لي من فضلك.",
                     AiGroupBookingFailure.GroupFull =>
                         "للأسف المجموعة دي اكتملت دلوقتي. اختار معاد تاني وأنا أسجلك فيه.",
+                    AiGroupBookingFailure.BookingAlreadyExists =>
+                        "في حجز موجود بالفعل للرقم ده؛ محتاج مراجعة المسؤول قبل تغييره.",
                     AiGroupBookingFailure.GroupUnavailable or AiGroupBookingFailure.GroupExpired =>
                         "المجموعة دي مش متاحة للحجز حاليًا. اختار معاد تاني وأنا أسجلك فيه.",
                     _ => "حصلت مشكلة مؤقتة ومقدرتش أثبت الحجز. حاول تاني بعد شوية من فضلك."
@@ -231,7 +236,9 @@ public sealed class AiGroupBookingOrchestrator(
             CustomerName = candidate.Name,
             CustomerPhone = candidate.Phone,
             KnownCustomerId = candidate.CustomerId,
-            ExistingBookingPolicy = ExistingGroupBookingPolicy.Transfer,
+            ExistingBookingPolicy = candidate.CustomerId.HasValue
+                ? ExistingGroupBookingPolicy.Transfer
+                : ExistingGroupBookingPolicy.UpdateSameGroup,
             Origin = GroupBookingOrigin.Ai,
             ExpirationPolicy = GroupBookingExpirationPolicy.RejectAfterTwentyFourHours,
             Timezone = request.Timezone
@@ -239,7 +246,7 @@ public sealed class AiGroupBookingOrchestrator(
         if (result.Status == GroupBookingStatus.AlreadyInGroup)
         {
             _logger.LogInformation(
-                "AI auto-booking skipped because {Phone} is already registered in group {GroupId}.",
+                "AI booking details saved for {Phone} already registered in group {GroupId}.",
                 candidate.Phone,
                 request.GroupId);
         }
@@ -250,7 +257,7 @@ public sealed class AiGroupBookingOrchestrator(
                 request.GroupId);
         }
 
-        if (result.Changed)
+        if (result.Succeeded)
         {
             await BroadcastBookingAsync(request.ProjectId, result, cancellationToken);
         }
@@ -308,6 +315,7 @@ public sealed class AiGroupBookingOrchestrator(
     private static AiGroupBookingFailure MapFailure(GroupBookingStatus status) => status switch
     {
         GroupBookingStatus.InvalidRequest => AiGroupBookingFailure.InvalidSuggestion,
+        GroupBookingStatus.BookingAlreadyExists => AiGroupBookingFailure.BookingAlreadyExists,
         GroupBookingStatus.GroupFull => AiGroupBookingFailure.GroupFull,
         GroupBookingStatus.GroupExpired => AiGroupBookingFailure.GroupExpired,
         GroupBookingStatus.GroupNotFound or GroupBookingStatus.GroupInactive =>

@@ -1,4 +1,5 @@
 using Amazon.S3;
+using Microsoft.AspNetCore.DataProtection;
 using Modules.Brain.Domain;
 using Modules.AI.Services;
 using Modules.Content.API;
@@ -152,6 +153,325 @@ public sealed class ContentAutomationTests
             ContentGenerationService.ParseCopy(response));
 
         Assert.Contains("ينقصه جزء مطلوب", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(ContentDocumentKind.Presentation, 8, "16:9")]
+    [InlineData(ContentDocumentKind.A4, 5, "A4")]
+    public void Document_prompt_preserves_the_requested_format_and_page_count(
+        ContentDocumentKind kind,
+        int pageCount,
+        string expectedFormat)
+    {
+        var prompt = ContentDocumentGenerationService.BuildPlanPrompt(new ContentDocument
+        {
+            Kind = kind,
+            RequestedPageCount = pageCount,
+            SourceContent = "محتوى عربي أصلي يجب تقسيمه مع الحفاظ على معناه."
+        }, Enumerable.Repeat("النص الأصلي", pageCount).ToArray());
+
+        Assert.Contains($"{pageCount}", prompt);
+        Assert.Contains(expectedFormat, prompt);
+        Assert.Contains("أعد JSON فقط", prompt);
+        Assert.Contains("لا تخترع", prompt);
+    }
+
+    [Fact]
+    public void Document_plan_requires_the_exact_requested_page_count()
+    {
+        const string response = """
+            {"title":"دليل الخدمة","pages":[
+              {"title":"مقدمة","body":"النص الأول","imagePrompt":"مشهد افتتاحي"},
+              {"title":"الخلاصة","body":"النص الثاني","imagePrompt":"مشهد ختامي"}
+            ]}
+            """;
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            ContentDocumentGenerationService.ParsePlan(response, ["", "النص الأول", "النص الثاني"]));
+
+        Assert.Contains("غير مكتمل", exception.Message);
+    }
+
+    [Fact]
+    public async Task Document_planning_recovers_when_the_next_design_response_is_complete()
+    {
+        var document = new ContentDocument { SourceContent = "  النص الأصلي بكل تفاصيله.\n" };
+        var sourcePages = ContentDocumentPagination.CreatePageBodies(document.SourceContent, document.Kind);
+        var completeResponse = JsonSerializer.Serialize(new
+        {
+            title = "عنوان من التخطيط الصحيح",
+            pages = sourcePages.Select(_ => new { title = "عنوان الصفحة", imagePrompt = "Editorial visual layout" })
+        });
+        var service = new ContentDocumentGenerationService(null!,
+            new SequencedGeminiClient("{\"title\":\"ناقص\",\"pages\":[]}", completeResponse),
+            null!, null!, null!, NullLogger<ContentDocumentGenerationService>.Instance);
+
+        var plan = await service.CreatePlanAsync(document, sourcePages, "test-key", "test-model");
+
+        Assert.Equal("عنوان من التخطيط الصحيح", plan.Title);
+        Assert.Equal(sourcePages, plan.Pages.Select(page => page.Body));
+        Assert.All(plan.Pages, page => Assert.Equal("Editorial visual layout", page.ImagePrompt));
+    }
+
+    [Theory]
+    [InlineData("{\"title\":\"خطة ناقصة\",\"pages\":[]}")]
+    [InlineData("{\"title\":\"خطة مقطوعة\",\"pages\":[")]
+    [InlineData("null")]
+    public async Task Regression_2026_09_07_incomplete_design_metadata_cannot_block_the_full_document(string response)
+    {
+        var document = new ContentDocument
+        {
+            SourceContent = "عنوان العرض الأصلي\n" + string.Concat(Enumerable.Repeat("  تفصيل مهم بنفس الحروف والأسطر 👩🏽‍💻.\n", 100))
+        };
+        var sourcePages = ContentDocumentPagination.CreatePageBodies(document.SourceContent, document.Kind);
+        var service = new ContentDocumentGenerationService(null!, new SequencedGeminiClient(response, response),
+            null!, null!, null!, NullLogger<ContentDocumentGenerationService>.Instance);
+
+        var plan = await service.CreatePlanAsync(document, sourcePages, "test-key", "test-model");
+
+        Assert.Equal("عنوان العرض الأصلي", plan.Title);
+        Assert.Equal(plan.Title, plan.Pages[0].Title);
+        Assert.Empty(plan.Pages[0].Body);
+        Assert.Equal(sourcePages, plan.Pages.Select(page => page.Body));
+        Assert.All(plan.Pages, page =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(page.Title));
+            Assert.False(string.IsNullOrWhiteSpace(page.ImagePrompt));
+        });
+    }
+
+    [Fact]
+    public void Production_regression_2026_09_02_document_images_use_the_public_api_route()
+    {
+        var documentId = Guid.Parse("10000000-0000-0000-0000-000000000001");
+        var pageId = Guid.Parse("20000000-0000-0000-0000-000000000002");
+        var updatedAt = new DateTime(2026, 9, 2, 1, 46, 0, DateTimeKind.Utc);
+
+        var imageUrl = ContentDocumentAssetRoutes.PageImage(documentId, pageId, updatedAt);
+
+        Assert.Equal(
+            $"/api/content/documents/{documentId:D}/pages/{pageId:D}/image?v={updatedAt.Ticks}",
+            imageUrl);
+        Assert.DoesNotContain("minio", imageUrl, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Document_prompt_substitutes_exact_slide_copy_for_image_generation()
+    {
+        var prompt = ContentDocumentGenerationService.BuildImagePrompt(
+            new ContentDocument
+            {
+                Kind = ContentDocumentKind.Presentation,
+                BrandStylePrompt = "هوية تعليمية حديثة",
+                BrandColorsJson = "[\"#00F3FF\",\"#0A0E17\"]"
+            },
+            new ContentDocumentPage
+            {
+                Title = "مقدمة في حرف T الخفيف",
+                Body = "السطر الأول\nالسطر الثاني",
+                ImagePrompt = "A confident speaker demonstrating a subtle sound wave"
+            });
+
+        Assert.Contains("<exact_title>مقدمة في حرف T الخفيف</exact_title>", prompt);
+        Assert.Contains("<exact_body>السطر الأول\nالسطر الثاني</exact_body>", prompt);
+        Assert.DoesNotContain("{{page.", prompt);
+    }
+
+    [Fact]
+    public async Task Reviewed_document_pages_are_persisted_and_rendered_without_replanning()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDbContext(projectId);
+        var tenant = new TenantContext();
+        tenant.SetProjectId(projectId);
+        var jobs = new DocumentJobs();
+        var storage = new DownloadableContentStorage("unused", [], "logo.png");
+        db.ProjectSettings.Add(new ProjectSettings { ProjectId = projectId, GeminiApiKey = "test-key" });
+        await db.SaveChangesAsync();
+        var outline = JsonSerializer.Serialize(new { pages = Enumerable.Range(0, 4).Select(index => new
+        {
+            blocks = new[] { new { type = "bullets", ids = Enumerable.Range(0, 30).Where(id => id % 4 == index).ToArray() } }
+        }) });
+        var planning = new ContentDocumentPlanningService(db, new SequencedGeminiClient(JsonSerializer.Serialize(new { pages = Enumerable.Range(0, 4).Select(index => new
+        {
+            blocks = new[] { new { type = "bullets", ids = Enumerable.Range(1, 29).Where(id => id % 4 == index).ToArray() } }
+        }) }), outline),
+            new PassThroughSecretVault(), new EphemeralDataProtectionProvider(), NullLogger<ContentDocumentPlanningService>.Instance);
+        var controller = new ContentDocumentsController(db, tenant, new ProjectAuthorizationService(), jobs, storage, planning)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([
+                    new Claim("ProjectId", projectId.ToString()), new Claim(ClaimTypes.Role, "Owner")], "test"))
+            } }
+        };
+        var source = "  " + string.Concat(Enumerable.Repeat("English and عربي 👩🏽‍💻 original details.\r\n", 30)) + "  ";
+        var request = new CreateContentDocumentRequest("Presentation", source, 5, "Session 1");
+
+        var previewResult = Assert.IsType<OkObjectResult>(await controller.Preview(request, CancellationToken.None));
+        var preview = Assert.IsType<ContentDocumentPreview.Preview>(previewResult.Value);
+        Assert.Equal(5, preview.Pages.Count);
+        Assert.Equal(30, preview.Pages.SelectMany(page => page.Blocks).SelectMany(block => block.Items).Count());
+        Assert.All(preview.Pages.Skip(1), page => Assert.Equal("bullets", Assert.Single(page.Blocks).Type));
+        Assert.Empty(await db.ContentDocuments.ToListAsync());
+        Assert.Empty(jobs.Jobs);
+        Assert.Equal(0, storage.UploadCount);
+
+        var approved = request with { PreviewFingerprint = preview.Fingerprint };
+        foreach (var stale in new[] { request, approved with { Content = source + "new" },
+                     approved with { PageCount = 4 }, approved with { CoverTitle = "Session 2" },
+                     approved with { Kind = "A4" } })
+            Assert.IsType<BadRequestObjectResult>(await controller.Create(stale, CancellationToken.None));
+        Assert.Empty(await db.ContentDocuments.ToListAsync());
+        Assert.Empty(jobs.Jobs);
+
+        db.ContentAutomationSettings.Add(new ContentAutomationSettings { ProjectId = projectId, LogoObjectKey = "logo.png" });
+        await db.SaveChangesAsync();
+        Assert.IsType<AcceptedResult>(await controller.Create(approved, CancellationToken.None));
+        Assert.Single(jobs.Jobs);
+        var document = Assert.Single(await db.ContentDocuments.ToListAsync());
+        var pages = await db.ContentDocumentPages.OrderBy(page => page.PageIndex).ToListAsync();
+        Assert.Equal(preview.Pages.Select(page => (page.Title, page.Body)), pages.Select(page => (page.Title, page.Body)));
+        Assert.Equal(0, storage.UploadCount);
+
+        var imageHandler = new RecordingImageHandler();
+        using var http = new HttpClient(imageHandler) { BaseAddress = new Uri("https://generativelanguage.googleapis.com/") };
+        var service = new ContentDocumentGenerationService(db, new SequencedGeminiClient(), new GeminiImageClient(http),
+            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance);
+        await service.GenerateAsync(projectId, document.Id, CancellationToken.None);
+
+        Assert.Equal(ContentDocumentStatus.Ready, document.Status);
+        Assert.Equal("Session 1", document.Title);
+        Assert.Equal(5, document.RequestedPageCount);
+        Assert.Equal(5, storage.UploadCount);
+        Assert.All(pages, page => Assert.Equal(ContentDocumentPageStatus.Ready, page.Status));
+        Assert.Equal(preview.Pages.Select(page => (page.Title, page.Body)), pages.Select(page => (page.Title, page.Body)));
+        for (var index = 0; index < pages.Count; index++)
+        {
+            using var imageRequest = JsonDocument.Parse(imageHandler.RequestBodies[index]);
+            var prompt = imageRequest.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString()!;
+            Assert.Contains($"<exact_title>{preview.Pages[index].Title}</exact_title>", prompt);
+            Assert.Contains($"<exact_body>{preview.Pages[index].Body}</exact_body>", prompt);
+        }
+    }
+
+    [Fact]
+    public async Task Ai_preview_can_reorder_original_passages_but_cannot_cross_projects_or_be_tampered_with()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDbContext(projectId);
+        db.ProjectSettings.Add(new ProjectSettings { ProjectId = projectId, GeminiApiKey = "test-key" });
+        await db.SaveChangesAsync();
+        var source = "العنوان: الفكرة الأولى\nTitle: Second topic\nتفاصيل الفكرة الأولى مع مثال كامل بدون تغيير.\nSecond topic details, exactly as supplied.";
+        var input = new ContentDocumentPlanningService.PreviewInput(source, ContentDocumentKind.Presentation, 3, "Title: Welcome");
+        var gemini = new SequencedGeminiClient("""
+            {"pages":[{"blocks":[{"type":"heading","ids":[0]},{"type":"bullets","ids":[2]}]},
+            {"blocks":[{"type":"heading","ids":[1]},{"type":"paragraph","ids":[3]}]}]}
+            """);
+        var planning = new ContentDocumentPlanningService(db, gemini, new PassThroughSecretVault(),
+            new EphemeralDataProtectionProvider(), NullLogger<ContentDocumentPlanningService>.Instance);
+
+        var preview = await planning.PreviewAsync(projectId, input, CancellationToken.None);
+        var restored = planning.Restore(projectId, input, preview.Fingerprint);
+
+        Assert.Equal("Welcome", preview.Pages[0].Title);
+        Assert.Equal(preview.Pages.Select(page => page.Title), restored.Pages.Select(page => page.Title));
+        Assert.Equal("الفكرة الأولى\n\nتفاصيل الفكرة الأولى مع مثال كامل بدون تغيير.", preview.Pages[1].Body);
+        Assert.Equal("Second topic\n\nSecond topic details, exactly as supplied.", preview.Pages[2].Body);
+        Assert.Equal(preview.Pages.Select(page => page.Body), restored.Pages.Select(page => page.Body));
+        Assert.Throws<ArgumentException>(() => planning.Restore(Guid.NewGuid(), input, preview.Fingerprint));
+        Assert.Throws<ArgumentException>(() => planning.Restore(projectId, input, "tampered" + preview.Fingerprint));
+        Assert.Empty(await db.ContentDocuments.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Ai_preview_rejects_incomplete_model_outputs_without_substituting_a_mechanical_split()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDbContext(projectId);
+        db.ProjectSettings.Add(new ProjectSettings { ProjectId = projectId, GeminiApiKey = "test-key" });
+        await db.SaveChangesAsync();
+        var input = new ContentDocumentPlanningService.PreviewInput("موضوع أول وتفاصيله كاملة.\nموضوع ثانٍ وتفاصيله كاملة.", ContentDocumentKind.Presentation, 3, null);
+        var planning = new ContentDocumentPlanningService(db, new SequencedGeminiClient("{}", "{\"pages\":[]}"),
+            new PassThroughSecretVault(), new EphemeralDataProtectionProvider(), NullLogger<ContentDocumentPlanningService>.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => planning.PreviewAsync(projectId, input, CancellationToken.None));
+        Assert.Empty(await db.ContentDocuments.ToListAsync());
+        Assert.Empty(await db.ContentDocumentPages.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Multi_session_preview_retries_mixing_and_approves_the_clean_original_words()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDbContext(projectId);
+        db.ProjectSettings.Add(new ProjectSettings { ProjectId = projectId, GeminiApiKey = "test-key" });
+        await db.SaveChangesAsync();
+        var source = "Session 1\n✅ Slide 1: Title: Listening\nKeep every original word.\nسيشن ٢\nSlide 2: Speaking\nPractice the complete explanation. 👩🏽‍💻";
+        var input = new ContentDocumentPlanningService.PreviewInput(source, ContentDocumentKind.Presentation, 3, "📘 Title: Training");
+        var gemini = new SequencedGeminiClient(
+            """{"pages":[{"blocks":[{"type":"paragraph","ids":[0,1,4]}]},{"blocks":[{"type":"paragraph","ids":[3,2,5]}]}]}""",
+            """{"pages":[{"blocks":[{"type":"heading","ids":[0]},{"type":"paragraph","ids":[1,2]}]},{"blocks":[{"type":"heading","ids":[3]},{"type":"paragraph","ids":[4,5]}]}]}""");
+        var planning = new ContentDocumentPlanningService(db, gemini, new PassThroughSecretVault(),
+            new EphemeralDataProtectionProvider(), NullLogger<ContentDocumentPlanningService>.Instance);
+
+        var preview = await planning.PreviewAsync(projectId, input, CancellationToken.None);
+        var restored = planning.Restore(projectId, input, preview.Fingerprint);
+
+        Assert.Equal("Training", preview.Title);
+        Assert.Equal("Session 1\n\nListening\nKeep every original word.", preview.Pages[1].Body);
+        Assert.Equal("سيشن ٢\n\nSpeaking\nPractice the complete explanation.", preview.Pages[2].Body);
+        Assert.Equal(preview.Pages.Select(page => page.Body), restored.Pages.Select(page => page.Body));
+        await Assert.ThrowsAsync<ArgumentException>(() => planning.PreviewAsync(projectId, input with { PageCount = 2 }, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Ai_chooses_each_session_count_inside_its_range_and_approval_binds_all_ranges()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDbContext(projectId);
+        db.ProjectSettings.Add(new ProjectSettings { ProjectId = projectId, GeminiApiKey = "test-key" });
+        await db.SaveChangesAsync();
+        const string source = "Session 1\nFirst explanation.\nSecond explanation.\nSession 2\nComplete original detail.\nComplete original example.";
+        var input = new ContentDocumentPlanningService.PreviewInput(source, ContentDocumentKind.Presentation, 0, "Training",
+            [new(0, 2, 3), new(1, 1, 2)]);
+        var gemini = new SequencedGeminiClient(
+            """{"pages":[{"blocks":[{"type":"paragraph","ids":[0,1,2]}]},{"blocks":[{"type":"paragraph","ids":[3,4]}]},{"blocks":[{"type":"paragraph","ids":[5]}]}]}""",
+            """{"pages":[{"blocks":[{"type":"heading","ids":[0]},{"type":"paragraph","ids":[1]}]},{"blocks":[{"type":"paragraph","ids":[2]}]},{"blocks":[{"type":"heading","ids":[3]},{"type":"paragraph","ids":[4,5]}]}]}""");
+        var planning = new ContentDocumentPlanningService(db, gemini, new PassThroughSecretVault(),
+            new EphemeralDataProtectionProvider(), NullLogger<ContentDocumentPlanningService>.Instance);
+
+        var preview = await planning.PreviewAsync(projectId, input, CancellationToken.None);
+        var restored = planning.Restore(projectId, input, preview.Fingerprint);
+
+        Assert.Equal(4, preview.PageCount);
+        Assert.Equal(new[] { 2, 1 }, preview.Sessions!.Select(session => session.PageCount));
+        Assert.Equal(new[] { (2, 3), (4, 4) }, preview.Sessions!.Select(session => (session.FromPage, session.ToPage)));
+        Assert.Equal(source.Split('\n'), preview.Pages.SelectMany(page => page.Blocks).SelectMany(block => block.Items));
+        Assert.Equal(preview.Pages.Select(page => page.Body), restored.Pages.Select(page => page.Body));
+        Assert.Equal(preview.Sessions, restored.Sessions);
+        Assert.Throws<ArgumentException>(() => planning.Restore(projectId, input with { SessionRanges = [new(0, 1, 3), new(1, 1, 2)] }, preview.Fingerprint));
+        Assert.Throws<ArgumentException>(() => planning.Restore(projectId, input with { Content = source.Replace("Session 2", "Session 3") }, preview.Fingerprint));
+        Assert.Empty(await db.ContentDocuments.ToListAsync());
+    }
+
+    private sealed class DocumentJobs : Hangfire.IBackgroundJobClient
+    {
+        public List<Hangfire.Common.Job> Jobs { get; } = [];
+        public string Create(Hangfire.Common.Job job, Hangfire.States.IState state) { Jobs.Add(job); return "test-job"; }
+        public bool ChangeState(string jobId, Hangfire.States.IState state, string expectedState) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void Document_logo_uses_the_public_api_route()
+    {
+        var documentId = Guid.Parse("10000000-0000-0000-0000-000000000001");
+        var updatedAt = new DateTime(2026, 9, 2, 1, 57, 0, DateTimeKind.Utc);
+
+        var logoUrl = ContentDocumentAssetRoutes.Logo(documentId, updatedAt);
+
+        Assert.StartsWith($"/api/content/documents/{documentId:D}/logo", logoUrl);
+        Assert.DoesNotContain("minio", logoUrl, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -835,8 +1155,11 @@ public sealed class ContentAutomationTests
         Assert.Equal(ContentPostStatus.Approved, post.Status);
     }
 
-    [Fact]
-    public async Task Image_generation_uses_supported_pro_model_for_square_4k_contract()
+    [Theory]
+    [InlineData(GeminiImageClient.SquareAspectRatio)]
+    [InlineData(GeminiImageClient.PresentationAspectRatio)]
+    [InlineData(GeminiImageClient.PortraitAspectRatio)]
+    public async Task Image_generation_preserves_the_requested_4k_aspect_ratio(string aspectRatio)
     {
         var handler = new RecordingImageHandler();
         using var httpClient = new HttpClient(handler)
@@ -849,8 +1172,8 @@ public sealed class ContentAutomationTests
             new GeminiImageRequest(
                 "Generate the approved brand poster",
                 "project-gemini-key",
-                new byte[] { 9, 8, 7 },
-                "image/jpeg"),
+                new GeminiReferenceImage(new byte[] { 9, 8, 7 }, "image/jpeg"),
+                aspectRatio),
             CancellationToken.None);
 
         Assert.Equal("v1beta/models/gemini-3-pro-image:generateContent", handler.RequestUri);
@@ -865,7 +1188,7 @@ public sealed class ContentAutomationTests
             .GetProperty("parts")[1]
             .GetProperty("inlineData");
         Assert.Equal("IMAGE_SIZE_FOUR_K", imageFormat.GetProperty("imageSize").GetString());
-        Assert.Equal("ASPECT_RATIO_ONE_BY_ONE", imageFormat.GetProperty("aspectRatio").GetString());
+        Assert.Equal(aspectRatio, imageFormat.GetProperty("aspectRatio").GetString());
         Assert.Equal("image/jpeg", logoReference.GetProperty("mimeType").GetString());
         Assert.Equal("CQgH", logoReference.GetProperty("data").GetString());
         Assert.Equal(GeminiImageClient.HighestQualityModel, image.Model);
@@ -1044,6 +1367,72 @@ public sealed class ContentAutomationTests
         return stream;
     }
 
+    [Fact]
+    public async Task Interrupted_document_resumes_remaining_slides_without_replacing_completed_images()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDbContext(projectId);
+        var document = new ContentDocument { ProjectId = projectId, Title = "Session 4",
+            Status = ContentDocumentStatus.GeneratingImages, RequestedPageCount = 3, BrandLogoObjectKey = "logo.png" };
+        var completed = new ContentDocumentPage { ProjectId = projectId, DocumentId = document.Id,
+            PageIndex = 0, Title = "Session 4", Status = ContentDocumentPageStatus.Ready, ImageObjectKey = "saved-cover.png" };
+        var interrupted = new ContentDocumentPage { ProjectId = projectId, DocumentId = document.Id,
+            PageIndex = 1, Body = "Original slide content", Status = ContentDocumentPageStatus.GeneratingImage };
+        var planned = new ContentDocumentPage { ProjectId = projectId, DocumentId = document.Id,
+            PageIndex = 2, Body = "Following slide content", Status = ContentDocumentPageStatus.Planned };
+        db.AddRange(document, completed, interrupted, planned, new ProjectSettings { ProjectId = projectId, GeminiApiKey = "test-key" });
+        await db.SaveChangesAsync();
+        var storage = new DownloadableContentStorage("saved-cover.png", [7, 8, 9], "logo.png");
+        using var http = new HttpClient(new RecordingImageHandler()) { BaseAddress = new Uri("https://example.test/") };
+        var service = new ContentDocumentGenerationService(db, new SequencedGeminiClient(), new GeminiImageClient(http),
+            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance);
+
+        await service.GenerateAsync(projectId, document.Id, CancellationToken.None);
+
+        Assert.Equal(ContentDocumentStatus.Ready, document.Status);
+        Assert.NotNull(document.CompletedAtUtc);
+        Assert.Equal("saved-cover.png", completed.ImageObjectKey);
+        Assert.All(new[] { interrupted, planned }, page => Assert.Equal(ContentDocumentPageStatus.Ready, page.Status));
+        Assert.Equal(2, storage.UploadCount);
+        Assert.Equal("Original slide content", interrupted.Body);
+        Assert.Equal("Following slide content", planned.Body);
+    }
+
+    [Fact]
+    public async Task Individual_design_preserves_other_slides_and_enables_export_only_after_the_last_slide()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDbContext(projectId);
+        var document = new ContentDocument { ProjectId = projectId, Title = "Session 5",
+            Status = ContentDocumentStatus.GeneratingImages, RequestedPageCount = 2, BrandLogoObjectKey = "logo.png" };
+        var first = new ContentDocumentPage { ProjectId = projectId, DocumentId = document.Id,
+            PageIndex = 0, Body = "Session 5\nFirst topic", Status = ContentDocumentPageStatus.Queued };
+        var second = new ContentDocumentPage { ProjectId = projectId, DocumentId = document.Id,
+            PageIndex = 1, Body = "Second topic", Status = ContentDocumentPageStatus.Planned };
+        db.AddRange(document, first, second, new ProjectSettings { ProjectId = projectId, GeminiApiKey = "test-key" });
+        await db.SaveChangesAsync();
+        var storage = new DownloadableContentStorage("unused", [], "logo.png");
+        using var http = new HttpClient(new RecordingImageHandler()) { BaseAddress = new Uri("https://example.test/") };
+        var service = new ContentDocumentGenerationService(db, new SequencedGeminiClient(), new GeminiImageClient(http),
+            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance);
+
+        await service.RegenerateImageAsync(projectId, first.Id, CancellationToken.None);
+
+        Assert.Equal(ContentDocumentStatus.AwaitingDesign, document.Status);
+        Assert.Equal(ContentDocumentPageStatus.Ready, first.Status);
+        Assert.Equal(ContentDocumentPageStatus.Planned, second.Status);
+        Assert.Null(document.CompletedAtUtc);
+        var firstImage = first.ImageObjectKey;
+        second.Status = ContentDocumentPageStatus.Queued;
+        await db.SaveChangesAsync();
+        await service.RegenerateImageAsync(projectId, second.Id, CancellationToken.None);
+        await service.RegenerateImageAsync(projectId, first.Id, CancellationToken.None);
+        Assert.Equal(ContentDocumentStatus.Ready, document.Status);
+        Assert.NotNull(document.CompletedAtUtc);
+        Assert.Equal(firstImage, first.ImageObjectKey);
+        Assert.Equal(2, storage.UploadCount);
+    }
+
     private static AppDbContext CreateDbContext(Guid projectId)
     {
         var tenantContext = new TenantContext();
@@ -1212,6 +1601,7 @@ public sealed class ContentAutomationTests
         public string? RequestUri { get; private set; }
         public string? ApiKey { get; private set; }
         public string? RequestBody { get; private set; }
+        public List<string> RequestBodies { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -1220,6 +1610,7 @@ public sealed class ContentAutomationTests
             RequestUri = request.RequestUri?.PathAndQuery.TrimStart('/');
             ApiKey = request.Headers.GetValues("x-goog-api-key").Single();
             RequestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            RequestBodies.Add(RequestBody);
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(

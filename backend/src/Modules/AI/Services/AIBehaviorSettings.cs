@@ -4,6 +4,7 @@ namespace Modules.AI.Services
 {
     public class AIBehaviorSettings
     {
+        public bool MessengerWhatsAppTransitionEnabled { get; set; } = true;
         public AIIdentitySettings Identity { get; set; } = new();
         public AIToneSettings Tone { get; set; } = new();
         public CTASettings Cta { get; set; } = new();

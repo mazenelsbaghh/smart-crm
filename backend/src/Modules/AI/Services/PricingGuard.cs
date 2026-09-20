@@ -19,6 +19,52 @@ namespace Modules.AI.Services
             """,
             MatchOptions);
 
+        private static readonly Regex ExactPriceTerms = new(
+            """
+            (?: سعر | اسعار | أسعار | الاسعار | الأسعار | بكام | تكلفة | تكلفه )
+            | \b(?: price | prices | cost | costs )\b
+            | \bhow\s+much\b
+            """,
+            MatchOptions);
+
+        private static readonly Regex ContextualQuestionTerms = new(
+            """
+            (?: معاد | ميعاد | موعد | مواعيد | امتى | إمتى | متى | مجاني | مجانيه | مجانية |
+                سيشن | اونلاين | أونلاين | اوفلاين | أوفلاين | عنوان | مكان | السنتر |
+                تفاصيل | معلومات | محتوى | محتوي | نظام | مدة | مده | هتعلم | هستفيد )
+            | \b(?: when | where | schedule | session | online | offline | free |
+                details? | information | info | curriculum | duration | learn | benefits? | includes? )\b
+            | \btell\s+me\s+(?:more|about)\b
+            | (?: عرفت | عارف | عارفه | عارفة ).*(?: السعر | التكلفة | سعره )
+            | (?: السعر | التكلفة | سعره ).*(?: عرفت | عارف | عارفه | عارفة | خلاص )
+            """,
+            MatchOptions);
+
+        private static readonly Regex FullCourseTerms = new(
+            """
+            (?: الكورس | الاشتراك )?\s*(?: كامل | بالكامل | كله )
+            | (?: الأربع | الاربع | 4 )\s*(?: شهور | أشهر | اشهر )
+            | (?: عرض\s+)?الكاش
+            | \b(?: full | whole | total | cash )\b
+            """,
+            MatchOptions);
+
+        private static readonly Regex MonthlyTerms = new(
+            """
+            (?: شهري | شهريا | شهرياً | الشهر | الاشتراك )
+            | \b(?: monthly | month | subscription )\b
+            """,
+            MatchOptions);
+
+        private static readonly Regex AdditionalCostQuestions = new(
+            """
+            (?: مصاريف | رسوم )\s+(?: إضافية | اضافية | إضافيه | اضافيه | تانية | أخرى | اخرى )
+            | (?: كتب | الكتاب | الكتب | ماتريال | material | materials ).*(?: مصاريف | رسوم | تكلفة | تكلفه )
+            | (?: مصاريف | رسوم | تكلفة | تكلفه ).*(?: كتب | الكتاب | الكتب | ماتريال | material | materials )
+            | \b(?: additional | extra )\s+(?: fee | fees | cost | costs )\b
+            """,
+            MatchOptions);
+
         private static readonly Regex ArabicPaymentMethodQuestions = new(
             """
             (?: طرق | طريقة | وسائل | وسيلة | تفاصيل | بيانات )\s+(?:ال)?دفع
@@ -56,7 +102,21 @@ namespace Modules.AI.Services
                    EnglishPaymentMethodQuestions.IsMatch(content);
         }
 
-        public static string? BuildPricingReplyFromKnowledge(string knowledgeText)
+        public static bool RequiresExactPriceAnswer(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return false;
+            }
+
+            return ExactPriceTerms.IsMatch(content) &&
+                   !ContextualQuestionTerms.IsMatch(content) &&
+                   !AdditionalCostQuestions.IsMatch(content) &&
+                   !ArabicPaymentMethodQuestions.IsMatch(content) &&
+                   !EnglishPaymentMethodQuestions.IsMatch(content);
+        }
+
+        public static string? BuildPricingReplyFromKnowledge(string customerMessage, string knowledgeText)
         {
             if (string.IsNullOrWhiteSpace(knowledgeText))
             {
@@ -80,17 +140,27 @@ namespace Modules.AI.Services
             var monthly = monthlyMatch.Success ? monthlyMatch.Groups[1].Value.Trim() : null;
             var cash = cashMatch.Success ? cashMatch.Groups[1].Value.Trim() : null;
 
+            if (FullCourseTerms.IsMatch(customerMessage) && !string.IsNullOrEmpty(cash))
+            {
+                return $"سعر الكورس بالكامل كاش هو {cash}.";
+            }
+
+            if (MonthlyTerms.IsMatch(customerMessage) && !string.IsNullOrEmpty(monthly))
+            {
+                return $"الاشتراك الشهري هو {monthly}.";
+            }
+
             if (!string.IsNullOrEmpty(monthly) && !string.IsNullOrEmpty(cash))
             {
-                return $"أكيد يا فندم، الأسعار عندنا واضحة:\n\nالاشتراك الشهري: {monthly}.\nالكاش للكورس كامل: {cash}.\n\nتحب أمشي مع حضرتك على نظام الشهري ولا الكاش؟";
+                return $"الاشتراك الشهري هو {monthly}، وسعر الكورس بالكامل كاش هو {cash}.";
             }
 
             if (!string.IsNullOrEmpty(monthly))
             {
-                return $"أكيد يا فندم، الاشتراك الشهري عندنا: {monthly}.\n\nتحب أعرفك المواعيد المتاحة؟";
+                return $"الاشتراك الشهري هو {monthly}.";
             }
 
-            return $"أكيد يا فندم، الكاش للكورس كامل: {cash}.\n\nتحب أعرفك المواعيد المتاحة؟";
+            return $"سعر الكورس بالكامل كاش هو {cash}.";
         }
     }
 }

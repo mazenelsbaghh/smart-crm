@@ -331,7 +331,7 @@ export default function MessengerInbox() {
     setLoadingOlderMessages(true);
     try {
       const response = await api.get<Message[]>(`/api/conversations/${conversationId}/messages`, {
-        params: { before: oldestMessage.createdAt, limit: MESSAGE_PAGE_SIZE },
+        params: { before: oldestMessage.createdAt, beforeId: oldestMessage.id, limit: MESSAGE_PAGE_SIZE },
         signal: controller.signal,
       });
       if (controller.signal.aborted || activeConvRef.current?.id !== conversationId

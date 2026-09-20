@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock3,
   Film,
+  Gamepad2,
   ImagePlus,
   LoaderCircle,
   Palette,
@@ -25,6 +26,8 @@ import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { useUnsavedNavigationGuard } from '../../hooks/use-unsaved-navigation-guard';
 import { contentApi } from './content-api';
 import ContentVideos from './ContentVideos';
+import ContentDocuments from './ContentDocuments';
+import ContentCardGames from './ContentCardGames';
 import type { ContentPost, ContentPostStatus, ContentStudioData, ContentWeekPlan, UpdateContentSettings } from './types';
 import styles from './ContentStudio.module.css';
 
@@ -44,6 +47,8 @@ const activeStatuses: ContentPostStatus[] = ['Generating', 'Publishing'];
 const contentTabs = [
   { key: 'posts', label: 'الصور والمنشورات' },
   { key: 'videos', label: 'الفيديوهات' },
+  { key: 'documents', label: 'العروض والمستندات' },
+  { key: 'games', label: 'الألعاب والكروت' },
 ] as const;
 type ContentView = (typeof contentTabs)[number]['key'];
 
@@ -64,7 +69,8 @@ function ContentStudioProjectView() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeView: ContentView = searchParams.get('view') === 'videos' ? 'videos' : 'posts';
+  const requestedView = searchParams.get('view');
+  const activeView: ContentView = requestedView === 'videos' || requestedView === 'documents' || requestedView === 'games' ? requestedView : 'posts';
   const [studioData, setStudioData] = useState<ContentStudioData | null>(null);
   const [form, setForm] = useState<UpdateContentSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,6 +80,8 @@ function ContentStudioProjectView() {
   const [error, setError] = useState<string | null>(null);
   const [formDirty, setFormDirty] = useState(false);
   const [videoDraftDirty, setVideoDraftDirty] = useState(false);
+  const [documentDraftDirty, setDocumentDraftDirty] = useState(false);
+  const [gameDraftDirty, setGameDraftDirty] = useState(false);
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
   const formDirtyRef = useRef(false);
   const logoInput = useRef<HTMLInputElement>(null);
@@ -83,7 +91,7 @@ function ContentStudioProjectView() {
     : studioData?.weeklyPlan ? [studioData.weeklyPlan] : [];
   const hasGeneratingPlan = polledWeeklyPlans.some((plan) => plan.status === 'Generating'
     || plan.items.some((item) => !item.contentPostId || item.postStatus === 'Generating'));
-  const navigationGuard = useUnsavedNavigationGuard(formDirty || videoDraftDirty);
+  const navigationGuard = useUnsavedNavigationGuard(formDirty || videoDraftDirty || documentDraftDirty || gameDraftDirty);
   const canManage = user?.role === 'Owner' || user?.role === 'Admin';
 
   const hydrateForm = useCallback((response: ContentStudioData) => {
@@ -185,6 +193,24 @@ function ContentStudioProjectView() {
       });
       return false;
     }
+    if (activeView === 'documents' && documentDraftDirty) {
+      setConfirmation({
+        title: 'مغادرة الملف قبل الحفظ؟',
+        message: 'ستفقد النص الجديد أو تعديلات الصفحات غير المحفوظة. الملفات المحفوظة لن تتأثر.',
+        confirmLabel: 'مغادرة دون حفظ',
+        onConfirm: () => { setDocumentDraftDirty(false); commitContentView(nextView); },
+      });
+      return false;
+    }
+    if (activeView === 'games' && gameDraftDirty) {
+      setConfirmation({
+        title: 'مغادرة اللعبة قبل تنفيذها؟',
+        message: 'ستفقد وصف اللعبة والتعديلات التي لم تنفذها بعد. الألعاب المحفوظة لن تتأثر.',
+        confirmLabel: 'مغادرة دون حفظ',
+        onConfirm: () => { setGameDraftDirty(false); commitContentView(nextView); },
+      });
+      return false;
+    }
     commitContentView(nextView);
     return true;
   };
@@ -217,6 +243,48 @@ function ContentStudioProjectView() {
         <div id="content-panel-videos" role="tabpanel" aria-labelledby="content-tab-videos">
           <ContentVideos key={activeProject.id} projectId={activeProject.id} canManage={canManage} onDraftDirtyChange={setVideoDraftDirty} />
         </div>
+        <StudioDialogs confirmation={confirmation} onCloseConfirmation={() => setConfirmation(null)} navigationGuard={navigationGuard} />
+      </div>
+    );
+  }
+  if (activeView === 'documents') {
+    if (loading || !studioData) return <ContentSkeleton />;
+    return (
+      <div className={styles.studio} dir="rtl">
+        <header className={styles.pageHeader}>
+          <div>
+            <p className={styles.eyebrow}>AI DOCUMENT STUDIO</p>
+            <h1>نص واحد، ملف كامل بهويتك</h1>
+            <p>Gemini يقسم المحتوى لسلايدز أو صفحات A4، يولّد صورة لكل صفحة، ويترك لك النص والترتيب قبل التنزيل.</p>
+          </div>
+          <div className={styles.modelStamp} aria-label="التصميم يستخدم هوية المحتوى الحالية">
+            <Sparkles size={18} />
+            <span><strong>Brand linked</strong>اللوجو والألوان الحالية</span>
+          </div>
+        </header>
+        <ContentTabs activeView={activeView} onChange={selectContentView} />
+        <ContentDocuments canManage={canManage} aiReady={studioData.aiConfigured} brandReady={Boolean(studioData.settings.logoUrl)} onDraftDirtyChange={setDocumentDraftDirty} />
+        <StudioDialogs confirmation={confirmation} onCloseConfirmation={() => setConfirmation(null)} navigationGuard={navigationGuard} />
+      </div>
+    );
+  }
+  if (activeView === 'games') {
+    if (loading || !studioData) return <ContentSkeleton />;
+    return (
+      <div className={styles.studio} dir="rtl">
+        <header className={styles.pageHeader}>
+          <div>
+            <p className={styles.eyebrow}>WORKSHOP GAME STUDIO</p>
+            <h1>حوّل فكرة الورشة إلى لعبة كروت كاملة</h1>
+            <p>اقترح أكثر من لعبة، نفّذ عدد الكروت الذي تختاره، وطبّق لوجو وألوان وهوية المشروع تلقائيًا.</p>
+          </div>
+          <div className={styles.modelStamp} aria-label="الألعاب تستخدم Gemini وهوية المشروع الحالية">
+            <Gamepad2 size={18} />
+            <span><strong>Brand linked</strong>نفس مفتاح Gemini والإعدادات</span>
+          </div>
+        </header>
+        <ContentTabs activeView={activeView} onChange={selectContentView} />
+        <ContentCardGames canManage={canManage} aiReady={studioData.aiConfigured} brandReady={Boolean(studioData.settings.logoUrl)} onDraftDirtyChange={setGameDraftDirty} />
         <StudioDialogs confirmation={confirmation} onCloseConfirmation={() => setConfirmation(null)} navigationGuard={navigationGuard} />
       </div>
     );
@@ -433,7 +501,7 @@ function ContentStudioProjectView() {
 }
 
 function ContentTabs({ activeView, onChange }: { activeView: ContentView; onChange: (view: ContentView) => boolean }) {
-  const tabRefs = useRef<Record<ContentView, HTMLButtonElement | null>>({ posts: null, videos: null });
+  const tabRefs = useRef<Record<ContentView, HTMLButtonElement | null>>({ posts: null, videos: null, documents: null, games: null });
   const selectFromKeyboard = (event: React.KeyboardEvent, index: number) => {
     if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
