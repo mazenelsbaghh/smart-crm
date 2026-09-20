@@ -345,6 +345,8 @@ builder.Services.AddScoped<Modules.Content.Services.ContentDocumentPlanningServi
 builder.Services.AddScoped<Modules.Content.Services.ContentDocumentGenerationService>();
 builder.Services.AddScoped<Modules.Content.Jobs.ContentDocumentJob>();
 builder.Services.AddScoped<Modules.Content.Services.ContentCardGameService>();
+builder.Services.AddScoped<Modules.Content.Services.ContentCardGameDesignService>();
+builder.Services.AddScoped<Modules.Content.Jobs.ContentCardGameDesignJob>();
 builder.Services.AddHttpClient<Modules.Content.Services.GeminiImageClient>(client =>
 {
     client.BaseAddress = new Uri("https://generativelanguage.googleapis.com/");

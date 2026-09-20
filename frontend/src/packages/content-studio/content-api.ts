@@ -64,6 +64,10 @@ export const contentApi = {
     })).data;
   },
 
+  async generateCardGameDesign(id: string) {
+    return (await api.post<{ message: string }>(`/api/content/card-games/${id}/design`)).data;
+  },
+
   async generateSample() {
     return (await api.post<{ message: string }>('/api/content/sample')).data;
   },

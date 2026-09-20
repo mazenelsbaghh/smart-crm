@@ -17,7 +17,8 @@ public sealed class ContentCardGameTests
         Assert.Contains("#22E9D4", prompt);
         Assert.Contains("ورشة تواصل لفريق خدمة العملاء", prompt);
         Assert.Contains("دليل خدمة العملاء المنشور", prompt);
-        Assert.Contains("لا تقترح أفكارًا عامة", prompt);
+        Assert.Contains("Do not offer generic games", prompt);
+        Assert.Contains("clear, natural English", prompt);
         Assert.Contains("\"ideas\"", prompt);
         Assert.DoesNotContain("{{", prompt);
     }
@@ -32,8 +33,9 @@ public sealed class ContentCardGameTests
 
         var prompt = ContentCardGameService.BuildDeckPrompt(Context(), input);
 
-        Assert.Contains($"عدد الكروت الإلزامي: {cardCount}", prompt);
-        Assert.Contains($"أعد {cardCount} عنصرًا بالضبط", prompt);
+        Assert.Contains($"Required card count: {cardCount}", prompt);
+        Assert.Contains($"Return exactly {cardCount} cards", prompt);
+        Assert.Contains("Write every player-facing value in clear, natural English", prompt);
         Assert.Contains("\"cards\"", prompt);
         Assert.DoesNotContain("{{", prompt);
     }
@@ -49,6 +51,26 @@ public sealed class ContentCardGameTests
             """);
 
         Assert.Equal("اختبار", parsed.Title);
+    }
+
+    [Fact]
+    public void Image_prompts_require_text_free_art_and_preserve_the_real_logo_in_the_application()
+    {
+        var game = new ContentCardGame
+        {
+            Title = "Quick Response",
+            BrandColorsJson = "[\"#140D2E\",\"#22E9D4\"]",
+            BrandStylePrompt = "Bold editorial identity"
+        };
+        var card = new ContentGameCard { Category = "Role play", Title = "Difficult opener", Prompt = "Respond in 30 seconds." };
+
+        var face = ContentCardGameService.BuildCardFaceImagePrompt(game, card);
+        var back = ContentCardGameService.BuildCardBackImagePrompt(game);
+
+        Assert.Contains("no text, no glyphs, no numbers", face);
+        Assert.Contains("application will place the exact logo", face);
+        Assert.Contains("no logo recreation", back);
+        Assert.Contains("Quick Response", back);
     }
 
     private static ContentCardGameService.GenerationContext Context() => new(

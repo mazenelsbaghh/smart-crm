@@ -48,6 +48,12 @@ export default function ContentCardGames({
     return () => window.clearTimeout(timer);
   }, [load]);
 
+  useEffect(() => {
+    if (!selected || !['Queued', 'Generating'].includes(selected.game.designStatus)) return;
+    const timer = window.setTimeout(() => void load(selected.game.id), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [load, selected]);
+
   const updateDraft = (next: CreateContentCardGame) => {
     setDraft(next);
     onDraftDirtyChange(Boolean(next.title?.trim() || next.brief.trim() || next.mechanic?.trim()));
@@ -125,7 +131,7 @@ export default function ContentCardGames({
           <label className={styles.field}><span>اسم اللعبة</span><input maxLength={200} value={draft.title ?? ''} onChange={(event) => updateDraft({ ...draft, title: event.target.value })} /></label>
           <label className={styles.field}><span>طريقة اللعب</span><textarea rows={4} maxLength={600} value={draft.mechanic ?? ''} onChange={(event) => updateDraft({ ...draft, mechanic: event.target.value })} /></label>
           <label className={styles.field}><span>عدد الكروت</span><input type="number" min={8} max={60} value={draft.cardCount} onChange={(event) => updateDraft({ ...draft, cardCount: Number(event.target.value) })} /></label>
-          <p className={styles.gameHint}>الظهر ثابت داخل اللعبة، والوجه مختلف لكل كارت. التصميم بزوايا مستقيمة ويستخدم لوجو وألوان المشروع تلقائيًا.</p>
+          <p className={styles.gameHint}>كل لعبة تُنتج كروت إنجليزية: وجه بصري مختلف لكل كارت وظهر موحّد مصمّم بالذكاء الاصطناعي، مع اللوجو والألوان الأصلية للمشروع.</p>
           <button type="button" className={styles.btnPrimary} disabled={!canManage || !readiness || draft.brief.trim().length < 10 || draft.cardCount < 8 || draft.cardCount > 60 || Boolean(busy)} onClick={() => void create()}>
             {busy === 'create' ? <LoaderCircle className={styles.spin} size={17} /> : <Plus size={17} />} نفّذ اللعبة والكروت
           </button>
@@ -133,7 +139,16 @@ export default function ContentCardGames({
 
         <main className={styles.gameCanvas}>
           {busy === 'load' && !selected ? <div className={styles.gameEmpty}><LoaderCircle className={styles.spin} /><p>بنحمّل الألعاب...</p></div>
-            : selected ? <GamePreview detail={selected} />
+            : selected ? <GamePreview canManage={canManage} detail={selected} onDesignRetry={async () => {
+              setBusy('create');
+              setError(null);
+              try {
+                const response = await contentApi.generateCardGameDesign(selected.game.id);
+                setNotice(response.message);
+                await load(selected.game.id);
+              } catch (requestError) { setError(message(requestError)); }
+              finally { setBusy(null); }
+            }} />
             : <div className={styles.gameEmpty}><Gamepad2 size={38} /><h2>أول لعبة تبدأ من فكرة</h2><p>اكتب هدف الورشة، خلّي Gemini يقترح أفكارًا، ثم نفّذ اللعبة كاملة.</p></div>}
         </main>
 
@@ -151,7 +166,15 @@ export default function ContentCardGames({
   );
 }
 
-function GamePreview({ detail }: { detail: ContentCardGameDetail }) {
+function GamePreview({
+  detail,
+  canManage,
+  onDesignRetry,
+}: {
+  detail: ContentCardGameDetail;
+  canManage: boolean;
+  onDesignRetry: () => Promise<void>;
+}) {
   const palette = useMemo(() => paletteFor(detail.game.brandColors), [detail.game.brandColors]);
   const style = {
     '--game-ink': palette.ink,
@@ -159,38 +182,89 @@ function GamePreview({ detail }: { detail: ContentCardGameDetail }) {
     '--game-accent': palette.accent,
     '--game-muted': palette.muted,
   } as CSSProperties;
+  const isDesigning = ['Queued', 'Generating'].includes(detail.game.designStatus);
+  const logoSource = useAssetSource(detail.game.logoUrl);
+  const backArtworkSource = useAssetSource(detail.game.backImageUrl);
   return <div className={styles.gamePreview} style={style}>
     <header className={styles.gamePreviewHeader}>
-      <div><span>لعبة جاهزة</span><h2>{detail.game.title}</h2><p>{detail.game.mechanic}</p></div>
+      <div><span>{isDesigning ? 'DESIGNING DECK' : 'DECK READY'}</span><h2 dir="ltr">{detail.game.title}</h2><p dir="ltr">{detail.game.mechanic}</p></div>
       <button type="button" className={styles.btnSecondary} onClick={() => window.print()}><Printer size={17} /> طباعة / حفظ PDF</button>
     </header>
-    <details className={styles.gameInstructions}><summary>طريقة اللعب</summary><p>{detail.game.instructions}</p></details>
+    {(isDesigning || detail.game.designStatus === 'Failed') && <div className={detail.game.designStatus === 'Failed' ? styles.alertError : styles.gameDesignStatus} role="status">
+      {isDesigning ? <><LoaderCircle className={styles.spin} size={16} /> جارٍ تصميم الوجوه والظهر بالذكاء الاصطناعي… ستظهر تلقائيًا.</> : <>{detail.game.designError ?? 'تعذر استكمال بعض التصاميم.'} {canManage && <button type="button" onClick={() => void onDesignRetry()}>إعادة المحاولة</button>}</>}
+    </div>}
+    <details className={styles.gameInstructions}><summary>How to play</summary><p dir="ltr">{detail.game.instructions}</p></details>
     <section className={styles.gamePrintArea} aria-label={`كروت ${detail.game.title}`}>
-      <div className={styles.gameBackSample}><GameLogo url={detail.game.logoUrl} alt="لوجو المشروع" /><strong>{detail.game.title}</strong><span>WORKSHOP CARDS</span></div>
-      {detail.cards.map((card) => <article className={styles.gameCardFace} key={card.id}>
-        <header><span>{card.category || 'تحدّي'}</span><b>{String(card.cardIndex + 1).padStart(2, '0')}</b></header>
+      <GameBack detail={detail} logoSource={logoSource} artworkSource={backArtworkSource} label="لوجو المشروع" />
+      {detail.cards.map((card) => <article className={`${styles.gameCardFace} ${card.imageUrl ? styles.gameCardFaceVisual : ''}`} dir="ltr" key={card.id}>
+        {card.imageUrl && <GameArtwork className={styles.gameFaceArtwork} url={card.imageUrl} alt="" />}
+        <span className={styles.gameFaceScrim} aria-hidden="true" />
+        <header><span>{card.category || 'CHALLENGE'}</span><b>{String(card.cardIndex + 1).padStart(2, '0')}</b></header>
         <div><h3>{card.title}</h3><p>{card.prompt}</p></div>
         {card.instruction && <footer>{card.instruction}</footer>}
       </article>)}
     </section>
     <section className={styles.gameBackPrint} aria-label="ظهور الكروت للطباعة">
-      {detail.cards.map((card) => <div className={styles.gameBackSample} key={`back-${card.id}`}><GameLogo url={detail.game.logoUrl} alt="" /><strong>{detail.game.title}</strong><span>WORKSHOP CARDS</span></div>)}
+      {detail.cards.map((card) => <GameBack detail={detail} key={`back-${card.id}`} logoSource={logoSource} artworkSource={backArtworkSource} label="" />)}
     </section>
   </div>;
 }
 
-function GameLogo({ url, alt }: { url: string; alt: string }) {
-  const [source, setSource] = useState<string | null>(null);
+function GameBack({
+  detail,
+  label,
+  logoSource,
+  artworkSource,
+}: {
+  detail: ContentCardGameDetail;
+  label: string;
+  logoSource: string | null;
+  artworkSource: string | null;
+}) {
+  return <div className={styles.gameBackSample} dir="ltr">
+    {artworkSource && <AssetImage className={styles.gameBackArtwork} source={artworkSource} alt="" />}
+    <div className={styles.gameBackContent}><GameLogo source={logoSource} alt={label} /><strong>{detail.game.title}</strong><span>WORKSHOP CARDS</span></div>
+  </div>;
+}
+
+function GameArtwork({ url, alt, className }: { url: string; alt: string; className: string }) {
+  const source = useAssetSource(url);
+  return source ? <AssetImage className={className} source={source} alt={alt} /> : null;
+}
+
+function GameLogo({ source, alt }: { source: string | null; alt: string }) {
+  return source ? <AssetImage className={styles.gameBrandLogo} source={source} alt={alt} width={180} height={90} /> : <Gamepad2 aria-hidden="true" />;
+}
+
+function AssetImage({
+  source,
+  alt,
+  className,
+  width = 840,
+  height = 1200,
+}: {
+  source: string;
+  alt: string;
+  className: string;
+  width?: number;
+  height?: number;
+}) {
+  return <Image className={className} src={source} alt={alt} width={width} height={height} unoptimized />;
+}
+
+function useAssetSource(url: string | null) {
+  const [asset, setAsset] = useState<{ url: string; source: string } | null>(null);
   useEffect(() => {
+    if (!url) return;
     const controller = new AbortController();
     let objectUrl: string | null = null;
     void contentApi.downloadAsset(url, controller.signal).then((blob) => {
       objectUrl = URL.createObjectURL(blob);
-      setSource(objectUrl);
+      setAsset({ url, source: objectUrl });
     }).catch(() => undefined);
     return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [url]);
-  return source ? <Image src={source} alt={alt} width={180} height={90} unoptimized /> : <Gamepad2 aria-hidden="true" />;
+  return asset?.url === url ? asset.source : null;
 }
 
 function paletteFor(colors: string[]) {

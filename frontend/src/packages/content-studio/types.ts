@@ -285,6 +285,8 @@ export interface ContentGameCard {
   title: string;
   prompt: string;
   instruction: string;
+  imageUrl: string | null;
+  imageError: string | null;
 }
 
 export interface ContentCardGameDetail {
@@ -293,6 +295,9 @@ export interface ContentCardGameDetail {
     instructions: string;
     brandColors: string[];
     logoUrl: string;
+    backImageUrl: string | null;
+    designStatus: 'Queued' | 'Generating' | 'Ready' | 'Failed';
+    designError: string | null;
     plannerModel: string;
   };
   cards: ContentGameCard[];

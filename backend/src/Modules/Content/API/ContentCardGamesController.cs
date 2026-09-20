@@ -1,7 +1,9 @@
+using Hangfire;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Modules.Content.Domain;
+using Modules.Content.Jobs;
 using Modules.Content.Services;
 using Shared.Infrastructure;
 using Shared.Security;
@@ -17,6 +19,7 @@ public sealed class ContentCardGamesController(
     ITenantContext tenantContext,
     IProjectAuthorizationService authorization,
     IObjectStorage objectStorage,
+    IBackgroundJobClient jobs,
     ContentCardGameService games) : ControllerBase
 {
     [HttpGet]
@@ -55,6 +58,9 @@ public sealed class ContentCardGamesController(
                 cardCount = game.CardCount,
                 brandColors = DeserializeColors(game.BrandColorsJson),
                 logoUrl = LogoRoute(game.Id, game.UpdatedAt),
+                backImageUrl = string.IsNullOrWhiteSpace(game.BackImageObjectKey) ? null : BackImageRoute(game.Id, game.UpdatedAt),
+                designStatus = game.DesignStatus,
+                designError = game.DesignError,
                 plannerModel = game.PlannerModel,
                 createdAt = game.CreatedAt,
                 updatedAt = game.UpdatedAt
@@ -66,7 +72,9 @@ public sealed class ContentCardGamesController(
                 category = card.Category,
                 title = card.Title,
                 prompt = card.Prompt,
-                instruction = card.Instruction
+                instruction = card.Instruction,
+                imageUrl = string.IsNullOrWhiteSpace(card.ImageObjectKey) ? null : CardImageRoute(game.Id, card.Id, card.UpdatedAt),
+                imageError = card.ImageError
             })
         });
     }
@@ -81,6 +89,31 @@ public sealed class ContentCardGamesController(
         var stream = await objectStorage.DownloadAsync(game.BrandLogoObjectKey, cancellationToken);
         Response.Headers.CacheControl = "private, max-age=604800, immutable";
         return File(stream, ContentDocumentAssetRoutes.MimeFromKey(game.BrandLogoObjectKey), enableRangeProcessing: true);
+    }
+
+    [HttpGet("{id:guid}/back")]
+    public async Task<IActionResult> Back(Guid id, CancellationToken cancellationToken)
+    {
+        var projectId = ActiveProjectId();
+        if (!authorization.CanRead(User, projectId)) return Forbid();
+        var game = await FindGame(projectId, id, cancellationToken);
+        if (game is null || string.IsNullOrWhiteSpace(game.BackImageObjectKey)) return NotFound();
+        var stream = await objectStorage.DownloadAsync(game.BackImageObjectKey, cancellationToken);
+        Response.Headers.CacheControl = "private, max-age=604800, immutable";
+        return File(stream, game.BackImageMimeType ?? ContentDocumentAssetRoutes.MimeFromKey(game.BackImageObjectKey), enableRangeProcessing: true);
+    }
+
+    [HttpGet("{id:guid}/cards/{cardId:guid}/image")]
+    public async Task<IActionResult> CardImage(Guid id, Guid cardId, CancellationToken cancellationToken)
+    {
+        var projectId = ActiveProjectId();
+        if (!authorization.CanRead(User, projectId)) return Forbid();
+        var card = await dbContext.ContentGameCards.IgnoreQueryFilters().SingleOrDefaultAsync(item =>
+            item.ProjectId == projectId && item.GameId == id && item.Id == cardId, cancellationToken);
+        if (card is null || string.IsNullOrWhiteSpace(card.ImageObjectKey)) return NotFound();
+        var stream = await objectStorage.DownloadAsync(card.ImageObjectKey, cancellationToken);
+        Response.Headers.CacheControl = "private, max-age=604800, immutable";
+        return File(stream, card.ImageMimeType ?? ContentDocumentAssetRoutes.MimeFromKey(card.ImageObjectKey), enableRangeProcessing: true);
     }
 
     [HttpPost("ideas")]
@@ -105,14 +138,34 @@ public sealed class ContentCardGamesController(
             var game = await games.CreateAsync(projectId,
                 new CreateCardGameInput(request.Title, request.Brief ?? string.Empty, request.Mechanic, request.CardCount),
                 cancellationToken);
+            var queued = await QueueDesignAsync(game);
             return CreatedAtAction(nameof(Get), new { id = game.Id }, new
             {
                 id = game.Id,
-                message = $"تم إنشاء «{game.Title}» بعدد {game.CardCount} كارت وبهوية المشروع."
+                message = queued
+                    ? $"تم إنشاء «{game.Title}» بعدد {game.CardCount} كارت بالإنجليزية. جارٍ تصميم الوجوه والظهر بهوية المشروع."
+                    : $"تم إنشاء «{game.Title}» بالإنجليزية. المحتوى محفوظ؛ يمكنك بدء التصميم مرة أخرى من اللعبة."
             });
         }
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
         catch (InvalidOperationException exception) { return StatusCode(502, new { error = exception.Message }); }
+    }
+
+    [HttpPost("{id:guid}/design")]
+    public async Task<IActionResult> GenerateDesign(Guid id, CancellationToken cancellationToken)
+    {
+        var projectId = ActiveProjectId();
+        if (!authorization.CanManageProject(User, projectId)) return Forbid();
+        var game = await FindGame(projectId, id, cancellationToken);
+        if (game is null) return NotFound(new { error = "اللعبة غير موجودة." });
+        if (game.DesignStatus == ContentCardGameDesignStatus.Generating)
+            return Accepted(new { message = "تصاميم اللعبة قيد التنفيذ بالفعل." });
+
+        game.DesignStatus = ContentCardGameDesignStatus.Queued;
+        game.DesignError = null;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        var queued = await QueueDesignAsync(game);
+        return Accepted(new { message = queued ? "بدأنا تصميم الوجوه والظهر بالذكاء الاصطناعي." : "المحتوى محفوظ؛ تعذر بدء التصميم الآن. حاول مرة أخرى." });
     }
 
     private static object Summary(ContentCardGame game) => new
@@ -121,9 +174,26 @@ public sealed class ContentCardGamesController(
         title = game.Title,
         mechanic = game.Mechanic,
         cardCount = game.CardCount,
+        designStatus = game.DesignStatus,
         createdAt = game.CreatedAt,
         updatedAt = game.UpdatedAt
     };
+
+    private async Task<bool> QueueDesignAsync(ContentCardGame game)
+    {
+        try
+        {
+            jobs.Enqueue<ContentCardGameDesignJob>(job => job.GenerateAsync(game.ProjectId, game.Id));
+            return true;
+        }
+        catch (Exception)
+        {
+            game.DesignStatus = ContentCardGameDesignStatus.Failed;
+            game.DesignError = "تعذر بدء التصميم. يمكنك إعادة المحاولة.";
+            await dbContext.SaveChangesAsync(CancellationToken.None);
+            return false;
+        }
+    }
 
     private Task<ContentCardGame?> FindGame(Guid projectId, Guid id, CancellationToken cancellationToken) =>
         dbContext.ContentCardGames.IgnoreQueryFilters().SingleOrDefaultAsync(
@@ -137,6 +207,12 @@ public sealed class ContentCardGamesController(
 
     private static string LogoRoute(Guid gameId, DateTime updatedAt) =>
         $"/api/content/card-games/{gameId:D}/logo?v={updatedAt.Ticks}";
+
+    private static string BackImageRoute(Guid gameId, DateTime updatedAt) =>
+        $"/api/content/card-games/{gameId:D}/back?v={updatedAt.Ticks}";
+
+    private static string CardImageRoute(Guid gameId, Guid cardId, DateTime updatedAt) =>
+        $"/api/content/card-games/{gameId:D}/cards/{cardId:D}/image?v={updatedAt.Ticks}";
 
     private Guid ActiveProjectId() => tenantContext.ProjectId != Guid.Empty
         ? tenantContext.ProjectId

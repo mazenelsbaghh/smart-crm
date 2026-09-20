@@ -481,6 +481,11 @@ namespace Shared.Infrastructure
             contentCardGame.Property(game => game.Instructions).HasMaxLength(3_000);
             contentCardGame.Property(game => game.BrandLogoObjectKey).HasMaxLength(1_024);
             contentCardGame.Property(game => game.PlannerModel).HasMaxLength(100);
+            contentCardGame.Property(game => game.DesignStatus).HasMaxLength(32).HasDefaultValue(Modules.Content.Domain.ContentCardGameDesignStatus.Ready);
+            contentCardGame.Property(game => game.DesignError).HasMaxLength(1_000);
+            contentCardGame.Property(game => game.BackImageObjectKey).HasMaxLength(1_024);
+            contentCardGame.Property(game => game.BackImageMimeType).HasMaxLength(100);
+            contentCardGame.Property(game => game.ImageModel).HasMaxLength(100);
 
             var contentGameCard = modelBuilder.Entity<Modules.Content.Domain.ContentGameCard>();
             contentGameCard.HasIndex(card => new { card.GameId, card.CardIndex }).IsUnique();
@@ -488,6 +493,9 @@ namespace Shared.Infrastructure
             contentGameCard.Property(card => card.Title).HasMaxLength(160);
             contentGameCard.Property(card => card.Prompt).HasMaxLength(1_000);
             contentGameCard.Property(card => card.Instruction).HasMaxLength(500);
+            contentGameCard.Property(card => card.ImageObjectKey).HasMaxLength(1_024);
+            contentGameCard.Property(card => card.ImageMimeType).HasMaxLength(100);
+            contentGameCard.Property(card => card.ImageError).HasMaxLength(1_000);
             contentGameCard.HasOne<Modules.Content.Domain.ContentCardGame>()
                 .WithMany()
                 .HasForeignKey(card => new { card.GameId, card.ProjectId })
