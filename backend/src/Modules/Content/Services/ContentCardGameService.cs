@@ -27,11 +27,17 @@ public sealed class ContentCardGameService(
         CancellationToken cancellationToken)
     {
         var context = await LoadContextAsync(projectId, cancellationToken);
-        var response = await GenerateAsync(BuildIdeasPrompt(context, workshopBrief), context, cancellationToken);
-        var ideas = ParseJson<IdeaEnvelope>(response).Ideas ?? [];
-        if (ideas.Count is < 3 or > 8 || ideas.Any(idea => !ValidIdea(idea)))
-            throw new InvalidOperationException("Gemini لم يرجع أفكار ألعاب مكتملة. حاول مرة أخرى.");
-        return ideas.Take(6).ToList();
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var prompt = attempt == 0 ? BuildIdeasPrompt(context, workshopBrief) : BuildIdeasRetryPrompt(context, workshopBrief);
+            var response = await GenerateAsync(prompt, context, cancellationToken);
+            if (TryParseJson<IdeaEnvelope>(response, out var envelope)
+                && envelope.Ideas is { Count: >= 3 and <= 8 } ideas
+                && ideas.All(ValidIdea))
+                return ideas.Take(6).ToList();
+        }
+
+        throw new InvalidOperationException("Gemini لم يرجع أفكار ألعاب فعلية بشرح عربي. حاول مرة أخرى.");
     }
 
     public async Task<ContentCardGame> CreateAsync(
@@ -77,7 +83,7 @@ public sealed class ContentCardGameService(
         CreateCardGameInput input,
         CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 2; attempt++)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
             var prompt = attempt == 0
                 ? BuildDeckPrompt(context, input)
@@ -87,7 +93,7 @@ public sealed class ContentCardGameService(
                 return deck;
         }
 
-        throw new InvalidOperationException("Gemini لم يرجع اللعبة كاملة بعدد الكروت المطلوب. حاول مرة أخرى.");
+        throw new InvalidOperationException("Gemini لم يرجع لعبة فعلية بقواعد عربية وكروت حركية مكتملة. حاول مرة أخرى.");
     }
 
     private async Task<GenerationContext> LoadContextAsync(Guid projectId, CancellationToken cancellationToken)
@@ -153,6 +159,9 @@ public sealed class ContentCardGameService(
         {"ideas":[{"title":"English game name","summary":"شرح عربي قصير للفكرة","mechanic":"شرح عربي لطريقة اللعب","recommendedCardCount":20}]}
         """;
 
+    internal static string BuildIdeasRetryPrompt(GenerationContext context, string? workshopBrief) =>
+        $"{BuildIdeasPrompt(context, workshopBrief)}\nSTRICT RETRY: Return 3–6 complete, playable card-game ideas only. Both summary and mechanic MUST contain Arabic text. Do not return quizzes, question decks, or English-only explanations.";
+
     internal static string BuildDeckPrompt(GenerationContext context, CreateCardGameInput input) => $$"""
         You are a workshop card-game designer. Create one complete, printable workshop card game.
         Project name: {{context.ProjectName}}
@@ -169,14 +178,15 @@ public sealed class ContentCardGameService(
         Ground every card in the project's activities, services, and audience described in the knowledge. Never invent facts.
         Build a REAL, replayable card game — never a question deck. Its rules must include: player count, setup and deal, an explicit turn or round loop, how each card category changes play, risk/strategy or player interaction, end condition, and a clear winner or scoring rule.
         Use original rules and an original name. Do not copy a commercial game, its name, card wording, or distinctive rules. You may evoke the social strategy feeling of hidden information, swapping, drawing, peeking, bluffing, collecting, or tactical choices, but create a new game system for this project.
-        Write title in English. Write mechanic and instructions in simple Egyptian Arabic for the workshop organizer. Write EVERY card category, title, prompt, and instruction in clear natural English for players. Make each card distinct: prompt must state a playable action, event, choice, mission, or scoring effect — not merely ask a question.
+        Use 3 to 6 distinct English card categories across the deck. Include action cards that make players draw, swap, peek, reveal, block, trade, protect, steal, score, or make a tactical choice. Do not make every card an objection, question, or prompt.
+        Write title in English. Write mechanic and instructions in simple Egyptian Arabic for the workshop organizer. In instructions use these Arabic section headings EXACTLY: "عدد اللاعبين"، "التجهيز"، "توزيع الكروت"، "الدور"، "تأثير الكروت"، "نهاية اللعبة"، "الفوز". Write EVERY card category, title, prompt, and instruction in clear natural English for players. Make each card distinct: prompt must state a playable action, event, choice, mission, or scoring effect — not merely ask a question.
         Return exactly {{input.CardCount}} cards. Do not add visual instructions, colors, markdown, or any prose outside the JSON.
         Return JSON only in this exact shape:
         {"title":"English game name","mechanic":"ملخص عربي لطريقة اللعب","instructions":"شرح عربي كامل: عدد اللاعبين، التجهيز، توزيع الكروت، تسلسل الدور أو الجولة، تأثير كل نوع كارت، النهاية وطريقة الفوز","cards":[{"category":"English card type","title":"English short title","prompt":"English playable card effect","instruction":"English one-line player instruction"}]}
         """;
 
     internal static string BuildDeckRetryPrompt(GenerationContext context, CreateCardGameInput input) =>
-        $"{BuildDeckPrompt(context, input)}\nThe prior response did not match the contract. Retry now: JSON only, one object, exactly {input.CardCount} cards, English player-facing card text, and Arabic organizer instructions.";
+        $"{BuildDeckPrompt(context, input)}\nSTRICT RETRY: The prior deck was rejected because it was not a complete playable game. Return JSON only, one object, exactly {input.CardCount} cards, 3–6 distinct English card categories, playable English actions, and Arabic instructions containing every required Arabic heading exactly.";
 
     internal static string BuildCardFaceImagePrompt(ContentCardGame game, ContentGameCard card) => $$"""
         Create a print-ready portrait 3:4 visual background for a premium English-language workshop card.
@@ -262,8 +272,8 @@ public sealed class ContentCardGameService(
 
     private static bool ValidIdea(CardGameIdea idea) =>
         !string.IsNullOrWhiteSpace(idea.Title) && idea.Title.Length <= 200
-        && !string.IsNullOrWhiteSpace(idea.Summary) && idea.Summary.Length <= 1_000
-        && !string.IsNullOrWhiteSpace(idea.Mechanic) && idea.Mechanic.Length <= 600
+        && HasArabic(idea.Summary) && idea.Summary.Length <= 1_000
+        && HasArabic(idea.Mechanic) && idea.Mechanic.Length <= 600
         && idea.RecommendedCardCount is >= 8 and <= 60;
 
     private static bool ValidCard(GeneratedCard card) =>
@@ -273,10 +283,30 @@ public sealed class ContentCardGameService(
 
     private static bool ValidDeck(GeneratedDeck deck, int cardCount) =>
         !string.IsNullOrWhiteSpace(deck.Title)
-        && !string.IsNullOrWhiteSpace(deck.Mechanic)
-        && !string.IsNullOrWhiteSpace(deck.Instructions)
+        && HasArabic(deck.Mechanic)
+        && HasRequiredArabicRules(deck.Instructions)
         && deck.Cards?.Count == cardCount
-        && deck.Cards.All(ValidCard);
+        && deck.Cards.All(ValidCard)
+        && HasPlayableCardMix(deck.Cards);
+
+    private static bool HasArabic(string? value) => !string.IsNullOrWhiteSpace(value)
+        && value.Any(character => character is >= '\u0600' and <= '\u06ff');
+
+    private static bool HasRequiredArabicRules(string? instructions) => HasArabic(instructions)
+        && new[] { "عدد اللاعبين", "التجهيز", "توزيع الكروت", "الدور", "تأثير الكروت", "نهاية اللعبة", "الفوز" }
+            .All(heading => instructions!.Contains(heading, StringComparison.Ordinal));
+
+    private static bool HasPlayableCardMix(IReadOnlyCollection<GeneratedCard> cards)
+    {
+        var categories = cards.Select(card => card.Category.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+        var actionCards = cards.Count(card => HasPlayableAction(card.Prompt));
+        return categories >= Math.Min(3, cards.Count)
+            && actionCards >= Math.Ceiling(cards.Count * .6);
+    }
+
+    private static bool HasPlayableAction(string? prompt) => !string.IsNullOrWhiteSpace(prompt)
+        && new[] { "draw", "swap", "peek", "reveal", "block", "steal", "trade", "choose", "keep", "discard", "challenge", "score", "protect", "flip", "pass", "play", "take", "give", "move" }
+            .Any(action => prompt.Contains(action, StringComparison.OrdinalIgnoreCase));
 
     private static string Normalize(string? value, int maxLength, string fallback)
     {

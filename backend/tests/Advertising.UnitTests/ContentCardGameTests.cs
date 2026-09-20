@@ -20,6 +20,7 @@ public sealed class ContentCardGameTests
         Assert.Contains("Do not offer generic games", prompt);
         Assert.Contains("never a deck of questions", prompt);
         Assert.Contains("simple Egyptian Arabic", prompt);
+        Assert.Contains("Both summary and mechanic MUST contain Arabic text", ContentCardGameService.BuildIdeasRetryPrompt(context, "ورشة تواصل لفريق خدمة العملاء"));
         Assert.Contains("\"ideas\"", prompt);
         Assert.DoesNotContain("{{", prompt);
     }
@@ -40,6 +41,9 @@ public sealed class ContentCardGameTests
         Assert.Contains("never a question deck", prompt);
         Assert.Contains("simple Egyptian Arabic", prompt);
         Assert.Contains("EVERY card category, title, prompt, and instruction in clear natural English", prompt);
+        Assert.Contains("عدد اللاعبين", prompt);
+        Assert.Contains("Use 3 to 6 distinct English card categories", prompt);
+        Assert.Contains("STRICT RETRY", ContentCardGameService.BuildDeckRetryPrompt(Context(), input));
         Assert.Contains("\"cards\"", prompt);
         Assert.DoesNotContain("{{", prompt);
     }
