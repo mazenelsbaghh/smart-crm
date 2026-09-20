@@ -187,13 +187,13 @@ function GamePreview({
   const backArtworkSource = useAssetSource(detail.game.backImageUrl);
   return <div className={styles.gamePreview} style={style}>
     <header className={styles.gamePreviewHeader}>
-      <div><span>{isDesigning ? 'DESIGNING DECK' : 'DECK READY'}</span><h2 dir="ltr">{detail.game.title}</h2><p dir="ltr">{detail.game.mechanic}</p></div>
+      <div><span>{isDesigning ? 'جارٍ تصميم اللعبة' : 'لعبة مكتملة'}</span><h2 dir="ltr">{detail.game.title}</h2><p>{detail.game.mechanic}</p></div>
       <button type="button" className={styles.btnSecondary} onClick={() => window.print()}><Printer size={17} /> طباعة / حفظ PDF</button>
     </header>
     {(isDesigning || detail.game.designStatus === 'Failed') && <div className={detail.game.designStatus === 'Failed' ? styles.alertError : styles.gameDesignStatus} role="status">
       {isDesigning ? <><LoaderCircle className={styles.spin} size={16} /> جارٍ تصميم الوجوه والظهر بالذكاء الاصطناعي… ستظهر تلقائيًا.</> : <>{detail.game.designError ?? 'تعذر استكمال بعض التصاميم.'} {canManage && <button type="button" onClick={() => void onDesignRetry()}>إعادة المحاولة</button>}</>}
     </div>}
-    <details className={styles.gameInstructions}><summary>How to play</summary><p dir="ltr">{detail.game.instructions}</p></details>
+    <details className={styles.gameInstructions} open><summary>طريقة اللعب — شرح بالعربي</summary><p>{detail.game.instructions}</p></details>
     <section className={styles.gamePrintArea} aria-label={`كروت ${detail.game.title}`}>
       <GameBack detail={detail} logoSource={logoSource} artworkSource={backArtworkSource} label="لوجو المشروع" />
       {detail.cards.map((card) => <article className={`${styles.gameCardFace} ${card.imageUrl ? styles.gameCardFaceVisual : ''}`} dir="ltr" key={card.id}>

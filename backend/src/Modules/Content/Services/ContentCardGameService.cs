@@ -145,10 +145,12 @@ public sealed class ContentCardGameService(
         {{Normalize(context.Knowledge, 7_000, "لا توجد معرفة منشورة")}}
 
         Ground every idea in an activity, service, or audience actually mentioned in the project knowledge. Do not offer generic games that could suit any project.
-        Vary the mechanics: questions, role-play, teams, speed rounds, guessing, and choices. Require no tools beyond the cards and a phone timer.
-        Write every player-facing value in clear, natural English. Recommend 8 to 60 cards per game.
+        Every idea MUST be a complete, replayable card game — never a deck of questions or discussion prompts. Give it a clear setup, player turn or round loop, meaningful card actions, risk or strategy, and a specific win or scoring condition.
+        Propose distinctly different game loops such as hidden information and swapping, collecting sets, bluffing and deduction, cooperative missions, tactical racing, or push-your-luck. A question may appear as a small card effect, never as the core game loop. Require no tools beyond the cards and a phone timer.
+        Use an original rule system and original names. Do not copy a commercial game, its name, card wording, or its distinctive rules.
+        Write title in clear, natural English. Write summary and mechanic in simple Egyptian Arabic so the workshop organizer understands the game. Recommend 8 to 60 cards per game.
         Return JSON only in this exact shape:
-        {"ideas":[{"title":"Game name","summary":"Short description","mechanic":"How it works","recommendedCardCount":20}]}
+        {"ideas":[{"title":"English game name","summary":"شرح عربي قصير للفكرة","mechanic":"شرح عربي لطريقة اللعب","recommendedCardCount":20}]}
         """;
 
     internal static string BuildDeckPrompt(GenerationContext context, CreateCardGameInput input) => $$"""
@@ -165,14 +167,16 @@ public sealed class ContentCardGameService(
         {{Normalize(context.Knowledge, 7_000, "لا توجد معرفة منشورة")}}
 
         Ground every card in the project's activities, services, and audience described in the knowledge. Never invent facts.
-        Write every player-facing value in clear, natural English. Make each card distinct. prompt is the short, prominent card text; instruction is an optional one-line facilitator note.
+        Build a REAL, replayable card game — never a question deck. Its rules must include: player count, setup and deal, an explicit turn or round loop, how each card category changes play, risk/strategy or player interaction, end condition, and a clear winner or scoring rule.
+        Use original rules and an original name. Do not copy a commercial game, its name, card wording, or distinctive rules. You may evoke the social strategy feeling of hidden information, swapping, drawing, peeking, bluffing, collecting, or tactical choices, but create a new game system for this project.
+        Write title in English. Write mechanic and instructions in simple Egyptian Arabic for the workshop organizer. Write EVERY card category, title, prompt, and instruction in clear natural English for players. Make each card distinct: prompt must state a playable action, event, choice, mission, or scoring effect — not merely ask a question.
         Return exactly {{input.CardCount}} cards. Do not add visual instructions, colors, markdown, or any prose outside the JSON.
         Return JSON only in this exact shape:
-        {"title":"Final game name","mechanic":"Short how-it-works","instructions":"Full rules","cards":[{"category":"Category","title":"Short title","prompt":"Question or challenge","instruction":"Short facilitator note"}]}
+        {"title":"English game name","mechanic":"ملخص عربي لطريقة اللعب","instructions":"شرح عربي كامل: عدد اللاعبين، التجهيز، توزيع الكروت، تسلسل الدور أو الجولة، تأثير كل نوع كارت، النهاية وطريقة الفوز","cards":[{"category":"English card type","title":"English short title","prompt":"English playable card effect","instruction":"English one-line player instruction"}]}
         """;
 
     internal static string BuildDeckRetryPrompt(GenerationContext context, CreateCardGameInput input) =>
-        $"{BuildDeckPrompt(context, input)}\nThe prior response did not match the contract. Retry now: JSON only, one object, exactly {input.CardCount} cards, and English player-facing text.";
+        $"{BuildDeckPrompt(context, input)}\nThe prior response did not match the contract. Retry now: JSON only, one object, exactly {input.CardCount} cards, English player-facing card text, and Arabic organizer instructions.";
 
     internal static string BuildCardFaceImagePrompt(ContentCardGame game, ContentGameCard card) => $$"""
         Create a print-ready portrait 3:4 visual background for a premium English-language workshop card.
