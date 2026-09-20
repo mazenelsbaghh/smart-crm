@@ -115,8 +115,8 @@ export default function ContentCardGames({
         <aside className={styles.gameComposer} aria-label="إنشاء لعبة جديدة">
           <div className={styles.panelHeading}><div><span>01</span><h2>لعبة جديدة</h2></div></div>
           <label className={styles.field}>
-            <span>الورشة أو الهدف</span>
-            <textarea rows={5} maxLength={2000} value={draft.brief} placeholder="مثال: ورشة لفريق خدمة العملاء لكسر الجليد والتدريب على الردود..." onChange={(event) => updateDraft({ ...draft, brief: event.target.value })} />
+            <span>هدف جلسة الـ English Club</span>
+            <textarea rows={5} maxLength={2000} value={draft.brief} placeholder="مثال: English Club للمستوى المتوسط؛ نريد لعبة فرق تدرب المشاركين على الكلام بثقة ورواية قصص قصيرة..." onChange={(event) => updateDraft({ ...draft, brief: event.target.value })} />
           </label>
           <button type="button" className={styles.btnSecondary} disabled={!canManage || !readiness || Boolean(busy)} onClick={() => void suggest()}>
             {busy === 'ideas' ? <LoaderCircle className={styles.spin} size={17} /> : <Lightbulb size={17} />} اقترح أفكار بالذكاء الاصطناعي
@@ -131,7 +131,7 @@ export default function ContentCardGames({
           <label className={styles.field}><span>اسم اللعبة</span><input maxLength={200} value={draft.title ?? ''} onChange={(event) => updateDraft({ ...draft, title: event.target.value })} /></label>
           <label className={styles.field}><span>طريقة اللعب</span><textarea rows={4} maxLength={600} value={draft.mechanic ?? ''} onChange={(event) => updateDraft({ ...draft, mechanic: event.target.value })} /></label>
           <label className={styles.field}><span>عدد الكروت</span><input type="number" min={8} max={60} value={draft.cardCount} onChange={(event) => updateDraft({ ...draft, cardCount: Number(event.target.value) })} /></label>
-          <p className={styles.gameHint}>كل لعبة تُنتج كروت إنجليزية: وجه بصري مختلف لكل كارت وظهر موحّد مصمّم بالذكاء الاصطناعي، مع اللوجو والألوان الأصلية للمشروع.</p>
+          <p className={styles.gameHint}>كل لعبة هنا Activity حقيقية للـ English Club: المشاركون يتكلمون ويتفاعلون بالإنجليزي، بينما شرح المشرف بالعربي. الكروت لها وجوه بصرية وظهر موحّد بهوية المشروع.</p>
           <button type="button" className={styles.btnPrimary} disabled={!canManage || !readiness || draft.brief.trim().length < 10 || draft.cardCount < 8 || draft.cardCount > 60 || Boolean(busy)} onClick={() => void create()}>
             {busy === 'create' ? <LoaderCircle className={styles.spin} size={17} /> : <Plus size={17} />} نفّذ اللعبة والكروت
           </button>
