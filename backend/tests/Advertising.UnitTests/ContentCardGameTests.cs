@@ -38,6 +38,19 @@ public sealed class ContentCardGameTests
         Assert.DoesNotContain("{{", prompt);
     }
 
+    [Fact]
+    public void Json_parser_accepts_an_object_wrapped_in_model_formatting()
+    {
+        var parsed = ContentCardGameService.ParseJson<IdeaResponse>("""
+            هنا الأفكار المطلوبة:
+            ```json
+            {"title":"اختبار"}
+            ```
+            """);
+
+        Assert.Equal("اختبار", parsed.Title);
+    }
+
     private static ContentCardGameService.GenerationContext Context() => new(
         "TalkTips",
         new ContentAutomationSettings
@@ -48,4 +61,6 @@ public sealed class ContentCardGameTests
         "not-used-in-prompt-test",
         "gemini-test",
         "دليل خدمة العملاء المنشور");
+
+    private sealed record IdeaResponse(string Title);
 }

@@ -41,14 +41,7 @@ public sealed class ContentCardGameService(
     {
         Validate(input);
         var context = await LoadContextAsync(projectId, cancellationToken);
-        var response = await GenerateAsync(BuildDeckPrompt(context, input), context, cancellationToken);
-        var deck = ParseJson<GeneratedDeck>(response);
-        if (string.IsNullOrWhiteSpace(deck.Title)
-            || string.IsNullOrWhiteSpace(deck.Mechanic)
-            || string.IsNullOrWhiteSpace(deck.Instructions)
-            || deck.Cards?.Count != input.CardCount
-            || deck.Cards.Any(card => !ValidCard(card)))
-            throw new InvalidOperationException("Gemini لم يرجع اللعبة كاملة بعدد الكروت المطلوب. حاول مرة أخرى.");
+        var deck = await GenerateDeckAsync(context, input, cancellationToken);
 
         var game = new ContentCardGame
         {
@@ -76,6 +69,24 @@ public sealed class ContentCardGameService(
         }));
         await dbContext.SaveChangesAsync(cancellationToken);
         return game;
+    }
+
+    private async Task<GeneratedDeck> GenerateDeckAsync(
+        GenerationContext context,
+        CreateCardGameInput input,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var prompt = attempt == 0
+                ? BuildDeckPrompt(context, input)
+                : BuildDeckRetryPrompt(context, input);
+            var response = await GenerateAsync(prompt, context, cancellationToken);
+            if (TryParseJson<GeneratedDeck>(response, out var deck) && ValidDeck(deck, input.CardCount))
+                return deck;
+        }
+
+        throw new InvalidOperationException("Gemini لم يرجع اللعبة كاملة بعدد الكروت المطلوب. حاول مرة أخرى.");
     }
 
     private async Task<GenerationContext> LoadContextAsync(Guid projectId, CancellationToken cancellationToken)
@@ -159,11 +170,55 @@ public sealed class ContentCardGameService(
         {"title":"اسم اللعبة النهائي","mechanic":"طريقة اللعب المختصرة","instructions":"قواعد اللعب الكاملة","cards":[{"category":"الفئة","title":"عنوان قصير","prompt":"السؤال أو التحدي","instruction":"تعليمات قصيرة"}]}
         """;
 
-    private static T ParseJson<T>(string response)
+    internal static string BuildDeckRetryPrompt(GenerationContext context, CreateCardGameInput input) =>
+        $"{BuildDeckPrompt(context, input)}\nالرد السابق لم يطابق الصيغة. أعد المحاولة الآن: JSON فقط، كائن واحد، و{input.CardCount} كارت بالضبط.";
+
+    internal static T ParseJson<T>(string response)
     {
-        var cleaned = response.Trim().Replace("```json", string.Empty, StringComparison.OrdinalIgnoreCase).Replace("```", string.Empty);
+        var cleaned = ExtractJsonObject(response);
         try { return JsonSerializer.Deserialize<T>(cleaned, JsonOptions) ?? throw new JsonException(); }
         catch (JsonException) { throw new InvalidOperationException("Gemini لم يرجع بيانات لعبة صالحة. حاول مرة أخرى."); }
+    }
+
+    private static bool TryParseJson<T>(string response, out T value)
+    {
+        try
+        {
+            value = ParseJson<T>(response);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            value = default!;
+            return false;
+        }
+    }
+
+    private static string ExtractJsonObject(string response)
+    {
+        var start = response.IndexOf('{');
+        if (start < 0) return response.Trim();
+
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+        for (var index = start; index < response.Length; index++)
+        {
+            var character = response[index];
+            if (inString)
+            {
+                if (escaped) escaped = false;
+                else if (character == '\\') escaped = true;
+                else if (character == '"') inString = false;
+                continue;
+            }
+
+            if (character == '"') inString = true;
+            else if (character == '{') depth++;
+            else if (character == '}' && --depth == 0) return response[start..(index + 1)];
+        }
+
+        return response[start..].Trim();
     }
 
     private static void Validate(CreateCardGameInput input)
@@ -185,6 +240,13 @@ public sealed class ContentCardGameService(
         !string.IsNullOrWhiteSpace(card.Title) && card.Title.Length <= 160
         && !string.IsNullOrWhiteSpace(card.Prompt) && card.Prompt.Length <= 1_000
         && (card.Category?.Length ?? 0) <= 80 && (card.Instruction?.Length ?? 0) <= 500;
+
+    private static bool ValidDeck(GeneratedDeck deck, int cardCount) =>
+        !string.IsNullOrWhiteSpace(deck.Title)
+        && !string.IsNullOrWhiteSpace(deck.Mechanic)
+        && !string.IsNullOrWhiteSpace(deck.Instructions)
+        && deck.Cards?.Count == cardCount
+        && deck.Cards.All(ValidCard);
 
     private static string Normalize(string? value, int maxLength, string fallback)
     {
