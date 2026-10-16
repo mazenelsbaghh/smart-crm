@@ -50,7 +50,7 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         await db.SaveChangesAsync();
         var (hub, _) = CommitObservingHub(projectId);
         var orchestrator = new AiGroupBookingOrchestrator(db, coordinator, hub,
-            NullLogger<AiGroupBookingOrchestrator>.Instance);
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedBookingNumber());
         var correction = new AiGroupBookingRequest
         {
             ProjectId = projectId, GroupId = group.Id,
@@ -81,6 +81,12 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
             JsonSerializer.Deserialize<AdvertisingBookingOutcomeChanged>(message.PayloadJson)!.BookingId == bookingId);
     }
 
+    private sealed class VerifiedBookingNumber : IWhatsAppBookingNumberVerifier
+    {
+        public Task<WhatsAppNumberVerification> VerifyAsync(Guid projectId, string phone, CancellationToken cancellationToken = default)
+            => Task.FromResult(WhatsAppNumberVerification.Registered);
+    }
+
     [Fact]
     public async Task Ai_booking_for_other_person_in_another_group_reports_conflict_without_moving_or_renaming_them()
     {
@@ -89,7 +95,7 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         await using var db = postgres.CreateContext(Tenant(projectId));
         var otherGroup = new GroupAppointment
         {
-            ProjectId = projectId, Name = "مجموعة أخرى", Capacity = 2,
+            ProjectId = projectId, Name = "مجموعة أخرى", Capacity = 2, Mode = "online",
             IsActive = true, DateTime = DateTime.UtcNow.AddDays(3)
         };
         var customer = Customer(projectId, "01012345678");
@@ -98,7 +104,7 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         await db.SaveChangesAsync();
         var (hub, _) = CommitObservingHub(projectId);
         var orchestrator = new AiGroupBookingOrchestrator(db, new GroupBookingCoordinator(db), hub,
-            NullLogger<AiGroupBookingOrchestrator>.Instance);
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedBookingNumber());
 
         var conflict = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
         {
@@ -138,7 +144,7 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         Assert.NotNull(analysis.SuggestedGroupBookingId);
         var (hub, _) = CommitObservingHub(projectId);
         var orchestrator = new AiGroupBookingOrchestrator(db, new GroupBookingCoordinator(db), hub,
-            NullLogger<AiGroupBookingOrchestrator>.Instance);
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedBookingNumber());
 
         var booked = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
         {
@@ -204,7 +210,7 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
             aiDb,
             new GroupBookingCoordinator(aiDb),
             aiHub,
-            NullLogger<AiGroupBookingOrchestrator>.Instance);
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedBookingNumber());
         var publicController = Controller(publicDb, Tenant(projectId));
 
         var aiTask = aiOrchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
@@ -263,7 +269,7 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
             aiDb,
             new GroupBookingCoordinator(aiDb, indexEventProbe),
             hub,
-            NullLogger<AiGroupBookingOrchestrator>.Instance);
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedBookingNumber());
 
         var result = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
         {
@@ -358,6 +364,40 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         Assert.Equal(GroupBookingPhone.Normalize(input) ?? "<NULL>", databaseValue);
     }
 
+    [Theory]
+    [InlineData(CourseTypes.Regular)]
+    [InlineData(CourseTypes.Intensive)]
+    public async Task Course_schedule_filters_by_course_and_project_and_rejects_reclassifying_groups(string courseType)
+    {
+        var projectId = Guid.NewGuid();
+        var regular = await SeedAvailableGroupAsync(projectId, 3);
+        var otherProjectGroup = await SeedAvailableGroupAsync(Guid.NewGuid(), 3);
+        var tenant = Tenant(projectId);
+        await using var db = postgres.CreateContext(tenant);
+        var controller = Controller(db, tenant);
+        var created = Assert.IsType<OkObjectResult>(await controller.CreateGroup(new CreateGroupRequest
+        {
+            CourseType = CourseTypes.Intensive, DateTime = regular.DateTime, Capacity = 4
+        }));
+        var intensive = Assert.IsType<GroupAppointment>(created.Value);
+        Assert.Contains("المكثف", intensive.Name);
+
+        var response = Assert.IsType<OkObjectResult>(await controller.GetGroups(courseType));
+        var rows = JsonSerializer.SerializeToElement(response.Value).EnumerateArray().ToArray();
+        var row = Assert.Single(rows);
+        Assert.Equal(courseType, row.GetProperty("CourseType").GetString());
+        Assert.Equal(courseType == CourseTypes.Regular ? regular.Id : intensive.Id, row.GetProperty("Id").GetGuid());
+        Assert.NotEqual(otherProjectGroup.Id, row.GetProperty("Id").GetGuid());
+        Assert.IsType<BadRequestObjectResult>(await controller.UpdateGroup(intensive.Id,
+            new UpdateGroupRequest { CourseType = CourseTypes.Regular }));
+        await db.Entry(intensive).ReloadAsync();
+        Assert.Equal(CourseTypes.Intensive, intensive.CourseType);
+        var publicResponse = Assert.IsType<OkObjectResult>(await controller.GetActiveGroupsForPublic(projectId));
+        var publicRows = JsonSerializer.SerializeToElement(publicResponse.Value).EnumerateArray().ToArray();
+        Assert.Equal(2, publicRows.Length);
+        Assert.Contains(publicRows, publicRow => publicRow.GetProperty("CourseType").GetString() == CourseTypes.Intensive);
+    }
+
     private async Task<GroupAppointment> SeedAvailableGroupAsync(Guid projectId, int capacity)
     {
         var tenant = Tenant(projectId);
@@ -367,6 +407,7 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         {
             ProjectId = projectId,
             Name = "مجموعة اختبار التزامن",
+            Mode = "online",
             Capacity = capacity,
             IsActive = true,
             DateTime = DateTime.UtcNow.AddDays(2)

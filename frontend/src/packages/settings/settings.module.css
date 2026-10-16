@@ -14,9 +14,11 @@
 }
 
 .pageTitle {
-  font-size: 1.75rem;
-  font-weight: 700;
   color: hsl(var(--text-primary));
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: normal;
+  margin: 0;
 }
 
 .pageSubtitle {
@@ -26,8 +28,9 @@
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr;
   gap: var(--space-lg);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
 }
 
 @media (min-width: 1100px) {
@@ -38,11 +41,13 @@
 
 .card {
   min-width: 0;
-  padding: clamp(1rem, 2vw, var(--space-xl));
-  border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  padding: 22px;
+  border-radius: var(--radius-lg);
 }
 
 .cardTitle {
@@ -57,7 +62,7 @@
 }
 
 .whatsAppPanel {
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 .accountsHeader {
@@ -390,18 +395,19 @@
 }
 
 .btn {
+  composes: button from '../../components/ui/ui.module.css';
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  padding: 0.75rem var(--space-lg);
-  font-size: 0.875rem;
-  font-weight: 700;
-  border-radius: var(--radius-sm);
   border: none;
   cursor: pointer;
   transition: background-color var(--transition-normal), border-color var(--transition-normal), color var(--transition-normal), box-shadow var(--transition-normal);
   min-height: 44px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: .875rem;
+  padding: 9px 16px;
 }
 
 .btnPrimary {
@@ -447,7 +453,7 @@
 .form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: 16px;
 }
 
 .formGroup {
@@ -497,6 +503,26 @@
 .subscribersActions .btn {
   padding: 0.55rem 0.75rem;
   font-size: 0.78rem;
+}
+
+.groupSubscribersTableRegion { min-width: 0; overflow-x: auto; }
+.groupSubscribersTableRegion:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.groupSubscribersTable { width: 100%; border-collapse: collapse; text-align: start; }
+.groupSubscribersTable td { padding: 12px 6px; font-size: .875rem; overflow-wrap: anywhere; }
+.bookingStatusControl { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 44px; min-height: 44px; cursor: pointer; }
+.bookingStatusControl span { display: none; }
+
+@media (max-width: 767px) {
+  .groupSubscribersTable, .groupSubscribersTable tbody { display: block; }
+  .groupSubscribersTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .groupSubscribersTable tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; padding: 14px 0; }
+  .groupSubscribersTable td { min-width: 0; padding: 4px 0; }
+  .groupSubscribersTable td[data-label], .groupSubscribersTable td:last-child { grid-column: 1 / -1; }
+  .groupSubscribersTable td[data-label]::before { content: attr(data-label); display: block; color: var(--text-soft); font-size: .8125rem; font-weight: 400; margin-bottom: 3px; }
+  .groupSubscribersTable td:first-child { font-size: 1rem; color: var(--text-strong); }
+  .groupSubscribersTable td:first-child::before { display: none; }
+  .bookingStatusControl { justify-content: flex-start; }
+  .bookingStatusControl span { display: inline; }
 }
 
 .manualBookingEditor {
@@ -564,7 +590,7 @@
 }
 
 .phoneInput {
-  text-align: left;
+  text-align: start;
 }
 
 .fieldHint,
@@ -762,7 +788,6 @@
 }
 
 .stickySaveBar {
-  position: sticky;
   bottom: 0;
   z-index: 5;
   display: flex;
@@ -772,10 +797,12 @@
   padding: var(--space-md);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: hsl(var(--bg-primary));
-  box-shadow: 0 -8px 20px color-mix(in srgb, #020617 12%, transparent);
   color: hsl(var(--text-secondary));
   font-size: 0.82rem;
+  position: static;
+  background: var(--surface-muted);
+  box-shadow: none;
+  margin-top: 12px;
 }
 
 .checkboxGroup {
@@ -1002,5 +1029,847 @@
   .input,
   .select {
     transition: none;
+  }
+}
+
+.grid > .card:last-child {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .whatsAppPanel { grid-column: 1 / -1; } }
+
+@media (max-width: 767px) { .card { padding: 16px; } .stickySaveBar { flex-direction: column; align-items: stretch; gap: 10px; } .stickySaveBar button { width: 100%; } .inlineGrid { grid-template-columns: 1fr; } }
+
+.groupWorkspacePanel[hidden],
+.settingsTaskPanel[hidden] {
+  display: none;
+}
+
+.groupWorkspacePanel {
+  min-width: 0;
+}
+
+.groupExport {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.groupWorkspaceTitle {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.groupTimezone {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+}
+
+.groupSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  padding-bottom: var(--space-md);
+  color: var(--text-soft);
+  font-size: 0.85rem;
+}
+
+.groupSummary strong {
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.groupRecords {
+  min-width: 0;
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.groupFilters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.groupTable {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: start;
+}
+
+.groupTable tbody tr {
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.groupTable tbody tr:last-child {
+  border-bottom: 0;
+}
+
+.groupTable tr[data-selected="true"] {
+  background: var(--accent-soft);
+}
+
+.groupTable td {
+  padding: 16px 8px;
+  font-size: 0.85rem;
+}
+
+.groupIdentity strong,
+.groupIdentity > span {
+  display: block;
+}
+
+.groupIdentity strong {
+  margin-bottom: 4px;
+  color: var(--text-strong);
+}
+
+.groupIdentity > span {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.groupSchedule {
+  max-width: 260px;
+  overflow-wrap: anywhere;
+}
+
+.groupAvailability {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 116px;
+}
+
+.groupTable button {
+  min-height: 44px;
+}
+
+.groupRowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 240px;
+}
+
+.staffDirectory,
+.importPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.staffDirectory fieldset + fieldset {
+  padding-top: var(--space-lg) !important;
+  border-top: 1px solid var(--border-subtle) !important;
+}
+
+.groupExport {
+  margin-bottom: var(--space-lg);
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.groupExport h3 {
+  margin: 0 0 12px;
+}
+
+@media (max-width: 900px) {
+  .groupRecords {
+    padding: var(--space-md);
+  }
+
+  .groupTable thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .groupTable,
+  .groupTable tbody {
+    display: block;
+  }
+
+  .groupTable tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    padding-block: 18px;
+  }
+
+  .groupTable td {
+    display: block;
+    padding: 0;
+  }
+
+  .groupTable .groupIdentity {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .groupTable td[data-label="الحالة"] {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: end;
+  }
+
+  .groupTable .groupSchedule,
+  .groupTable .groupActionsCell,
+  .groupTable td[colspan] {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+
+  .groupTable td[data-label="الحجوزات والسعة"] {
+    grid-column: 1 / -1;
+  }
+
+  .groupAvailability {
+    max-width: none;
+  }
+
+  .groupRowActions {
+    max-width: none;
+  }
+
+  .groupRowActions > button:first-child {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .groupTable button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 560px) {
+  .groupFilters {
+    gap: 8px;
+  }
+
+  .groupFilters > div {
+    flex-basis: calc(50% - 4px) !important;
+  }
+
+  .groupFilters > button {
+    min-height: 36px;
+    padding-block: 4px;
+  }
+
+  .groupFilters > button:disabled {
+    display: none;
+  }
+
+  .groupExport {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.settingsWorkspace {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-lg);
+}
+
+.settingsTaskNav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settingsTaskNav button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 64px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.settingsTaskNav button > span {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.settingsTaskNav button small {
+  color: var(--text-soft);
+  font-size: 0.73rem;
+}
+
+.settingsTaskNav button:hover {
+  background: var(--surface-muted);
+}
+
+.settingsTaskNav button[aria-current="true"] {
+  border-color: var(--accent-soft-strong);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.settingsContent,
+.settingsTaskPanel {
+  min-width: 0;
+}
+
+.settingsTaskPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.settingsConnectionSave[hidden] {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .settingsWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settingsTaskNav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .settingsTaskNav button {
+    flex: 0 0 auto;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .settingsTaskNav button small {
+    display: none;
+  }
+}
+
+.groupHeadingRow,
+.groupPrimaryToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.groupHeadingContent {
+  min-width: 0;
+}
+
+.groupPrimaryToolbar > .btn:last-child {
+  margin-inline-start: auto;
+}
+
+.groupManagementMenu,
+.groupCoursePicker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.groupManagementMenu > summary,
+.groupCoursePicker > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-strong);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.groupManagementMenu > summary::-webkit-details-marker,
+.groupCoursePicker > summary::-webkit-details-marker {
+  display: none;
+}
+
+.groupManagementMenu[open] > summary,
+.groupCoursePicker[open] > summary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.groupManagementMenu > nav,
+.groupCoursePicker > nav {
+  position: absolute;
+  z-index: 20;
+  inset-block-start: calc(100% + 6px);
+  inset-inline-end: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 224px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.groupCoursePicker > nav {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+  min-width: 180px;
+}
+
+.groupManagementMenu button,
+.groupCoursePicker a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  text-align: start;
+  text-decoration: none;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.groupManagementMenu button:hover:not(:disabled),
+.groupCoursePicker a:hover {
+  background: var(--surface-muted);
+}
+
+.groupManagementMenu button[aria-current="page"],
+.groupCoursePicker a[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.groupManagementMenu button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.groupManagementMenu :focus-visible,
+.groupCoursePicker :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.groupUnsavedMark {
+  margin-inline-start: auto;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.75rem;
+}
+
+.groupListTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.groupResultCount {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+}
+
+.groupFilterDisclosure summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-base);
+  font-size: 0.82rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.groupFilterDisclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.groupFilterDisclosure[open] {
+  flex-basis: 100%;
+}
+
+.groupFilterDisclosure[open] summary {
+  width: fit-content;
+  margin-bottom: 12px;
+}
+
+.filterActiveCount {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+
+.groupSummaryTimezone {
+  margin-inline-start: auto;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 560px) {
+  .groupPage {
+    gap: 12px;
+  }
+
+  .groupSummary {
+    gap: 6px 14px;
+    padding-bottom: 8px;
+    font-size: 0.8rem;
+  }
+
+  .groupSummaryTimezone {
+    width: 100%;
+  }
+
+  .groupRecords {
+    padding-block: 8px;
+  }
+}
+
+.groupStatusFilters {
+  padding-bottom: 6px;
+}
+
+.groupStatusFilters > div {
+  margin: 0;
+}
+
+.groupContextDivider {
+  margin-inline: 6px;
+  color: var(--border-strong);
+}
+
+.groupScheduleDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.groupDateLabel,
+.groupInstructor {
+  color: var(--text-soft);
+  font-size: 0.76rem;
+}
+
+.groupDate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--info);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.groupDate svg {
+  flex-shrink: 0;
+}
+
+.groupStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-soft);
+  font-size: 0.73rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.groupStatusBadge[data-status="available"] {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.groupStatusBadge[data-status="full"] {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.groupCapacityNumbers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.groupCapacityNumbers strong {
+  color: var(--text-strong);
+  font-size: 0.95rem;
+}
+
+.groupCapacityNumbers > span:last-child:not(:first-child) {
+  color: var(--success);
+}
+
+.groupCapacityTrack {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-muted);
+}
+
+.groupCapacityTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--success);
+}
+
+.groupAvailability[data-status="full"] .groupCapacityTrack span {
+  background: var(--warning);
+}
+
+.groupAvailability[data-status="inactive"] .groupCapacityTrack span {
+  background: var(--border-strong);
+}
+
+.groupPrimaryAction {
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 0.81rem;
+}
+
+.groupMoreActions summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-soft);
+  font-size: 0.76rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.groupMoreActions summary::-webkit-details-marker {
+  display: none;
+}
+
+.groupMoreActions[open] {
+  flex-basis: 100%;
+}
+
+.groupMoreActions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+}
+
+.groupMoreActions summary:hover {
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+.settingsTaskLabel {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.settingsTaskLabel svg {
+  flex-shrink: 0;
+  color: var(--text-soft);
+}
+
+.settingsTaskNav button small {
+  padding-inline-start: 28px;
+}
+
+.settingsTaskNav button[aria-current="true"] {
+  font-weight: 700;
+  border-color: color-mix(in oklch, var(--accent) 38%, var(--border-subtle));
+}
+
+.settingsTaskNav button[aria-current="true"][data-tone="intelligence"] {
+  color: var(--intelligence);
+  background: var(--intelligence-soft);
+  border-color: color-mix(in oklch, var(--intelligence) 35%, var(--border-subtle));
+}
+
+.settingsTaskNav button[aria-current="true"][data-tone="info"] {
+  color: var(--info);
+  background: var(--info-soft);
+  border-color: color-mix(in oklch, var(--info) 35%, var(--border-subtle));
+}
+
+.settingsTaskNav button[aria-current="true"] svg {
+  color: currentColor;
+}
+
+.settingsEditor[data-tone="intelligence"] > h2 svg {
+  color: var(--intelligence);
+}
+
+.replySettingsHint {
+  margin: 0;
+  max-width: 65ch;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+
+.replyChannelList {
+  display: flex;
+  flex-direction: column;
+}
+
+
+
+
+
+
+
+
+
+.replyChannelState {
+  padding: 3px 7px;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  background: var(--surface-muted);
+  font-size: .75rem;
+  font-weight: 600;
+}
+
+.replyChannelState[data-enabled="true"] {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+
+
+
+
+
+.numberWithUnit {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.numberWithUnit:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.numberWithUnit input {
+  min-height: 44px;
+  padding-block: 8px;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  font-variant-numeric: tabular-nums;
+}
+
+.numberWithUnit input:focus-visible {
+  box-shadow: none;
+}
+
+.numberWithUnit span {
+  padding-inline: 4px 12px;
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .groupTable tbody tr {
+    gap: 8px;
+    padding-block: 14px;
+  }
+
+  .groupRowActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .groupRowActions > button:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .groupMoreActions[open] {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .settingsEditor {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .settingsEditor > h2 {
+    margin: 0;
+    padding-bottom: 12px;
+    font-size: 1.05rem;
+  }
+
+  .settingsTaskPanel {
+    gap: 14px;
+  }
+
+
+
+
+
+
+  .groupStatusFilters button {
+    padding-inline: 8px;
+    gap: 5px;
+  }
+
+  .groupResultCount {
+    font-size: 0.74rem;
   }
 }

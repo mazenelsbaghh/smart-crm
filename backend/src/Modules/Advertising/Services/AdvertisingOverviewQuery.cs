@@ -13,14 +13,18 @@ public sealed record AdvertisingOverviewInsightMetrics(
     int DaysLoaded,
     int Snapshots,
     DateTime? LastPulledAtUtc,
-    decimal AllTimeSpend);
+    decimal AllTimeSpend,
+    int WindowSnapshots,
+    int ExcludedCurrencySnapshots);
 
 public sealed record AdvertisingOverviewConversionMetrics(
     decimal Revenue,
     int Leads,
     int QualifiedLeads,
     int Bookings,
-    int Purchases);
+    int Purchases,
+    decimal AttributedRevenue,
+    int ExcludedRevenueCurrencies);
 
 public sealed record AdvertisingOverviewCampaign(
     string Name,
@@ -54,37 +58,49 @@ public static class AdvertisingOverviewQuery
         AppDbContext db,
         Guid projectId,
         AdvertisingOverviewWindow window,
+        string currency,
         CancellationToken cancellationToken)
     {
-        var metrics = await db.AdvertisingInsights.AsNoTracking()
+        var query = db.AdvertisingInsights.AsNoTracking()
             .Where(snapshot => snapshot.ProjectId == projectId && snapshot.IsCurrent)
+            .Where(snapshot => snapshot.TargetType == "Ad" && (snapshot.BreakdownHash == "none" || snapshot.BreakdownHash == ""));
+        var history = await query
             .GroupBy(snapshot => snapshot.ProjectId)
-            .Select(group => new AdvertisingOverviewInsightMetrics(
-                group.Sum(snapshot => snapshot.IntervalStartUtc >= window.StartUtc && snapshot.IntervalStartUtc < window.EndUtc ? snapshot.Spend : 0m),
-                group.Sum(snapshot => snapshot.IntervalStartUtc >= window.StartUtc && snapshot.IntervalStartUtc < window.EndUtc ? snapshot.Impressions : 0L),
-                group.Sum(snapshot => snapshot.IntervalStartUtc >= window.StartUtc && snapshot.IntervalStartUtc < window.EndUtc ? snapshot.Clicks : 0L),
-                group.Select(snapshot => snapshot.IntervalStartUtc.Date).Distinct().Count(),
-                group.Count(),
-                group.Max(snapshot => (DateTime?)snapshot.FetchedAtUtc),
-                group.Sum(snapshot => snapshot.Spend)))
+            .Select(group => new {
+                DaysLoaded = group.Select(snapshot => snapshot.IntervalStartUtc.Date).Distinct().Count(),
+                Snapshots = group.Count(),
+                LastPulledAtUtc = group.Max(snapshot => (DateTime?)snapshot.FetchedAtUtc),
+                AllTimeSpend = group.Sum(snapshot => snapshot.Currency == currency ? snapshot.Spend : 0m) })
             .SingleOrDefaultAsync(cancellationToken);
-
-        return metrics ?? new(0m, 0L, 0L, 0, 0, null, 0m);
+        var earliest = window.StartUtc.AddDays(-1);
+        var latest = window.EndUtc.AddDays(1);
+        var candidates = await query.Where(snapshot => snapshot.IntervalStartUtc >= earliest && snapshot.IntervalStartUtc < latest)
+            .ToListAsync(cancellationToken);
+        var rows = candidates.Where(snapshot => AdvertisingInsightWindow.StartUtc(snapshot) >= window.StartUtc
+            && AdvertisingInsightWindow.StartUtc(snapshot) < window.EndUtc).ToArray();
+        return new(rows.Where(row => row.Currency == currency).Sum(row => row.Spend), rows.Sum(row => row.Impressions),
+            rows.Sum(row => row.Clicks), history?.DaysLoaded ?? 0, history?.Snapshots ?? 0,
+            history?.LastPulledAtUtc, history?.AllTimeSpend ?? 0m, rows.Length, rows.Count(row => row.Currency != currency));
     }
 
     public static async Task<AdvertisingOverviewConversionMetrics> ConversionsAsync(
         AppDbContext db,
         Guid projectId,
         AdvertisingOverviewWindow window,
+        string currency,
         CancellationToken cancellationToken)
     {
         var metrics = await db.AdvertisingConversions.AsNoTracking()
             .Where(conversion => conversion.ProjectId == projectId
                 && conversion.OccurredAtUtc >= window.StartUtc
-                && conversion.OccurredAtUtc < window.EndUtc)
+                && conversion.OccurredAtUtc < window.EndUtc
+                && (conversion.TruthState == "Verified" || conversion.TruthState == "Corrected")
+                && conversion.State != ConversionState.Suppressed
+                && conversion.CorrectionState != CorrectionState.PendingBase)
             .GroupBy(conversion => conversion.ProjectId)
             .Select(group => new AdvertisingOverviewConversionMetrics(
-                group.Sum(conversion => conversion.CurrentValue > 0 ? conversion.CurrentValue ?? 0m : 0m),
+                group.Sum(conversion => AdvertisingOutcomePolicy.RevenueEvents.Contains(conversion.EventType)
+                    && conversion.CurrentValue > 0 && conversion.Currency == currency ? conversion.CurrentValue ?? 0m : 0m),
                 group.Count(conversion => conversion.EventType == "Lead"),
                 group.Count(conversion => conversion.EventType == "QualifiedLead"),
                 group.Count(conversion => conversion.EventType == "BookingConfirmed"
@@ -92,10 +108,18 @@ public static class AdvertisingOverviewQuery
                     || conversion.EventType == "AttendanceConfirmed"),
                 group.Count(conversion => conversion.EventType == "Purchase"
                     || conversion.EventType == "SubscriptionStarted"
-                    || conversion.EventType == "EnrollmentPaid")))
+                    || conversion.EventType == "SubscriptionRenewed"
+                    || conversion.EventType == "DealWon"
+                    || conversion.EventType == "EnrollmentPaid"),
+                group.Sum(conversion => AdvertisingOutcomePolicy.RevenueEvents.Contains(conversion.EventType)
+                    && conversion.CurrentValue > 0 && conversion.Currency == currency
+                    && conversion.AttributionState == AttributionState.Attributed && conversion.AdvertisementId != null
+                    ? conversion.CurrentValue ?? 0m : 0m),
+                group.Count(conversion => AdvertisingOutcomePolicy.RevenueEvents.Contains(conversion.EventType)
+                    && conversion.CurrentValue > 0 && (conversion.Currency == null || conversion.Currency != currency))))
             .SingleOrDefaultAsync(cancellationToken);
 
-        return metrics ?? new(0m, 0, 0, 0, 0);
+        return metrics ?? new(0m, 0, 0, 0, 0, 0m, 0);
     }
 
     public static async Task<AdvertisingOverviewAdvertisementMetrics> AdvertisementsAsync(

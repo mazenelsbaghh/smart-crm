@@ -78,7 +78,7 @@ namespace Modules.Campaigns.API
             var campaigns = await _context.Campaigns
                 .Where(c => c.ProjectId == projectId)
                 .ToListAsync();
-            return Ok(campaigns);
+            return Ok(campaigns.Select(CampaignResponse));
         }
 
         [HttpPost("projects/{projectId}/campaigns")]
@@ -101,7 +101,7 @@ namespace Modules.Campaigns.API
             _context.Campaigns.Add(campaign);
             await _context.SaveChangesAsync();
 
-            return Created($"/api/campaigns/{campaign.Id}", campaign);
+            return Created($"/api/campaigns/{campaign.Id}", CampaignResponse(campaign));
         }
 
         [HttpGet("campaigns/{id}")]
@@ -110,7 +110,7 @@ namespace Modules.Campaigns.API
             var campaign = await _context.Campaigns.FindAsync(id);
             if (campaign == null) return NotFound();
             if (!_authorization.CanRead(User, campaign.ProjectId)) return Forbid();
-            return Ok(campaign);
+            return Ok(CampaignResponse(campaign));
         }
 
         [HttpPost("campaigns/{id}/schedule")]
@@ -202,22 +202,23 @@ namespace Modules.Campaigns.API
                 name = campaign.Name,
                 status = campaign.Status.ToString(),
                 sentCount = campaign.SentCount,
-                deliveredCount = campaign.DeliveredCount,
-                readCount = campaign.ReadCount,
-                responseCount = campaign.ResponseCount,
+                // No receipt ingestion exists yet; legacy stored delivery counts also reflected send acceptance.
+                deliveredCount = (int?)null,
+                readCount = (int?)null,
+                responseCount = (int?)null,
                 variants = new
                 {
                     A = new
                     {
                         sent = variantA.Count(r => IsSent(r.Status)),
-                        delivered = variantA.Count(r => r.Status == RecipientStatus.Delivered || r.Status == RecipientStatus.Read || r.Status == RecipientStatus.Responded),
-                        responded = variantA.Count(r => r.Status == RecipientStatus.Responded)
+                        delivered = (int?)null,
+                        responded = (int?)null
                     },
                     B = new
                     {
                         sent = variantB.Count(r => IsSent(r.Status)),
-                        delivered = variantB.Count(r => r.Status == RecipientStatus.Delivered || r.Status == RecipientStatus.Read || r.Status == RecipientStatus.Responded),
-                        responded = variantB.Count(r => r.Status == RecipientStatus.Responded)
+                        delivered = (int?)null,
+                        responded = (int?)null
                     }
                 }
             };
@@ -230,6 +231,28 @@ namespace Modules.Campaigns.API
                 or RecipientStatus.Delivered
                 or RecipientStatus.Read
                 or RecipientStatus.Responded;
+
+        private static object CampaignResponse(Campaign campaign) => new
+        {
+            campaign.Id,
+            campaign.ProjectId,
+            campaign.WhatsAppAccountId,
+            campaign.Name,
+            campaign.SegmentId,
+            campaign.MessageTemplateA,
+            campaign.MessageTemplateB,
+            campaign.Status,
+            campaign.ScheduledAt,
+            campaign.StartedAt,
+            campaign.CompletedAt,
+            campaign.SentCount,
+            // Only accepted sends are observed; these require provider receipts or reply attribution.
+            DeliveredCount = (int?)null,
+            ReadCount = (int?)null,
+            ResponseCount = (int?)null,
+            campaign.CreatedAt,
+            campaign.UpdatedAt
+        };
 
         [HttpPost("campaigns/generate-copy")]
         public async Task<IActionResult> GenerateCopy([FromBody] GenerateCopyRequest request)

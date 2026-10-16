@@ -1,11 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, CalendarDays, Trophy } from 'lucide-react';
+import PageHeader from '../../../components/ui/PageHeader';
+import { ArrowRight, CalendarDays, Trophy, ChartNoAxesCombined } from 'lucide-react';
 import { useAuth } from '../../../context/auth-context';
 import { reportsApi, type ReportWindow } from './reports-api';
-import { reportDateWindow } from './report-window';
+import { reportDateWindow, reportInputDate, reportTimezone } from './report-window';
+import type { Project } from '../../../services/auth';
 import type { SalesIntelligenceDashboard } from './types';
 import styles from './reports.module.css';
 
@@ -22,15 +24,8 @@ const stages: { key: DailyKey; label: string }[] = [
   { key: 'attended', label: 'حضور' },
 ];
 
-const inputDate = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
 const formatDay = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString('ar-EG', {
-  weekday: 'short', day: 'numeric', month: 'short',
+  weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC',
 });
 
 const stageLeaders = (daily: SalesIntelligenceDashboard['daily']): StageLeader[] => stages.map((stage) => {
@@ -63,7 +58,7 @@ function DailyBreakdown({ dashboard, leaders }: { dashboard: SalesIntelligenceDa
     </div>
     <p className={styles.dailyBookingNote}>«حجز» حسب يوم دخول الشات؛ «حجز في اليوم» حسب تاريخ تسجيل الحجز.</p>
     {dashboard.daily.length === 0 ? <div className={styles.emptyInline}><p>لا توجد نتائج في هذه الفترة</p><span>جرّب توسيع تاريخ البداية والنهاية.</span></div> : (
-      <div className={styles.tableScroll}><table className={`${styles.dailyTable} ${styles.expandedDailyTable}`}>
+      <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="جدول نتائج الأيام، قابل للتمرير"><table className={`${styles.dailyTable} ${styles.expandedDailyTable}`}>
         <thead><tr><th>اليوم</th>{stages.map((stage) => <th key={stage.key}>{stage.label}</th>)}</tr></thead>
         <tbody>{dashboard.daily.map((day) => <tr key={day.date}>
           <th scope="row">{formatDay(day.date)}</th>
@@ -78,30 +73,37 @@ function DailyBreakdown({ dashboard, leaders }: { dashboard: SalesIntelligenceDa
 }
 
 export default function FunnelAnalyticsPage() {
-  const { activeProject } = useAuth();
-  const [fromDate, setFromDate] = useState(() => inputDate(new Date(Date.now() - 6 * 86_400_000)));
-  const [toDate, setToDate] = useState(() => inputDate(new Date()));
-  const [windowRange, setWindowRange] = useState<ReportWindow>(() => reportDateWindow(fromDate, toDate)!);
+  const { activeProject, loading } = useAuth();
+  if (!activeProject) return <div role="status">{loading ? 'جاري تحديد المشروع…' : 'تعذر تحديد المشروع النشط.'}</div>;
+  return <FunnelWorkspace key={`${activeProject.id}:${activeProject.settings?.timezone}`} project={activeProject} />;
+}
+
+function FunnelWorkspace({ project }: { project: Project }) {
+  const timezone = reportTimezone(project.settings?.timezone);
+  const [fromDate, setFromDate] = useState(() => reportInputDate(new Date(Date.now() - 6 * 86_400_000), timezone));
+  const [toDate, setToDate] = useState(() => reportInputDate(new Date(), timezone));
+  const [windowRange, setWindowRange] = useState<ReportWindow>(() => reportDateWindow(fromDate, toDate, timezone)!);
   const [dashboard, setDashboard] = useState<SalesIntelligenceDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const requestId = useRef(0);
+  const requestedWindow = useRef(windowRange);
+  useLayoutEffect(() => { requestedWindow.current = windowRange; }, [windowRange]);
 
   const load = useCallback(async () => {
-    if (!activeProject) {
-      setError('تعذر تحديد المشروع النشط.');
-      setLoading(false);
-      return;
-    }
+    const request = ++requestId.current;
+    const isCurrent = () => request === requestId.current && requestedWindow.current === windowRange;
     setLoading(true);
     setError('');
     try {
-      setDashboard(await reportsApi.dashboard(activeProject.id, windowRange));
+      const report = await reportsApi.dashboard(project.id, windowRange);
+      if (isCurrent()) setDashboard(report);
     } catch {
-      setError('تعذر تحميل تحليل الأيام. تحقق من اتصال الخادم ثم حاول مرة أخرى.');
+      if (isCurrent()) setError('تعذر تحميل تحليل الأيام. تحقق من اتصال الخادم ثم حاول مرة أخرى.');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [activeProject, windowRange]);
+  }, [project.id, windowRange]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -111,11 +113,13 @@ export default function FunnelAnalyticsPage() {
   const leaders = useMemo(() => stageLeaders(dashboard?.daily ?? []), [dashboard]);
 
   const applyRange = () => {
-    const next = reportDateWindow(fromDate, toDate);
+    const next = reportDateWindow(fromDate, toDate, dashboard?.timezone ?? timezone);
     if (!next) {
       setError('اختر تاريخ بداية ونهاية صحيحين؛ تاريخ النهاية لا يسبق البداية.');
       return;
     }
+    setDashboard(null);
+    setLoading(true);
     setWindowRange(next);
   };
 
@@ -124,23 +128,23 @@ export default function FunnelAnalyticsPage() {
       <header className={styles.funnelPageHeader}>
         <div>
           <Link className={styles.backLink} href="/management/reports"><ArrowRight size={15} aria-hidden="true" /> مدير المبيعات</Link>
-          <h1>الأيام الأعلى في مسار التحويل</h1>
-          <p>قارن نتائج العملاء حسب يوم دخول الشات، وشوف عدد الحجوزات المسجلة في كل يوم.</p>
+          <PageHeader title="الأيام الأعلى في مسار التحويل" icon={<ChartNoAxesCombined size={24} aria-hidden="true" />}
+            description="قارن نتائج العملاء حسب يوم دخول الشات، وشوف عدد الحجوزات المسجلة في كل يوم." />
         </div>
       </header>
 
       <div className={styles.customRangeBar}>
-        <div className={styles.customRangeTitle}><CalendarDays size={17} aria-hidden="true" /><span>حدد الفترة التي تريد فهمها</span></div>
+        <div className={styles.customRangeTitle}><CalendarDays size={17} aria-hidden="true" /><span>حدد الفترة بتوقيت {dashboard?.timezone ?? timezone}</span></div>
         <label>من<input aria-label="تاريخ بداية الفترة" type="date" value={fromDate} max={toDate} onChange={(event) => setFromDate(event.target.value)} /></label>
         <label>إلى<input aria-label="تاريخ نهاية الفترة" type="date" value={toDate} min={fromDate} onChange={(event) => setToDate(event.target.value)} /></label>
         <button type="button" disabled={loading} onClick={applyRange}>{loading ? 'جاري العرض…' : 'عرض الفترة'}</button>
       </div>
 
-      {error && <div className={styles.errorBanner} role="alert">{error}</div>}
+      {error && <div className={styles.errorBanner} role="alert">{error} <button type="button" onClick={() => void load()}>إعادة المحاولة</button></div>}
       {loading && !dashboard ? <div className={styles.funnelPageLoading} role="status">جاري تحميل الأيام…</div> : dashboard && (
         <>
-          <BestDays leaders={leaders} dayCount={dashboard.daily.length} />
           <DailyBreakdown dashboard={dashboard} leaders={leaders} />
+          <BestDays leaders={leaders} dayCount={dashboard.daily.length} />
         </>
       )}
     </main>

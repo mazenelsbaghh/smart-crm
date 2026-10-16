@@ -16,6 +16,8 @@ public sealed partial class KnowledgeProjectionConsumer(AppDbContext db) :
     IIntegrationEventHandler<AdvertisingKnowledgeChanged>
 {
     protected override string ConsumerName => nameof(KnowledgeProjectionConsumer);
+    // Knowledge events replace the full document snapshot, including revocations arriving before earlier revisions.
+    protected override bool AcceptsCompleteSnapshots => true;
 
     public Task HandleAsync(AdvertisingKnowledgeChanged message) => ConsumeAsync(message, async cancellationToken =>
     {
@@ -33,8 +35,11 @@ public sealed partial class KnowledgeProjectionConsumer(AppDbContext db) :
         projection.AffectedOfferKeysJson = message.AffectedOfferKeysJson;
         projection.UpdatedFromEventId = message.Id;
         projection.IsTombstoned = message.IsTombstone;
+        var affectedProfileIds = Db.AdvertisingFactSources.IgnoreQueryFilters()
+            .Where(source => source.ProjectId == message.ProjectId && source.KnowledgeDocumentId == message.KnowledgeDocumentId)
+            .Select(source => source.ProfileId);
         var profiles = await Db.AdvertisingProfiles.IgnoreQueryFilters()
-            .Where(x => x.ProjectId == message.ProjectId && x.StaleAtUtc == null)
+            .Where(x => x.ProjectId == message.ProjectId && x.StaleAtUtc == null && affectedProfileIds.Contains(x.Id))
             .ToListAsync(cancellationToken);
         foreach (var profile in profiles)
         {
@@ -86,6 +91,10 @@ public sealed partial class KnowledgeProjectionConsumer(AppDbContext db) :
 
     public async Task HandleAsync(KnowledgePublishedChangedEvent @event)
     {
+        // Older queue contracts must not restore knowledge withdrawn by a versioned snapshot.
+        if (await Db.AdvertisingKnowledgeProjections.IgnoreQueryFilters().AnyAsync(snapshot =>
+                snapshot.ProjectId == @event.ProjectId && snapshot.DocumentId == @event.DocumentId
+                && snapshot.DocumentVersion >= @event.Version)) return;
         var isPublished = @event.Status is "Published" or "Approved";
         var profiles = await Db.AdvertisingProfiles.IgnoreQueryFilters().Where(x => x.ProjectId == @event.ProjectId).ToListAsync();
         foreach (var old in profiles) { old.Status = "Stale"; old.StaleAtUtc = DateTime.UtcNow; }

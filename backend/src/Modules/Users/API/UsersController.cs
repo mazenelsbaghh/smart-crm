@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Modules.Auth.Domain;
 using Shared.Infrastructure;
@@ -10,10 +11,12 @@ using System.Threading.Tasks;
 namespace Modules.Users.API
 {
     [ApiController]
+    [Authorize(Roles = "Owner,Admin")]
     [Route("api")]
     public class UsersController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly IProjectAuthorizationService _authorization = new ProjectAuthorizationService();
         private readonly IPasswordHasher _passwordHasher;
 
         private static readonly string[] ValidRoles = new[]
@@ -30,6 +33,7 @@ namespace Modules.Users.API
         [HttpGet("projects/{projectId}/users")]
         public async Task<IActionResult> ListUsers(Guid projectId)
         {
+            if (!_authorization.CanManageProject(User, projectId)) return Forbid();
             var users = await _context.Users
                 .Where(u => u.ProjectId == projectId)
                 .Select(u => new UserDto
@@ -49,6 +53,7 @@ namespace Modules.Users.API
         [HttpPost("projects/{projectId}/users/invite")]
         public async Task<IActionResult> InviteUser(Guid projectId, [FromBody] InviteUserRequest request)
         {
+            if (!_authorization.CanManageProject(User, projectId)) return Forbid();
             if (string.IsNullOrWhiteSpace(request.Email))
             {
                 return BadRequest(new { error = "Email is required" });
@@ -69,6 +74,8 @@ namespace Modules.Users.API
             {
                 return BadRequest(new { error = "Email already exists" });
             }
+
+            if (role == "Owner" && !User.IsInRole("Owner")) return Forbid();
 
             var user = new User
             {
@@ -100,6 +107,7 @@ namespace Modules.Users.API
             {
                 return NotFound(new { error = "User not found" });
             }
+            if (!_authorization.CanManageProject(User, user.ProjectId)) return Forbid();
 
             return Ok(new UserDto
             {
@@ -120,6 +128,7 @@ namespace Modules.Users.API
             {
                 return NotFound(new { error = "User not found" });
             }
+            if (!_authorization.CanManageProject(User, user.ProjectId)) return Forbid();
 
             if (!string.IsNullOrWhiteSpace(request.Email))
             {
@@ -136,6 +145,7 @@ namespace Modules.Users.API
                 {
                     return BadRequest(new { error = $"Invalid role. Allowed roles are: {string.Join(", ", ValidRoles)}" });
                 }
+                if (request.Role == "Owner" && !User.IsInRole("Owner")) return Forbid();
                 user.Role = request.Role;
             }
 
@@ -161,12 +171,14 @@ namespace Modules.Users.API
             {
                 return NotFound(new { error = "User not found" });
             }
+            if (!_authorization.CanManageProject(User, user.ProjectId)) return Forbid();
 
             if (string.IsNullOrWhiteSpace(request.Role) || !ValidRoles.Contains(request.Role))
             {
                 return BadRequest(new { error = $"Invalid role. Allowed roles are: {string.Join(", ", ValidRoles)}" });
             }
 
+            if (request.Role == "Owner" && !User.IsInRole("Owner")) return Forbid();
             user.Role = request.Role;
             user.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
@@ -190,6 +202,7 @@ namespace Modules.Users.API
             {
                 return NotFound(new { error = "User not found" });
             }
+            if (!_authorization.CanManageProject(User, user.ProjectId)) return Forbid();
 
             _context.Users.Remove(user);
             await _context.SaveChangesAsync();

@@ -10,15 +10,22 @@ namespace Advertising.IntegrationTests;
 
 public sealed class AiGenerationCacheTests : IAsyncLifetime
 {
-    private readonly IContainer container = new ContainerBuilder("redis:7-alpine")
-        .WithPortBinding(6379, true).WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
+    private readonly string? externalConnection = Environment.GetEnvironmentVariable("ADVERTISING_TEST_REDIS_CONNECTION");
+    private IContainer? container;
     private IConnectionMultiplexer redis = null!;
     private readonly IDataProtectionProvider protection = new EphemeralDataProtectionProvider();
 
     public async Task InitializeAsync()
     {
-        await container.StartAsync();
-        var options = ConfigurationOptions.Parse($"{container.Hostname}:{container.GetMappedPublicPort(6379)}");
+        var connection = externalConnection;
+        if (string.IsNullOrWhiteSpace(connection))
+        {
+            container = new ContainerBuilder("redis:7-alpine").WithPortBinding(6379, true)
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
+            await container.StartAsync();
+            connection = $"{container.Hostname}:{container.GetMappedPublicPort(6379)}";
+        }
+        var options = ConfigurationOptions.Parse(connection);
         options.AsyncTimeout = 1000;
         options.BacklogPolicy = BacklogPolicy.FailFast;
         redis = await ConnectionMultiplexer.ConnectAsync(options);
@@ -27,7 +34,7 @@ public sealed class AiGenerationCacheTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         redis.Dispose();
-        await container.DisposeAsync();
+        if (container is not null) await container.DisposeAsync();
     }
 
     [Fact]
@@ -72,7 +79,15 @@ public sealed class AiGenerationCacheTests : IAsyncLifetime
     [Fact]
     public async Task Redis_outage_still_allows_a_reply_but_does_not_create_unusable_provider_context_caches()
     {
-        await container.StopAsync();
+        if (container is not null) await container.StopAsync();
+        else
+        {
+            redis.Dispose();
+            var offline = new ConfigurationOptions { AbortOnConnectFail = false, ConnectTimeout = 100,
+                AsyncTimeout = 100, ConnectRetry = 0, BacklogPolicy = BacklogPolicy.FailFast };
+            offline.EndPoints.Add("127.0.0.1", 1);
+            redis = await ConnectionMultiplexer.ConnectAsync(offline);
+        }
         var generated = 0;
         Task<string> Generate()
         {

@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Modules.Auth.Domain;
+using Modules.Auth.Services;
 using Shared.Infrastructure;
 using Shared.Security;
 using System;
@@ -24,6 +26,7 @@ namespace Modules.Auth.API
         }
 
         [HttpPost("register")]
+        [AllowAnonymous]
         public IActionResult Register([FromBody] RegisterRequest _) =>
             StatusCode(StatusCodes.Status403Forbidden, new
             {
@@ -32,6 +35,7 @@ namespace Modules.Auth.API
             });
 
         [HttpPost("login")]
+        [AllowAnonymous]
         public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
             var user = await _context.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Email == request.Email);
@@ -40,22 +44,24 @@ namespace Modules.Auth.API
                 return Unauthorized(new { error = "Invalid email or password" });
             }
 
-            var accessToken = _jwtService.GenerateToken(user.Id, user.Email, user.Role, user.ProjectId);
             var refreshToken = new RefreshToken
             {
                 UserId = user.Id,
+                ProjectId = user.ProjectId,
                 Token = Guid.NewGuid().ToString(),
                 ExpiresAt = DateTime.UtcNow.AddDays(7)
             };
 
             _context.RefreshTokens.Add(refreshToken);
+            refreshToken.SessionId = refreshToken.Id;
             await _context.SaveChangesAsync();
+            var accessToken = _jwtService.GenerateToken(new(user.Id, user.Email, user.Role, user.ProjectId, refreshToken.Id));
 
             return Ok(new
             {
                 accessToken,
                 refreshToken = refreshToken.Token,
-                expiresInSeconds = 900,
+                expiresInSeconds = JwtSettings.LifetimeMinutes * 60,
                 user = new
                 {
                     user.Id,
@@ -66,6 +72,7 @@ namespace Modules.Auth.API
         }
 
         [HttpPost("refresh")]
+        [AllowAnonymous]
         public async Task<IActionResult> Refresh([FromBody] RefreshRequest request)
         {
             var token = await _context.RefreshTokens.FirstOrDefaultAsync(t => t.Token == request.RefreshToken);
@@ -80,34 +87,45 @@ namespace Modules.Auth.API
                 return Unauthorized(new { code = "REFRESH_TOKEN_INVALID", error = "User not found" });
             }
 
+            var projectId = token.ProjectId ?? user.ProjectId;
+            var role = await ProjectAccess.RoleFor(_context, user, projectId);
+            if (role is null)
+                return Unauthorized(new { code = "REFRESH_TOKEN_INVALID", error = "Project access has been removed" });
+
             token.RevokedAt = DateTime.UtcNow;
 
-            var newAccessToken = _jwtService.GenerateToken(user.Id, user.Email, user.Role, user.ProjectId);
             var newRefreshToken = new RefreshToken
             {
                 UserId = user.Id,
+                ProjectId = projectId,
+                SessionId = token.SessionId ?? token.Id,
                 Token = Guid.NewGuid().ToString(),
                 ExpiresAt = DateTime.UtcNow.AddDays(7)
             };
 
             _context.RefreshTokens.Add(newRefreshToken);
             await _context.SaveChangesAsync();
+            var newAccessToken = _jwtService.GenerateToken(new(user.Id, user.Email, role, projectId, newRefreshToken.SessionId!.Value));
 
             return Ok(new
             {
                 accessToken = newAccessToken,
                 refreshToken = newRefreshToken.Token,
-                expiresInSeconds = 900
+                expiresInSeconds = JwtSettings.LifetimeMinutes * 60
             });
         }
 
         [HttpPost("logout")]
+        [AllowAnonymous]
         public async Task<IActionResult> Logout([FromBody] RefreshRequest request)
         {
             var token = await _context.RefreshTokens.FirstOrDefaultAsync(t => t.Token == request.RefreshToken);
             if (token != null)
             {
-                token.RevokedAt = DateTime.UtcNow;
+                var sessionId = token.SessionId ?? token.Id;
+                var family = await _context.RefreshTokens.Where(candidate => candidate.UserId == token.UserId
+                    && (candidate.SessionId ?? candidate.Id) == sessionId && candidate.RevokedAt == null).ToListAsync();
+                foreach (var active in family) active.RevokedAt = DateTime.UtcNow;
                 await _context.SaveChangesAsync();
             }
 

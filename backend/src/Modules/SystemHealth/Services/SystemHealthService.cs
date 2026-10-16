@@ -50,7 +50,7 @@ namespace Modules.SystemHealth.Services
 
     public class GeminiMetrics
     {
-        public int AverageLatencyMs { get; set; } = 850;
+        public int? AverageLatencyMs { get; set; }
     }
 
     public class SystemHealthService : ISystemHealthService
@@ -157,8 +157,8 @@ namespace Modules.SystemHealth.Services
                 overallHealthy = false;
             }
 
-            // 7. Gemini API check (verify connection settings exist)
-            health.Components["GeminiAPI"] = "Healthy";
+            // No provider request is made here; report the absence of a measurement honestly.
+            health.Components["GeminiAPI"] = "NotMeasured";
 
             health.Status = overallHealthy ? "Healthy" : "Unhealthy";
             return health;

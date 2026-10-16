@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Activity, Calendar, CheckCircle2, ExternalLink, RefreshCw, Settings, Users, Zap, User, ShieldCheck } from 'lucide-react';
+import { Activity, Calendar, CheckCircle2, ExternalLink, RefreshCw, Settings, Users, Zap, User, ShieldCheck, MessageCircle, Save } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/auth-context';
 import styles from './settings.module.css';
+import layout from './Addons.module.css';
 import ScheduleDemandAddon from './ScheduleDemandAddon';
 
 interface WhatsAppGroupAutomationRow {
@@ -55,7 +56,7 @@ interface HumanTransferOverview {
 interface AddonsProps {
   messengerWhatsAppTransitionEnabled: boolean;
   onMessengerBookingRouteChange: (enabled: boolean) => Promise<void>;
-  onManageGroups: () => void;
+  onManageGroups: (courseType: 'regular' | 'intensive') => void;
   isGroupAppointmentsEnabled: boolean;
   onToggleGroupAppointments: (enabled: boolean) => Promise<void>;
   isWhatsAppGroupAutomationEnabled: boolean;
@@ -323,7 +324,7 @@ export default function Addons({
     void handleUpdatePhone(phone);
   };
 
-  const openGroupManagement = () => {
+  const openGroupManagement = (courseType: 'regular' | 'intensive') => {
     if (hasUnsavedPhoneChanges) {
       setMessage({ type: 'error', text: 'احفظ أرقام المدير والمشرف المعدّلة قبل فتح إدارة المجموعات.' });
       (managerPhoneDraft.trim() !== groupAutomationManagerPhone.trim()
@@ -331,7 +332,7 @@ export default function Addons({
         : humanPhoneInputRef.current)?.focus();
       return;
     }
-    onManageGroups();
+    onManageGroups(courseType);
   };
 
   const handleToggleTalkTipsTrialGate = async (checked: boolean) => {
@@ -364,533 +365,77 @@ export default function Addons({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', width: '100%' }}>
-      {message && (
-        <div role={message.type === 'error' ? 'alert' : 'status'} aria-live="polite" className="glass-panel" style={{
-          padding: 'var(--space-md)',
-          border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
-          backgroundColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.04)' : 'rgba(239, 68, 68, 0.04)',
-          borderRadius: 'var(--radius-md)',
-          fontSize: '0.85rem',
-          fontWeight: 600
-        }}>
-          {message.text}
-        </div>
-      )}
+    <div className={layout.workspace}>
+      {message && <div role={message.type === 'error' ? 'alert' : 'status'} className={message.type === 'error' ? layout.error : layout.notice}>{message.text}</div>}
+      <nav className={layout.jumpLinks} aria-label="أقسام الإضافات">
+        <a href="#addon-booking"><Calendar size={17} /> الحجز والمواعيد</a>
+        <a href="#addon-automation"><Zap size={17} /> أتمتة واتساب</a>
+        <a href="#addon-human"><User size={17} /> المشرف البشري</a>
+        <a href="#addon-demand"><Activity size={17} /> طلبات المواعيد</a>
+        <a href="#addon-trial"><ShieldCheck size={17} /> تجربة TalkTips</a>
+      </nav>
 
-      <section className={styles.card} aria-labelledby="messenger-booking-title">
-        <h2 id="messenger-booking-title" className={styles.cardTitle}>حجز عملاء الماسنجر</h2>
-        <label className={styles.label} htmlFor="messenger-booking-route">مكان إكمال الحجز</label>
-        <select
-          id="messenger-booking-route"
-          className={styles.input}
-          value={messengerWhatsAppTransitionEnabled ? 'WhatsApp' : 'Messenger'}
-          disabled={loading}
-          aria-describedby="messenger-booking-help"
-          onChange={(event) => void changeMessengerBookingRoute(event.target.value === 'WhatsApp')}
-        >
-          <option value="Messenger">إكمال الحجز من الماسنجر</option>
-          <option value="WhatsApp">التحويل للواتساب لإكمال الحجز</option>
-        </select>
-        <p id="messenger-booking-help" className={styles.accountsHint}>
-          {messengerWhatsAppTransitionEnabled
-            ? 'يرد على الاستفسارات في الماسنجر، ثم يطلب رقم العميل للانتقال إلى واتساب وإكمال الحجز.'
-            : 'يجمع الاسم ورقم الموبايل ويكمل الحجز في الماسنجر، حسب المواعيد المتاحة وإعدادات الحجز.'}
-        </p>
+      <section id="addon-booking" className={layout.panel} aria-labelledby="addon-booking-title">
+        <header className={layout.heading}>
+          <span className={layout.icon}><Calendar size={23} /></span>
+          <div><h2 id="addon-booking-title">الحجز والمواعيد</h2><p>حدد مسار الحجز، ثم تابع مواعيد كل كورس وسعته.</p></div>
+          <label className={layout.toggle}><input type="checkbox" role="switch" aria-label="تفعيل حجز مواعيد الكورسات" checked={isGroupAppointmentsEnabled} disabled={loading} onChange={e => handleToggle(e.target.checked)} className={styles.checkbox} /><span>{isGroupAppointmentsEnabled ? 'الحجز مفعّل' : 'الحجز متوقف'}</span></label>
+        </header>
+        <div className={layout.bookingBody}>
+          <div className={layout.field}>
+            <h3 id="messenger-booking-title"><MessageCircle size={18} /> حجز عملاء الماسنجر</h3>
+            <label htmlFor="messenger-booking-route">مكان إكمال الحجز</label>
+            <select id="messenger-booking-route" className={styles.input} value={messengerWhatsAppTransitionEnabled ? 'WhatsApp' : 'Messenger'} disabled={loading} aria-describedby="messenger-booking-help" onChange={event => void changeMessengerBookingRoute(event.target.value === 'WhatsApp')}>
+              <option value="Messenger">إكمال الحجز من الماسنجر</option><option value="WhatsApp">التحويل للواتساب لإكمال الحجز</option>
+            </select>
+            <p id="messenger-booking-help">{messengerWhatsAppTransitionEnabled ? 'يرد في الماسنجر، ثم يطلب رقم العميل للانتقال إلى واتساب وإكمال الحجز.' : 'يجمع الاسم ورقم الموبايل ويكمل الحجز في الماسنجر، حسب المواعيد المتاحة وإعدادات الحجز.'}</p>
+          </div>
+          <div className={layout.courseList}>
+            <div><div><h3>مواعيد الكورس العادي</h3><p>المجموعات والسعة والحجوزات.</p></div><button type="button" onClick={() => openGroupManagement('regular')} disabled={!isGroupAppointmentsEnabled} className={`${styles.btn} ${styles.btnSecondary}`}><Settings size={16} /> إدارة مواعيد الكورس العادي</button></div>
+            <div><div><h3>مواعيد الكورس المكثف</h3><p>السيشنات والإنستراكتورز والحجوزات.</p></div><button type="button" onClick={() => openGroupManagement('intensive')} className={`${styles.btn} ${styles.btnSecondary}`}><Settings size={16} /> إدارة مواعيد الكورس المكثف</button></div>
+            {!isGroupAppointmentsEnabled && <p className={layout.hint}>فعّل حجز مواعيد الكورسات لفتح الحجز للعملاء.</p>}
+          </div>
+        </div>
       </section>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))',
-        gap: 'var(--space-lg)'
-      }}>
-        {/* Group Appointments Card */}
-        <div className="glass-panel" style={{
-          padding: 'var(--space-xl)',
-          borderRadius: 'var(--radius-md)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          minHeight: '220px',
-          gap: 'var(--space-md)'
-        }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-md)' }}>
-              <div style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '8px',
-                backgroundColor: 'var(--accent-soft)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--accent)'
-              }}>
-                <Calendar size={22} />
-              </div>
-
-              <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label="تفعيل مواعيد المجموعات"
-                  checked={isGroupAppointmentsEnabled}
-                  disabled={loading}
-                  onChange={(e) => handleToggle(e.target.checked)}
-                  className={styles.checkbox}
-                />
-              </label>
-            </div>
-
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-strong)' }}>
-              مواعيد المجموعات (Group Appointments)
-            </h3>
-            <p style={{ fontSize: '0.825rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
-              تفعيل صفحة حجز عامة لحجز مواعيد دورية للمجموعات مع تحديد السعة القصوى لكل مجموعة لتجنب الحجوزات الزائدة.
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
-            <button
-              type="button"
-              onClick={openGroupManagement}
-              disabled={!isGroupAppointmentsEnabled}
-              className={`${styles.btn} ${isGroupAppointmentsEnabled ? styles.btnPrimary : styles.btnSecondary}`}
-              style={{ padding: '6px 16px', fontSize: '0.8rem', opacity: isGroupAppointmentsEnabled ? 1 : 0.5 }}
-            >
-              <Settings size={14} />
-              إدارة المجموعات والاشتراكات
-            </button>
-          </div>
+      <section id="addon-automation" className={layout.panel} aria-labelledby="addon-automation-title">
+        <header className={layout.heading}>
+          <span className={`${layout.icon} ${layout.green}`}><Zap size={23} /></span>
+          <div><h2 id="addon-automation-title">أتمتة مجموعات واتساب</h2><p>إنشاء المجموعات وإرسال الدعوات ومتابعة الطلاب بعد الحضور.</p></div>
+          <label className={layout.toggle}><input type="checkbox" role="switch" aria-label="تفعيل أتمتة مجموعات واتساب" checked={isWhatsAppGroupAutomationEnabled} disabled={loading} onChange={e => handleToggleGroupAutomation(e.target.checked)} className={styles.checkbox} /><span>{isWhatsAppGroupAutomationEnabled ? 'مفعّلة' : 'متوقفة'}</span></label>
+        </header>
+        <div className={layout.phoneRow}>
+          <div className={layout.field}><label htmlFor="addon-group-manager-phone">رقم هاتف المدير للتنبيهات والمجموعات</label><input ref={managerPhoneInputRef} id="addon-group-manager-phone" type="tel" inputMode="tel" autoComplete="tel" dir="ltr" className={styles.input} value={managerPhoneDraft} onChange={event => setManagerPhoneDraft(event.target.value)} disabled={loading} placeholder="+20xxxxxxxxxx" /></div>
+          <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={loading || managerPhoneDraft.trim() === groupAutomationManagerPhone.trim()} onClick={saveManagerPhone}><Save size={16} /> حفظ رقم المدير</button>
+          {managerPhoneDraft.trim() !== groupAutomationManagerPhone.trim() && <small role="status">رقم المدير لم يُحفظ بعد.</small>}
         </div>
+        {isWhatsAppGroupAutomationEnabled && <>
+          <div className={layout.sectionHeading}><h3><Activity size={18} /> حالة المجموعات</h3><button type="button" onClick={() => fetchAutomationOverview()} disabled={automationOverviewLoading} className={`${styles.btn} ${styles.btnSecondary}`}><RefreshCw size={16} /> تحديث</button></div>
+          <dl className={layout.stats}>
+            {([['جروبات واتساب', automationOverview?.whatsAppGroupsCreated], ['طلاب داخلها', automationOverview?.totalBookingsInWhatsAppGroups], ['متابعات معلقة', automationOverview?.pendingFollowUps], ['كل الحجوزات', automationOverview?.totalBookings]] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value ?? '—'}</dd></div>)}
+          </dl>
+          {automationOverviewLoading ? <p role="status">جاري تحميل حالة المجموعات...</p> : !automationOverview ? <p>بيانات الأتمتة غير متاحة الآن. استخدم «تحديث» لإعادة المحاولة.</p> : visibleAutomationGroups.length === 0 ? <p className={layout.hint}>لا توجد مجموعات بحجوزات أو جروبات واتساب حتى الآن.</p> : <ul className={layout.rows}>{visibleAutomationGroups.map(group => <li key={group.id}>
+            <div><strong>{group.name || (group.mode === 'online' ? 'أونلاين' : 'في السنتر')}</strong><span className={layout.badge} data-state={group.followUpStatus}>{getFollowUpStatusLabel(group.followUpStatus).text}</span><p><Users size={15} /> {group.bookedCount} طالب · {formatAppointmentDate(group.dateTime)} · {group.isActive ? 'نشطة' : 'معطلة'} {group.hasWhatsAppGroup && <span><CheckCircle2 size={15} /> الجروب اتعمل</span>}</p></div>
+            {group.whatsAppGroupInviteLink && <a href={group.whatsAppGroupInviteLink} target="_blank" rel="noreferrer" className={`${styles.btn} ${styles.btnSecondary}`}><ExternalLink size={16} /> رابط المجموعة</a>}
+          </li>)}</ul>}
+        </>}
+      </section>
 
-        {/* WhatsApp Group Automation Card */}
-        <div className="glass-panel" style={{
-          padding: 'var(--space-xl)',
-          borderRadius: 'var(--radius-md)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          minHeight: '220px',
-          gap: 'var(--space-md)'
-        }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-md)' }}>
-              <div style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '8px',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'rgba(16, 185, 129, 1)'
-              }}>
-                <Zap size={22} />
-              </div>
+      <section id="addon-human" className={layout.panel} aria-labelledby="addon-human-title">
+        <header className={layout.heading}><span className={`${layout.icon} ${layout.blue}`}><User size={23} /></span><div><h2 id="addon-human-title">التواصل مع مشرف بشري</h2><p>إرسال رقم المشرف عندما يطلب العميل التحدث مع شخص حقيقي أو مسؤول.</p></div><label className={layout.toggle}><input type="checkbox" role="switch" aria-label="تفعيل التواصل مع مشرف بشري" checked={humanTransferEnabled} disabled={loading} onChange={e => handleToggleHumanTransfer(e.target.checked)} className={styles.checkbox} /><span>{humanTransferEnabled ? 'مفعّل' : 'متوقف'}</span></label></header>
+        <div className={layout.phoneRow}><div className={layout.field}><label htmlFor="addon-human-transfer-phone">رقم هاتف المشرف للتحويل</label><input ref={humanPhoneInputRef} id="addon-human-transfer-phone" type="tel" inputMode="tel" autoComplete="tel" dir="ltr" className={styles.input} value={humanPhoneDraft} onChange={event => setHumanPhoneDraft(event.target.value)} disabled={loading} placeholder="+20xxxxxxxxxx" /></div><button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={loading || humanPhoneDraft.trim() === humanTransferPhone.trim()} onClick={saveHumanTransferPhone}><Save size={16} /> حفظ رقم المشرف</button>{humanPhoneDraft.trim() !== humanTransferPhone.trim() && <small role="status">رقم المشرف لم يُحفظ بعد.</small>}</div>
+        <div className={layout.sectionHeading}><span className={layout.badge} data-state={!humanTransferOverview ? undefined : humanTransferOverview.isReady ? 'active' : humanTransferEnabled ? 'waiting' : 'inactive'}>{!humanTransferOverview ? 'الحالة غير متاحة' : humanTransferOverview.isReady ? 'جاهز للتحويل' : humanTransferEnabled ? 'أكمل رقم المشرف لتجهيز التحويل' : 'التحويل متوقف'}</span><button type="button" onClick={() => fetchHumanTransferOverview()} disabled={humanTransferOverviewLoading} className={`${styles.btn} ${styles.btnSecondary}`}><RefreshCw size={16} /> تحديث</button></div>
+        <p className={layout.hint}>الرقم المستخدم: <bdi dir="ltr">{humanTransferOverview?.humanTransferPhone || humanTransferPhone || 'لم يتم تحديد رقم'}</bdi></p>
+        <dl className={layout.stats}>{([['كل الطلبات', humanTransferOverview?.totalRequests], ['طلبات اليوم', humanTransferOverview?.todayRequests], ['غير مقروءة', humanTransferOverview?.unreadRequests]] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value ?? '—'}</dd></div>)}</dl>
+        {humanTransferOverviewLoading ? <p role="status">جاري تحميل طلبات التواصل...</p> : !humanTransferOverview ? <p>بيانات طلبات التواصل غير متاحة الآن. استخدم «تحديث» لإعادة المحاولة.</p> : humanTransferOverview.recentRequests.length === 0 ? <p className={layout.hint}>لا توجد طلبات تواصل مع مشرف حتى الآن.</p> : <ul className={layout.rows}>{humanTransferOverview.recentRequests.map(item => <li key={item.id}><p>{item.message}</p><time dateTime={item.createdAt}>{formatRequestDate(item.createdAt)}</time></li>)}</ul>}
+      </section>
 
-              <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label="تفعيل أتمتة مجموعات واتساب"
-                  checked={isWhatsAppGroupAutomationEnabled}
-                  disabled={loading}
-                  onChange={(e) => handleToggleGroupAutomation(e.target.checked)}
-                  className={styles.checkbox}
-                />
-              </label>
-            </div>
+      <div id="addon-demand" className={layout.demand}><ScheduleDemandAddon timezone={displayTimezone} onMessage={setMessage} /></div>
 
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-strong)' }}>
-              أتمتة مجموعات الواتساب (Group Automation)
-            </h3>
-            <p style={{ fontSize: '0.825rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
-              إنشاء مجموعات واتساب مؤمنة آلياً قبل الجلسات وإرسال روابط الدعوة للطلاب ومتابعتهم بعد الحضور.
-            </p>
-
-            {(isWhatsAppGroupAutomationEnabled || !groupAutomationManagerPhone) && (
-              <div style={{ marginTop: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                <div>
-                  <label htmlFor="addon-group-manager-phone" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-soft)', marginBottom: '4px' }}>
-                    رقم هاتف المدير للتنبيهات والمجموعات
-                  </label>
-                  <input
-                    ref={managerPhoneInputRef}
-                    id="addon-group-manager-phone"
-                    type="tel"
-                    inputMode="tel"
-                    autoComplete="tel"
-                    dir="ltr"
-                    value={managerPhoneDraft}
-                    onChange={(event) => setManagerPhoneDraft(event.target.value)}
-                    disabled={loading}
-                    placeholder="+20xxxxxxxxxx"
-                    style={{
-                      width: '100%',
-                      minHeight: '44px',
-                      padding: '8px 12px',
-                      fontSize: '0.8rem',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid var(--border)',
-                      backgroundColor: 'var(--bg-card)',
-                      color: 'var(--text-strong)'
-                    }}
-                  />
-                  <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={loading || managerPhoneDraft.trim() === groupAutomationManagerPhone.trim()} onClick={saveManagerPhone}>
-                    حفظ رقم المدير
-                  </button>
-                  {managerPhoneDraft.trim() !== groupAutomationManagerPhone.trim() && <small role="status">رقم المدير لم يُحفظ بعد.</small>}
-                </div>
-
-                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 'var(--space-md)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
-                    <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Activity size={14} />
-                      إدارة الأتمتة
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => fetchAutomationOverview()}
-                      disabled={automationOverviewLoading}
-                      className={`${styles.btn} ${styles.btnSecondary}`}
-                      style={{ padding: '4px 8px', fontSize: '0.72rem' }}
-                    >
-                      <RefreshCw size={12} />
-                      تحديث
-                    </button>
-                  </div>
-
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                    gap: '8px',
-                    marginBottom: 'var(--space-sm)'
-                  }}>
-                    {[
-                      ['جروبات واتساب', automationOverview?.whatsAppGroupsCreated ?? '—'],
-                      ['طلاب داخلها', automationOverview?.totalBookingsInWhatsAppGroups ?? '—'],
-                      ['متابعات معلقة', automationOverview?.pendingFollowUps ?? '—'],
-                      ['كل الحجوزات', automationOverview?.totalBookings ?? '—']
-                    ].map(([label, value]) => (
-                      <div key={label} style={{ padding: '8px 0', borderTop: '1px solid var(--border-subtle)' }}>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-strong)', lineHeight: 1.1 }}>{value}</div>
-                        <div style={{ fontSize: '0.66rem', color: 'hsl(var(--text-secondary))', marginTop: '3px' }}>{label}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {automationOverviewLoading ? (
-                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
-                      جاري تحميل حالة المجموعات...
-                    </div>
-                  ) : !automationOverview ? (
-                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
-                      بيانات الأتمتة غير متاحة الآن. استخدم «تحديث» لإعادة المحاولة.
-                    </div>
-                  ) : visibleAutomationGroups.length === 0 ? (
-                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
-                      لا توجد مجموعات بحجوزات أو جروبات واتساب حتى الآن.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '260px', overflowY: 'auto' }}>
-                      {visibleAutomationGroups.map((group) => {
-                        const status = getFollowUpStatusLabel(group.followUpStatus);
-                        return (
-                          <div
-                            key={group.id}
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: '1fr auto',
-                              gap: '10px',
-                              padding: '9px 0',
-                              borderTop: '1px solid var(--border-subtle)'
-                            }}
-                          >
-                            <div style={{ minWidth: 0 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)' }}>
-                                  {group.name || (group.mode === 'online' ? 'أونلاين' : 'في السنتر')}
-                                </span>
-                                <span style={{
-                                  fontSize: '0.66rem',
-                                  color: status.color,
-                                  background: status.background,
-                                  padding: '2px 6px',
-                                  borderRadius: '6px',
-                                  fontWeight: 700
-                                }}>
-                                  {status.text}
-                                </span>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '5px', color: 'hsl(var(--text-secondary))', fontSize: '0.72rem' }}>
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                  <Users size={11} />
-                                  {group.bookedCount} طالب
-                                </span>
-                                <span>{formatAppointmentDate(group.dateTime)}</span>
-                                <span>{group.isActive ? 'نشطة' : 'معطلة'}</span>
-                                {group.hasWhatsAppGroup && (
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'rgb(16, 185, 129)' }}>
-                                    <CheckCircle2 size={11} />
-                                    الجروب اتعمل
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            {group.whatsAppGroupInviteLink && (
-                              <a
-                                href={group.whatsAppGroupInviteLink}
-                                target="_blank"
-                                rel="noreferrer"
-                                className={`${styles.btn} ${styles.btnSecondary}`}
-                                style={{ padding: '4px 8px', fontSize: '0.7rem', alignSelf: 'start' }}
-                              >
-                                <ExternalLink size={11} />
-                                الرابط
-                              </a>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Human Agent Transfer Card */}
-        <div className="glass-panel" style={{
-          padding: 'var(--space-xl)',
-          borderRadius: 'var(--radius-md)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          minHeight: '220px',
-          gap: 'var(--space-md)'
-        }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-md)' }}>
-              <div style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '8px',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'rgba(59, 130, 246, 1)'
-              }}>
-                <User size={22} />
-              </div>
-
-              <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label="تفعيل التواصل مع مشرف بشري"
-                  checked={humanTransferEnabled}
-                  disabled={loading}
-                  onChange={(e) => handleToggleHumanTransfer(e.target.checked)}
-                  className={styles.checkbox}
-                />
-              </label>
-            </div>
-
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-strong)' }}>
-              التواصل مع شخص حقيقي (Human Transfer)
-            </h3>
-            <p style={{ fontSize: '0.825rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
-              إرسال رقم المشرف فقط عندما يطلب العميل صراحة التحدث مع شخص حقيقي أو رقم مسؤول.
-            </p>
-
-            <div style={{
-              marginTop: 'var(--space-md)',
-              padding: '10px 0',
-              borderTop: '1px solid var(--border-subtle)',
-              borderBottom: '1px solid var(--border-subtle)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-                <span style={{
-                  fontSize: '0.76rem',
-                  fontWeight: 800,
-                  color: !humanTransferOverview ? 'hsl(var(--text-secondary))' : humanTransferOverview.isReady ? 'rgb(16, 185, 129)' : humanTransferEnabled ? 'rgb(245, 158, 11)' : 'hsl(var(--accent-danger))',
-                  background: !humanTransferOverview ? 'var(--surface-muted)' : humanTransferOverview.isReady ? 'rgba(16, 185, 129, 0.1)' : humanTransferEnabled ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                  padding: '3px 8px',
-                  borderRadius: '6px'
-                }}>
-                  {!humanTransferOverview ? 'الحالة غير متاحة' : humanTransferOverview.isReady ? 'شغالة بالرقم الحالي' : humanTransferEnabled ? 'مفعلة لكن الرقم ناقص' : 'متوقفة'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => fetchHumanTransferOverview()}
-                  disabled={humanTransferOverviewLoading}
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                  style={{ padding: '4px 8px', fontSize: '0.72rem' }}
-                >
-                  <RefreshCw size={12} />
-                  تحديث
-                </button>
-              </div>
-              <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))' }}>
-                الرقم المستخدم: <span style={{ color: 'var(--text-strong)', fontWeight: 700 }}>{humanTransferOverview?.humanTransferPhone || humanTransferPhone || 'غير محدد'}</span>
-              </div>
-            </div>
-
-            {(humanTransferEnabled || !humanTransferPhone) && (
-              <div style={{ marginTop: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                <label htmlFor="addon-human-transfer-phone" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-soft)', marginBottom: '4px' }}>
-                  رقم هاتف المشرف للتواصل (مثال: 010xxxxxxxx)
-                </label>
-                <input
-                  ref={humanPhoneInputRef}
-                  id="addon-human-transfer-phone"
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  dir="ltr"
-                  value={humanPhoneDraft}
-                  onChange={(event) => setHumanPhoneDraft(event.target.value)}
-                  disabled={loading}
-                  placeholder="010xxxxxxxx"
-                  style={{
-                    width: '100%',
-                    minHeight: '44px',
-                    padding: '8px 12px',
-                    fontSize: '0.8rem',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--border)',
-                    backgroundColor: 'var(--bg-card)',
-                    color: 'var(--text-strong)'
-                  }}
-                />
-                <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={loading || humanPhoneDraft.trim() === humanTransferPhone.trim()} onClick={saveHumanTransferPhone}>
-                  حفظ رقم المشرف
-                </button>
-                {humanPhoneDraft.trim() !== humanTransferPhone.trim() && <small role="status">رقم المشرف لم يُحفظ بعد.</small>}
-
-                <div>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                    gap: '8px',
-                    marginBottom: 'var(--space-sm)'
-                  }}>
-                    {[
-                      ['كل الطلبات', humanTransferOverview?.totalRequests ?? '—'],
-                      ['طلبات اليوم', humanTransferOverview?.todayRequests ?? '—'],
-                      ['غير مقروءة', humanTransferOverview?.unreadRequests ?? '—']
-                    ].map(([label, value]) => (
-                      <div key={label} style={{ padding: '8px 0', borderTop: '1px solid var(--border-subtle)' }}>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-strong)', lineHeight: 1.1 }}>{value}</div>
-                        <div style={{ fontSize: '0.66rem', color: 'hsl(var(--text-secondary))', marginTop: '3px' }}>{label}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {humanTransferOverviewLoading ? (
-                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
-                      جاري تحميل طلبات التواصل...
-                    </div>
-                  ) : !humanTransferOverview ? (
-                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
-                      بيانات طلبات المشرف غير متاحة الآن. استخدم «تحديث» لإعادة المحاولة.
-                    </div>
-                  ) : !humanTransferOverview.recentRequests.length ? (
-                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-secondary))', padding: '8px 0' }}>
-                      لا توجد طلبات تواصل بشخص حقيقي حتى الآن.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '220px', overflowY: 'auto' }}>
-                      {humanTransferOverview.recentRequests.map((request) => (
-                        <div
-                          key={request.id}
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '4px',
-                            padding: '8px 0',
-                            borderTop: '1px solid var(--border-subtle)'
-                          }}
-                        >
-                          <span style={{ fontSize: '0.77rem', color: 'var(--text-strong)', lineHeight: 1.5 }}>
-                            {request.message}
-                          </span>
-                          <span style={{ fontSize: '0.68rem', color: 'hsl(var(--text-secondary))' }}>
-                            {formatRequestDate(request.createdAt)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <ScheduleDemandAddon timezone={displayTimezone} onMessage={setMessage} />
-
-        <div className="glass-panel" style={{
-          padding: 'var(--space-xl)',
-          borderRadius: 'var(--radius-md)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          minHeight: '220px',
-          gap: 'var(--space-md)'
-        }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-md)' }}>
-              <div style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '8px',
-                backgroundColor: 'rgba(0, 243, 255, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--accent)'
-              }}>
-                <ShieldCheck size={22} />
-              </div>
-              <label className={styles.checkboxGroup} style={{ cursor: loading ? 'not-allowed' : 'pointer' }}>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label="تفعيل دعوة تجربة TalkTips"
-                  checked={isTalkTipsTrialGateEnabled}
-                  disabled={loading}
-                  onChange={(event) => handleToggleTalkTipsTrialGate(event.target.checked)}
-                  className={styles.checkbox}
-                />
-              </label>
-            </div>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-strong)' }}>
-              CTA تجربة TalkTips الذكي
-            </h3>
-            <p style={{ fontSize: '0.825rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
-              يفحص النظام حالة التجربة من موقع TalkTips. لو العميل لسه ما جرّبش، يرد الـAI على سؤاله طبيعي ويختم الرد بدعوة متغيرة تناسب السياق مع رابط التجربة.
-            </p>
-          </div>
-          <a
-            href="https://talktips-academy.com/ar/try"
-            target="_blank"
-            rel="noreferrer"
-            className={`${styles.btn} ${styles.btnSecondary}`}
-            style={{ alignSelf: 'flex-end', padding: '6px 16px', fontSize: '0.8rem' }}
-          >
-            <ExternalLink size={14} />
-            فتح صفحة التجربة
-          </a>
-        </div>
-
-      </div>
+      <section id="addon-trial" className={layout.panel} aria-labelledby="addon-trial-title">
+        <header className={layout.heading}><span className={`${layout.icon} ${layout.violet}`}><ShieldCheck size={23} /></span><div><h2 id="addon-trial-title">دعوة تجربة TalkTips</h2><p>يقترح تجربة التطبيق أثناء النقاش عن الإنجليزي والسعر والحجز، دون تكرار أو تعطيل خطوات الحجز.</p></div><label className={layout.toggle}><input type="checkbox" role="switch" aria-label="تفعيل بوابة تجربة TalkTips" checked={isTalkTipsTrialGateEnabled} disabled={loading} onChange={e => handleToggleTalkTipsTrialGate(e.target.checked)} className={styles.checkbox} /><span>{isTalkTipsTrialGateEnabled ? 'مفعّلة' : 'متوقفة'}</span></label></header>
+        <a href="https://talktips-academy.com/ar/try" target="_blank" rel="noreferrer" className={`${styles.btn} ${styles.btnSecondary}`}><ExternalLink size={16} /> فتح تجربة TalkTips</a>
+      </section>
     </div>
   );
 }

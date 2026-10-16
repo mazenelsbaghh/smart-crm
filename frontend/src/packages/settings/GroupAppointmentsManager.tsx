@@ -5,12 +5,15 @@ import { api } from '../../services/api';
 import { SignalRService } from '../../services/signalr';
 import { useAuth } from '../../context/auth-context';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
-import { 
-  Calendar, 
-  Plus, 
-  Trash2, 
-  Edit3, 
-  Users, 
+import FilterTabs from '../../components/ui/FilterTabs';
+import StatusMessage from '../../components/ui/StatusMessage';
+import { useUnsavedNavigationGuard } from '../../hooks/use-unsaved-navigation-guard';
+import {
+  Calendar,
+  Plus,
+  Trash2,
+  Edit3,
+  Users,
   ArrowRight,
   Clock,
   Download,
@@ -18,9 +21,16 @@ import {
   Search,
   ShieldAlert,
   Upload,
-  UserCheck
+  UserCheck,
+  SlidersHorizontal,
+  ListFilter,
+  CirclePause,
+  Settings2,
+  ChevronDown
 } from 'lucide-react';
 import styles from './settings.module.css';
+import GroupStaffDirectoryEditor, { StaffContact } from './GroupStaffDirectoryEditor';
+import GroupParticipationPanel from './GroupParticipationPanel';
 
 interface Booking {
   id: string;
@@ -138,6 +148,8 @@ const manualBookingErrorMessage = (error: unknown) => {
 
 interface InstructorsResponse {
   instructors: string[];
+  instructorContacts?: StaffContact[];
+  supervisors?: StaffContact[];
 }
 
 interface PaidBlacklistImportResult {
@@ -163,11 +175,30 @@ interface GroupAppointment {
   bookings: Booking[];
   mode: string;
   instructorName?: string;
+  supervisorPhone?: string;
+  staffSyncError?: string | null;
+  staffSyncedAtUtc?: string | null;
 }
 
+type GroupStatus = 'available' | 'full' | 'inactive';
+
+const getGroupStatus = (group: GroupAppointment): GroupStatus => {
+  if (!group.isActive) return 'inactive';
+  return group.bookedCount >= group.capacity ? 'full' : 'available';
+};
+
+const groupStatusLabels: Record<GroupStatus, string> = {
+  available: 'متاحة للحجز', full: 'مكتملة', inactive: 'غير نشطة',
+};
+
 interface GroupAppointmentsManagerProps {
+  courseType?: 'regular' | 'intensive';
   onBack: () => void;
+  backLabel?: string;
   timezone: string;
+  onDirtyChange?: (dirty: boolean) => void;
+  heading?: React.ReactNode;
+  courseNavigation?: React.ReactNode;
 }
 
 const zonedParts = (date: Date, timezone: string) => Object.fromEntries(
@@ -214,45 +245,58 @@ const validTimezone = (timezone: string) => {
   catch { return 'Africa/Cairo'; }
 };
 
-export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppointmentsManagerProps) {
+export default function GroupAppointmentsManager({ onBack, timezone, courseType = 'regular', backLabel = 'العودة للإضافات', onDirtyChange, heading, courseNavigation }: GroupAppointmentsManagerProps) {
   const { activeProject } = useAuth();
   const projectTimezone = validTimezone(timezone);
   const [groups, setGroups] = useState<GroupAppointment[]>([]);
   const [instructorFilter, setInstructorFilter] = useState('');
-  const [groupStatusFilter, setGroupStatusFilter] = useState('all');
+  const [groupStatusFilter, setGroupStatusFilter] = useState<'all' | GroupStatus>('all');
+  const [workspaceSection, setWorkspaceSection] = useState<'groups' | 'staff' | 'data'>('groups');
+  const managementMenuRef = useRef<HTMLDetailsElement>(null);
   const [loading, setLoading] = useState(true);
+  const [groupsLoadFailed, setGroupsLoadFailed] = useState(false);
+  const groupsLoadController = useRef<AbortController | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  
+
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<GroupAppointment | null>(null);
+  const [participationGroup, setParticipationGroup] = useState<{ id: string; name: string; projectId: string } | null>(null);
+  const participationTrigger = useRef<HTMLButtonElement | null>(null);
   const [pendingDeleteBookingId, setPendingDeleteBookingId] = useState<string | null>(null);
   const [deletingBookingId, setDeletingBookingId] = useState<string | null>(null);
-  
+
   // Confirmation state for deleting group
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [groupToDelete, setGroupToDelete] = useState<string | null>(null);
-  
+
   // Form states
   const [mode, setMode] = useState<string>('offline');
-  const [dateTime, setDateTime] = useState('');
   const [freeSessionDateTime, setFreeSessionDateTime] = useState('');
-  const [courseSecondDateTime, setCourseSecondDateTime] = useState('');
   const [capacity, setCapacity] = useState(5);
   const [isActive, setIsActive] = useState(true);
-  const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [instructors, setInstructors] = useState<string[]>([]);
-  const [instructorsText, setInstructorsText] = useState('');
+  const [instructorContacts, setInstructorContacts] = useState<StaffContact[]>([]);
+  const [supervisors, setSupervisors] = useState<StaffContact[]>([]);
+  const [draftInstructors, setDraftInstructors] = useState<StaffContact[]>([]);
+  const [draftSupervisors, setDraftSupervisors] = useState<StaffContact[]>([]);
   const [selectedInstructor, setSelectedInstructor] = useState('');
+  const [supervisorPhone, setSupervisorPhone] = useState('');
   const [savingInstructors, setSavingInstructors] = useState(false);
+  const [staffLoaded, setStaffLoaded] = useState(false);
+  const staffDirty = staffLoaded && (JSON.stringify(draftInstructors) !== JSON.stringify(instructorContacts)
+    || JSON.stringify(draftSupervisors) !== JSON.stringify(supervisors));
+  const staffNavigationGuard = useUnsavedNavigationGuard(staffDirty);
+  useEffect(() => onDirtyChange?.(staffDirty), [onDirtyChange, staffDirty]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const [paidImportFileName, setPaidImportFileName] = useState('');
   const [paidImportPhones, setPaidImportPhones] = useState<string[]>([]);
   const [paidImporting, setPaidImporting] = useState(false);
   const [paidImportConfirmOpen, setPaidImportConfirmOpen] = useState(false);
   const [paidImportResult, setPaidImportResult] = useState<PaidBlacklistImportResult | null>(null);
-  
+
   const [searchQuery, setSearchQuery] = useState('');
   const [manualBookingOpen, setManualBookingOpen] = useState(false);
   const [manualBooking, setManualBooking] = useState<ManualBookingForm>(EMPTY_MANUAL_BOOKING);
@@ -262,11 +306,10 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
   const manualBookingToggleRef = useRef<HTMLButtonElement>(null);
   const manualBookingNameRef = useRef<HTMLInputElement>(null);
   const subscribersHeadingRef = useRef<HTMLHeadingElement>(null);
+  const subscribersTrigger = useRef<HTMLButtonElement | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const editorCloseRef = useRef<HTMLButtonElement>(null);
 
-  const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
-  const DAY_NAMES_SHORT = ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
 
   const closeEditor = useCallback(() => setIsModalOpen(false), []);
 
@@ -299,20 +342,26 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
 
   const fetchGroups = useCallback(async () => {
     if (!activeProject) return;
+    groupsLoadController.current?.abort();
+    const controller = new AbortController();
+    groupsLoadController.current = controller;
     try {
       setLoading(true);
-      const response = await api.get<GroupAppointment[]>('/api/group-appointments');
+      setGroupsLoadFailed(false);
+      const response = await api.get<GroupAppointment[]>('/api/group-appointments', { params: { courseType }, signal: controller.signal });
+      if (controller.signal.aborted) return;
       setGroups(response.data);
       setSelectedGroup(current => current
         ? response.data.find(group => group.id === current.id) ?? null
         : null);
     } catch (e) {
+      if (controller.signal.aborted) return;
       console.error(e);
-      setMessage({ type: 'error', text: 'فشل تحميل مجموعات المواعيد.' });
+      setGroupsLoadFailed(true);
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [activeProject]);
+  }, [activeProject, courseType]);
 
   useEffect(() => {
     if (!activeProject) return;
@@ -331,28 +380,35 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
 
   const fetchInstructors = useCallback(async () => {
     if (!activeProject) return;
+    setStaffLoaded(false);
     try {
       const response = await api.get<InstructorsResponse>('/api/group-appointments/instructors');
       const nextInstructors = response.data.instructors || [];
       setInstructors(nextInstructors);
-      setInstructorsText(nextInstructors.join('\n'));
+      const contacts = response.data.instructorContacts ?? nextInstructors.map(name => ({ id: `legacy:${name}`, name, phone: '' }));
+      setInstructorContacts(contacts);
+      setDraftInstructors(contacts);
+      setSupervisors(response.data.supervisors ?? []);
+      setDraftSupervisors(response.data.supervisors ?? []);
+      setStaffLoaded(true);
     } catch (e) {
       console.error(e);
       setMessage({ type: 'error', text: 'فشل تحميل أسماء الإنستراكتورز.' });
     }
-  }, [activeProject]);
+  }, [activeProject, setDraftInstructors, setDraftSupervisors]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchGroups();
     void fetchInstructors();
+    return () => groupsLoadController.current?.abort();
   }, [fetchGroups, fetchInstructors]);
 
   const handleSaveGroup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!dateTime || !freeSessionDateTime || !courseSecondDateTime || capacity <= 0) return;
-    if (selectedDays.length !== 2) {
-      setMessage({ type: 'error', text: 'اختار يومين بالضبط لمواعيد الكورس الأسبوعية.' });
+    if (!freeSessionDateTime || capacity <= 0) return;
+    if (supervisorPhone.trim() && !normalizeManualBookingPhone(supervisorPhone)) {
+      setMessage({ type: 'error', text: 'اكتب رقم واتساب صحيحًا للمسؤولة.' });
       return;
     }
     if (!selectedInstructor.trim()) {
@@ -364,18 +420,16 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
       setActionLoading(true);
       setMessage(null);
 
-      const utcDate = projectLocalToUtc(dateTime, projectTimezone);
       const freeSessionUtcDate = projectLocalToUtc(freeSessionDateTime, projectTimezone);
-      const courseSecondUtcDate = projectLocalToUtc(courseSecondDateTime, projectTimezone);
 
       const payload = {
-        dateTime: utcDate,
+        courseType,
+        dateTime: freeSessionUtcDate,
         freeSessionDateTime: freeSessionUtcDate,
-        courseSecondDateTime: courseSecondUtcDate,
         capacity,
         isActive,
-        days: selectedDays.join(','),
         mode,
+        supervisorPhone: supervisorPhone.trim() ? normalizeManualBookingPhone(supervisorPhone) : '',
         instructorName: selectedInstructor.trim()
       };
 
@@ -388,12 +442,9 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
       }
 
       setIsModalOpen(false);
-      setDateTime('');
       setFreeSessionDateTime('');
-      setCourseSecondDateTime('');
       setCapacity(5);
       setIsActive(true);
-      setSelectedDays([]);
       setMode('offline');
       setSelectedInstructor('');
       setEditingGroupId(null);
@@ -414,18 +465,30 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
     if (manualBookingSubmitting) return;
     setEditingGroupId(group.id);
     setMode(group.mode || 'offline');
-    setDateTime(projectDateTimeInput(group.dateTime, projectTimezone));
-    setFreeSessionDateTime(group.freeSessionDateTime ? projectDateTimeInput(group.freeSessionDateTime, projectTimezone) : '');
-    setCourseSecondDateTime(group.courseSecondDateTime ? projectDateTimeInput(group.courseSecondDateTime, projectTimezone) : '');
+    setFreeSessionDateTime(projectDateTimeInput(group.freeSessionDateTime || group.dateTime, projectTimezone));
     setCapacity(group.capacity);
     setIsActive(group.isActive);
-    setSelectedDays(group.days ? group.days.split(',').filter(Boolean).map(Number) : []);
     setSelectedInstructor(group.instructorName || '');
+    setSupervisorPhone(group.supervisorPhone || '');
     setIsModalOpen(true);
+  };
+
+  const openWorkspaceSection = (section: 'groups' | 'staff' | 'data') => {
+    if (manualBookingSubmitting) return;
+    setWorkspaceSection(section);
+    if (managementMenuRef.current) {
+      managementMenuRef.current.open = false;
+      managementMenuRef.current.querySelector('summary')?.focus();
+    }
   };
 
   const handleBack = () => {
     if (manualBookingSubmitting) return;
+    if (staffDirty) {
+      openWorkspaceSection('staff');
+      setMessage({ type: 'error', text: 'احفظ تعديلات فريق العمل قبل مغادرة المجموعات.' });
+      return;
+    }
     onBack();
   };
 
@@ -433,37 +496,37 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
     if (manualBookingSubmitting) return;
     setEditingGroupId(null);
     setMode('offline');
-    setDateTime('');
     setFreeSessionDateTime('');
-    setCourseSecondDateTime('');
     setCapacity(5);
     setIsActive(true);
     setIsModalOpen(true);
-    setSelectedDays([]);
     setSelectedInstructor(instructors[0] || '');
+    setSupervisorPhone('');
   };
 
   const handleSaveInstructors = async () => {
-    const nextInstructors = instructorsText
-      .split(/\n|,|;/)
-      .map(item => item.trim())
-      .filter(Boolean);
-
     try {
       setSavingInstructors(true);
       const response = await api.put<InstructorsResponse>('/api/group-appointments/instructors', {
-        instructors: nextInstructors
+        instructorContacts: draftInstructors, supervisors: draftSupervisors
       });
       const savedInstructors = response.data.instructors || [];
+      const contacts = response.data.instructorContacts ?? [];
+      const savedSupervisors = response.data.supervisors ?? [];
+      const selectedId = instructorContacts.find(contact => contact.name === selectedInstructor)?.id;
+      const supervisorId = supervisors.find(contact => contact.phone === supervisorPhone)?.id;
+      setSelectedInstructor(contacts.find(contact => contact.id === selectedId)?.name ?? '');
+      setSupervisorPhone(savedSupervisors.find(contact => contact.id === supervisorId)?.phone ?? supervisorPhone);
       setInstructors(savedInstructors);
-      setInstructorsText(savedInstructors.join('\n'));
-      if (selectedInstructor && !savedInstructors.includes(selectedInstructor)) {
-        setSelectedInstructor('');
-      }
-      setMessage({ type: 'success', text: 'تم حفظ أسماء الإنستراكتورز.' });
-    } catch (e) {
-      console.error(e);
-      setMessage({ type: 'error', text: 'فشل حفظ أسماء الإنستراكتورز.' });
+      setInstructorContacts(contacts);
+      setDraftInstructors(contacts);
+      setSupervisors(savedSupervisors);
+      setDraftSupervisors(savedSupervisors);
+      await fetchGroups();
+      setMessage({ type: 'success', text: 'تم حفظ أسماء وأرقام فريق العمل.' });
+    } catch (error) {
+      const response = (error as { response?: { data?: { error?: string } } }).response;
+      setMessage({ type: 'error', text: response?.data?.error || 'فشل حفظ فريق العمل. بياناتك ما زالت موجودة، حاول مرة أخرى.' });
     } finally {
       setSavingInstructors(false);
     }
@@ -602,6 +665,7 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
     setSearchQuery('');
     setManualBookingOpen(false);
     resetManualBookingEditor();
+    window.requestAnimationFrame(() => subscribersHeadingRef.current?.focus());
   };
 
   const closeSelectedGroup = () => {
@@ -609,6 +673,7 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
     setSearchQuery('');
     setManualBookingOpen(false);
     resetManualBookingEditor();
+    window.requestAnimationFrame(() => subscribersTrigger.current?.focus());
   };
 
   const openManualBookingEditor = () => {
@@ -737,7 +802,7 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
     if (manualBookingSubmitting) return;
     try {
       await api.patch(`/api/group-appointments/bookings/${bookingId}`, updates);
-      
+
       // Update local state
       setSelectedGroup(prev => {
         if (!prev) return prev;
@@ -777,7 +842,7 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
   const handleExportExcel = async (group: GroupAppointment) => {
     if (!group || group.bookings.length === 0) return;
     const XLSX = await import('xlsx');
-    
+
     const sortedBookings = [...group.bookings].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const data = sortedBookings.map(b => ({
       'اسم الطالب': b.customerName,
@@ -786,21 +851,21 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
       'حالة الحضور': b.isAttended ? 'حضر' : 'لم يحضر',
       'حالة الدفع': b.isPaid ? 'دفع' : 'لم يدفع'
     }));
-    
+
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'المشتركين');
-    
+
     const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    
+
     const timeStr = new Intl.DateTimeFormat('en-GB', { timeZone: projectTimezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-      .format(new Date(group.dateTime)).replace(':', '_');
+      .format(new Date(group.freeSessionDateTime || group.dateTime)).replace(':', '_');
     const fileName = `bookings_${group.mode}_${timeStr}.xlsx`;
-    
+
     link.setAttribute('download', fileName);
     document.body.appendChild(link);
     link.click();
@@ -819,9 +884,6 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
         'نوع المجموعة': groupMode,
         'إنستراكتور الكورس': group.instructorName || '',
         'ميعاد السيشن المجانية': group.freeSessionDateTime ? new Date(group.freeSessionDateTime).toLocaleString('ar-EG', { timeZone: projectTimezone }) : '',
-        'ميعاد السيشن الأولى للكورس': new Date(group.dateTime).toLocaleString('ar-EG', { timeZone: projectTimezone }),
-        'ميعاد السيشن الثانية للكورس': group.courseSecondDateTime ? new Date(group.courseSecondDateTime).toLocaleString('ar-EG', { timeZone: projectTimezone }) : '',
-        'أيام الكورس': formatDays(group.days),
         'تاريخ الحجز': new Date(booking.createdAt).toLocaleString('ar-EG', { timeZone: projectTimezone }),
         'حالة الحضور': booking.isAttended ? 'حضر' : 'لم يحضر',
         'حالة الدفع': booking.isPaid ? 'دفع' : 'لم يدفع'
@@ -849,21 +911,9 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
     URL.revokeObjectURL(url);
   };
 
-  const toggleDay = (dayIndex: number) => {
-    setSelectedDays(prev => {
-      if (prev.includes(dayIndex)) {
-        return prev.filter(d => d !== dayIndex);
-      }
-      if (prev.length >= 2) {
-        return [...prev.slice(1), dayIndex].sort();
-      }
-      return [...prev, dayIndex].sort();
-    });
-  };
-
   const formatTime = (isoString: string) => {
     const dateObj = new Date(isoString);
-    const dateStr = dateObj.toLocaleDateString('ar-EG', { month: 'long', day: 'numeric', timeZone: projectTimezone });
+    const dateStr = dateObj.toLocaleDateString('ar-EG', { weekday: 'long', month: 'long', day: 'numeric', timeZone: projectTimezone });
     const timeStr = dateObj.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', timeZone: projectTimezone });
     return `${dateStr} الساعة ${timeStr}`;
   };
@@ -877,28 +927,23 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
     });
   };
 
-  const formatDays = (days: string) => {
-    if (!days) return '';
-    return days.split(',').filter(Boolean).map(d => DAY_NAMES_SHORT[parseInt(d)] || '').join(' · ');
-  };
-
   const groupInstructors = [...new Set(groups.map(group => group.instructorName?.trim()).filter((name): name is string => Boolean(name)))].sort((a, b) => a.localeCompare(b, 'ar'));
-  const filteredGroups = groups.filter(group =>
-    (!instructorFilter || group.instructorName?.trim() === instructorFilter)
-    && (groupStatusFilter === 'all' || group.isActive === (groupStatusFilter === 'active')),
-  );
+  const instructorGroups = groups.filter(group => !instructorFilter || group.instructorName?.trim() === instructorFilter);
+  const statusFilters = [
+    { key: 'all' as const, label: 'الكل', tone: 'info' as const, icon: <ListFilter size={16} aria-hidden="true" />, count: instructorGroups.length },
+    { key: 'available' as const, label: 'متاحة', tone: 'success' as const, icon: <UserCheck size={16} aria-hidden="true" />, count: instructorGroups.filter(group => getGroupStatus(group) === 'available').length },
+    { key: 'full' as const, label: 'مكتملة', tone: 'warning' as const, icon: <Users size={16} aria-hidden="true" />, count: instructorGroups.filter(group => getGroupStatus(group) === 'full').length },
+    { key: 'inactive' as const, label: 'غير نشطة', icon: <CirclePause size={16} aria-hidden="true" />, count: instructorGroups.filter(group => getGroupStatus(group) === 'inactive').length },
+  ];
+  const filteredGroups = instructorGroups.filter(group => groupStatusFilter === 'all' || getGroupStatus(group) === groupStatusFilter);
   const sortedGroups = [...filteredGroups].sort((a, b) => {
-    const getRank = (g: GroupAppointment) => {
-      if (g.bookedCount >= g.capacity) return 2;
-      if (!g.isActive) return 3;
-      return 1;
-    };
+    const getRank = (group: GroupAppointment) => ({ available: 1, full: 2, inactive: 3 })[getGroupStatus(group)];
     const rankA = getRank(a);
     const rankB = getRank(b);
     if (rankA !== rankB) {
       return rankA - rankB;
     }
-    return new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime();
+    return new Date(a.freeSessionDateTime || a.dateTime).getTime() - new Date(b.freeSessionDateTime || b.dateTime).getTime();
   });
 
   const filteredBookings = selectedGroup
@@ -916,319 +961,65 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', width: '100%' }}>
-      {/* Top Header Controls */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
-        <button 
-          type="button"
-          onClick={handleBack}
-          disabled={manualBookingSubmitting}
-          className={`${styles.btn} ${styles.btnSecondary}`}
-          style={{ padding: '6px 12px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-        >
-          <ArrowRight size={14} />
-          العودة للإضافات
-        </button>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            onClick={handleExportInactiveGroupsExcel}
-            className={`${styles.btn} ${styles.btnSecondary}`}
-            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-          >
-            <Download size={16} />
-            تصدير حجوزات المجموعات غير النشطة
-          </button>
-
-          <button
-            type="button"
-            onClick={openNewGroupEditor}
-            disabled={manualBookingSubmitting}
-            className={`${styles.btn} ${styles.btnPrimary}`}
-            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-          >
-            <Plus size={16} />
-            إضافة مجموعة جديدة
-          </button>
+      <div className={styles.groupHeadingRow}>
+        <div className={styles.groupHeadingContent}>
+          {heading ?? <>
+            <h2 className={styles.groupWorkspaceTitle}>{courseType === 'intensive' ? 'مواعيد الكورس المكثف' : 'مواعيد الكورس العادي'}</h2>
+            <p className={styles.groupTimezone}>المواعيد بتوقيت <bdi>{projectTimezone}</bdi></p>
+          </>}
         </div>
-      </div>
-
-      {message && (
-        <div role={message.type === 'error' ? 'alert' : 'status'} aria-live="polite" className="glass-panel" style={{
-          padding: 'var(--space-md)', 
-          border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
-          backgroundColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.04)' : 'rgba(239, 68, 68, 0.04)',
-          borderRadius: 'var(--radius-md)',
-          fontSize: '0.85rem',
-          fontWeight: 600
+        <details ref={managementMenuRef} name="group-toolbar-menu" className={styles.groupManagementMenu} onKeyDown={event => {
+          if (event.key !== 'Escape') return;
+          event.currentTarget.open = false;
+          event.currentTarget.querySelector('summary')?.focus();
+          event.stopPropagation();
         }}>
-          {message.text}
-        </div>
-      )}
-
-      <div className="glass-panel" style={{ padding: 'var(--space-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
-          <div>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'hsl(var(--text-primary))' }}>الإنستراكتورز العاملين</h3>
-            <p style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))', marginTop: '4px' }}>
-              اكتب كل اسم في سطر منفصل. نفس الأسماء ستظهر كاختيارات عند إنشاء أو تعديل المجموعة.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleSaveInstructors}
-            className={`${styles.btn} ${styles.btnPrimary}`}
-            disabled={savingInstructors}
-            style={{ padding: '6px 14px', fontSize: '0.8rem' }}
-          >
-            {savingInstructors ? 'جاري الحفظ...' : 'حفظ الأسماء'}
-          </button>
-        </div>
-        <label className={styles.label} htmlFor="group-instructors">أسماء المدرّبين، اسم واحد في كل سطر</label>
-        <textarea
-          id="group-instructors"
-          value={instructorsText}
-          onChange={(e) => setInstructorsText(e.target.value)}
-          className={styles.input}
-          rows={3}
-          placeholder={'مثال:\nأحمد علي\nمنى حسن'}
-          style={{ resize: 'vertical', minHeight: '86px', lineHeight: 1.7 }}
-        />
+          <summary aria-label="إدارة المجموعات"><Settings2 size={18} aria-hidden="true" />إدارة<ChevronDown size={15} aria-hidden="true" /></summary>
+          <nav aria-label="مهام إدارة المجموعات">
+            <button type="button" disabled={manualBookingSubmitting} onClick={() => openWorkspaceSection('groups')} aria-current={workspaceSection === 'groups' ? 'page' : undefined}>
+              <Calendar size={18} aria-hidden="true" />المجموعات والحجوزات
+            </button>
+            <button type="button" disabled={manualBookingSubmitting} onClick={() => openWorkspaceSection('staff')} aria-current={workspaceSection === 'staff' ? 'page' : undefined}>
+              <Users size={18} aria-hidden="true" />فريق العمل{staffDirty && <span className={styles.groupUnsavedMark}>غير محفوظ</span>}
+            </button>
+            <button type="button" disabled={manualBookingSubmitting} onClick={() => openWorkspaceSection('data')} aria-current={workspaceSection === 'data' ? 'page' : undefined}>
+              <FileDown size={18} aria-hidden="true" />الاستيراد والتصدير
+            </button>
+            <button type="button" onClick={handleBack} disabled={manualBookingSubmitting}>
+              <ArrowRight size={18} aria-hidden="true" />{backLabel}
+            </button>
+          </nav>
+        </details>
+      </div>
+      <div className={styles.groupPrimaryToolbar}>
+        {workspaceSection === 'groups' ? courseNavigation : <button type="button" disabled={manualBookingSubmitting}
+          className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => openWorkspaceSection('groups')}>
+          <ArrowRight size={16} aria-hidden="true" />العودة للمجموعات
+        </button>}
+        <button type="button" onClick={openNewGroupEditor} disabled={manualBookingSubmitting} aria-label="إضافة مجموعة جديدة"
+          className={`${styles.btn} ${styles.btnPrimary}`}><Plus size={17} aria-hidden="true" />مجموعة جديدة</button>
       </div>
 
-      <p role="note" className={styles.inlineMessage}>كل المواعيد معروضة وتُحفظ حسب المنطقة الزمنية: <b dir="ltr">{projectTimezone}</b>.</p>
+      {staffDirty && workspaceSection !== 'staff' && <StatusMessage tone="warning">لديك تعديلات غير محفوظة في فريق العمل. ارجع إلى قسم فريق العمل لحفظها.</StatusMessage>}
+      {message && <StatusMessage tone={message.type === 'error' ? 'danger' : 'success'}>{message.text}</StatusMessage>}
 
-      <div className="glass-panel" style={{ padding: 'var(--space-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
-          <div>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'hsl(var(--text-primary))', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <ShieldAlert size={18} style={{ color: 'hsl(var(--accent-warning))' }} />
-              استيراد المحظورين للدفع
-            </h3>
-            <p style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))', marginTop: '4px', lineHeight: 1.6 }}>
-              ارفع ملف Excel بأرقام الطلاب الذين اشتركوا بالفعل. عند التأكيد سيتم حذفهم من كل المجموعات النشطة والمعطلة، وإلغاء متابعاتهم، ووضعهم في مجموعة المحظورين للدفع.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleDownloadPaidTemplate}
-            className={`${styles.btn} ${styles.btnSecondary}`}
-            style={{ padding: '6px 14px', fontSize: '0.8rem' }}
-          >
-            <FileDown size={14} />
-            تحميل قالب
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-          <label
-            className={`${styles.btn} ${styles.btnSecondary}`}
-            style={{
-              padding: '8px 14px',
-              fontSize: '0.82rem',
-              cursor: paidImporting || manualBookingSubmitting ? 'not-allowed' : 'pointer',
-              opacity: paidImporting || manualBookingSubmitting ? 0.55 : 1,
-            }}
-          >
-            <Upload size={14} />
-            اختيار ملف Excel
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handlePaidImportFileChange}
-              disabled={paidImporting || manualBookingSubmitting}
-              style={{ display: 'none' }}
-            />
-          </label>
-          <button
-            type="button"
-            onClick={openPaidImportConfirmation}
-            className={`${styles.btn} ${styles.btnPrimary}`}
-            disabled={paidImporting || manualBookingSubmitting || paidImportPhones.length === 0}
-            style={{ padding: '8px 16px', fontSize: '0.82rem', opacity: paidImporting || manualBookingSubmitting || paidImportPhones.length === 0 ? 0.55 : 1 }}
-          >
-            {paidImporting ? 'جاري التنفيذ...' : 'مراجعة وتنفيذ الحظر'}
-          </button>
-          <span style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))' }}>
-            {paidImportFileName ? `${paidImportFileName} - ${paidImportPhones.length} رقم جاهز` : 'لم يتم اختيار ملف بعد'}
-          </span>
-        </div>
-
-        {paidImportResult && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-            gap: 'var(--space-sm)',
-            marginTop: 'var(--space-xs)'
-          }}>
-            {[
-              ['تم حظرهم من العملاء الحاليين', paidImportResult.matchedCount],
-              ['أرقام جديدة تم حظرها', paidImportResult.newCount],
-              ['حجوزات تم حذفها', paidImportResult.removedBookingsCount],
-              ['متابعات تم إلغاؤها', paidImportResult.cancelledFollowUpsCount]
-            ].map(([label, count]) => (
-              <div
-                key={label}
-                style={{
-                  padding: '10px 12px',
-                  background: 'var(--surface-muted)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)'
-                }}
-              >
-                <div style={{ fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: 600 }}>{label}</div>
-                <div style={{ fontSize: '1.2rem', color: 'hsl(var(--text-primary))', fontWeight: 800 }}>{count}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {!loading && groups.length > 0 && (
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-          gap: 'var(--space-md)',
-          marginBottom: 'var(--space-xs)' 
-        }}>
-          {/* Card 1: Total Booked Students */}
-          <div className="glass-panel" style={{ 
-            padding: 'var(--space-lg)', 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 'var(--space-md)',
-            background: 'var(--surface-muted)',
-            border: '1px solid var(--accent-soft-strong)',
-            borderRadius: 'var(--radius-lg)'
-          }}>
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              width: '48px', 
-              height: '48px', 
-              borderRadius: 'var(--radius-md)', 
-              background: 'hsla(var(--accent-primary-hsl), 0.15)',
-              color: 'hsl(var(--accent-primary))'
-            }}>
-              <Users size={24} aria-hidden="true" />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>إجمالي الطلاب المحجوزين</span>
-              <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
-                {groups.reduce((sum, g) => sum + (g.bookedCount || 0), 0)}
-              </span>
-            </div>
-          </div>
-
-          {/* Card 2: Active Groups */}
-          <div className="glass-panel" style={{ 
-            padding: 'var(--space-lg)', 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 'var(--space-md)',
-            background: 'var(--surface-muted)',
-            border: '1px solid rgba(34, 197, 94, 0.15)',
-            borderRadius: 'var(--radius-lg)'
-          }}>
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              width: '48px', 
-              height: '48px', 
-              borderRadius: 'var(--radius-md)', 
-              background: 'rgba(34, 197, 94, 0.12)',
-              color: 'rgb(34, 197, 94)'
-            }}>
-              <Calendar size={24} aria-hidden="true" />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>المجموعات النشطة</span>
-              <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
-                {groups.filter(g => g.isActive).length} <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'hsl(var(--text-muted))' }}>/ {groups.length}</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Card 2.5: Active Students in Active Groups */}
-          <div className="glass-panel" style={{ 
-            padding: 'var(--space-lg)', 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 'var(--space-md)',
-            background: 'var(--surface-muted)',
-            border: '1px solid rgba(249, 115, 22, 0.15)',
-            borderRadius: 'var(--radius-lg)'
-          }}>
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              width: '48px', 
-              height: '48px', 
-              borderRadius: 'var(--radius-md)', 
-              background: 'rgba(249, 115, 22, 0.12)',
-              color: 'rgb(249, 115, 22)'
-            }}>
-              <UserCheck size={24} aria-hidden="true" />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>الطلاب النشطة في المجموعات النشطة</span>
-              <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
-                {groups.filter(g => g.isActive).reduce((sum, g) => sum + (g.bookedCount || 0), 0)}
-              </span>
-            </div>
-          </div>
-
-          {/* Card 3: Booking Fill Rate */}
-          <div className="glass-panel" style={{ 
-            padding: 'var(--space-lg)', 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 'var(--space-md)',
-            background: 'var(--surface-muted)',
-            border: '1px solid rgba(168, 85, 247, 0.15)',
-            borderRadius: 'var(--radius-lg)'
-          }}>
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              width: '48px', 
-              height: '48px', 
-              borderRadius: 'var(--radius-md)', 
-              background: 'rgba(168, 85, 247, 0.12)',
-              color: 'rgb(168, 85, 247)'
-            }}>
-              <Clock size={24} aria-hidden="true" />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: 500 }}>نسبة إشغال المجموعات</span>
-              <span style={{ fontSize: '1.6rem', fontWeight: 800, color: 'hsl(var(--text-primary))', lineHeight: 1.2 }}>
-                {(() => {
-                  const totalCap = groups.reduce((sum, g) => sum + (g.capacity || 0), 0);
-                  const totalBooked = groups.reduce((sum, g) => sum + (g.bookedCount || 0), 0);
-                  return totalCap > 0 ? `${Math.round((totalBooked / totalCap) * 100)}%` : '0%';
-                })()}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
+      <div id="groups-workspace-panel-groups" role="region" aria-label="المجموعات والحجوزات" hidden={workspaceSection !== 'groups'} className={styles.groupWorkspacePanel}>
+      {groupsLoadFailed && <StatusMessage tone="danger">
+        <span>{groups.length ? 'تعذر تحديث المجموعات. البيانات المعروضة من آخر تحميل ناجح.' : 'فشل تحميل مجموعات المواعيد.'}</span>
+        <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => void fetchGroups()}>إعادة تحميل المجموعات</button>
+      </StatusMessage>}
       {loading ? (
         <div role="status" aria-live="polite" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 'var(--space-sm)', padding: '4rem 0' }}>
           <div className={styles.spinner} aria-hidden="true"></div>
           <span>جاري تحميل مجموعات المواعيد…</span>
         </div>
-      ) : groups.length === 0 ? (
-        <div className="glass-panel" style={{ 
-          display: 'flex', 
-          flexDirection: 'column', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          padding: '4rem var(--space-md)', 
+      ) : groupsLoadFailed && groups.length === 0 ? null : groups.length === 0 ? (
+        <div className="glass-panel" style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '4rem var(--space-md)',
           textAlign: 'center',
           gap: 'var(--space-sm)'
         }}>
@@ -1239,184 +1030,15 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
           </p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'var(--space-lg)' }}>
-          {/* List of Groups */}
-          <div className="glass-panel" style={{ padding: 'var(--space-lg)' }}>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 'var(--space-md)', color: 'hsl(var(--text-primary))' }}>المجموعات الحالية</h3>
-
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'end', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
-              <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-                <label className={styles.label} htmlFor="group-instructor-filter">الإنستراكتور</label>
-                <select id="group-instructor-filter" className={styles.select} value={instructorFilter} onChange={event => setInstructorFilter(event.target.value)}>
-                  <option value="">كل الإنستراكتورز</option>
-                  {groupInstructors.map(instructor => <option key={instructor} value={instructor}>{instructor}</option>)}
-                </select>
-              </div>
-              <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-                <label className={styles.label} htmlFor="group-status-filter">حالة المجموعة</label>
-                <select id="group-status-filter" className={styles.select} value={groupStatusFilter} onChange={event => setGroupStatusFilter(event.target.value)}>
-                  <option value="all">كل الحالات</option>
-                  <option value="active">مفتوحة (نشطة)</option>
-                  <option value="inactive">مقفولة (معطلة)</option>
-                </select>
-              </div>
-              <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={!instructorFilter && groupStatusFilter === 'all'} onClick={() => { setInstructorFilter(''); setGroupStatusFilter('all'); }}>
-                مسح الفلاتر
-              </button>
-            </div>
-            <p aria-live="polite" aria-atomic="true" style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', marginBottom: 'var(--space-md)' }}>
-              عرض {filteredGroups.length} من {groups.length} مجموعة
-            </p>
-
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'right' }}>
-                <caption className={styles.tableCaption}>المجموعات الحالية ومواعيدها وسعتها وحالتها</caption>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>نوع المجموعة</th>
-                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>المواعيد والمدرّب</th>
-                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>الحجوزات / السعة</th>
-                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الحالة</th>
-                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedGroups.length === 0 && (
-                    <tr><td colSpan={5} style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'hsl(var(--text-secondary))' }}>لا توجد مجموعات مطابقة. جرّب تغيير الإنستراكتور أو الحالة، أو امسح الفلاتر.</td></tr>
-                  )}
-                  {sortedGroups.map((group) => {
-                    const percent = Math.min(100, Math.round((group.bookedCount / group.capacity) * 100));
-                    const isFull = group.bookedCount >= group.capacity;
-
-                    return (
-                      <tr key={group.id} style={{ borderBottom: '1px solid var(--border-subtle)', verticalAlign: 'middle' }}>
-                        <td style={{ padding: '16px 8px' }}>
-                          <span style={{ fontWeight: 600, color: 'var(--text-strong)' }}>
-                            {group.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)'}
-                          </span>
-                          {!group.isActive && (
-                            <span style={{ 
-                              marginRight: '8px',
-                              padding: '2px 6px',
-                              fontSize: '0.7rem',
-                              backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                              color: 'hsl(var(--accent-danger))',
-                              borderRadius: '4px'
-                            }}>غير نشطة</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '16px 8px', fontSize: '0.85rem' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'hsl(var(--text-primary))', fontWeight: 600 }}>
-                              <Clock size={12} />
-                              {formatTime(group.dateTime)}
-                            </div>
-                            {group.days && (
-                              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
-                                أيام الكورس: {formatDays(group.days)}
-                              </span>
-                            )}
-                            {group.courseSecondDateTime && (
-                              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
-                                السيشن الثانية: {formatTime(group.courseSecondDateTime)}
-                              </span>
-                            )}
-                            {group.freeSessionDateTime && (
-                              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
-                                الجلسة المجانية: {formatTime(group.freeSessionDateTime)}
-                              </span>
-                            )}
-                            {group.instructorName && (
-                              <span style={{ fontSize: '0.75rem', color: 'hsl(var(--accent-primary))', fontWeight: 700 }}>
-                                إنستراكتور الكورس: {group.instructorName}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td style={{ padding: '16px 8px' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '120px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 600 }}>
-                              <span style={{ color: isFull ? 'hsl(var(--accent-danger))' : 'hsl(var(--text-secondary))' }}>
-                                {isFull ? 'مكتملة!' : `${group.bookedCount} / ${group.capacity}`}
-                              </span>
-                              <span>{percent}%</span>
-                            </div>
-                            <div role="progressbar" aria-label={`إشغال ${group.name}`} aria-valuemin={0} aria-valuemax={group.capacity} aria-valuenow={group.bookedCount} aria-valuetext={`${group.bookedCount} من ${group.capacity}`} style={{ height: '6px', background: 'hsl(var(--bg-tertiary))', borderRadius: '3px', overflow: 'hidden' }}>
-                              <div style={{ 
-                                width: `${percent}%`, 
-                                height: '100%', 
-                                background: isFull ? 'hsl(var(--accent-danger))' : 'hsl(var(--accent-success))',
-                                borderRadius: '3px'
-                              }}></div>
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '16px 8px', textAlign: 'center' }}>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleGroup(group)}
-                            disabled={actionLoading || manualBookingSubmitting}
-                            style={{
-                              padding: '4px 12px',
-                              fontSize: '0.75rem',
-                              border: 'none',
-                              borderRadius: '12px',
-                              cursor: actionLoading || manualBookingSubmitting ? 'not-allowed' : 'pointer',
-                              fontWeight: 600,
-                              background: group.isActive ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                              color: group.isActive ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))',
-                            }}
-                          >
-                            {group.isActive ? 'نشطة ✓' : 'معطلة ✗'}
-                          </button>
-                        </td>
-                        <td style={{ padding: '16px 8px', textAlign: 'center' }}>
-                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                            <button
-                              type="button"
-                              onClick={() => handleSelectGroup(group)}
-                              disabled={manualBookingSubmitting}
-                              aria-expanded={selectedGroup?.id === group.id}
-                              aria-controls="group-subscribers-panel"
-                              className={`${styles.btn} ${styles.btnSecondary}`}
-                              style={{ padding: '4px 8px', fontSize: '0.75rem', backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
-                            >
-                              <Users size={12} />
-                              المشتركين ({group.bookedCount})
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`تعديل مجموعة ${group.name}`}
-                              onClick={() => handleStartEdit(group)}
-                              disabled={manualBookingSubmitting}
-                              className={`${styles.btn} ${styles.btnSecondary}`}
-                              style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                            >
-                              <Edit3 size={12} />
-                            </button>
-                             <button
-                               type="button"
-                               aria-label={`حذف مجموعة ${group.name}`}
-                               onClick={() => triggerDeleteGroup(group.id)}
-                               className={`${styles.btn} ${styles.btnDanger}`}
-                               style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                               disabled={actionLoading || manualBookingSubmitting}
-                             >
-                               <Trash2 size={12} />
-                             </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 'var(--space-lg)' }}>
           {/* Booked Customers List (Conditional Panel) */}
+          {participationGroup && participationGroup.projectId === activeProject?.id && (
+            <GroupParticipationPanel key={`${participationGroup.projectId}:${participationGroup.id}`}
+              groupId={participationGroup.id} groupName={participationGroup.name} timezone={timezone}
+              onClose={() => { setParticipationGroup(null); participationTrigger.current?.focus(); }} />
+          )}
           {selectedGroup && (
-            <div id="group-subscribers-panel" className="glass-panel" style={{ padding: 'var(--space-lg)' }}>
+            <div id="group-subscribers-panel" className="glass-panel" style={{ padding: 'var(--space-lg)', minWidth: 0 }}>
               <div className={styles.subscribersHeader}>
                 <div className={styles.subscribersHeading}>
                   <h3 ref={subscribersHeadingRef} tabIndex={-1} className={styles.subscribersTitle}>
@@ -1616,16 +1238,16 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
                   className={styles.input}
                   style={{ width: '100%', paddingLeft: '2.5rem', paddingRight: '1rem' }}
                 />
-                <Search 
-                  size={16} 
-                  style={{ 
-                    position: 'absolute', 
-                    left: '12px', 
-                    top: '50%', 
-                    transform: 'translateY(-50%)', 
-                    color: 'hsl(var(--text-muted))', 
-                    pointerEvents: 'none' 
-                  }} 
+                <Search
+                  size={16}
+                  style={{
+                    position: 'absolute',
+                    left: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: 'hsl(var(--text-muted))',
+                    pointerEvents: 'none'
+                  }}
                 />
               </div>
 
@@ -1638,8 +1260,8 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
                   لم يتم العثور على نتائج تطابق البحث &quot;{searchQuery}&quot;
                 </p>
               ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'right' }}>
+                <div className={styles.groupSubscribersTableRegion} role="region" aria-label="سجل مشتركي المجموعة" tabIndex={0}>
+                  <table className={styles.groupSubscribersTable}>
                     <caption className={styles.tableCaption}>مشتركو المجموعة وحالة الحضور والدفع</caption>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -1654,34 +1276,40 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
                     <tbody>
                       {filteredBookings.map((booking) => (
                         <tr key={booking.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                          <td style={{ padding: '12px 6px', fontWeight: 600 }}>{booking.customerName}</td>
-                          <td style={{ padding: '12px 6px', fontSize: '0.85rem' }}>+{booking.customerPhone}</td>
-                          <td style={{ padding: '12px 6px', fontSize: '0.85rem', color: 'hsl(var(--text-secondary))' }}>
+                          <td data-label="اسم العميل" style={{ fontWeight: 600 }}>{booking.customerName}</td>
+                          <td data-label="رقم الواتساب"><bdi dir="ltr">+{booking.customerPhone}</bdi></td>
+                          <td data-label="تاريخ الحجز" style={{ color: 'hsl(var(--text-secondary))' }}>
                             {new Date(booking.createdAt).toLocaleDateString('ar-EG', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: projectTimezone })}
                           </td>
-                          <td style={{ padding: '12px 6px', textAlign: 'center' }}>
-                            <input 
-                              type="checkbox" 
+                          <td>
+                            <label className={styles.bookingStatusControl}>
+                            <input
+                              type="checkbox"
                               aria-label={`تحديد حضور ${booking.customerName}`}
-                              checked={booking.isAttended || false} 
-                              onChange={(e) => handleToggleBookingStatus(booking.id, { isAttended: e.target.checked })} 
+                              checked={booking.isAttended || false}
+                              onChange={(e) => handleToggleBookingStatus(booking.id, { isAttended: e.target.checked })}
                               disabled={manualBookingSubmitting}
                               style={{ width: '16px', height: '16px', cursor: manualBookingSubmitting ? 'not-allowed' : 'pointer' }}
                             />
+                            <span>الحضور</span>
+                            </label>
                           </td>
-                          <td style={{ padding: '12px 6px', textAlign: 'center' }}>
-                            <input 
-                              type="checkbox" 
+                          <td>
+                            <label className={styles.bookingStatusControl}>
+                            <input
+                              type="checkbox"
                               aria-label={`تحديد دفع ${booking.customerName}`}
-                              checked={booking.isPaid || false} 
-                              onChange={(e) => handleToggleBookingStatus(booking.id, { isPaid: e.target.checked })} 
+                              checked={booking.isPaid || false}
+                              onChange={(e) => handleToggleBookingStatus(booking.id, { isPaid: e.target.checked })}
                               disabled={manualBookingSubmitting}
                               style={{ width: '16px', height: '16px', cursor: manualBookingSubmitting ? 'not-allowed' : 'pointer' }}
                             />
+                            <span>الدفع</span>
+                            </label>
                           </td>
-                          <td style={{ padding: '12px 6px', textAlign: 'center' }}>
+                          <td>
                             <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                              <a 
+                              <a
                                 href={`/inbox?customerId=${booking.customerId}&startConversation=1`}
                                 className={`${styles.btn} ${styles.btnSecondary}`}
                                 style={{ padding: '4px 10px', fontSize: '0.75rem', backgroundColor: 'var(--accent-soft)' }}
@@ -1713,18 +1341,280 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
               )}
             </div>
           )}
+
+          {/* List of Groups */}
+          <div className={styles.groupRecords}>
+            <h3 className={styles.tableCaption}>المجموعات الحالية</h3>
+
+            <div className={styles.groupStatusFilters}>
+              <FilterTabs compactOnMobile label="حالة المجموعات" options={statusFilters} selected={groupStatusFilter} onChange={setGroupStatusFilter} />
+            </div>
+            <div className={styles.groupListTools}>
+            <p aria-live="polite" aria-atomic="true" className={styles.groupResultCount}>
+              {filteredGroups.length} مجموعة <span className={styles.groupContextDivider}>·</span> <bdi>{projectTimezone}</bdi>
+            </p>
+
+              <details className={styles.groupFilterDisclosure}>
+                <summary><SlidersHorizontal size={16} aria-hidden="true" />المدرّب
+                  {instructorFilter && <span className={styles.filterActiveCount}>{instructorFilter}</span>}
+                </summary>
+            <div className={styles.groupFilters}>
+              <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+                <label className={styles.label} htmlFor="group-instructor-filter">الإنستراكتور</label>
+                <select id="group-instructor-filter" className={styles.select} value={instructorFilter} onChange={event => setInstructorFilter(event.target.value)}>
+                  <option value="">كل الإنستراكتورز</option>
+                  {groupInstructors.map(instructor => <option key={instructor} value={instructor}>{instructor}</option>)}
+                </select>
+              </div>
+              <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} disabled={!instructorFilter} onClick={() => setInstructorFilter('')}>
+                كل المدربين
+              </button>
+            </div>
+              </details>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table className={styles.groupTable}>
+                <caption className={styles.tableCaption}>المجموعات الحالية ومواعيدها وسعتها وحالتها</caption>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>المجموعة</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>المواعيد والمدرّب</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)' }}>الحجوزات / السعة</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الحالة</th>
+                    <th scope="col" style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'var(--text-soft)', textAlign: 'center' }}>الإجراءات</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedGroups.length === 0 && (
+                    <tr><td colSpan={5} style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'hsl(var(--text-secondary))' }}>لا توجد مجموعات مطابقة. جرّب تغيير الإنستراكتور أو الحالة، أو امسح الفلاتر.</td></tr>
+                  )}
+                  {sortedGroups.map((group) => {
+                    const percent = Math.min(100, Math.round((group.bookedCount / group.capacity) * 100));
+                    const status = getGroupStatus(group);
+                    const slotsLeft = Math.max(0, group.capacity - group.bookedCount);
+
+                    return (
+                      <tr key={group.id} data-selected={selectedGroup?.id === group.id || participationGroup?.id === group.id}>
+                        <td data-label="المجموعة" className={styles.groupIdentity}>
+                          <strong>{group.name || (group.mode === 'online' ? 'مجموعة أونلاين' : 'مجموعة في السنتر')}</strong>
+                          <span>{group.mode === 'online' ? 'أونلاين' : 'في السنتر'}</span>
+                        </td>
+                        <td data-label="الموعد والمدرّب" className={styles.groupSchedule}>
+                          <div className={styles.groupScheduleDetails}>
+                            <span className={styles.groupDateLabel}>الحصة المجانية</span>
+                            <strong className={styles.groupDate}><Clock size={14} aria-hidden="true" />{formatTime(group.freeSessionDateTime || group.dateTime)}</strong>
+                            {group.supervisorPhone && <div>المسؤولة: <bdi>{group.supervisorPhone}</bdi>
+                              {group.staffSyncError ? <span role="status"> · تعذرت إضافة فريق العمل، راجع صلاحيات وخصوصية واتساب</span>
+                                : !group.staffSyncedAtUtc ? <span> · إضافة فريق العمل قيد الانتظار</span> : <span> · تمت إضافة فريق العمل</span>}
+                            </div>}
+                            {group.instructorName && (
+                              <span className={styles.groupInstructor}>
+                                المدرّب: {group.instructorName}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td data-label="الحجوزات والسعة">
+                          <div className={styles.groupAvailability} data-status={status}>
+                            <div className={styles.groupCapacityNumbers}>
+                              <span><strong>{group.bookedCount}</strong> / {group.capacity} مشترك</span>
+                              {status === 'available' && <span>{slotsLeft} مقعد متاح</span>}
+                            </div>
+                            <div className={styles.groupCapacityTrack} role="progressbar" aria-label={`إشغال ${group.name}`}
+                              aria-valuemin={0} aria-valuemax={group.capacity} aria-valuenow={Math.min(group.bookedCount, group.capacity)}
+                              aria-valuetext={`${group.bookedCount} من ${group.capacity}`}>
+                              <span style={{ width: `${percent}%` }} />
+                            </div>
+                          </div>
+                        </td>
+                        <td data-label="الحالة">
+                          <span className={styles.groupStatusBadge} data-status={status}>{groupStatusLabels[status]}</span>
+                        </td>
+                        <td data-label="الإجراءات" className={styles.groupActionsCell}>
+                          <div className={styles.groupRowActions}>
+                            <button
+                              type="button"
+                              onClick={event => { subscribersTrigger.current = event.currentTarget; handleSelectGroup(group); }}
+                              disabled={manualBookingSubmitting}
+                              aria-expanded={selectedGroup?.id === group.id}
+                              aria-controls="group-subscribers-panel"
+                              className={`${styles.btn} ${styles.btnPrimary} ${styles.groupPrimaryAction}`}
+                            >
+                              <Users size={12} />
+                              المشتركين ({group.bookedCount})
+                            </button>
+                            <button type="button" className={`${styles.btn} ${styles.btnSecondary}`}
+                              style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                              disabled={manualBookingSubmitting || !activeProject}
+                              aria-expanded={participationGroup?.id === group.id && participationGroup?.projectId === activeProject?.id}
+                              aria-controls="group-participation-panel"
+                              onClick={event => {
+                                participationTrigger.current = event.currentTarget;
+                                if (activeProject) setParticipationGroup(current => current?.id === group.id && current.projectId === activeProject.id
+                                  ? null : { id: group.id, name: group.name, projectId: activeProject.id });
+                              }}>
+                              <UserCheck size={12} /> متابعة دخول الجروب
+                            </button>
+                            <details className={styles.groupMoreActions}>
+                              <summary><SlidersHorizontal size={16} aria-hidden="true" />إجراءات أخرى</summary>
+                              <div>
+                            <button
+                              type="button"
+                              aria-label={`تعديل مجموعة ${group.name}`}
+                              onClick={() => handleStartEdit(group)}
+                              disabled={manualBookingSubmitting}
+                              className={`${styles.btn} ${styles.btnSecondary}`}
+                              style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                            >
+                              <Edit3 size={14} /> تعديل
+                            </button>
+                             <button
+                               type="button"
+                               aria-label={`حذف مجموعة ${group.name}`}
+                               onClick={() => triggerDeleteGroup(group.id)}
+                               className={`${styles.btn} ${styles.btnDanger}`}
+                               style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                               disabled={actionLoading || manualBookingSubmitting}
+                             >
+                               <Trash2 size={14} /> حذف
+                             </button>
+                                <button type="button" onClick={() => handleToggleGroup(group)} disabled={actionLoading || manualBookingSubmitting}
+                                  className={`${styles.btn} ${styles.btnSecondary}`}>{group.isActive ? 'إيقاف الحجز' : 'تفعيل الحجز'}</button>
+                              </div>
+                            </details>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+
         </div>
       )}
+
+      </div>
+
+      <div id="groups-workspace-panel-staff" role="region" aria-label="إدارة فريق العمل" hidden={workspaceSection !== 'staff'} className={styles.groupWorkspacePanel}>
+      <section className={styles.staffDirectory} aria-label="فريق المجموعات">
+        <h3 className={styles.sectionTitle}>فريق المجموعات</h3>
+        <GroupStaffDirectoryEditor title="الإنستراكتورز" hint="احفظ الاسم ورقم واتساب لإضافة دكتور كل مجموعة كعضو. يمكنك استكمال أرقام الأسماء القديمة لاحقًا."
+          contacts={draftInstructors} onChange={setDraftInstructors} disabled={savingInstructors || !staffLoaded} />
+        <GroupStaffDirectoryEditor title="مسؤولات المتابعة" hint="احفظ الاسم والرقم، ثم اختر المسؤولة لكل مجموعة. تُضاف كعضوة ويصلها كل حجز جديد على واتساب."
+          contacts={draftSupervisors} onChange={setDraftSupervisors} disabled={savingInstructors || !staffLoaded} />
+        <button type="button" onClick={handleSaveInstructors} className={`${styles.btn} ${styles.btnPrimary}`}
+          disabled={savingInstructors || !staffLoaded} style={{ alignSelf: 'start' }}>
+          {!staffLoaded ? 'تحميل فريق العمل...' : savingInstructors ? 'جاري الحفظ...' : 'حفظ فريق العمل'}
+        </button>
+      </section>
+      </div>
+      <div id="groups-workspace-panel-data" role="region" aria-label="الاستيراد والتصدير" hidden={workspaceSection !== 'data'} className={styles.groupWorkspacePanel}>
+        <section className={styles.groupExport} aria-label="تصدير الحجوزات">
+          <div><h3 className={styles.sectionTitle}>تصدير الحجوزات</h3><p className={styles.sectionHint}>نزّل حجوزات المجموعات غير النشطة في ملف Excel.</p></div>
+          <button type="button" onClick={handleExportInactiveGroupsExcel} className={`${styles.btn} ${styles.btnSecondary}`}>
+            <Download size={16} />تصدير حجوزات المجموعات غير النشطة
+          </button>
+        </section>
+      <section className={styles.importPanel} aria-label="استيراد المحظورين للدفع">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+          <div>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'hsl(var(--text-primary))', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ShieldAlert size={18} style={{ color: 'hsl(var(--accent-warning))' }} />
+              استيراد المحظورين للدفع
+            </h3>
+            <p style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))', marginTop: '4px', lineHeight: 1.6 }}>
+              ارفع ملف Excel بأرقام الطلاب الذين اشتركوا بالفعل. عند التأكيد سيتم حذفهم من كل المجموعات النشطة والمعطلة، وإلغاء متابعاتهم، ووضعهم في مجموعة المحظورين للدفع.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleDownloadPaidTemplate}
+            className={`${styles.btn} ${styles.btnSecondary}`}
+            style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+          >
+            <FileDown size={14} />
+            تحميل قالب
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <label
+            className={`${styles.btn} ${styles.btnSecondary}`}
+            style={{
+              padding: '8px 14px',
+              fontSize: '0.82rem',
+              cursor: paidImporting || manualBookingSubmitting ? 'not-allowed' : 'pointer',
+              opacity: paidImporting || manualBookingSubmitting ? 0.55 : 1,
+            }}
+          >
+            <Upload size={14} />
+            اختيار ملف Excel
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handlePaidImportFileChange}
+              disabled={paidImporting || manualBookingSubmitting}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={openPaidImportConfirmation}
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            disabled={paidImporting || manualBookingSubmitting || paidImportPhones.length === 0}
+            style={{ padding: '8px 16px', fontSize: '0.82rem', opacity: paidImporting || manualBookingSubmitting || paidImportPhones.length === 0 ? 0.55 : 1 }}
+          >
+            {paidImporting ? 'جاري التنفيذ...' : 'مراجعة وتنفيذ الحظر'}
+          </button>
+          <span style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))' }}>
+            {paidImportFileName ? `${paidImportFileName} - ${paidImportPhones.length} رقم جاهز` : 'لم يتم اختيار ملف بعد'}
+          </span>
+        </div>
+
+        {paidImportResult && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gap: 'var(--space-sm)',
+            marginTop: 'var(--space-xs)'
+          }}>
+            {[
+              ['تم حظرهم من العملاء الحاليين', paidImportResult.matchedCount],
+              ['أرقام جديدة تم حظرها', paidImportResult.newCount],
+              ['حجوزات تم حذفها', paidImportResult.removedBookingsCount],
+              ['متابعات تم إلغاؤها', paidImportResult.cancelledFollowUpsCount]
+            ].map(([label, count]) => (
+              <div
+                key={label}
+                style={{
+                  padding: '10px 12px',
+                  background: 'var(--surface-muted)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)'
+                }}
+              >
+                <div style={{ fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: 600 }}>{label}</div>
+                <div style={{ fontSize: '1.2rem', color: 'hsl(var(--text-primary))', fontWeight: 800 }}>{count}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      </div>
 
       {/* Add/Edit Modal */}
       {isModalOpen && (
         <div className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }}>
-          <div ref={editorRef} className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="group-editor-title" aria-describedby="group-editor-timezone" style={{ maxWidth: '560px', maxHeight: '92dvh', overflowY: 'auto' }}>
+          <div ref={editorRef} className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="group-editor-title" aria-describedby="group-editor-timezone" style={{ maxWidth: '560px', maxHeight: '92dvh', overflowY: 'auto', background: 'var(--surface)', color: 'var(--text-strong)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
               <h3 id="group-editor-title" style={{ fontSize: '1.1rem', fontWeight: 600 }}>
                 {editingGroupId ? 'تعديل مجموعة مواعيد' : 'إنشاء مجموعة جديدة'}
               </h3>
-              <button 
+              <button
                 ref={editorCloseRef}
                 type="button"
                 aria-label="إغلاق نموذج المجموعة"
@@ -1741,10 +1631,10 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
             <form onSubmit={handleSaveGroup} className={styles.form}>
               <div className={styles.formGroup}>
                 <label className={styles.label} htmlFor="group-editor-mode">نوع المجموعة</label>
-                <select 
+                <select
                   id="group-editor-mode"
-                  value={mode} 
-                  onChange={(e) => setMode(e.target.value)} 
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value)}
                   className={styles.select}
                   required
                 >
@@ -1754,7 +1644,7 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-editor-instructor">مدرّب المجموعة</label>
+                <label className={styles.label} htmlFor="group-editor-instructor">دكتور المجموعة</label>
                 <select
                   id="group-editor-instructor"
                   value={selectedInstructor}
@@ -1763,15 +1653,29 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
                   required
                 >
                   <option value="">اختر الإنستراكتور</option>
+                  {selectedInstructor && !instructors.includes(selectedInstructor) && <option value={selectedInstructor}>{selectedInstructor} (محفوظ سابقًا)</option>}
                   {instructors.map((instructor) => (
                     <option key={instructor} value={instructor}>{instructor}</option>
                   ))}
                 </select>
                 {instructors.length === 0 && (
                   <span style={{ fontSize: '0.72rem', color: 'hsl(var(--accent-danger))' }}>
-                    أضف أسماء الإنستراكتورز من الخانة الموجودة خارج النموذج ثم احفظها.
+                    أضف الإنستراكتورز من قائمة فريق العمل خارج النموذج ثم احفظها.
                   </span>
                 )}
+              </div>
+
+              <div className={styles.formGroup}>
+                <label className={styles.label} htmlFor="group-supervisor-phone">المسؤولة عن المجموعة</label>
+                <select id="group-supervisor-phone" value={supervisorPhone} onChange={event => setSupervisorPhone(event.target.value)}
+                  className={styles.select} aria-describedby="group-supervisor-help">
+                  <option value="">بدون مسؤولة</option>
+                  {supervisorPhone && !supervisors.some(contact => contact.phone === supervisorPhone) && (
+                    <option value={supervisorPhone}>الرقم المحفوظ سابقًا: +{supervisorPhone}</option>
+                  )}
+                  {supervisors.map(contact => <option key={contact.id} value={contact.phone}>{contact.name} (+{contact.phone})</option>)}
+                </select>
+                <small id="group-supervisor-help">تُضاف للجروب كعضوة، ويصلها اسم ورقم كل حجز جديد على الخاص. أضف الأسماء من قائمة مسؤولات المتابعة خارج النموذج.</small>
               </div>
 
               <div className={styles.formGroup}>
@@ -1786,97 +1690,44 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
                 />
               </div>
 
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-editor-first-session">موعد الجلسة الأولى للكورس</label>
-                <input 
-                  id="group-editor-first-session"
-                  type="datetime-local" 
-                  value={dateTime} 
-                  onChange={(e) => setDateTime(e.target.value)} 
-                  className={styles.input} 
-                  required 
-                />
-              </div>
+              <p className={styles.sectionHint}>مواعيد الكورس تتحدد في الحصة المجانية حسب مستوى الطالب، مع الدكتور المسؤول عن المجموعة.</p>
 
               <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-editor-second-session">موعد الجلسة الثانية للكورس</label>
+                <label className={styles.label} htmlFor="group-editor-capacity">السعة (عدد المشتركين الأقصى)</label>
                 <input
-                  id="group-editor-second-session"
-                  type="datetime-local"
-                  value={courseSecondDateTime}
-                  onChange={(e) => setCourseSecondDateTime(e.target.value)}
+                  id="group-editor-capacity"
+                  type="number"
+                  min={1}
+                  value={capacity}
+                  onChange={(e) => setCapacity(Number(e.target.value))}
                   className={styles.input}
                   required
                 />
               </div>
 
-              <div className={styles.formGroup}>
-                <span id="group-editor-days-label" className={styles.label}>أيام الكورس الأسبوعية (اختر يومين)</span>
-                <div role="group" aria-labelledby="group-editor-days-label" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
-                  {DAY_NAMES.map((dayName, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      aria-pressed={selectedDays.includes(idx)}
-                      onClick={() => toggleDay(idx)}
-                      style={{
-                        minHeight: '44px',
-                        padding: '6px 14px',
-                        fontSize: '0.8rem',
-                        borderRadius: '16px',
-                        border: selectedDays.includes(idx) ? '2px solid hsl(var(--accent-primary))' : '1px solid var(--border-subtle)',
-                        background: selectedDays.includes(idx) ? 'hsla(var(--accent-primary), 0.15)' : 'transparent',
-                        color: selectedDays.includes(idx) ? 'hsl(var(--accent-primary))' : 'hsl(var(--text-secondary))',
-                        cursor: 'pointer',
-                        fontWeight: selectedDays.includes(idx) ? 700 : 400,
-                        transition: 'background-color 0.2s, border-color 0.2s, color 0.2s'
-                      }}
-                    >
-                      {dayName}
-                    </button>
-                  ))}
-                </div>
-                <span style={{ fontSize: '0.72rem', color: selectedDays.length === 2 ? 'hsl(var(--text-secondary))' : 'hsl(var(--accent-danger))' }}>
-                  المختار حالياً: {selectedDays.length} / 2
-                </span>
-              </div>
-
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-editor-capacity">السعة (عدد المشتركين الأقصى)</label>
-                <input 
-                  id="group-editor-capacity"
-                  type="number" 
-                  min={1}
-                  value={capacity} 
-                  onChange={(e) => setCapacity(Number(e.target.value))} 
-                  className={styles.input} 
-                  required 
-                />
-              </div>
-
               <div className={styles.formGroup} style={{ marginTop: 'var(--space-xs)' }}>
                 <label className={styles.checkboxGroup}>
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     checked={isActive}
                     onChange={(e) => setIsActive(e.target.checked)}
-                    className={styles.checkbox} 
+                    className={styles.checkbox}
                   />
                   <span className={styles.label} style={{ userSelect: 'none' }}>مجموعة نشطة ومتاحة للحجز</span>
                 </label>
               </div>
 
               <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={closeEditor}
                   className={`${styles.btn} ${styles.btnSecondary}`}
                   disabled={actionLoading}
                 >
                   إلغاء
                 </button>
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   className={`${styles.btn} ${styles.btnPrimary}`}
                   disabled={actionLoading}
                 >
@@ -1888,7 +1739,14 @@ export default function GroupAppointmentsManager({ onBack, timezone }: GroupAppo
         </div>
       )}
 
-      <ConfirmDialog 
+      <ConfirmDialog
+        isOpen={staffNavigationGuard.navigationBlocked}
+        title="تعديلات فريق العمل غير محفوظة"
+        message="مغادرة الصفحة ستفقد تعديلات الأسماء والأرقام التي لم تحفظها."
+        confirmLabel="مغادرة دون حفظ" cancelLabel="العودة للتعديلات"
+        onConfirm={staffNavigationGuard.confirmNavigation} onCancel={staffNavigationGuard.cancelNavigation}
+      />
+      <ConfirmDialog
         isOpen={confirmDeleteOpen}
         title="تأكيد حذف المجموعة"
         message="هل أنت متأكد من حذف هذه المجموعة؟ سيتم حذف جميع الحجوزات والبيانات المرتبطة بها نهائياً."

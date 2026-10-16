@@ -4,19 +4,30 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
-import { handleDialogKeyDown } from './dialog-accessibility';
+import Dialog from '../../components/shared/Dialog';
 import { 
   BookOpen, 
   Upload, 
   RefreshCw, 
   FileText, 
   ExternalLink,
-  CheckCircle2,
   Plus,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Sparkles,
+  Check,
+  Clock,
+  Pencil,
+  Trash2,
+  Undo2,
+  X
 } from 'lucide-react';
+import PageHeader from '../../components/ui/PageHeader';
+import FilterTabs from '../../components/ui/FilterTabs';
+import SearchField from '../../components/ui/SearchField';
+import StatusMessage from '../../components/ui/StatusMessage';
 import styles from './management.module.css';
+import { useListFilters } from './hooks/use-list-filters';
 
 interface KnowledgeDocument {
   id: string;
@@ -36,17 +47,21 @@ const statusMapAr: Record<string, string> = {
   'Rejected': 'مرفوض'
 };
 
+const listFilterConfig = { statuses: ['all', 'approved', 'pending'] as const, defaultStatus: 'all' as const };
+
 export default function KnowledgeBase() {
+  return <React.Suspense fallback={<p role="status">جاري تحميل القائمة…</p>}><KnowledgeBaseList /></React.Suspense>;
+}
+
+function KnowledgeBaseList() {
   const { activeProject } = useAuth();
   
+  const { search: searchQuery, setSearch: setSearchQuery, status: activeTab, setStatus: setActiveTab,
+    page: currentPage, setPage: setCurrentPage, pageSize, setPageSize, clearFilters, hasFilters } = useListFilters(listFilterConfig);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
-  const [activeTab, setActiveTab] = useState<'all' | 'approved' | 'pending'>('all');
   const [loading, setLoading] = useState(true);
+  const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  // Pagination State
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
 
   const [actionLoading, setActionLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -90,6 +105,7 @@ export default function KnowledgeBase() {
       const response = await api.get<KnowledgeDocument[]>(`/api/projects/${activeProject.id}/knowledge`);
       if (requestId !== loadRequestIdRef.current) return;
       setDocuments(response.data);
+      setLoadedProjectId(activeProject.id);
     } catch (e) {
       if (requestId !== loadRequestIdRef.current) return;
       console.error('Failed to load knowledge base documents', e);
@@ -101,7 +117,6 @@ export default function KnowledgeBase() {
 
   useEffect(() => {
     const loadTimer = window.setTimeout(() => {
-      setCurrentPage(1);
       void fetchDocuments();
     }, 0);
     return () => window.clearTimeout(loadTimer);
@@ -400,12 +415,17 @@ export default function KnowledgeBase() {
   };
 
   const filteredDocuments = documents.filter(doc => {
+    if (!`${doc.title} ${doc.content}`.toLocaleLowerCase('ar').includes(searchQuery.trim().toLocaleLowerCase('ar'))) return false;
     if (activeTab === 'approved') return doc.status === 'Approved' || doc.status === 'Published';
     if (activeTab === 'pending') return doc.status === 'PendingApproval' || doc.status === 'Draft' || doc.status === 'Rejected';
     return true;
   });
 
   const totalPages = Math.ceil(filteredDocuments.length / pageSize) || 1;
+  const countsAvailable = !loading && !loadError && loadedProjectId === activeProject?.id;
+  useEffect(() => {
+    if (!loading && !loadError && loadedProjectId === activeProject?.id && currentPage > totalPages) setCurrentPage(totalPages, 'replace');
+  }, [loading, loadError, loadedProjectId, activeProject?.id, currentPage, totalPages, setCurrentPage]);
   const paginatedDocuments = filteredDocuments.slice(
     (currentPage - 1) * pageSize,
     currentPage * pageSize
@@ -414,128 +434,36 @@ export default function KnowledgeBase() {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <div>
-          <h1 className={styles.pageTitle}>قاعدة المعرفة والتدريب</h1>
-          <p className={styles.pageSubtitle}>توفير مستندات المصدر، والتعليمات، وأدلة البحث لتدريب نموذج الذكاء الاصطناعي Gemini الخاص بك</p>
-        </div>
+        <PageHeader icon={<BookOpen size={22} aria-hidden="true" />} title="قاعدة المعرفة" description="المصادر التي يعتمد عليها المساعد في الرد على العملاء." />
         
-        {activeProject && (
-          <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-            <button
-              type="button"
-              className={`${styles.btn} ${styles.btnSecondary}`}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload size={16} />
-              رفع ملف (.txt)
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".txt,text/plain"
-              onChange={handleFileUpload}
-              hidden
-              tabIndex={-1}
-            />
-
-            <button
-              type="button"
-              onClick={handleSyncBrain}
-              disabled={actionLoading}
-              className={`${styles.btn} ${styles.btnPrimary}`}
-            >
-              <RefreshCw size={16} className={actionLoading ? 'animate-spin' : ''} />
-              مزامنة المعرفة
-            </button>
-          </div>
-        )}
+        {activeProject && <div className={styles.recordActions}>
+          <details className={styles.addSourceMenu}>
+            <summary className={`${styles.btn} ${styles.btnPrimary}`}><Plus size={17} aria-hidden="true" /> إضافة مصدر</summary>
+            <div className={styles.sourceOptions}>
+              <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => { setEditingDocumentId(null); setFormTitle(''); setFormContent(''); setFormSourceUrl(''); setIsModalOpen(true); }}><FileText size={17} aria-hidden="true" /> كتابة نص</button>
+              <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => fileInputRef.current?.click()}><Upload size={17} aria-hidden="true" /> رفع ملف (.txt)</button>
+              <button type="button" className={`${styles.btn} ${styles.btnIntelligence}`} onClick={handleStartWizard}><Sparkles size={17} aria-hidden="true" /> معالج الذكاء الاصطناعي</button>
+            </div>
+          </details>
+          <input ref={fileInputRef} type="file" accept=".txt,text/plain" onChange={handleFileUpload} hidden tabIndex={-1} />
+          <button type="button" onClick={handleSyncBrain} disabled={actionLoading} className={`${styles.btn} ${styles.btnSecondary}`}><RefreshCw size={16} aria-hidden="true" className={actionLoading ? 'animate-spin' : ''} /> مزامنة المعرفة</button>
+        </div>}
       </div>
 
-      {message && (
-        <div className={`glass-panel`} role={message.type === 'error' ? 'alert' : 'status'} style={{
-          padding: 'var(--space-md)', 
-          borderRight: `4px solid ${message.type === 'success' ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))'}`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-sm)'
-        }}>
-          <CheckCircle2 size={18} style={{ color: message.type === 'success' ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))' }} />
-          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{message.text}</span>
-        </div>
-      )}
+      {message && <StatusMessage tone={message.type === 'error' ? 'danger' : 'success'}>{message.text}</StatusMessage>}
 
-      {/* Documents Grid / Table */}
-      <div className={`glass-panel ${styles.panel}`}>
-        <div className={styles.panelHeader}>
-          <h3 className={styles.panelTitle}>المصادر والمستندات المدخلة</h3>
-          {activeProject && <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingDocumentId(null);
-                setFormTitle('');
-                setFormContent('');
-                setFormSourceUrl('');
-                setIsModalOpen(true);
-              }}
-              className={`${styles.btn} ${styles.btnSecondary}`}
-              style={{ padding: '4px 10px', fontSize: '0.8rem' }}
-            >
-              <Plus size={12} />
-              إضافة نص يدوياً
-            </button>
-            <button
-              type="button"
-              onClick={handleStartWizard}
-              className={`${styles.btn} ${styles.btnSecondary}`}
-              style={{ padding: '4px 10px', fontSize: '0.8rem', backgroundColor: 'rgba(59, 130, 246, 0.15)', color: 'hsl(210, 100%, 75%)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
-            >
-              <Plus size={12} />
-              معالج الذكاء الاصطناعي
-            </button>
-          </div>}
+      <div className={styles.operationsToolbar}>
+        <FilterTabs compactOnMobile label="حالة مصادر المعرفة" selected={activeTab} onChange={setActiveTab} options={[
+          { key: 'all', label: 'كل المصادر', count: countsAvailable ? documents.length : undefined, icon: <BookOpen size={16} aria-hidden="true" /> },
+          { key: 'approved', label: 'معتمدة', count: countsAvailable ? documents.filter(d => d.status === 'Approved' || d.status === 'Published').length : undefined, icon: <Check size={16} aria-hidden="true" />, tone: 'success' },
+          { key: 'pending', label: 'تحتاج مراجعة', count: countsAvailable ? documents.filter(d => !['Approved', 'Published'].includes(d.status)).length : undefined, icon: <Clock size={16} aria-hidden="true" />, tone: 'warning' },
+        ]} />
+        <div className={styles.listSearchTools}>
+        <SearchField label="بحث في مصادر المعرفة" placeholder="ابحث في العنوان أو المحتوى…" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} />
+          {hasFilters && <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={clearFilters}>إعادة ضبط التصفية</button>}
         </div>
-
-        {/* Tab selection */}
-        <div role="group" aria-label="تصفية مستندات المعرفة حسب الحالة" style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('all');
-              setCurrentPage(1);
-            }}
-            className={`${styles.btn} ${activeTab === 'all' ? styles.btnPrimary : styles.btnSecondary}`}
-            aria-pressed={activeTab === 'all'}
-            style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-          >
-            كل المستندات ({documents.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('approved');
-              setCurrentPage(1);
-            }}
-            className={`${styles.btn} ${activeTab === 'approved' ? styles.btnPrimary : styles.btnSecondary}`}
-            aria-pressed={activeTab === 'approved'}
-            style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-          >
-            المعتمدة ({documents.filter(d => d.status === 'Approved' || d.status as string === 'Published').length})
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('pending');
-              setCurrentPage(1);
-            }}
-            className={`${styles.btn} ${activeTab === 'pending' ? styles.btnPrimary : styles.btnSecondary}`}
-            aria-pressed={activeTab === 'pending'}
-            style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-          >
-            قيد الاعتماد ({documents.filter(d => d.status === 'PendingApproval' || d.status === 'Draft' || d.status === 'Rejected').length})
-          </button>
-        </div>
-
+      </div>
+      <div className={`${styles.panel} ${styles.operationsPanel}`}>
         {loading ? (
           <div className={styles.emptyState}>
             <div className={styles.spinner}></div>
@@ -555,33 +483,34 @@ export default function KnowledgeBase() {
           </div>
         ) : (
           <div className={styles.tableWrapper}>
-            <table className={styles.table}>
+            <table role="table" className={styles.table}>
               <caption className="sr-only">مستندات قاعدة المعرفة وحالة الاعتماد</caption>
               <thead>
                 <tr>
                   <th className={styles.th}>العنوان</th>
                   <th className={styles.th}>المصدر</th>
                   <th className={styles.th}>الحالة</th>
-                  <th className={styles.th}>مقتطف من المحتوى</th>
+
                   <th className={styles.th} style={{ textAlign: 'center' }}>إجراءات الاعتماد</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedDocuments.map(doc => (
                   <tr key={doc.id} className={styles.tr}>
-                    <td className={styles.td}>
+                    <td data-label="العنوان" className={styles.td}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <FileText size={16} style={{ color: 'hsl(var(--accent-primary))' }} />
                         <span style={{ fontWeight: 600, color: 'var(--text-strong)' }}>{doc.title}</span>
                       </div>
+                      <p className={styles.sourceExcerpt}>{doc.content.length > 160 ? `${doc.content.substring(0, 160)}…` : doc.content}</p>
                     </td>
-                    <td className={styles.td}>
+                    <td data-label="المصدر" className={styles.td}>
                       {doc.sourceUrl ? (
                         <a 
                           href={doc.sourceUrl} 
                           target="_blank" 
                           rel="noreferrer" 
-                          style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'hsl(var(--accent-secondary))', textDecoration: 'none' }}
+                          className={styles.sourceLink}
                         >
                           <ExternalLink size={12} />
                           رابط المصدر
@@ -590,7 +519,7 @@ export default function KnowledgeBase() {
                         <span style={{ color: 'hsl(var(--text-muted))' }}>نص مرفوع يدوياً</span>
                       )}
                     </td>
-                    <td className={styles.td}>
+                    <td data-label="الحالة" className={styles.td}>
                       <span className={`${styles.statusBadge} ${
                         (doc.status === 'Approved' || doc.status === 'Published') 
                           ? styles.statusCompleted 
@@ -600,34 +529,27 @@ export default function KnowledgeBase() {
                           ? styles.statusFailed
                           : styles.statusPending
                       }`}>
-                        {statusMapAr[doc.status] || doc.status}
+                        {doc.status === 'Approved' || doc.status === 'Published' ? <Check size={14} aria-hidden="true" /> : <Clock size={14} aria-hidden="true" />}{statusMapAr[doc.status] || doc.status}
                       </span>
                     </td>
-                    <td className={styles.td}>
-                      <span style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))' }}>
-                        {doc.content.length > 60 ? `${doc.content.substring(0, 60)}...` : doc.content}
-                      </span>
-                    </td>
-                    <td className={styles.td} style={{ textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'center' }}>
+                    <td data-label="إجراءات الاعتماد" className={styles.td} style={{ textAlign: 'center' }}>
+                      <div className={styles.recordActions}>
                         {(doc.status !== 'Approved' && doc.status as string !== 'Published') ? (
                           <button
                             onClick={() => setDocumentToPublish(doc)}
                             className={`${styles.btn} ${styles.btnSuccess}`}
-                            style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                             disabled={actionLoading}
                           >
-                            اعتماد ونشر
+                            <Check size={15} aria-hidden="true" /> اعتماد ونشر
                           </button>
                         ) : (
                           <button
                             type="button"
                             onClick={() => setDocumentToDraft(doc)}
                             className={`${styles.btn} ${styles.btnSecondary}`}
-                            style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                             disabled={actionLoading}
                           >
-                            سحب لمسودة
+                            <Undo2 size={15} aria-hidden="true" /> سحب لمسودة
                           </button>
                         )}
                         {doc.status === 'PendingApproval' && (
@@ -635,28 +557,27 @@ export default function KnowledgeBase() {
                             type="button"
                             onClick={() => setDocumentToDraft(doc)}
                             className={`${styles.btn} ${styles.btnDanger}`}
-                            style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                             disabled={actionLoading}
                           >
-                            رفض
+                            <X size={15} aria-hidden="true" /> رفض
                           </button>
                         )}
                         <button
                           onClick={() => handleStartEdit(doc)}
                           className={`${styles.btn} ${styles.btnSecondary}`}
-                          style={{ padding: '2px 8px', fontSize: '0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.15)', color: 'hsl(210, 100%, 75%)' }}
                           disabled={actionLoading}
                         >
-                          تعديل
+                          <Pencil size={15} aria-hidden="true" /> فتح وتعديل
                         </button>
+                        <details className={styles.recordDisclosure}><summary>المزيد</summary>
                         <button
                           onClick={() => handleDeleteDocument(doc.id)}
                           className={`${styles.btn} ${styles.btnDanger}`}
-                          style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                           disabled={actionLoading}
                         >
-                          حذف
+                          <Trash2 size={15} aria-hidden="true" /> حذف
                         </button>
+                        </details>
                       </div>
                     </td>
                   </tr>
@@ -674,7 +595,6 @@ export default function KnowledgeBase() {
                     value={pageSize}
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
-                      setCurrentPage(1);
                     }}
                     className={styles.paginationSelect}
                   >
@@ -692,7 +612,7 @@ export default function KnowledgeBase() {
                 <div className={styles.paginationControls}>
                   <button
                     type="button"
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    onClick={() => setCurrentPage(Math.min(currentPage + 1, totalPages))}
                     disabled={currentPage === totalPages}
                     className={styles.paginationBtn}
                     title="الصفحة التالية"
@@ -725,7 +645,7 @@ export default function KnowledgeBase() {
 
                   <button
                     type="button"
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    onClick={() => setCurrentPage(Math.max(currentPage - 1, 1))}
                     disabled={currentPage === 1}
                     className={styles.paginationBtn}
                     title="الصفحة السابقة"
@@ -742,8 +662,8 @@ export default function KnowledgeBase() {
 
       {/* Manual document creation modal */}
       {isModalOpen && (
-        <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`} role="dialog" aria-modal="true" aria-labelledby="knowledge-document-dialog-title" onKeyDown={(event) => handleDialogKeyDown(event, () => { setIsModalOpen(false); setEditingDocumentId(null); })}>
+        <Dialog label="تحرير قاعدة المعرفة" onClose={() => { setIsModalOpen(false); setEditingDocumentId(null); }}>
+          <div className={styles.dialogContent}>
             <div className={styles.modalHeader}>
               <h3 id="knowledge-document-dialog-title" className={styles.modalTitle}>
                 {editingDocumentId ? 'تعديل مستند معرفي' : 'إضافة مستند معرفي'}
@@ -828,13 +748,13 @@ export default function KnowledgeBase() {
               </div>
             </form>
           </div>
-        </div>
+        </Dialog>
       )}
 
       {/* AI Wizard Modal */}
       {isWizardOpen && (
-        <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`} role="dialog" aria-modal="true" aria-labelledby="knowledge-wizard-title" onKeyDown={(event) => handleDialogKeyDown(event, () => { setIsWizardOpen(false); setEditingDocumentId(null); })} style={{ maxWidth: '640px', width: '90%' }}>
+        <Dialog label="تحرير قاعدة المعرفة" onClose={() => { setIsWizardOpen(false); setEditingDocumentId(null); }}>
+          <div className={styles.dialogContent}>
             <div className={styles.modalHeader}>
               <h3 id="knowledge-wizard-title" className={styles.modalTitle} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <BookOpen size={18} style={{ color: 'hsl(var(--accent-primary))' }} />
@@ -1026,7 +946,6 @@ export default function KnowledgeBase() {
                     type="button"
                     onClick={handleAddQa}
                     className={`${styles.btn} ${styles.btnSecondary}`}
-                    style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                   >
                     <Plus size={12} />
                     سؤال وجواب جديد
@@ -1135,7 +1054,7 @@ export default function KnowledgeBase() {
               </div>
             )}
           </div>
-        </div>
+        </Dialog>
       )}
 
       <ConfirmDialog 

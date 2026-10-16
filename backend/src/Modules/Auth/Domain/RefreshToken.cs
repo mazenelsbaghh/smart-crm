@@ -6,6 +6,8 @@ namespace Modules.Auth.Domain
     public class RefreshToken : Entity
     {
         public Guid UserId { get; set; }
+        public Guid? ProjectId { get; set; }
+        public Guid? SessionId { get; set; }
         public string Token { get; set; }
         public DateTime ExpiresAt { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

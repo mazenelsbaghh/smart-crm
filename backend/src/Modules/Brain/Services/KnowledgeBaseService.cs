@@ -5,7 +5,6 @@ using Modules.Brain.Domain;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using Pgvector;
 using Shared.Queue;
 using Shared.Events;
 using System.Security.Cryptography;
@@ -28,11 +27,9 @@ namespace Modules.Brain.Services
     public class KnowledgeBaseService : IKnowledgeBaseService
     {
         private readonly AppDbContext _dbContext;
-        private readonly IGeminiClient _geminiClient;
         public KnowledgeBaseService(AppDbContext dbContext, IGeminiClient geminiClient)
         {
             _dbContext = dbContext;
-            _geminiClient = geminiClient;
         }
 
         public async Task<KnowledgeDocument> CreateDocumentAsync(Guid projectId, string title, string content, string? sourceUrl)
@@ -48,10 +45,8 @@ namespace Modules.Brain.Services
             };
 
             _dbContext.KnowledgeDocuments.Add(doc);
-            await _dbContext.SaveChangesAsync();
-
-            // Generate chunks and embeddings
-            await GenerateChunksAndEmbeddingsAsync(doc);
+            EnqueueAdvertisingSnapshot(doc);
+            await GenerateChunksAsync(doc);
 
             return doc;
         }
@@ -66,11 +61,8 @@ namespace Modules.Brain.Services
             doc.SourceUrl = sourceUrl;
             doc.Version += 1;
             doc.Status = "Draft"; // Set back to draft so user publishes it again
-
-            await _dbContext.SaveChangesAsync();
-
-            // Generate chunks and embeddings
-            await GenerateChunksAndEmbeddingsAsync(doc);
+            EnqueueAdvertisingSnapshot(doc);
+            await GenerateChunksAsync(doc);
 
             return doc;
         }
@@ -81,20 +73,27 @@ namespace Modules.Brain.Services
             if (doc == null) throw new ArgumentException("Document not found");
 
             doc.Status = "Approved";
+            doc.Version++;
+            EnqueueAdvertisingSnapshot(doc);
+            await _dbContext.SaveChangesAsync();
+            return doc;
+        }
+
+        private void EnqueueAdvertisingSnapshot(KnowledgeDocument doc)
+        {
             IntegrationOutbox.Enqueue(_dbContext, new AdvertisingKnowledgeChanged
             {
                 ProjectId = doc.ProjectId,
                 KnowledgeDocumentId = doc.Id,
                 State = doc.Status,
                 RevisionHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(doc.Content))).ToLowerInvariant(),
-                SafeFactsJson = BuildAdvertisingFacts(doc.Content),
+                SafeFactsJson = doc.Status is "Approved" or "Published" ? BuildAdvertisingFacts(doc.Content) : "{}",
                 AffectedOfferKeysJson = JsonSerializer.Serialize(new[] { doc.Title }),
                 SourceAggregateType = nameof(KnowledgeDocument),
                 SourceAggregateId = doc.Id,
-                SourceVersion = doc.Version
+                SourceVersion = doc.Version,
+                IsTombstone = doc.Status == "Deleted"
             });
-            await _dbContext.SaveChangesAsync();
-            return doc;
         }
 
         private static string BuildAdvertisingFacts(string content)
@@ -122,6 +121,8 @@ namespace Modules.Brain.Services
             if (doc == null) throw new ArgumentException("Document not found");
 
             doc.Status = "Rejected";
+            doc.Version++;
+            EnqueueAdvertisingSnapshot(doc);
             await _dbContext.SaveChangesAsync();
             return doc;
         }
@@ -139,10 +140,8 @@ namespace Modules.Brain.Services
             };
 
             _dbContext.KnowledgeDocuments.Add(doc);
-            await _dbContext.SaveChangesAsync();
-
-            // Generate chunks and embeddings
-            await GenerateChunksAndEmbeddingsAsync(doc);
+            EnqueueAdvertisingSnapshot(doc);
+            await GenerateChunksAsync(doc);
 
             return doc;
         }
@@ -155,18 +154,20 @@ namespace Modules.Brain.Services
             
             if (doc == null) throw new ArgumentException("Document not found");
 
+            doc.Version++;
+            doc.Status = "Deleted";
+            EnqueueAdvertisingSnapshot(doc);
             _dbContext.KnowledgeChunks.RemoveRange(doc.Chunks);
             _dbContext.KnowledgeDocuments.Remove(doc);
             await _dbContext.SaveChangesAsync();
         }
 
-        private async Task GenerateChunksAndEmbeddingsAsync(KnowledgeDocument doc)
+        private async Task GenerateChunksAsync(KnowledgeDocument doc)
         {
             var oldChunks = await _dbContext.KnowledgeChunks
                 .Where(c => c.KnowledgeDocumentId == doc.Id)
                 .ToListAsync();
             _dbContext.KnowledgeChunks.RemoveRange(oldChunks);
-            await _dbContext.SaveChangesAsync();
 
             var chunks = new System.Collections.Generic.List<string>();
             bool isQaFormat = doc.Content.Contains("س:") && doc.Content.Contains("ج:");
@@ -243,14 +244,10 @@ namespace Modules.Brain.Services
 
             foreach (var chunkText in chunks)
             {
-                var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(chunkText);
-                var embeddingVector = new Vector(embeddingFloats);
-
                 var chunk = new KnowledgeChunk
                 {
                     KnowledgeDocumentId = doc.Id,
-                    ChunkText = chunkText,
-                    Embedding = embeddingVector
+                    ChunkText = chunkText
                 };
 
                 _dbContext.KnowledgeChunks.Add(chunk);

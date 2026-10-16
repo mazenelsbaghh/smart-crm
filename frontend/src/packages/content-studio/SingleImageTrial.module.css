@@ -1,0 +1,18 @@
+.trial { display: flex; flex-direction: column; gap: 14px; padding-block: 22px; border-block: 1px solid var(--border-subtle); color: var(--text-strong); }
+.trial h3, .trial p, .trial figure { margin: 0; }
+.trial h3 { display: flex; align-items: center; gap: 9px; font-size: 1.1rem; }
+.trial h3 svg { color: var(--intelligence); }
+.trial p, .trial small, .trial figcaption { color: var(--text-soft); line-height: 1.7; }
+.trial label { display: flex; flex-direction: column; gap: 8px; font-weight: 600; }
+.trial textarea { width: 100%; min-height: 150px; box-sizing: border-box; border: 1px solid color-mix(in oklch, var(--intelligence) 30%, var(--border-subtle)); border-radius: 10px; background: var(--surface); color: inherit; padding: 14px; font: inherit; resize: vertical; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.trial button, .trial a { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 14px; border: 0; border-radius: 8px; background: var(--intelligence); color: var(--surface); font: inherit; cursor: pointer; text-decoration: none; }
+.trial .clear { background: var(--surface-muted); color: var(--text-strong); border: 1px solid var(--border-subtle); }
+.trial :disabled { opacity: .55; cursor: not-allowed; }
+.trial :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.trial figure { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.trial img { max-width: 100%; width: min(100%, 620px); height: auto; border-radius: 8px; }
+.trial .error { color: hsl(var(--accent-danger)); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }

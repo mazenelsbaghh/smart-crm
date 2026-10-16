@@ -25,7 +25,7 @@ export default function ErrorBoundary({ error, reset }: ErrorProps) {
 
         <h1 id="runtime-error-title" className={styles.title}>حصل خطأ غير متوقع</h1>
         <p className={styles.subtitle}>
-          بياناتك لم تتغيّر بسبب هذه الشاشة. حاول تحميل الجزء ده مرة تانية، أو ارجع للوحة التحكم.
+          تعذّر عرض هذا الجزء. حاول تحميله مرة تانية، أو ارجع للوحة التحكم.
         </p>
 
         <div className={styles.buttonGroup}>
@@ -37,7 +37,7 @@ export default function ErrorBoundary({ error, reset }: ErrorProps) {
             <RefreshCw size={18} aria-hidden="true" />
             حاول تاني
           </button>
-          <Link href="/" className={styles.secondaryButton}>
+          <Link href="/dashboard" className={styles.secondaryButton}>
             <Home size={18} aria-hidden="true" />
             ارجع للوحة التحكم
           </Link>

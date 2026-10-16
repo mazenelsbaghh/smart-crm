@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { Gamepad2, Lightbulb, LoaderCircle, Palette, Plus, Printer, Sparkles } from 'lucide-react';
+import { Gamepad2, FolderOpen, Lightbulb, LoaderCircle, Palette, Plus, Printer, RefreshCw, Sparkles } from 'lucide-react';
 import { contentApi } from './content-api';
 import type { CardGameIdea, ContentCardGameDetail, ContentCardGameSummary, CreateContentCardGame } from './types';
 import styles from './ContentStudio.module.css';
@@ -26,20 +26,27 @@ export default function ContentCardGames({
   const [ideas, setIdeas] = useState<CardGameIdea[]>([]);
   const [busy, setBusy] = useState<'load' | 'ideas' | 'create' | null>('load');
   const [error, setError] = useState<string | null>(null);
+  const [loadFailure, setLoadFailure] = useState<{ message: string; gameId?: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const loadRequest = useRef(0);
 
   const load = useCallback(async (preferredId?: string) => {
+    const request = ++loadRequest.current;
     setBusy('load');
     setError(null);
+    setLoadFailure(null);
+    let requestedId = preferredId;
     try {
       const response = await contentApi.listCardGames();
+      if (request !== loadRequest.current) return;
       setGames(response.games);
-      const id = preferredId ?? response.games[0]?.id;
-      setSelected(id ? await contentApi.getCardGame(id) : null);
+      requestedId ??= response.games[0]?.id;
+      const detail = requestedId ? await contentApi.getCardGame(requestedId) : null;
+      if (request === loadRequest.current) setSelected(detail);
     } catch (requestError) {
-      setError(message(requestError));
+      if (request === loadRequest.current) setLoadFailure({ message: message(requestError), gameId: requestedId });
     } finally {
-      setBusy(null);
+      if (request === loadRequest.current) setBusy(null);
     }
   }, []);
 
@@ -49,10 +56,25 @@ export default function ContentCardGames({
   }, [load]);
 
   useEffect(() => {
-    if (!selected || !['Queued', 'Generating', 'Stopping'].includes(selected.game.designStatus)) return;
+    if (busy || !selected || !['Queued', 'Generating', 'Stopping'].includes(selected.game.designStatus)) return;
     const timer = window.setTimeout(() => void load(selected.game.id), 5_000);
     return () => window.clearTimeout(timer);
-  }, [load, selected]);
+  }, [busy, load, selected]);
+
+  const selectGame = async (id: string) => {
+    const request = ++loadRequest.current;
+    setBusy('load');
+    setError(null);
+    setLoadFailure(null);
+    try {
+      const detail = await contentApi.getCardGame(id);
+      if (request === loadRequest.current) setSelected(detail);
+    } catch (requestError) {
+      if (request === loadRequest.current) setLoadFailure({ message: message(requestError), gameId: id });
+    } finally {
+      if (request === loadRequest.current) setBusy(null);
+    }
+  };
 
   const updateDraft = (next: CreateContentCardGame) => {
     setDraft(next);
@@ -103,17 +125,26 @@ export default function ContentCardGames({
 
   return (
     <div id="content-panel-games" role="tabpanel" aria-labelledby="content-tab-games" className={styles.gameStudio}>
-      {(notice || error) && <div className={error ? styles.alertError : styles.alertSuccess} role={error ? 'alert' : 'status'}>{error ?? notice}</div>}
+      {(notice || error || loadFailure) && <div className={error || loadFailure ? styles.alertError : styles.alertSuccess} role={error || loadFailure ? 'alert' : 'status'}>
+        {error ?? loadFailure?.message ?? notice}
+        {loadFailure && <button type="button" className={styles.btnSecondary} disabled={Boolean(busy)} onClick={() => void load(loadFailure.gameId)}><RefreshCw size={17} aria-hidden="true" /> إعادة تحميل الألعاب</button>}
+      </div>}
 
       <section className={styles.gameReadiness} aria-label="جاهزية إنشاء الألعاب">
-        <span><Sparkles size={16} /> Gemini <strong>{aiReady ? 'جاهز' : 'أضف المفتاح'}</strong></span>
-        <span><Palette size={16} /> هوية المشروع <strong>{brandReady ? 'مربوطة' : 'ارفع اللوجو'}</strong></span>
-        <span><Gamepad2 size={16} /> الألعاب <strong>{games.length}</strong></span>
+        <span data-ready={aiReady}><Sparkles size={16} aria-hidden="true" /> Gemini <strong>{aiReady ? 'جاهز' : 'أضف المفتاح'}</strong></span>
+        <span data-ready={brandReady}><Palette size={16} aria-hidden="true" /> هوية المشروع <strong>{brandReady ? 'مربوطة' : 'ارفع اللوجو'}</strong></span>
+        <span><Gamepad2 size={16} /> الألعاب في القائمة <strong>{games.length}</strong></span>
       </section>
 
       <div className={styles.gameWorkspace}>
+        <aside className={styles.gameHistory} aria-label="الألعاب المحفوظة">
+          <div className={styles.documentHistoryHeading}><h2><FolderOpen size={18} aria-hidden="true" /> الألعاب المحفوظة</h2><span>{games.length} في أحدث 50</span></div>
+          {games.map((game) => <button type="button" key={game.id} className={selected?.game.id === game.id ? styles.gameHistoryActive : undefined} onClick={() => void selectGame(game.id)}><Gamepad2 size={16} /><span><strong>{game.title}</strong><small>{game.cardCount} كارت</small></span></button>)}
+        </aside>
+        <details className={styles.mediaCreateDisclosure} open={games.length === 0}>
+          <summary><Plus size={18} aria-hidden="true" /> إنشاء لعبة جديدة<span>الفكرة وقواعد اللعب</span></summary>
         <aside className={styles.gameComposer} aria-label="إنشاء لعبة جديدة">
-          <div className={styles.panelHeading}><div><span>01</span><h2>لعبة جديدة</h2></div></div>
+          <div className={styles.mediaTaskHeading}><Gamepad2 size={20} aria-hidden="true" /><h2>صمّم تجربة اللعب</h2></div>
           <label className={styles.field}>
             <span>هدف جلسة الـ English Club</span>
             <textarea rows={5} maxLength={2000} value={draft.brief} placeholder="مثال: English Club للمستوى المتوسط؛ نريد لعبة فرق تدرب المشاركين على الكلام بثقة ورواية قصص قصيرة..." onChange={(event) => updateDraft({ ...draft, brief: event.target.value })} />
@@ -131,11 +162,12 @@ export default function ContentCardGames({
           <label className={styles.field}><span>اسم اللعبة</span><input maxLength={200} value={draft.title ?? ''} onChange={(event) => updateDraft({ ...draft, title: event.target.value })} /></label>
           <label className={styles.field}><span>طريقة اللعب</span><textarea rows={4} maxLength={600} value={draft.mechanic ?? ''} onChange={(event) => updateDraft({ ...draft, mechanic: event.target.value })} /></label>
           <label className={styles.field}><span>عدد الكروت</span><input type="number" min={8} max={60} value={draft.cardCount} onChange={(event) => updateDraft({ ...draft, cardCount: Number(event.target.value) })} /></label>
-          <p className={styles.gameHint}>لعبة كوتشينة للـ English Club، بقواعد بالعربي وكروت بالإنجليزي. بعد مراجعة القواعد، ابدأ تصميم الوش والظهر كصور كاملة بالكلام والرموز ولوجو المشروع.</p>
+          <p className={styles.gameHint}>راجع القواعد بالعربي أولًا، ثم صمّم وجوه الكروت بالإنجليزي وظهورها بهوية المشروع.</p>
           <button type="button" className={styles.btnPrimary} disabled={!canManage || !readiness || draft.brief.trim().length < 10 || draft.cardCount < 8 || draft.cardCount > 60 || Boolean(busy)} onClick={() => void create()}>
             {busy === 'create' ? <LoaderCircle className={styles.spin} size={17} /> : <Plus size={17} />} أنشئ اللعبة وراجع القواعد
           </button>
         </aside>
+        </details>
 
         <main className={styles.gameCanvas}>
           {busy === 'load' && !selected ? <div className={styles.gameEmpty}><LoaderCircle className={styles.spin} /><p>بنحمّل الألعاب...</p></div>
@@ -155,18 +187,11 @@ export default function ContentCardGames({
               } catch (requestError) { setError(message(requestError)); }
               finally { setBusy(null); }
             }} />
+            : loadFailure ? <div className={styles.gameEmpty}><Gamepad2 size={38} aria-hidden="true" /><h2>تعذّر عرض الألعاب المحفوظة</h2><p>أعد التحميل من رسالة الخطأ لعرض الألعاب وقواعدها.</p></div>
             : <div className={styles.gameEmpty}><Gamepad2 size={38} /><h2>أول لعبة تبدأ من فكرة</h2><p>اكتب هدف الورشة، خلّي Gemini يقترح أفكارًا، ثم نفّذ اللعبة كاملة.</p></div>}
         </main>
 
-        <aside className={styles.gameHistory} aria-label="الألعاب المحفوظة">
-          <div className={styles.documentHistoryHeading}><h2>الألعاب</h2><span>{games.length}</span></div>
-          {games.map((game) => <button type="button" key={game.id} className={selected?.game.id === game.id ? styles.gameHistoryActive : undefined} onClick={async () => {
-            setBusy('load');
-            setError(null);
-            try { setSelected(await contentApi.getCardGame(game.id)); } catch (requestError) { setError(message(requestError)); }
-            finally { setBusy(null); }
-          }}><Gamepad2 size={16} /><span><strong>{game.title}</strong><small>{game.cardCount} كارت</small></span></button>)}
-        </aside>
+
       </div>
     </div>
   );
@@ -196,7 +221,7 @@ function GamePreview({
         : <>{detail.game.designError ?? (detail.game.designStatus === 'Cancelled' ? 'التصميم متوقف. الصور المكتملة محفوظة.' : 'التصميم الجديد صورة كاملة، وليس خلفية مع كلام مضاف. راجع النصوص واللوجو بعد التوليد.')}
           {canManage && <button type="button" className={styles.btnSecondary} onClick={() => void onDesignRetry()}>تصميم الكروت كاملة</button>}</>}
     </div>}
-    <details className={styles.gameInstructions} open><summary>طريقة اللعب — شرح بالعربي</summary><p>{detail.game.instructions}</p></details>
+    <details className={styles.gameInstructions} open><summary>طريقة اللعب بالعربي</summary><p>{detail.game.instructions}</p></details>
     <section className={styles.gamePrintArea} aria-label={`كروت ${detail.game.title}`}>
       <GameArtwork url={detail.game.backImageUrl} alt={`ظهر ${detail.game.title}`} />
       {detail.cards.map((card) => <GameArtwork key={card.id} url={card.imageUrl} alt={`${card.cardIndex + 1}. ${card.category}: ${card.title}. ${card.prompt} ${card.instruction}`} />)}

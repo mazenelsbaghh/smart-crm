@@ -310,7 +310,7 @@ describe('API session refresh', () => {
     expect(localStorage.getItem('refreshToken')).toBe('newer-refresh');
   });
 
-  it('does not replay an old request after the browser switches to another user', async () => {
+  it.each(['another-user', 'another-project'])('does not replay a mutation after switching to %s', async (switchKind) => {
     localStorage.setItem('accessToken', 'expired-access');
     localStorage.setItem('refreshToken', 'old-refresh');
     localStorage.setItem('user', '{"id":"user-1"}');
@@ -323,12 +323,12 @@ describe('API session refresh', () => {
     };
     const refresh = deferred<AxiosResponse<{ accessToken: string; refreshToken: string }>>();
     vi.spyOn(axiosClient, 'post').mockReturnValue(refresh.promise);
-    const oldRequest = api.get('/old-user-action');
+    const oldRequest = api.put('/api/content/settings', { postsPerDay: 3 });
 
     await vi.waitFor(() => expect(axiosClient.post).toHaveBeenCalledTimes(1));
     localStorage.setItem('accessToken', 'user-2-access');
     localStorage.setItem('refreshToken', 'user-2-refresh');
-    localStorage.setItem('user', '{"id":"user-2"}');
+    localStorage.setItem('user', JSON.stringify({ id: switchKind === 'another-user' ? 'user-2' : 'user-1' }));
     localStorage.setItem('activeProject', '{"id":"project-2"}');
     refresh.resolve(refreshResponse('stale-user-1-access', 'stale-user-1-refresh'));
 
@@ -338,6 +338,24 @@ describe('API session refresh', () => {
     expect(localStorage.getItem('accessToken')).toBe('user-2-access');
     expect(localStorage.getItem('refreshToken')).toBe('user-2-refresh');
     expect(localStorage.getItem('activeProject')).toBe('{"id":"project-2"}');
+  });
+
+  it('uses the rotated refresh token when a project switch is retried after access expiry', async () => {
+    localStorage.setItem('accessToken', 'expired-access');
+    localStorage.setItem('refreshToken', 'old-refresh');
+    localStorage.setItem('user', '{"id":"user-1"}');
+    localStorage.setItem('activeProject', '{"id":"project-1"}');
+    let switchPayload: unknown;
+    api.defaults.adapter = async (config) => {
+      if (config.headers.Authorization !== 'Bearer fresh-access') throw unauthorized(config);
+      switchPayload = JSON.parse(config.data);
+      return ok(config);
+    };
+    vi.spyOn(axiosClient, 'post').mockResolvedValue(refreshResponse('fresh-access', 'rotated-refresh'));
+
+    await api.post('/api/auth/projects/switch', { projectId: 'project-2', refreshToken: 'old-refresh' });
+
+    expect(switchPayload).toEqual({ projectId: 'project-2', refreshToken: 'rotated-refresh' });
   });
 
   it.each(['/api/auth/login', '/api/auth/refresh'])(

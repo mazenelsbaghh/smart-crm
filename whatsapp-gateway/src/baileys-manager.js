@@ -1,5 +1,5 @@
 import { inboundMediaAttachment, uploadInboundMedia } from './inbound-media.js';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys';
+import makeWASocket, { Browsers, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { randomUUID } from 'node:crypto';
 import path from 'path';
 import fs from 'fs';
@@ -15,6 +15,7 @@ import {
     inboundOutboxDirectory
 } from './inbound-message-outbox.js';
 import { shouldCaptureInboundUpsert } from './inbound-upsert-policy.js';
+import { isNonCustomerChat } from './inbound-source.js';
 import { recentOutboundMessages } from './recent-outbound-messages.js';
 import {
     resolveSessionIdentity,
@@ -106,8 +107,7 @@ export function hasCredentials(projectId, whatsappAccountId) {
 
     const stats = fs.statSync(credsFile);
     if (stats.size === 0) {
-        console.warn(`[baileys-manager] Empty creds.json found for ${sessionLabel(identity)}. Removing corrupted credentials.`);
-        fs.rmSync(credsFile, { force: true });
+        // Baileys can briefly truncate this file while saving. A status check must not delete it.
         return false;
     }
 
@@ -235,9 +235,9 @@ async function initializeSession(identity, key) {
 
     let version = [2, 3000, 1017531287];
     try {
-        const { version: latestVersion } = await fetchLatestBaileysVersion();
+        const { version: latestVersion, isLatest } = await fetchLatestBaileysVersion();
         version = latestVersion;
-        console.log(`Using fetched WA Web version: ${version.join('.')}`);
+        console.log(`Using ${isLatest ? 'fetched' : 'bundled'} WA Web version: ${version.join('.')}`);
     } catch (err) {
         console.warn('Failed to fetch latest WA Web version, using fallback:', err.message);
     }
@@ -247,7 +247,7 @@ async function initializeSession(identity, key) {
         auth: state,
         logger: pino({ level: process.env.BAILEYS_LOG_LEVEL || 'warn' }),
         printQRInTerminal: false,
-        browser: ['Smart Customer', 'Chrome', '10.0.0'],
+        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false
     });
 
@@ -281,6 +281,16 @@ async function initializeSession(identity, key) {
             connectionOpenedAt.delete(key);
         } else if (connection === 'close') {
             const disconnectStatusCode = lastDisconnect?.error?.output?.statusCode;
+            const providerReason = lastDisconnect?.error?.data?.attrs?.type;
+            console.log(JSON.stringify({
+                event: 'whatsapp.connection.closed',
+                projectId: identity.projectId,
+                whatsappAccountId: identity.whatsappAccountId,
+                statusCode: disconnectStatusCode ?? null,
+                providerReason: ['device_removed', 'replaced'].includes(providerReason) ? providerReason : null,
+                connectedForMs: connectionOpenedAt.has(key)
+                    ? Date.now() - Date.parse(connectionOpenedAt.get(key)) : null
+            }));
             const explicitlyDisabled = isSessionDisabled(getSessionsDir(), identity);
             const shouldReconnect = disconnectStatusCode !== DisconnectReason.loggedOut
                 && !explicitlyDisabled;
@@ -291,10 +301,7 @@ async function initializeSession(identity, key) {
             const isPaired = hasCredentials(identity.projectId, identity.whatsappAccountId);
             const maxAttempts = isPaired ? 1000 : MAX_RECONNECT_ATTEMPTS;
             
-            // Check if this is a conflict (session replaced by another device/connection)
-            const isConflict = errorMessage.toLowerCase().includes('conflict') || 
-                               errorMessage.toLowerCase().includes('replaced') ||
-                               disconnectStatusCode === 440;
+            const isConflict = disconnectStatusCode === DisconnectReason.connectionReplaced;
             
             // Use longer delay for conflicts to avoid rapid reconnection loops
             const baseDelay = isConflict ? 30000 : RECONNECT_DELAY_MS;
@@ -380,16 +387,8 @@ async function initializeSession(identity, key) {
                         m.type,
                         msg.messageTimestamp,
                         socketConnectionOpenedAt)) continue;
-                    // Skip WhatsApp Status/Story updates (status@broadcast) and group messages (@g.us)
                     const remoteJid = msg.key.remoteJid || '';
-                    if (remoteJid === 'status@broadcast' || remoteJid.endsWith('@broadcast')) {
-                        console.log(`[baileys-manager] Skipping status/story message from ${remoteJid}`);
-                        continue;
-                    }
-                    if (remoteJid.endsWith('@g.us')) {
-                        console.log(`[baileys-manager] Skipping group message from ${remoteJid}`);
-                        continue;
-                    }
+                    if (isNonCustomerChat(remoteJid)) continue;
 
                     console.log(`[baileys-manager] msg.key: ${JSON.stringify(msg.key)}`);
                     console.log(`[baileys-manager] full msg keys: ${Object.keys(msg).join(', ')}`);

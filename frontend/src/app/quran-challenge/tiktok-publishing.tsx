@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import axios from 'axios';
-import { Clock3, ExternalLink, Link2, RefreshCw, Send } from 'lucide-react';
+import { Save, Clock3, ExternalLink, Link2, RefreshCw, Send } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
@@ -269,7 +269,7 @@ export function TikTokPublishingPanel({ selection, timezone }: { selection: Vers
 
                 <div className={`${styles.youtubeActions} ${styles.tiktokActions}`}>
                   <button type="button" className={styles.publishNow} onClick={() => void refreshStatus()} disabled={!settings.lastPublishId || busy}><RefreshCw size={17} /> تحديث الحالة</button>
-                  <button type="button" className={styles.saveSchedule} onClick={save} disabled={busy}>{busy ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button>
+                  <button type="button" className={styles.saveSchedule} onClick={save} disabled={busy}><Save size={17} aria-hidden="true" />{busy ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button>
                   <button type="button" className={`${styles.saveSchedule} ${styles.tiktokPublish}`} onClick={() => setConfirmPublish(true)} disabled={!canPublish}><Send size={17} />{busy ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button>
                 </div>
               </>}

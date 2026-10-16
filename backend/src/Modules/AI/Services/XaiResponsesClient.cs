@@ -91,7 +91,7 @@ public sealed class XaiResponsesClient(HttpClient httpClient, ILogger<XaiRespons
         }
 
         var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
-        return ResponsesApiOutputText.Extract(responseJson) ?? ApiError;
+        return ResponsesApiOutputText.Extract(responseJson, logger, "xAI", replyRequest.Model) ?? ApiError;
     }
 
     private async Task<string?> TranscribeAudioAsync(

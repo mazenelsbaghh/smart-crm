@@ -40,7 +40,10 @@ public enum GroupBookingStatus
     GroupInactive,
     GroupExpired,
     GroupFull,
-    BookingAlreadyExists
+    BookingAlreadyExists,
+    OnlineRequired,
+    CityRequired,
+    AttendanceModeMismatch
 }
 
 public sealed class GroupBookingCommand
@@ -50,6 +53,8 @@ public sealed class GroupBookingCommand
     public required string CustomerName { get; init; }
     public required string CustomerPhone { get; init; }
     public Guid? KnownCustomerId { get; init; }
+    public string? CustomerCity { get; init; }
+    public string? AttendanceMode { get; init; }
     public ExistingGroupBookingPolicy ExistingBookingPolicy { get; init; }
     public GroupBookingOrigin Origin { get; init; }
     public GroupBookingExpirationPolicy ExpirationPolicy { get; init; }
@@ -190,7 +195,7 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
             return new(GroupBookingStatus.GroupInactive, canonicalPhone, group);
         }
         if (command.ExpirationPolicy == GroupBookingExpirationPolicy.RejectAfterTwentyFourHours &&
-            DateTime.UtcNow - DateTime.SpecifyKind(group.DateTime, DateTimeKind.Utc) >= TimeSpan.FromHours(24))
+            DateTime.UtcNow - DateTime.SpecifyKind((group.FreeSessionDateTime ?? group.DateTime), DateTimeKind.Utc) >= TimeSpan.FromHours(24))
         {
             group.IsActive = false;
             await _context.SaveChangesAsync(cancellationToken);
@@ -203,6 +208,16 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
             cancellationToken);
 
         var customer = await FindCustomerAsync(command, canonicalPhone, cancellationToken);
+        if (command.Origin == GroupBookingOrigin.Ai)
+        {
+            var city = GroupBookingAttendancePolicy.EffectiveCity(command.CustomerCity, customer?.City);
+            var attendanceFailure = GroupBookingAttendancePolicy.Rejection(group.Mode, city, command.AttendanceMode);
+            if (attendanceFailure is { } rejectedStatus)
+            {
+                await RollbackAsync(transaction, cancellationToken);
+                return new(rejectedStatus, canonicalPhone, group);
+            }
+        }
         var existingBooking = await FindBookingAsync(
             command.ProjectId,
             canonicalPhone,
@@ -279,8 +294,15 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
             ProjectId = command.ProjectId
         };
         if (existingBooking != null)
+        {
             await new Modules.CRM.Services.GroupBookingFollowUpLifecycle(_context)
                 .CancelForBookingAsync(existingBooking, existingBooking.GroupAppointment);
+            var pendingStaffNotifications = await _context.GroupStaffNotifications
+                .Where(n => n.ProjectId == command.ProjectId && n.BookingId == existingBooking.Id
+                    && n.SentAtUtc == null && n.CancelledAtUtc == null).ToListAsync(cancellationToken);
+            foreach (var notification in pendingStaffNotifications)
+                notification.CancelledAtUtc = DateTime.UtcNow;
+        }
         booking.GroupAppointmentId = group.Id;
         booking.CustomerId = customer.Id;
         booking.CustomerName = customerName;
@@ -302,6 +324,8 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
         {
             await CancelPendingFollowUpsAsync(command.ProjectId, customer.Id, cancellationToken);
         }
+
+        GroupStaffNotifications.Enqueue(_context, group, booking);
 
         var alert = command.Origin == GroupBookingOrigin.Public
             ? CreatePublicBookingAlert(command.ProjectId, group.Name, booking, bookingStatus)
@@ -462,6 +486,8 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
     {
         if (command.Origin != GroupBookingOrigin.Public || string.IsNullOrWhiteSpace(customer.Name))
             customer.Name = customerName;
+        if (command.Origin == GroupBookingOrigin.Ai && GroupBookingAttendancePolicy.HasKnownCity(command.CustomerCity))
+            customer.City = command.CustomerCity!.Trim();
         if (string.IsNullOrWhiteSpace(customer.PhoneNumber)
             || GroupBookingPhone.Normalize(customer.PhoneNumber) == canonicalPhone)
             customer.PhoneNumber = canonicalPhone;
@@ -504,7 +530,7 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
         }
 
         var projectZone = TimezoneHelper.GetTimeZone(command.Timezone);
-        var groupUtc = DateTime.SpecifyKind(group.DateTime, DateTimeKind.Utc);
+        var groupUtc = DateTime.SpecifyKind((group.FreeSessionDateTime ?? group.DateTime), DateTimeKind.Utc);
         var localGroupTime = TimeZoneInfo.ConvertTimeFromUtc(groupUtc, projectZone);
         return isTransfer
             ? $"تم نقل حجز الطالب من مجموعة إلى مجموعة: {group.Name} بتاريخ {localGroupTime:yyyy-MM-dd HH:mm}"
@@ -516,10 +542,10 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
         Guid customerId,
         CancellationToken cancellationToken)
     {
-        var pendingFollowUps = await _context.FollowUps
+        var pendingFollowUps = await Modules.CRM.Services.GroupSessionPreparationScheduler.ExcludePreparation(_context.FollowUps
             .Where(followUp => followUp.ProjectId == projectId &&
                                followUp.CustomerId == customerId &&
-                               followUp.Status == "Pending")
+                               followUp.Status == "Pending"))
             .ToListAsync(cancellationToken);
         foreach (var followUp in pendingFollowUps)
         {

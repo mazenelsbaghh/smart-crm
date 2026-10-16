@@ -11,6 +11,7 @@ interface OpportunityQueueProps {
   opportunities: OpportunityItem[];
   plan: FollowUpPlanSummary;
   canManage: boolean;
+  timezone: string;
   actionsDisabled?: boolean;
   onSchedule: (opportunity: OpportunityItem) => Promise<void>;
   onSend: (opportunity: OpportunityItem) => Promise<void>;
@@ -37,7 +38,7 @@ const recommendedActionLabels: Record<OpportunityItem['recommendedAction'], stri
   OpenConversation: 'المقترح: افتح المحادثة ورد يدويًا',
 };
 
-export function OpportunityQueue({ opportunities, plan, canManage, actionsDisabled = false, onSchedule, onSend, onQueuePlan }: OpportunityQueueProps) {
+export function OpportunityQueue({ opportunities, plan, canManage, timezone, actionsDisabled = false, onSchedule, onSend, onQueuePlan }: OpportunityQueueProps) {
   const [states, setStates] = useState<Record<string, ActionState>>({});
   const [armedConversationId, setArmedConversationId] = useState<string | null>(null);
   const [armedPlanAction, setArmedPlanAction] = useState<FollowUpPlanAction | null>(null);
@@ -96,8 +97,9 @@ export function OpportunityQueue({ opportunities, plan, canManage, actionsDisabl
     <section className={styles.section} aria-labelledby="opportunities-title">
       <div className={styles.sectionHeading}>
         <div><span className={styles.eyebrow}>قابلة للاسترجاع</span><h2 id="opportunities-title">فرص تحتاج متابعة</h2></div>
-        <span className={styles.countPill}>{opportunities.length.toLocaleString('ar-EG')}</span>
+        <span className={styles.countPill}>{opportunities.length.toLocaleString('ar-EG')} معروضة</span>
       </div>
+      <p className={styles.contextNote}>المعروض أعلى الفرص أولوية؛ أعداد الخطة تشمل كل الفرص المؤهلة في الفترة.</p>
       <div className={styles.followUpPlan} aria-label="خطة المتابعات لكل الفرص">
         <button type="button" data-action="send" disabled={!canManage || actionsDisabled || sendNowCount === 0 || runningPlanAction !== null || itemMutationRunning} aria-expanded={armedPlanAction === 'SendNow'} onClick={() => setArmedPlanAction('SendNow')}><Send size={16} aria-hidden="true" /><span>{runningPlanAction === 'SendNow' ? 'جاري تجهيز الإرسال…' : 'يتبعت الآن'}</span><strong>{sendNowCount.toLocaleString('ar-EG')}</strong></button>
         <button type="button" data-action="schedule" disabled={!canManage || actionsDisabled || scheduleCount === 0 || runningPlanAction !== null || itemMutationRunning} aria-expanded={armedPlanAction === 'Schedule'} onClick={() => setArmedPlanAction('Schedule')}><CalendarPlus size={16} aria-hidden="true" /><span>{runningPlanAction === 'Schedule' ? 'جاري الجدولة…' : 'جدولة على أيام'}</span><strong>{scheduleCount.toLocaleString('ar-EG')}</strong></button>
@@ -126,7 +128,7 @@ export function OpportunityQueue({ opportunities, plan, canManage, actionsDisabl
               <p>{item.summary}</p>
               <div className={styles.nextAction}><b>الخطوة التالية:</b> {item.recommendation}</div>
               <span className={styles.recommendedAction} data-action={item.recommendedAction}>{recommendedActionLabels[item.recommendedAction]}</span>
-              <span className={styles.timestamp}><Clock4 size={13} aria-hidden="true" />آخر رسالة {new Date(item.lastMessageAtUtc).toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', dateStyle: 'short', timeStyle: 'short' })}</span>
+              <span className={styles.timestamp}><Clock4 size={13} aria-hidden="true" />آخر رسالة {new Date(item.lastMessageAtUtc).toLocaleString('ar-EG', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' })}</span>
             </div>
             <div className={styles.opportunityActions}>
               {canManage && item.channel === 'WhatsApp' && <>

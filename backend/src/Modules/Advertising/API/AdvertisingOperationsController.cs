@@ -32,11 +32,12 @@ public sealed class AdvertisingOperationsController(
         if (!CanRead(projectId)) return Forbid();
         var projectContext = await db.ProjectAdvertisingContextProjections.AsNoTracking()
             .SingleOrDefaultAsync(contextProjection => contextProjection.ProjectId == projectId, cancellationToken);
-        var reportingTimezone = projectContext?.ReportingTimezoneIana;
-        if (!TryResolveTimezone(reportingTimezone, out _))
-            return Conflict(new { code = "ADS_REPORTING_TIMEZONE_UNKNOWN", message = "A validated reporting timezone is required." });
         var connection = await db.AdvertisingConnections.AsNoTracking()
             .SingleOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken);
+        var reportingTimezone = !string.IsNullOrWhiteSpace(connection?.AccountTimezoneIana)
+            ? connection.AccountTimezoneIana : projectContext?.ReportingTimezoneIana;
+        if (!TryResolveTimezone(reportingTimezone, out var reportingZone))
+            return Conflict(new { code = "ADS_REPORTING_TIMEZONE_UNKNOWN", message = "A validated reporting timezone is required." });
         var envelopeQuery = db.AutonomyEnvelopes.AsNoTracking().Where(candidate => candidate.ProjectId == projectId);
         var envelopeCandidates = await envelopeQuery.OrderByDescending(candidate => candidate.CreatedAt).Take(1)
             .Concat(envelopeQuery.Where(candidate => candidate.State == EnvelopeState.Active)
@@ -51,10 +52,11 @@ public sealed class AdvertisingOperationsController(
         if (currency is null)
             return Conflict(new { code = "ADS_REPORTING_CURRENCY_UNKNOWN", message = "A provider-verified account currency is required." });
         var asOfUtc = DateTime.UtcNow;
-        var todayStartUtc = AdvertisingSchedulePolicy.DayStartUtc(asOfUtc, reportingTimezone!);
+        var localDate = TimeZoneInfo.ConvertTimeFromUtc(asOfUtc, reportingZone!).Date;
+        var todayStartUtc = AdvertisingInsightWindow.DayBoundaryUtc(localDate, reportingZone!);
         var reportingWindow = new AdvertisingOverviewWindow(todayStartUtc, asOfUtc);
-        var insightMetrics = await AdvertisingOverviewQuery.InsightsAsync(db, projectId, reportingWindow, cancellationToken);
-        var conversionMetrics = await AdvertisingOverviewQuery.ConversionsAsync(db, projectId, reportingWindow, cancellationToken);
+        var insightMetrics = await AdvertisingOverviewQuery.InsightsAsync(db, projectId, reportingWindow, currency, cancellationToken);
+        var conversionMetrics = await AdvertisingOverviewQuery.ConversionsAsync(db, projectId, reportingWindow, currency, cancellationToken);
         var advertisementMetrics = await AdvertisingOverviewQuery.AdvertisementsAsync(db, projectId, cancellationToken);
         var stop = await db.AdvertisingEmergencyStops.AsNoTracking().AnyAsync(x => x.ProjectId == projectId && x.ResumedAtUtc == null, cancellationToken);
         var latestDisable = await db.AdvertisingDisableRequests.AsNoTracking().Where(x => x.ProjectId == projectId)
@@ -112,8 +114,13 @@ public sealed class AdvertisingOperationsController(
             windowStartUtc = todayStartUtc,
             windowEndUtc = asOfUtc,
             spend = insightMetrics.Spend,
+            spendAvailable = insightMetrics.WindowSnapshots > 0 && insightMetrics.ExcludedCurrencySnapshots == 0,
             revenue = conversionMetrics.Revenue,
-            roas = insightMetrics.Spend > 0 ? decimal.Round(conversionMetrics.Revenue / insightMetrics.Spend, 2) : 0,
+            attributedRevenue = conversionMetrics.AttributedRevenue,
+            excludedRevenueCurrencies = conversionMetrics.ExcludedRevenueCurrencies,
+            excludedSpendCurrencies = insightMetrics.ExcludedCurrencySnapshots,
+            roas = insightMetrics.Spend > 0 && insightMetrics.ExcludedCurrencySnapshots == 0 && conversionMetrics.ExcludedRevenueCurrencies == 0
+                ? (decimal?)decimal.Round(conversionMetrics.AttributedRevenue / insightMetrics.Spend, 2) : null,
             leads = conversionMetrics.Leads,
             qualifiedLeads = conversionMetrics.QualifiedLeads,
             bookings = conversionMetrics.Bookings,
@@ -128,8 +135,8 @@ public sealed class AdvertisingOperationsController(
             disableState = liveDisable.State,
             dailyCap = envelope?.DailyCap ?? 0,
             usableCap = envelope is null ? 0 : allocator.Allocate(envelope.DailyCap, envelope.SafetyReservePercent, 1, true).Usable,
-            aiModel = string.IsNullOrWhiteSpace(projectContext.AllowedAiModel) ? "الإعداد الافتراضي للنظام" : projectContext.AllowedAiModel,
-            usesProjectApiKey = projectContext.AiConfigurationVersion > 0,
+            aiModel = string.IsNullOrWhiteSpace(projectContext?.AllowedAiModel) ? "الإعداد الافتراضي للنظام" : projectContext.AllowedAiModel,
+            usesProjectApiKey = projectContext?.AiConfigurationVersion > 0,
             reportingTimezone,
             currency,
             attributionWindow = "7d click-to-WhatsApp",
@@ -167,8 +174,8 @@ public sealed class AdvertisingOperationsController(
                 },
                 ai = new
                 {
-                    model = string.IsNullOrWhiteSpace(projectContext.AllowedAiModel) ? "الإعداد الافتراضي للنظام" : projectContext.AllowedAiModel,
-                    usesProjectApiKey = projectContext.AiConfigurationVersion > 0,
+                    model = string.IsNullOrWhiteSpace(projectContext?.AllowedAiModel) ? "الإعداد الافتراضي للنظام" : projectContext.AllowedAiModel,
+                    usesProjectApiKey = projectContext?.AiConfigurationVersion > 0,
                     latestDecision = latestDecision is null ? null : new { latestDecision.ActionType, state = latestDecision.State.ToString(), latestDecision.CreatedAt }
                 },
                 tracking = new

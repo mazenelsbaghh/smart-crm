@@ -1,5 +1,5 @@
 import { CheckCircle2, CircleDollarSign, PauseCircle, Target } from 'lucide-react';
-import type { AdvertisingReadiness } from '../types';
+import type { AdvertisingReadiness, ReadinessItem } from '../types';
 import styles from '../AdManager.module.css';
 
 const readinessReason: Record<string, string> = {
@@ -16,10 +16,24 @@ const readinessReason: Record<string, string> = {
   ADS_TRACKING_STALE: 'آخر قياس قديم ويحتاج تحديثًا',
 };
 
+function ReadinessCheck({ item }: { item: ReadinessItem }) {
+  return <li className={item.ready ? styles.complete : ''}>
+    <span>{item.ready ? <CheckCircle2 size={18} aria-hidden="true" /> : item.key === 'budget' ? <CircleDollarSign size={18} aria-hidden="true" /> : <PauseCircle size={18} aria-hidden="true" />}</span>
+    <div><strong>{item.label}</strong>{item.reason && <small>{readinessReason[item.reason] ?? item.reason}</small>}</div>
+  </li>;
+}
+
 export function ReadinessPanel({ readiness, onConfigure, canManage = true }: { readiness: AdvertisingReadiness; onConfigure: () => void; canManage?: boolean }) {
   if (readiness.ready) return null;
-  return <section className={styles.readiness} aria-labelledby="readiness-title"><div><Target size={22} /><h2 id="readiness-title">جهّز المشروع قبل الصرف</h2><p>لن يتم إنشاء أو تعديل أي ميزانية قبل اكتمال العناصر التالية.</p></div>
-    <ol>{readiness.items.map(item => <li key={item.key} className={item.ready ? styles.complete : ''}><span>{item.ready ? <CheckCircle2 size={18} /> : item.key === 'budget' ? <CircleDollarSign size={18} /> : <PauseCircle size={18} />}</span><div><strong>{item.label}</strong>{item.reason && <small>{readinessReason[item.reason] ?? item.reason}</small>}</div></li>)}</ol>
-    {canManage ? <button className={styles.primaryButton} onClick={onConfigure}>إكمال الإعداد</button>
-      : <p className={styles.readOnlyBadge}>يلزم دور مالك أو مدير لإكمال الإعداد.</p>}</section>;
+  const incomplete = readiness.items.filter(item => !item.ready);
+  const complete = readiness.items.filter(item => item.ready);
+  return <section className={styles.readiness} aria-labelledby="readiness-title">
+    <div className={styles.readinessHeading}>
+      <div><h2 id="readiness-title"><Target size={20} aria-hidden="true" />جهّز المشروع قبل الصرف</h2><p>لن يتم إنشاء أو تعديل أي ميزانية قبل اكتمال العناصر التالية.</p></div>
+      {canManage ? <button className={styles.primaryButton} onClick={onConfigure}>إكمال الإعداد</button>
+        : <p className={styles.readOnlyBadge}>يلزم دور مالك أو مدير لإكمال الإعداد.</p>}
+    </div>
+    <ol>{incomplete.map(item => <ReadinessCheck key={item.key} item={item} />)}</ol>
+    {complete.length > 0 && <details className={styles.completedChecks}><summary><CheckCircle2 size={17} aria-hidden="true" />{complete.length.toLocaleString('ar-EG')} عناصر مكتملة</summary><ol>{complete.map(item => <ReadinessCheck key={item.key} item={item} />)}</ol></details>}
+  </section>;
 }

@@ -2,6 +2,7 @@ import axios, { type AxiosError, type GenericAbortSignal, type InternalAxiosRequ
 
 interface RetriableRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean;
+  _sessionContext?: { principalId: string | null; projectId: string | null };
 }
 
 interface RefreshedSession {
@@ -13,6 +14,7 @@ interface RefreshAttempt {
   storage: Storage;
   refreshToken: string;
   principalId: string | null;
+  projectId: string | null;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL !== undefined ? process.env.NEXT_PUBLIC_API_URL : 'http://localhost';
@@ -50,29 +52,41 @@ const storedUserId = (storage: Storage) => {
   }
 };
 
-const accessTokenSubject = (accessToken: string | null) => {
+const accessTokenClaim = (accessToken: string | null, claim: string) => {
   if (!accessToken) return null;
   try {
     const encodedPayload = accessToken.split('.')[1];
     if (!encodedPayload) return null;
     const base64 = encodedPayload.replace(/-/g, '+').replace(/_/g, '/');
     const paddedBase64 = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
-    const payload = JSON.parse(atob(paddedBase64)) as { sub?: unknown };
-    return typeof payload.sub === 'string' && payload.sub.trim() ? payload.sub.trim() : null;
+    const payload = JSON.parse(atob(paddedBase64)) as Record<string, unknown>;
+    const claimValue = payload[claim];
+    return typeof claimValue === 'string' && claimValue.trim() ? claimValue.trim() : null;
   } catch {
     return null;
   }
 };
 
 const storedPrincipalId = (storage: Storage) =>
-  accessTokenSubject(storage.getItem('accessToken')) ?? storedUserId(storage);
+  accessTokenClaim(storage.getItem('accessToken'), 'sub') ?? storedUserId(storage);
+
+const storedProjectId = (storage: Storage): string | null => {
+  const claimedProject = accessTokenClaim(storage.getItem('accessToken'), 'ProjectId');
+  if (claimedProject) return claimedProject;
+  try {
+    const project = JSON.parse(storage.getItem('activeProject') ?? 'null') as { id?: unknown } | null;
+    return typeof project?.id === 'string' ? project.id : null;
+  } catch {
+    return null;
+  }
+};
 
 const requireRefreshAttempt = (): RefreshAttempt => {
   const storage = browserStorage();
   if (!storage) throw new Error('Token refresh is only available in the browser');
 
   const refreshToken = storage.getItem('refreshToken');
-  if (refreshToken) return { storage, refreshToken, principalId: storedPrincipalId(storage) };
+  if (refreshToken) return { storage, refreshToken, principalId: storedPrincipalId(storage), projectId: storedProjectId(storage) };
 
   clearSession(storage);
   throw new Error('No refresh token found');
@@ -93,11 +107,11 @@ const isInvalidRefreshTokenResponse = (error: unknown) =>
   && error.response?.status === 401
   && (error.response.data as { code?: unknown } | undefined)?.code === 'REFRESH_TOKEN_INVALID';
 
-const newerSessionAccessToken = ({ storage, refreshToken, principalId }: RefreshAttempt) => {
+const newerSessionAccessToken = ({ storage, refreshToken, principalId, projectId }: RefreshAttempt) => {
   const currentRefreshToken = storage.getItem('refreshToken');
   if (!currentRefreshToken || currentRefreshToken === refreshToken) return null;
   const currentAccessToken = storage.getItem('accessToken');
-  if (principalId && storedPrincipalId(storage) === principalId && currentAccessToken) return currentAccessToken;
+  if (principalId && storedPrincipalId(storage) === principalId && storedProjectId(storage) === projectId && currentAccessToken) return currentAccessToken;
   throw new axios.CanceledError('Session changed while the access token was refreshing');
 };
 
@@ -185,15 +199,13 @@ api.interceptors.request.use(
       config.headers.set('Authorization', `Bearer ${token}`);
     }
 
-    const activeProject = storage.getItem('activeProject');
-    if (activeProject) {
-      try {
-        const project = JSON.parse(activeProject);
-        if (project?.id) config.headers.set('X-Project-Id', project.id);
-      } catch (error) {
-        console.error('Error parsing active project from localStorage', error);
-      }
-    }
+    const request = config as RetriableRequestConfig;
+    request._sessionContext ??= { principalId: storedPrincipalId(storage), projectId: storedProjectId(storage) };
+    if (request._sessionContext.principalId !== storedPrincipalId(storage)
+        || request._sessionContext.projectId !== storedProjectId(storage))
+      throw new axios.CanceledError('Project or account changed before the request could complete');
+    if (request._sessionContext.projectId)
+      config.headers.set('X-Project-Id', request._sessionContext.projectId);
     return config;
   },
   (error) => Promise.reject(error),
@@ -212,6 +224,10 @@ api.interceptors.response.use(
     originalRequest._retry = true;
     const accessToken = await waitForRefresh(sharedRefresh(), originalRequest.signal);
     originalRequest.headers.set('Authorization', `Bearer ${accessToken}`);
+    if (originalRequest.url?.split('?')[0].endsWith('/api/auth/projects/switch')) {
+      const payload = typeof originalRequest.data === 'string' ? JSON.parse(originalRequest.data) : originalRequest.data;
+      originalRequest.data = { ...payload, refreshToken: browserStorage()?.getItem('refreshToken') };
+    }
     return api(originalRequest);
   },
 );

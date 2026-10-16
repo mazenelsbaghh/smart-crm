@@ -16,7 +16,8 @@ namespace Modules.Analytics.Application.Services;
 public sealed class SalesIntelligenceService(
     AppDbContext db,
     IGeminiClient gemini,
-    IProjectSecretVault secretVault)
+    IProjectSecretVault secretVault,
+    AiGenerationCache? generationCache = null)
 {
     private const int AttributionWindowDays = 30;
     private const int ImmediateFollowUpPriority = 80;
@@ -445,10 +446,11 @@ public sealed class SalesIntelligenceService(
         return sources.Conversations.Select(conversation =>
         {
             analyses.TryGetValue(conversation.Id, out var analysis);
-            var booking = BookingForConversation(conversation, sources.Bookings);
-            var stage = EffectiveStage(analysis?.VerifiedStage ?? SalesConversationStage.New, booking);
+            var bookings = BookingsForConversation(conversation, sources.Bookings);
+            var stage = EffectiveStage(analysis?.VerifiedStage ?? SalesConversationStage.New, bookings);
             var responded = HasResponse(messageTimings.GetValueOrDefault(conversation.Id));
-            return new ConversationFact(conversation, analysis, booking, stage, responded);
+            return new ConversationFact(conversation, analysis, stage, responded,
+                bookings.Any(booking => booking.IsPaid), bookings.Any(booking => booking.IsAttended));
         }).ToArray();
     }
 
@@ -480,7 +482,7 @@ public sealed class SalesIntelligenceService(
             .Select(row => MapAnalysis(
                 row.Analysis!,
                 CustomerName(customerNames, row.Conversation.CustomerId),
-                row.Conversation.Channel))
+                row.Conversation.Channel) with { Stage = row.Stage.ToString() })
             .ToArray();
 
     private static IReadOnlyList<OpportunityCandidate> OpportunityCandidates(
@@ -605,7 +607,7 @@ public sealed class SalesIntelligenceService(
         row.Analysis?.Outcome == SalesConversationOutcome.Active || row.Conversation.Status is "Open" or "Pending";
 
     private static bool IsBooked(ConversationFact row) => row.Stage >= SalesConversationStage.Booked;
-    private static bool IsPaid(ConversationFact row) => row.Stage >= SalesConversationStage.Paid;
+    private static bool IsPaid(ConversationFact row) => row.Paid;
 
     public async Task<AskSalesAnalystResult> AskAsync(
         SalesAnalystQuestion analystQuestion,
@@ -623,13 +625,11 @@ public sealed class SalesIntelligenceService(
         var evidenceRows = await AnalystEvidenceRowsAsync(
             projectId, analystQuestion.FromUtc, analystQuestion.ToUtc, cancellationToken);
         var (apiKey, model) = await AiConfigurationAsync(projectId, cancellationToken);
-        var reviewContext = new AnalystReviewContext(cleanQuestion, apiKey, model);
+        var reviewContext = new AnalystReviewContext(analystQuestion with { Question = cleanQuestion }, apiKey, model);
         var batchFindings = await AnalyzeEvidenceBatchesAsync(
             reviewContext, evidenceRows, cancellationToken);
-        var parsed = batchFindings.Count == 1
-            ? batchFindings[0].Finding
-            : await SynthesizeAnalystAnswerAsync(
-                reviewContext, dashboard, batchFindings, cancellationToken);
+        var parsed = await SynthesizeAnalystAnswerAsync(
+            reviewContext, dashboard, batchFindings, cancellationToken);
         var includedIds = evidenceRows.Select(item => item.ConversationId).ToHashSet();
         return new AskSalesAnalystResult(
             parsed.Answer,
@@ -650,7 +650,7 @@ public sealed class SalesIntelligenceService(
         var findings = new List<AnalystBatchFinding>();
         foreach (var batch in evidenceRows.Chunk(AnalystEvidenceBatchSize))
         {
-            var prompt = BuildAnalystBatchPrompt(reviewContext.Question, batch);
+            var prompt = BuildAnalystBatchPrompt(reviewContext.Request.Question, batch);
             var finding = SalesIntelligenceAiParser.ParseAnswer(
                 await GenerateAnalystAnswerAsync(prompt, reviewContext, cancellationToken));
             findings.Add(new(batch.Length, finding));
@@ -664,7 +664,7 @@ public sealed class SalesIntelligenceService(
         IReadOnlyList<AnalystBatchFinding> batchFindings,
         CancellationToken cancellationToken)
     {
-        var prompt = BuildAnalystSynthesisPrompt(reviewContext.Question, dashboard, batchFindings);
+        var prompt = BuildAnalystSynthesisPrompt(reviewContext.Request.Question, dashboard, batchFindings);
         return SalesIntelligenceAiParser.ParseAnswer(
             await GenerateAnalystAnswerAsync(prompt, reviewContext, cancellationToken));
     }
@@ -681,7 +681,10 @@ public sealed class SalesIntelligenceService(
             db.ConversationSalesAnalyses.IgnoreQueryFilters().Where(analysis => analysis.ProjectId == projectId),
             conversation => conversation.Id,
             analysis => analysis.ConversationId,
-            (_, analysis) => new AnalystEvidenceRow(
+            (_, analysis) => analysis)
+        .OrderByDescending(analysis => analysis.LastMessageAtUtc)
+        .ThenBy(analysis => analysis.ConversationId)
+        .Select(analysis => new AnalystEvidenceRow(
                 analysis.ConversationId,
                 analysis.VerifiedStage,
                 analysis.Outcome,
@@ -692,7 +695,6 @@ public sealed class SalesIntelligenceService(
                 analysis.Confidence,
                 analysis.NeedsFollowUp,
                 analysis.LastMessageAtUtc))
-        .OrderByDescending(item => item.LastMessageAtUtc)
         .ToListAsync(cancellationToken);
 
     private static string BuildAnalystBatchPrompt(
@@ -739,7 +741,23 @@ public sealed class SalesIntelligenceService(
         أرجع JSON فقط: {"answer":"الإجابة النهائية العملية", "conversationIds":["أقوى GUIDs داعمة من نتائج الدفعات فقط"]}
         """;
 
-    private async Task<string> GenerateAnalystAnswerAsync(
+    private Task<string> GenerateAnalystAnswerAsync(
+        string prompt,
+        AnalystReviewContext reviewContext,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (generationCache is null) return GenerateValidAnalystAnswerAsync(prompt, reviewContext, cancellationToken);
+        var inputHash = Fingerprint(JsonSerializer.Serialize(new
+        {
+            reviewContext.Request, reviewContext.Model, CredentialHash = Fingerprint(reviewContext.ApiKey), prompt
+        }));
+        return generationCache.GetOrGenerateReplyAsync(
+            $"ai:sales-analyst:v1:{reviewContext.Request.ProjectId:N}:{inputHash}",
+            () => GenerateValidAnalystAnswerAsync(prompt, reviewContext, cancellationToken), TimeSpan.FromHours(1));
+    }
+
+    private async Task<string> GenerateValidAnalystAnswerAsync(
         string prompt,
         AnalystReviewContext reviewContext,
         CancellationToken cancellationToken)
@@ -748,7 +766,9 @@ public sealed class SalesIntelligenceService(
         {
             if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
             var response = await gemini.GenerateReplyAsync(prompt, reviewContext.ApiKey, reviewContext.Model);
-            if (!response.StartsWith("[AI_ERROR]", StringComparison.Ordinal)) return response;
+            if (response.StartsWith("[AI_ERROR]", StringComparison.Ordinal)) continue;
+            _ = SalesIntelligenceAiParser.ParseAnswer(response);
+            return response;
         }
         throw new AiEngineUnavailableException();
     }
@@ -784,16 +804,12 @@ public sealed class SalesIntelligenceService(
         DateTime toUtc,
         CancellationToken cancellationToken)
     {
-        var recent = await db.SalesIntelligenceDigests.IgnoreQueryFilters()
+        var digest = await db.SalesIntelligenceDigests.IgnoreQueryFilters()
             .Where(item => item.ProjectId == projectId
-                && item.GeneratedAtUtc >= DateTime.UtcNow.AddDays(-2))
+                && item.GeneratedAtUtc >= DateTime.UtcNow.AddDays(-2)
+                && item.WindowStartUtc == fromUtc && item.WindowEndUtc == toUtc)
             .OrderByDescending(item => item.GeneratedAtUtc)
-            .Take(20)
-            .ToListAsync(cancellationToken);
-        var requestedDuration = toUtc - fromUtc;
-        var digest = recent.FirstOrDefault(item =>
-            Math.Abs((item.WindowEndUtc - toUtc).TotalHours) <= 26
-            && Math.Abs(((item.WindowEndUtc - item.WindowStartUtc) - requestedDuration).TotalHours) <= 2);
+            .FirstOrDefaultAsync(cancellationToken);
         return digest is null ? null : DigestResponse(digest);
     }
 
@@ -812,21 +828,22 @@ public sealed class SalesIntelligenceService(
 
     private static IReadOnlyList<FunnelMetric> BuildFunnel(IReadOnlyList<ConversationFact> rows)
     {
-        var values = new[]
+        (string Key, string Label, Func<ConversationFact, bool> Matches)[] stages =
         {
-            ("new", "شات جديد", rows.Count),
-            ("responded", "تم الرد", rows.Count(row => row.Responded)),
-            ("qualified", "عميل مؤهل", rows.Count(row => row.Stage >= SalesConversationStage.Qualified)),
-            ("intent", "نية حجز", rows.Count(row => row.Stage >= SalesConversationStage.BookingIntent)),
-            ("booked", "حجز", rows.Count(row => row.Stage >= SalesConversationStage.Booked)),
-            ("paid", "دفع", rows.Count(row => row.Stage >= SalesConversationStage.Paid)),
-            ("attended", "حضر", rows.Count(row => row.Stage >= SalesConversationStage.Attended))
+            ("new", "شات جديد", _ => true),
+            ("responded", "تم الرد", row => row.Responded),
+            ("qualified", "عميل مؤهل", row => row.Stage >= SalesConversationStage.Qualified),
+            ("intent", "نية حجز", row => row.Stage >= SalesConversationStage.BookingIntent),
+            ("booked", "حجز", IsBooked),
+            ("paid", "دفع", IsPaid),
+            ("attended", "حضر", row => row.Attended)
         };
-        return values.Select((value, index) => new FunnelMetric(
-            value.Item1,
-            value.Item2,
-            value.Item3,
-            index == 0 ? 100m : Percentage(value.Item3, values[index - 1].Item3))).ToArray();
+        return stages.Select((stage, index) =>
+        {
+            var previousRows = index == 0 ? rows : rows.Where(stages[index - 1].Matches).ToArray();
+            return new FunnelMetric(stage.Key, stage.Label, rows.Count(stage.Matches),
+                Percentage(previousRows.Count(stage.Matches), previousRows.Count));
+        }).ToArray();
     }
 
     private static IReadOnlyList<FunnelTransitionMetric> BuildFunnelTransitions(
@@ -845,10 +862,9 @@ public sealed class SalesIntelligenceService(
                 row => row.Stage >= SalesConversationStage.Booked, null),
             new("booked-to-paid", "حجز", "دفع",
                 row => row.Stage >= SalesConversationStage.Booked,
-                row => row.Stage >= SalesConversationStage.Paid, "PaymentNotRecorded"),
+                IsPaid, "PaymentNotRecorded"),
             new("paid-to-attended", "دفع", "حضور",
-                row => row.Stage >= SalesConversationStage.Paid,
-                row => row.Stage >= SalesConversationStage.Attended, "AttendanceNotRecorded")
+                IsPaid, row => row.Attended, "AttendanceNotRecorded")
         ];
         return definitions.Select(definition => BuildFunnelTransition(rows, definition)).ToArray();
     }
@@ -913,8 +929,8 @@ public sealed class SalesIntelligenceService(
             group.Count(row => row.Stage >= SalesConversationStage.Qualified),
             group.Count(row => row.Stage >= SalesConversationStage.BookingIntent),
             group.Count(row => row.Stage >= SalesConversationStage.Booked),
-            group.Count(row => row.Stage >= SalesConversationStage.Paid),
-            group.Count(row => row.Stage >= SalesConversationStage.Attended)))
+            group.Count(IsPaid),
+            group.Count(row => row.Attended)))
         .ToArray();
 
     private static IReadOnlyList<ReasonMetric> BuildReasons(IReadOnlyList<ConversationFact> rows)
@@ -937,22 +953,21 @@ public sealed class SalesIntelligenceService(
             .ToArray();
     }
 
-    private static GroupAppointmentBooking? BookingForConversation(
+    private static IReadOnlyList<GroupAppointmentBooking> BookingsForConversation(
         Conversation conversation,
         IReadOnlyList<GroupAppointmentBooking> bookings) => bookings
         .Where(item => item.CustomerId == conversation.CustomerId
             && item.CreatedAt >= conversation.CreatedAt
             && item.CreatedAt <= conversation.CreatedAt.AddDays(AttributionWindowDays))
-        .OrderBy(item => item.CreatedAt)
-        .FirstOrDefault();
+        .ToArray();
 
     private static SalesConversationStage EffectiveStage(
         SalesConversationStage analyzedStage,
-        GroupAppointmentBooking? booking)
+        IReadOnlyList<GroupAppointmentBooking> bookings)
     {
-        if (booking?.IsAttended == true) return SalesConversationStage.Attended;
-        if (booking?.IsPaid == true) return SalesConversationStage.Paid;
-        if (booking is not null) return SalesConversationStage.Booked;
+        if (bookings.Any(booking => booking.IsAttended)) return SalesConversationStage.Attended;
+        if (bookings.Any(booking => booking.IsPaid)) return SalesConversationStage.Paid;
+        if (bookings.Count > 0) return SalesConversationStage.Booked;
         return analyzedStage > SalesConversationStage.BookingIntent
             ? SalesConversationStage.BookingIntent
             : analyzedStage;
@@ -1009,7 +1024,7 @@ public sealed class SalesIntelligenceService(
         DateTime fromUtc,
         DateTime toUtc,
         string timezone) => new(
-            projectId, fromUtc, toUtc, timezone, DateTime.UtcNow, 0, 0, 0, 0, 0, 0, 0, 0,
+            projectId, fromUtc, toUtc, timezone, DateTime.UtcNow, 0, 0, 0, 0, 0, 0, 0, null,
             BuildFunnel([]), BuildFunnelTransitions([]), [], [], FollowUpPlan([]), [], [], null);
 
     private static string CustomerName(IReadOnlyDictionary<Guid, string> customers, Guid customerId) =>
@@ -1018,9 +1033,9 @@ public sealed class SalesIntelligenceService(
     private static decimal Percentage(int value, int total) =>
         total <= 0 ? 0m : Math.Round(value * 100m / total, 1);
 
-    private static decimal Median(IReadOnlyList<decimal> values)
+    private static decimal? Median(IReadOnlyList<decimal> values)
     {
-        if (values.Count == 0) return 0m;
+        if (values.Count == 0) return null;
         var middle = values.Count / 2;
         return values.Count % 2 == 1
             ? Math.Round(values[middle], 1)
@@ -1069,9 +1084,10 @@ public sealed class SalesIntelligenceService(
     private sealed record ConversationFact(
         Conversation Conversation,
         ConversationSalesAnalysis? Analysis,
-        GroupAppointmentBooking? Booking,
         SalesConversationStage Stage,
-        bool Responded);
+        bool Responded,
+        bool Paid,
+        bool Attended);
 
     private sealed record FunnelTransitionDefinition(
         string Key,
@@ -1098,7 +1114,7 @@ public sealed class SalesIntelligenceService(
         ParsedAnalystAnswer Finding);
 
     private sealed record AnalystReviewContext(
-        string Question,
+        SalesAnalystQuestion Request,
         string ApiKey,
         string Model);
 

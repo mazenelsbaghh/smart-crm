@@ -1,10 +1,14 @@
 import React from 'react';
+import Link from 'next/link';
+import { FileText, ArrowRight } from 'lucide-react';
 import styles from '../../styles/legal.module.css';
 
 export default function TermsOfService() {
   return (
     <main className={styles.page}>
+      <nav className={styles.navigation} aria-label="صفحات المعلومات"><Link href="/"><ArrowRight size={17} /> تسجيل الدخول</Link><Link href="/privacy">الخصوصية</Link></nav>
       <article className={styles.article}>
+        <span className={styles.icon}><FileText size={27} aria-hidden="true" /></span>
         <h1>شروط الاستخدام (Terms of Service)</h1>
         <p className={styles.intro}>تنطبق هذه الشروط على خدمة «أكمل الآية» المتاحة عبر منصة Smart Customer Core (سمارت كاستمر).</p>
 

@@ -22,7 +22,8 @@ public enum ContentWeekPlanStatus
     Approved = 2,
     Completed = 3,
     Rejected = 4,
-    GenerationFailed = 5
+    GenerationFailed = 5,
+    Expired = 6
 }
 
 public sealed class ContentAutomationSettings : AuditableEntity, ITenantEntity
@@ -36,6 +37,7 @@ public sealed class ContentAutomationSettings : AuditableEntity, ITenantEntity
     public bool IsEnabled { get; set; }
     public bool HasApprovedStyle { get; set; }
     public TimeSpan DailyPublishTimeLocal { get; set; } = new(10, 0, 0);
+    public int PostsPerDay { get; set; } = 1;
     public string Timezone { get; set; } = "Africa/Cairo";
     public DateTime? NextPublishAtUtc { get; set; }
     public DateTime? LastPublishedAtUtc { get; set; }
@@ -44,7 +46,14 @@ public sealed class ContentAutomationSettings : AuditableEntity, ITenantEntity
     public string? LogoMimeType { get; set; }
     public string? LogoFileName { get; set; }
     public string BrandColorsJson { get; set; } = "[]";
+    public string DesignSource { get; set; } = "logo";
+    public bool MatchReferenceTone { get; set; }
+    public string ReferenceColorsJson { get; set; } = "[]";
+    public string ReferenceImagesJson { get; set; } = "[]";
     public string StylePrompt { get; set; } = DefaultStylePrompt;
+    public string ImageProvider { get; set; } = "Gemini";
+    public string OpenAiImageModel { get; set; } = "gpt-image-2.5-sunburst";
+    public string OpenAiImageApiKey { get; set; } = string.Empty;
     public Guid? ApprovedSamplePostId { get; set; }
 }
 

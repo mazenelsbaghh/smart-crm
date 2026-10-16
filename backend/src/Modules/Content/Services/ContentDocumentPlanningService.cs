@@ -24,6 +24,9 @@ public sealed class ContentDocumentPlanningService(
         Encoder = JavaScriptEncoder.Create(UnicodeRanges.All)
     };
 
+    internal ContentPaperDesign RestorePaperDesign(Guid projectId, string? token) =>
+        ContentPaperDesign.Restore(protection, projectId, token);
+
     internal async Task<ContentDocumentPreview.Preview> PreviewAsync(Guid projectId, PreviewInput input, CancellationToken cancellationToken)
     {
         ValidateInput(input);

@@ -34,6 +34,16 @@ public sealed class PricingGuardTests
         Assert.True(PricingGuard.IsPricingQuestion(message));
     }
 
+    [Theory]
+    [InlineData("سعر المكثف كام؟")]
+    [InlineData("الكورس العادي بكام؟")]
+    [InlineData("بكام؟")]
+    public void Multiple_course_offers_do_not_override_the_contextual_reply_with_an_unscoped_monthly_price(string message)
+    {
+        const string knowledge = "الكورس العادي\nالاشتراك الشهري: 1500 جنيه\nالكورس المكثف: 6000 جنيه كاش أو 7500 جنيه تقسيط";
+        Assert.Null(PricingGuard.BuildPricingReplyFromKnowledge(message, knowledge));
+    }
+
     [Fact]
     public void Trusted_pricing_knowledge_is_rendered_with_its_configured_prices()
     {

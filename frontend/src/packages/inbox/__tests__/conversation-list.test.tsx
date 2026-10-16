@@ -1,4 +1,4 @@
-import { createRef } from 'react';
+import { createRef, useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Conversation } from '../../../types/chat';
@@ -33,27 +33,33 @@ const statusLabels = {
 };
 
 describe('ConversationList', () => {
-  it('يعرض بيانات المصدر وحالات الفلاتر بلا ملخصات أو تصنيفات مختلقة', () => {
-    render(
-      <ConversationList
+  it('يعرض بيانات المصدر ويتيح اختيار حالة المحادثات بلا ملخصات مختلقة', () => {
+    function ConversationListScenario() {
+      const [filterStatus, setFilterStatus] = useState('All');
+      return <ConversationList
         conversations={[conversation]}
         activeConv={null}
         setActiveConv={vi.fn()}
         searchQuery=""
         setSearchQuery={vi.fn()}
-        filterStatus="All"
-        setFilterStatus={vi.fn()}
+        filterStatus={filterStatus}
+        setFilterStatus={setFilterStatus}
         channel="WhatsApp"
         searchInputRef={createRef<HTMLInputElement>()}
         statusLabels={statusLabels}
-      />,
-    );
+      />;
+    }
+    render(<ConversationListScenario />);
 
     expect(screen.getByText('تصنيف CRM: عميل حالي')).toBeInTheDocument();
-    expect(screen.getByText('واتساب · رقم المبيعات')).toBeInTheDocument();
+    expect(screen.getByText('رقم المبيعات')).toBeInTheDocument();
     expect(screen.getByLabelText('3 رسائل غير مقروءة')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'محادثة جديدة، غير متاحة حاليًا' })).toBeDisabled();
+    const statusFilter = screen.getByRole('combobox', { name: 'حالة المحادثات' });
+    expect(statusFilter).toHaveValue('All');
+    fireEvent.change(statusFilter, { target: { value: 'Pending' } });
+    expect(statusFilter).toHaveValue('Pending');
     expect(screen.queryByText('مؤهل للشراء')).not.toBeInTheDocument();
+    expect(screen.queryByText('لا يتوفر ملخص للرسالة في هذا المصدر')).not.toBeInTheDocument();
   });
 
   it('يتيح تحميل الصفحة التالية عندما يعلن المصدر وجودها', () => {
@@ -77,5 +83,16 @@ describe('ConversationList', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'تحميل محادثات أقدم' }));
     expect(onLoadMore).toHaveBeenCalledOnce();
+  });
+
+  it('does not label an unknown unread count as zero or as unread messages', () => {
+    render(<ConversationList conversations={[{ ...conversation, unreadCount: null }]}
+      activeConv={null} setActiveConv={vi.fn()} searchQuery="" setSearchQuery={vi.fn()}
+      filterStatus="All" setFilterStatus={vi.fn()} channel="WhatsApp"
+      searchInputRef={createRef<HTMLInputElement>()} statusLabels={statusLabels} />);
+
+    expect(screen.getByText('سارة أحمد')).toBeInTheDocument();
+    expect(screen.queryByText(/غير مقروءة/)).not.toBeInTheDocument();
+    expect(screen.queryByText('٠')).not.toBeInTheDocument();
   });
 });

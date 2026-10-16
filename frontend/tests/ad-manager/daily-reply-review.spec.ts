@@ -5,7 +5,8 @@ test('daily review supports a full RTL workflow at desktop and mobile sizes', as
   await page.route('**/reports/daily-review**', route => route.fulfill({ json: route.request().url().includes('/processing') ? processingFixture : reviewFixture }));
   await page.route('**/conversations/conversation-1/messages**', route => route.fulfill({ json: messagesFixture }));
   await page.goto('/management/reply-review');
-  await expect(page.getByRole('heading', { name: 'مراجعة الردود اليومية' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'مراجعة الردود' })).toBeVisible();
+  await page.getByRole('tab', { name: 'معالجة المشكلات' }).click();
   await expect(page.getByRole('heading', { name: 'المراجعة والمعالجة المجدولة' })).toBeVisible();
   await page.getByText('إعدادات الجدولة والمعالجة').click();
   await expect(page.getByLabel('فحص المحادثات كل (دقيقة)')).toBeVisible();
@@ -17,9 +18,12 @@ test('daily review supports a full RTL workflow at desktop and mobile sizes', as
   await page.getByRole('heading', { name: 'المراجعة والمعالجة المجدولة' }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/tmp/reply-review-schedule-mobile.png' });
   await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('tab', { name: 'المحادثات' }).click();
   await page.getByRole('button', { name: /عميلة اختبار — سهيلة/ }).click();
   await expect(page.getByText('بعد ١٧ دقيقة')).toBeVisible();
+  await page.getByRole('tab', { name: 'فحص المتابعات' }).click();
   await expect(page.getByText('مكتملة بلا دليل إرسال')).toBeVisible();
+  await page.getByRole('tab', { name: 'المحادثات' }).click();
   await page.getByRole('heading', { name: 'سجل المحادثة' }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/tmp/daily-reply-review-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

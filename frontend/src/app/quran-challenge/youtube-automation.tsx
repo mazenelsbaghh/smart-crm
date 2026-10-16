@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Clock3, Link2, PlaySquare, Send, Unlink } from 'lucide-react';
+import { Save, Clock3, Link2, PlaySquare, Send, Unlink } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
@@ -125,7 +125,7 @@ export function YouTubeAutomationPanel({ selection, timezone }: { selection: Ver
             <label className={styles.captionTemplate}><span>الوصف التلقائي</span><textarea rows={6} maxLength={5000} value={settings.captionTemplate} onChange={(event) => setSettings({ ...settings, captionTemplate: event.target.value })} /><small>المتغيرات المتاحة: {'{surah}'}، {'{ayah}'}، {'{word}'}</small></label>
             <AutomationSwitch settings={settings} setSettings={setSettings} timezone={timezone} />
             <div className={styles.youtubeActions}>
-              <button type="button" className={styles.saveSchedule} onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button>
+              <button type="button" className={styles.saveSchedule} onClick={save} disabled={saving}><Save size={17} aria-hidden="true" />{saving ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button>
               <button type="button" className={styles.publishNow} onClick={() => setConfirmAction('publish')} disabled={!settings.connected || publishing}><Send size={17} />{publishing ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button>
             </div>
             {settings.lastPublishedAtUtc && <p className={styles.lastPublish}>آخر نشر: {automationDateTime(settings.lastPublishedAtUtc, timezone)}</p>}

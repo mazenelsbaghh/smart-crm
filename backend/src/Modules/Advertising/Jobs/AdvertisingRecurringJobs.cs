@@ -15,7 +15,7 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
     WhatsAppCreativeTestService whatsAppTests, AdvertisingDecisionService decisions, ConversionDeliveryJob conversionDelivery,
     AdvertisingTrackingHealthService trackingHealth, AdvertisingDecisionImpactService impactService,
     AdvertisingEmergencyStopService emergencyStopService, AdvertisingOwnershipPolicy ownership,
-    AdvertisingCampaignBootstrapService campaignBootstrap, BudgetAllocator budgets)
+    AdvertisingCampaignBootstrapService campaignBootstrap)
 {
     [DisableConcurrentExecution(timeoutInSeconds: 50)]
     public Task DeliverConversionsAsync() => conversionDelivery.RunAsync();
@@ -34,35 +34,10 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
         foreach (var projectId in await ActiveProjectIdsAsync())
             await WithProjectLease(projectId, "spend", TimeSpan.FromMinutes(4), async () =>
             {
-                var envelope = await db.AutonomyEnvelopes.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.State == EnvelopeState.Active);
-                if (envelope is null) return;
-                var start = AdvertisingSchedulePolicy.DayStartUtc(DateTime.UtcNow, envelope.ReportingTimezoneIana);
-                var managedAds = await ownership.ManagedAdsAsync(projectId, activeOnly: false);
-                var managedAdIds = managedAds.Select(item => item.Id).ToArray();
-                var analyticalSpend = await db.AdvertisingInsights.IgnoreQueryFilters().Where(x =>
-                    x.ProjectId == projectId && managedAdIds.Contains(x.TargetId)
-                    && x.IntervalStartUtc >= start && x.IsCurrent).SumAsync(x => x.Spend);
-                var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(item =>
-                    item.ProjectId == projectId && item.State == AdvertisingConnectionState.Ready);
-                var spend = analyticalSpend;
-                if (connection?.ProtectedAccessToken is not null && connection.AdAccountExternalId is not null)
-                {
-                    var managedIds = managedAds.Where(item => item.AdExternalId != null)
-                        .Select(item => item.AdExternalId!).ToHashSet(StringComparer.Ordinal);
-                    var today = DateOnly.FromDateTime(DateTime.UtcNow);
-                    var liveRows = await insights.GetAdInsightsAsync(vault.Unprotect(connection.ProtectedAccessToken),
-                        connection.AdAccountExternalId, today, today, CancellationToken.None);
-                    spend = Math.Max(analyticalSpend, liveRows.Where(row => managedIds.Contains(row.AdExternalId)).Sum(row => row.Spend));
-                }
-                var ledgers = await budgets.EnsureCurrentLedgersAsync(db, envelope);
-                foreach (var ledger in ledgers) { ledger.ObservedSpend = Math.Max(ledger.ObservedSpend, spend); ledger.LastReconciledAtUtc = DateTime.UtcNow; }
-                var exposure = ledgers.Count == 0 ? spend : Math.Max(spend, ledgers.Max(AdvertisingSpendGuard.Exposure));
-                await db.SaveChangesAsync();
-                if (!AdvertisingOperationalPolicy.MustEmergencyStop(exposure, envelope.DailyCap)) return;
-                var abnormal = ledgers.Any(ledger => AdvertisingOperationalPolicy.IsAbnormalForecast(
-                    Math.Max(ledger.ForecastSpend, ledger.ObservedSpend + ledger.DelayedSpendEstimate), ledger.UsableCap));
-                await ActivateAutomaticStop(projectId, abnormal ? EmergencyTrigger.AbnormalSpend : EmergencyTrigger.CapRisk,
-                    $"Guarded spend exposure {exposure} reached the authorized cap {envelope.DailyCap}.");
+                var breach = await new AdvertisingSpendMonitor(db, insights, vault).ReconcileAsync(projectId);
+                if (breach is not null)
+                    await ActivateAutomaticStop(projectId, breach.Abnormal ? EmergencyTrigger.AbnormalSpend : EmergencyTrigger.CapRisk,
+                        $"{breach.PeriodKind} spend exposure {breach.Exposure} reached its authorized cap {breach.Cap}.");
             });
     }
 
@@ -332,7 +307,7 @@ public sealed class AdvertisingRecurringJobs(AppDbContext db, IConnectionMultipl
 
     private async Task<List<Guid>> ActiveProjectIdsAsync()
     {
-        var active = await db.AutonomyEnvelopes.IgnoreQueryFilters().Where(x => x.State == EnvelopeState.Active)
+        var active = await db.AutonomyEnvelopes.IgnoreQueryFilters().Where(x => x.State == EnvelopeState.Active || x.State == EnvelopeState.Suspended)
             .Select(x => x.ProjectId).ToListAsync();
         var monitored = await db.AdvertisingDisableRequests.IgnoreQueryFilters().Where(item =>
             item.Mode == AutopilotDisableMode.LeaveRunning && item.CompletedAtUtc == null)

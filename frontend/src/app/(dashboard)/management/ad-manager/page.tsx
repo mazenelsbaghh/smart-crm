@@ -143,7 +143,7 @@ export default function AdManagerPage() {
 
       {activeTab === 'strategy' && <StrategyView strategy={data.strategy} />}
 
-      {activeTab === 'campaigns' && <>{canManage && <ExistingCampaignImport key={projectId} projectId={projectId} dailyCap={data.overview?.dailyCap ?? 0} onImported={data.refreshAfterMutation} />}<CampaignHierarchyView rows={data.campaigns} /></>}
+      {activeTab === 'campaigns' && <div className={styles.campaignWorkspace}><CampaignHierarchyView rows={data.campaigns} />{canManage && <ExistingCampaignImport key={projectId} projectId={projectId} dailyCap={data.overview?.dailyCap ?? 0} onImported={data.refreshAfterMutation} />}</div>}
       {activeTab === 'creatives' && <CreativesView projectId={projectId} creatives={data.creatives} comparisons={data.creativeComparison} decisions={data.decisions} onChanged={data.refreshAfterMutation} canManage={canManage} />}
       {activeTab === 'audiences' && <AudiencesView rows={data.audiences} />}
       {activeTab === 'experiments' && <ExperimentsView rows={data.experiments} ads={data.campaigns} />}

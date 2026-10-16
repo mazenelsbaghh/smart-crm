@@ -7,6 +7,48 @@ import { createInboundMessageOutbox } from '../src/inbound-message-outbox.js';
 
 const silentLogger = { error() {} };
 
+test('channel updates never start customer delivery or media enrichment', async context => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-inbound-channels-'));
+    context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const outbox = createInboundMessageOutbox({
+        directory,
+        forwardMessage: async () => assert.fail('a non-customer chat must not reach the backend'),
+        logger: silentLogger
+    });
+    context.after(() => outbox.close());
+
+    for (const sender of ['123456789@newsletter', 'status@broadcast', '123456789@g.us']) {
+        await outbox.captureAndForward({ ...inboundMessage('account-a'), sender },
+            async () => assert.fail('a non-customer chat must not upload media'));
+    }
+    assert.equal(jsonFileCount(directory), 0);
+});
+
+test('legacy channel retry backlog is cleared while phone and LID messages still deliver', async context => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-inbound-legacy-channels-'));
+    context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const forwarded = [];
+    const senders = ['123456789@newsletter', 'status@broadcast', '123456789@g.us', '201000000001', '123456789@lid'];
+    for (const [index, sender] of senders.entries()) {
+        fs.writeFileSync(path.join(directory, `${index}.json`), JSON.stringify({
+            version: 1,
+            message: { ...inboundMessage('account-a', `provider-${index}`), sender, senderJid: sender },
+            attempts: 3790,
+            nextAttemptAt: index < 3 ? Date.now() + 300_000 : null
+        }));
+    }
+    const outbox = createInboundMessageOutbox({
+        directory,
+        forwardMessage: async message => forwarded.push(message.sender),
+        logger: silentLogger
+    });
+    context.after(() => outbox.close());
+    await outbox.restore();
+
+    assert.deepEqual(forwarded.sort(), ['123456789@lid', '201000000001']);
+    assert.equal(jsonFileCount(directory), 0);
+});
+
 function inboundMessage(accountId, messageId = 'provider-message-1') {
     return {
         projectId: 'project-1',

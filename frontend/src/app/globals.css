@@ -1,6 +1,15 @@
 @import "../styles/variables.css";
 
-/* Base controls only. Component modules own their visual vocabulary. */
+h1, h2, h3, h4, p { margin-block-start: 0; }
+h1, h2, h3, h4 { line-height: 1.5; }
+a { color: inherit; }
+button, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+button, select { border-radius: var(--radius-md); }
+input, textarea, select { max-width: 100%; accent-color: var(--accent); }
+table { text-align: start; }
+img, video { max-width: 100%; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
 button,
 input,
 select,
@@ -114,4 +123,13 @@ button phantom-ui {
 
 .neon-input::placeholder {
   color: var(--text-soft);
+}
+
+@media (max-width: 767px) {
+  input, textarea, select { font-size: 16px !important; }
+  button { overflow-wrap: anywhere; }
+}
+
+@media (max-width: 767px) {
+  button, [role='button'] { min-height: 44px !important; }
 }

@@ -48,7 +48,7 @@ public sealed class ScheduleAvailabilityMatcher(AppDbContext db)
             .Where(group => group.ProjectId == projectId
                 && group.IsActive
                 && group.Bookings.Count < group.Capacity)
-            .OrderBy(group => group.DateTime)
+            .OrderBy(group => (group.FreeSessionDateTime ?? group.DateTime))
             .ToListAsync(cancellationToken);
 
     private static GroupAppointment? FirstMatchingGroup(
@@ -60,8 +60,8 @@ public sealed class ScheduleAvailabilityMatcher(AppDbContext db)
             preference.AvailabilityHorizon,
             preference.CreatedAt);
         return groups.FirstOrDefault(group =>
-            (!deadline.HasValue || group.DateTime <= deadline.Value)
-            && group.DateTime >= DateTime.UtcNow
+            (!deadline.HasValue || (group.FreeSessionDateTime ?? group.DateTime) <= deadline.Value)
+            && (group.FreeSessionDateTime ?? group.DateTime) >= DateTime.UtcNow
             && ScheduleAvailabilityWindows.ContainsHour(
                 preference.TimeWindow,
                 LocalTime(group, timezone).Hour));
@@ -103,7 +103,7 @@ public sealed class ScheduleAvailabilityMatcher(AppDbContext db)
             Type = "Nurturing",
             Tone = "Default",
             Status = "Pending",
-            Notes = NotificationText(preference.TimeWindow, localTime)
+            Notes = NotificationText(preference.TimeWindow, localTime, group.CourseType)
         };
         db.FollowUps.Add(followUp);
         return followUp;
@@ -111,12 +111,12 @@ public sealed class ScheduleAvailabilityMatcher(AppDbContext db)
 
     private static DateTime LocalTime(GroupAppointment group, TimeZoneInfo timezone) =>
         TimeZoneInfo.ConvertTimeFromUtc(
-            DateTime.SpecifyKind(group.DateTime, DateTimeKind.Utc),
+            DateTime.SpecifyKind((group.FreeSessionDateTime ?? group.DateTime), DateTimeKind.Utc),
             timezone);
 
-    private static string NotificationText(string window, DateTime localTime)
+    private static string NotificationText(string window, DateTime localTime, string courseType)
     {
         var dayPeriod = localTime.Hour >= 12 ? "مساءً" : "صباحًا";
-        return $"اتفتح دلوقتي موعد مناسب يوم {localTime:dd/MM/yyyy} الساعة {localTime:h:mm} {dayPeriod}، داخل الفترة اللي اخترتها ({ScheduleAvailabilityWindows.ArabicLabel(window)}). لو حابب تحجزه ابعتلنا ونأكد لك الحجز.";
+        return $"اتفتح دلوقتي موعد مناسب لـ{CourseTypes.ArabicLabel(courseType)} يوم {localTime:dd/MM/yyyy} الساعة {localTime:h:mm} {dayPeriod}، داخل الفترة اللي اخترتها ({ScheduleAvailabilityWindows.ArabicLabel(window)}). لو حابب تحجزه ابعتلنا ونأكد لك الحجز.";
     }
 }

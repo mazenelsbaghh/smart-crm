@@ -113,6 +113,57 @@ public sealed class AIReplyWorkerDeliveryTests
         Assert.Equal(connectedAt, payload.RootElement.GetProperty("expectedConnectedAt").GetDateTimeOffset());
     }
 
+    [Fact]
+    public async Task Transition_send_uses_another_connected_account_when_default_is_disconnected()
+    {
+        var projectId = Guid.NewGuid();
+        var connectedAccountId = Guid.NewGuid();
+        await using var db = Context(projectId);
+        db.WhatsAppAccounts.AddRange(
+            new WhatsAppAccount
+            {
+                Id = projectId,
+                ProjectId = projectId,
+                Name = "الحساب الافتراضي",
+                IsDefault = true
+            },
+            new WhatsAppAccount
+            {
+                Id = connectedAccountId,
+                ProjectId = projectId,
+                Name = "الحساب المتصل",
+                IsDefault = false
+            });
+        await db.SaveChangesAsync();
+
+        var gateway = new GatewayHandler(
+            HttpStatusCode.OK,
+            DateTimeOffset.UtcNow.AddMinutes(-2),
+            onlyConnectedAccountId: connectedAccountId);
+        var configuration = Configuration();
+        using var services = new ServiceCollection()
+            .AddSingleton(db)
+            .AddSingleton<IConfiguration>(configuration)
+            .AddSingleton(new WhatsAppAccountService(db))
+            .AddSingleton(new WhatsAppGatewaySessionClient(new HttpClient(gateway), configuration))
+            .AddSingleton<IHttpClientFactory>(new TestHttpClientFactory(gateway))
+            .BuildServiceProvider();
+
+        var sendAttempt = await AIReplyWorker.SendWhatsAppTransitionMessageThroughConnectedAccountAsync(
+            services,
+            new AIReplyWorker.WhatsAppTransitionRequest(
+                projectId,
+                "201111111111",
+                "نكمل على واتساب",
+                "messenger-transition:any-connected-account"));
+
+        Assert.Equal(AIReplyWorker.WhatsAppTransitionDeliveryOutcome.Sent, sendAttempt.Outcome);
+        Assert.Equal(connectedAccountId, sendAttempt.WhatsAppAccountId);
+        Assert.Equal(1, gateway.SendCount);
+        using var payload = JsonDocument.Parse(Assert.IsType<string>(gateway.SendRequestBody));
+        Assert.Equal(connectedAccountId, payload.RootElement.GetProperty("whatsappAccountId").GetGuid());
+    }
+
     [Theory]
     [InlineData(412, "DefinitelyNotSent")]
     [InlineData(503, "DefinitelyNotSent")]
@@ -207,6 +258,11 @@ public sealed class AIReplyWorkerDeliveryTests
                 ProjectId = projectId,
                 Name = "الحساب الرئيسي",
                 IsDefault = true
+            },
+            new WhatsAppAccount
+            {
+                ProjectId = projectId,
+                Name = "حساب متصل آخر"
             });
         await db.SaveChangesAsync();
         var gateway = new GatewayHandler(HttpStatusCode.Conflict, DateTimeOffset.UtcNow.AddMinutes(-1));
@@ -239,6 +295,7 @@ public sealed class AIReplyWorkerDeliveryTests
         Assert.Empty(db.Messages);
         Assert.Empty(db.FollowUps);
         Assert.Equal(0, facebook.SendCount);
+        Assert.Equal(1, gateway.SendCount);
         Assert.DoesNotContain("ReceiveMessage", broadcasts);
         using var payload = JsonDocument.Parse(Assert.IsType<string>(gateway.SendRequestBody));
         Assert.Equal(
@@ -369,7 +426,8 @@ public sealed class AIReplyWorkerDeliveryTests
     private sealed class GatewayHandler(
         HttpStatusCode sendStatus,
         DateTimeOffset? connectedAt,
-        bool throwOnSend = false) : HttpMessageHandler
+        bool throwOnSend = false,
+        Guid? onlyConnectedAccountId = null) : HttpMessageHandler
     {
         public Uri? StatusRequestUri { get; private set; }
         public string? SendRequestBody { get; private set; }
@@ -382,11 +440,15 @@ public sealed class AIReplyWorkerDeliveryTests
             if (request.Method == HttpMethod.Get)
             {
                 StatusRequestUri = request.RequestUri;
+                var isConnected = !onlyConnectedAccountId.HasValue
+                    || request.RequestUri!.Query.Contains(
+                        $"whatsappAccountId={onlyConnectedAccountId.Value}",
+                        StringComparison.OrdinalIgnoreCase);
                 var body = JsonSerializer.Serialize(new
                 {
-                    status = "Connected",
-                    phoneNumber = "201000000000",
-                    connectedAt,
+                    status = isConnected ? "Connected" : "Disconnected",
+                    phoneNumber = isConnected ? "201000000000" : null,
+                    connectedAt = isConnected ? connectedAt : null,
                     error = (string?)null
                 });
                 return new HttpResponseMessage(HttpStatusCode.OK)

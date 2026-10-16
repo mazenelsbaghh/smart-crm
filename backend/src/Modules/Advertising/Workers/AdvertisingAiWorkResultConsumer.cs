@@ -64,7 +64,9 @@ public static class AdvertisingAiResultSchema
             if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
             var properties = document.RootElement.EnumerateObject().ToArray();
             if (properties.Any(item => item.Name is not ("verdict" or "reasons"))) return false;
-            if (!document.RootElement.TryGetProperty("verdict", out var verdict) || !Verdicts.Contains(verdict.GetString() ?? string.Empty)) return false;
+            if (!document.RootElement.TryGetProperty("verdict", out var verdict)
+                || verdict.ValueKind != System.Text.Json.JsonValueKind.String
+                || !Verdicts.Contains(verdict.GetString() ?? string.Empty)) return false;
             return document.RootElement.TryGetProperty("reasons", out var reasons)
                 && reasons.ValueKind == System.Text.Json.JsonValueKind.Array
                 && reasons.EnumerateArray().All(item => item.ValueKind == System.Text.Json.JsonValueKind.String);

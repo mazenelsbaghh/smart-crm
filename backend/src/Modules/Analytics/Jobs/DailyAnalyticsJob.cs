@@ -1,64 +1,57 @@
-using System;
-using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Shared.Infrastructure;
 using Modules.Analytics.Application.Services;
-using Modules.Analytics.Domain;
 
-namespace Modules.Analytics.Jobs
+namespace Modules.Analytics.Jobs;
+
+public class DailyAnalyticsJob(AppDbContext dbContext, IAnalyticsEngine analyticsEngine)
 {
-    public class DailyAnalyticsJob
+    private static readonly string[] MetricTypes = ["Sales", "AI_Accuracy", "Team_Performance", "Customer_Acquisition"];
+
+    public async Task ExecuteAsync()
     {
-        private readonly AppDbContext _dbContext;
-        private readonly IAnalyticsEngine _analyticsEngine;
-
-        public DailyAnalyticsJob(AppDbContext dbContext, IAnalyticsEngine analyticsEngine)
+        var projects = await dbContext.Projects.IgnoreQueryFilters().Select(project => project.Id).ToListAsync();
+        foreach (var projectId in projects)
         {
-            _dbContext = dbContext;
-            _analyticsEngine = analyticsEngine;
-        }
-
-        public async Task ExecuteAsync()
-        {
-            // We ignore global query filter here to get all projects in the system
-            var projects = await _dbContext.Projects
-                .IgnoreQueryFilters()
-                .ToListAsync();
-
-            var yesterday = DateTime.UtcNow.AddDays(-1);
-
-            foreach (var project in projects)
+            try
             {
-                try
-                {
-                    // Compute metrics
-                    var salesSnapshot = await _analyticsEngine.CalculateMetricAsync(project.Id, "Sales", yesterday);
-                    var aiSnapshot = await _analyticsEngine.CalculateMetricAsync(project.Id, "AI_Accuracy", yesterday);
-                    var teamSnapshot = await _analyticsEngine.CalculateMetricAsync(project.Id, "Team_Performance", yesterday);
-                    var customerSnapshot = await _analyticsEngine.CalculateMetricAsync(project.Id, "Customer_Acquisition", yesterday);
-
-                    // Clear old snapshots for this date and project to prevent duplicates
-                    var oldSnapshots = await _dbContext.AnalyticsSnapshots
-                        .IgnoreQueryFilters()
-                        .Where(s => s.ProjectId == project.Id && s.SnapshotDate.Date == yesterday.Date)
-                        .ToListAsync();
-                    
-                    _dbContext.AnalyticsSnapshots.RemoveRange(oldSnapshots);
-
-                    // Add new snapshots
-                    _dbContext.AnalyticsSnapshots.Add(salesSnapshot);
-                    _dbContext.AnalyticsSnapshots.Add(aiSnapshot);
-                    _dbContext.AnalyticsSnapshots.Add(teamSnapshot);
-                    _dbContext.AnalyticsSnapshots.Add(customerSnapshot);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error running DailyAnalyticsJob for project {project.Id}: {ex.Message}");
-                }
+                var (today, timezone) = await ReportingDateAsync(projectId);
+                await ReplaceDayAsync(projectId, today.AddDays(-1), timezone);
+                await dbContext.SaveChangesAsync();
             }
-
-            await _dbContext.SaveChangesAsync();
+            catch (Exception exception)
+            {
+                dbContext.ChangeTracker.Clear();
+                Console.WriteLine($"Error running DailyAnalyticsJob for project {projectId}: {exception.Message}");
+            }
         }
+    }
+
+    public async Task ExecuteProjectAsync(Guid projectId)
+    {
+        var (today, timezone) = await ReportingDateAsync(projectId);
+        await ReplaceDayAsync(projectId, today.AddDays(-1), timezone);
+        await ReplaceDayAsync(projectId, today, timezone);
+        await dbContext.SaveChangesAsync();
+    }
+
+    private async Task<(DateTime Date, string? Timezone)> ReportingDateAsync(Guid projectId)
+    {
+        var timezone = await dbContext.ProjectSettings.IgnoreQueryFilters()
+            .Where(settings => settings.ProjectId == projectId).Select(settings => settings.Timezone).SingleOrDefaultAsync();
+        return (TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, AnalyticsReportingDay.TimeZone(timezone)).Date, timezone);
+    }
+
+    private async Task ReplaceDayAsync(Guid projectId, DateTime day, string? timezone)
+    {
+        var snapshots = new List<Modules.Analytics.Domain.AnalyticsSnapshot>();
+        foreach (var metricType in MetricTypes)
+            snapshots.Add(await analyticsEngine.CalculateMetricAsync(projectId, metricType, day));
+        var (start, end) = AnalyticsReportingDay.Bounds(day, timezone);
+        var existing = await dbContext.AnalyticsSnapshots.IgnoreQueryFilters()
+            .Where(snapshot => snapshot.ProjectId == projectId && snapshot.SnapshotDate >= start && snapshot.SnapshotDate < end)
+            .ToListAsync();
+        dbContext.AnalyticsSnapshots.RemoveRange(existing);
+        dbContext.AnalyticsSnapshots.AddRange(snapshots);
     }
 }

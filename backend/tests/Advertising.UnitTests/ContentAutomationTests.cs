@@ -1,3 +1,5 @@
+using ImageMagick;
+using Shared.Imaging;
 using Amazon.S3;
 using Microsoft.AspNetCore.DataProtection;
 using Modules.Brain.Domain;
@@ -18,9 +20,6 @@ using System.Text.Json;
 using Shared.Infrastructure;
 using Shared.Security;
 using Shared.Storage;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace Advertising.UnitTests;
@@ -77,6 +76,54 @@ public sealed class ContentAutomationTests
         Assert.All(schedule.Zip(schedule.Skip(1)), pair => Assert.Equal(TimeSpan.FromDays(1), pair.Second - pair.First));
     }
 
+    [Theory]
+    [InlineData(2, "2026-08-27T07:00:00Z")]
+    [InlineData(3, "2026-08-26T15:00:00Z")]
+    public void Missed_daily_post_uses_the_next_available_slot(int postsPerDay, string expectedUtc)
+    {
+        var nextSlot = ContentSchedule.NextSlotUtc(
+            DateTime.Parse("2026-08-26T12:30:00Z").ToUniversalTime(),
+            new TimeSpan(10, 0, 0),
+            "Africa/Cairo",
+            postsPerDay);
+
+        Assert.Equal(DateTime.Parse(expectedUtc).ToUniversalTime(), nextSlot);
+    }
+
+    [Fact]
+    public async Task Rescheduling_two_posts_per_day_keeps_both_posts_on_each_local_day()
+    {
+        var projectId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(projectId);
+        var settings = new ContentAutomationSettings
+        {
+            ProjectId = projectId,
+            PostsPerDay = 2,
+            LogoObjectKey = "logos/current.png"
+        };
+        var plan = NewTestPlan(projectId, settings, ContentWeekPlanStatus.Approved);
+        dbContext.ContentWeekPlans.Add(plan);
+        AddPlanItemsWithImages(dbContext, projectId, plan,
+            Enumerable.Repeat(ContentPostStatus.Approved, 14).ToArray());
+        await dbContext.SaveChangesAsync();
+        var service = new ContentWeeklyPlanService(dbContext, null!, null!,
+            NullLogger<ContentWeeklyPlanService>.Instance);
+
+        await service.RescheduleActivePlanAsync(new ContentPlanScheduleChange(projectId,
+            new TimeSpan(10, 0, 0), "Africa/Cairo",
+            DateTime.Parse("2026-08-26T12:30:00Z").ToUniversalTime()), CancellationToken.None);
+        await dbContext.SaveChangesAsync();
+
+        var slots = await dbContext.ContentWeekPlanItems
+            .OrderBy(planItem => planItem.DayIndex)
+            .Select(planItem => planItem.ScheduledForUtc)
+            .ToListAsync();
+        Assert.Equal(14, slots.Count);
+        Assert.Equal(TimeSpan.FromHours(4), slots[1] - slots[0]);
+        Assert.Equal(TimeSpan.FromHours(20), slots[2] - slots[1]);
+        Assert.Equal(TimeSpan.FromDays(6), slots[^1].Date - slots[1].Date);
+    }
+
     [Fact]
     public void Copy_prompt_includes_project_context_and_the_expected_json_contract()
     {
@@ -99,6 +146,66 @@ public sealed class ContentAutomationTests
         Assert.Contains("\"visualHeadline\"", prompt);
         Assert.Contains("\"caption\"", prompt);
         Assert.Contains("\"imagePrompt\"", prompt);
+    }
+
+    [Fact]
+    public void Reference_copy_prompt_leaves_visual_treatment_to_the_uploaded_posts()
+    {
+        var prompt = ContentGenerationService.BuildCopyPrompt(
+            new ProjectSettings(),
+            new ContentAutomationSettings { DesignSource = "references", MatchReferenceTone = true, StylePrompt = "تصميم من الريفرنس" },
+            [new KnowledgeSource("خدمة", "حقائق الخدمة")],
+            []);
+
+        Assert.Contains("صور الريفرنس المرفوعة هي التي ستحدد الشكل النهائي", prompt);
+        Assert.Contains("من دون تحديد أسلوب الرسم أو الخامات أو التكوين", prompt);
+    }
+
+    [Fact]
+    public void Reference_image_prompt_prioritizes_post_tone_over_conflicting_style_text()
+    {
+        var prompt = ContentGenerationService.BuildImagePrompt(
+            new GeneratedCopy("فكرة", "فكرة تنمو", "كابشن", "A glossy 3D watermelon sculpture"),
+            new ContentAutomationSettings { DesignSource = "references", MatchReferenceTone = true, StylePrompt = "عنصر ثلاثي الأبعاد" },
+            ["#0B0B0B", "#E30613", "#F8F8F6"],
+            ContentVisualDirection.DarkEditorial);
+
+        Assert.Contains("finished post references are the authority for the visual tone", prompt);
+        Assert.Contains("reinterpret any stylistic wording to match the post references", prompt);
+        Assert.Contains("conflicting style wording above is subordinate", prompt);
+        Assert.Contains("same proportions as the finished post references", prompt);
+        Assert.DoesNotContain("Art direction: عنصر ثلاثي الأبعاد", prompt);
+        Assert.DoesNotContain("Use bold editorial typography, an art-directed sculptural", prompt);
+    }
+
+    [Fact]
+    public void Free_reference_inspiration_preserves_the_existing_prompt()
+    {
+        var prompt = ContentGenerationService.BuildImagePrompt(
+            new GeneratedCopy("فكرة", "فكرة تنمو", "كابشن", "A watermelon sculpture"),
+            new ContentAutomationSettings { DesignSource = "references", MatchReferenceTone = false },
+            ["#E30613"],
+            ContentVisualDirection.DarkEditorial);
+
+        Assert.Contains("Use the supplied post references as the main composition guide", prompt);
+        Assert.Contains("The first attached image is the authentic logo", prompt);
+        Assert.DoesNotContain("finished post references are the authority for the visual tone", prompt);
+    }
+
+    [Fact]
+    public void Free_reference_identity_stays_compatible_and_strict_tone_changes_it()
+    {
+        var settings = new ContentAutomationSettings
+        {
+            DesignSource = "references",
+            StylePrompt = "هوية البراند",
+            ReferenceColorsJson = "[\"#E30613\"]",
+            ReferenceImagesJson = "[]"
+        };
+
+        Assert.Equal("هوية البراند\n[references:[\"#E30613\"]:[]]", ContentBrandReferences.Identity(settings));
+        settings.MatchReferenceTone = true;
+        Assert.Contains("[references-tone:", ContentBrandReferences.Identity(settings));
     }
 
     [Fact]
@@ -204,7 +311,7 @@ public sealed class ContentAutomationTests
         });
         var service = new ContentDocumentGenerationService(null!,
             new SequencedGeminiClient("{\"title\":\"ناقص\",\"pages\":[]}", completeResponse),
-            null!, null!, null!, NullLogger<ContentDocumentGenerationService>.Instance);
+            null!, null!, null!, NullLogger<ContentDocumentGenerationService>.Instance, null!);
 
         var plan = await service.CreatePlanAsync(document, sourcePages, "test-key", "test-model");
 
@@ -225,7 +332,7 @@ public sealed class ContentAutomationTests
         };
         var sourcePages = ContentDocumentPagination.CreatePageBodies(document.SourceContent, document.Kind);
         var service = new ContentDocumentGenerationService(null!, new SequencedGeminiClient(response, response),
-            null!, null!, null!, NullLogger<ContentDocumentGenerationService>.Instance);
+            null!, null!, null!, NullLogger<ContentDocumentGenerationService>.Instance, null!);
 
         var plan = await service.CreatePlanAsync(document, sourcePages, "test-key", "test-model");
 
@@ -337,7 +444,7 @@ public sealed class ContentAutomationTests
         var imageHandler = new RecordingImageHandler();
         using var http = new HttpClient(imageHandler) { BaseAddress = new Uri("https://generativelanguage.googleapis.com/") };
         var service = new ContentDocumentGenerationService(db, new SequencedGeminiClient(), new GeminiImageClient(http),
-            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance);
+            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance, null!);
         await service.GenerateAsync(projectId, document.Id, CancellationToken.None);
 
         Assert.Equal(ContentDocumentStatus.Ready, document.Status);
@@ -1049,6 +1156,37 @@ public sealed class ContentAutomationTests
     }
 
     [Fact]
+    public async Task Exhausted_day_repair_fails_transparently_without_rebilling_the_entire_week()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDbContext(projectId);
+        db.AddRange(new ContentAutomationSettings
+        {
+            ProjectId = projectId, LogoObjectKey = "logos/current.png", StylePrompt = "Current style",
+            HasApprovedStyle = true, LastPublishedAtUtc = DateTime.UtcNow
+        }, new ProjectSettings { ProjectId = projectId, GeminiApiKey = "test-key" },
+            CreateKnowledgeDocument(projectId, "الخدمة", "Approved"));
+        const string historicalCaption = "أحيانًا البداية بتبان معقدة لأنك بتحاول تجمع كل المهارات في خطوة واحدة. اختار موقفًا صغيرًا من يومك، وسجّل ردك عليه، وبعدها اسمع المحاولة وحدد نقطة واحدة فقط للتحسين. التقدم الحقيقي بيظهر لما تكرر التمرين بهدوء وتقارن النتيجة بعد أيام. احتفظ بالملاحظة وارجع لها نهاية الأسبوع.";
+        db.ContentPosts.Add(new ContentPost { ProjectId = projectId, Status = ContentPostStatus.Published,
+            Topic = "Previous practice", VisualHeadline = "Previous title", Caption = historicalCaption });
+        await db.SaveChangesAsync();
+        var invalidCopy = new { topic = "Practice", visualHeadline = "New practice", caption = historicalCaption, imagePrompt = "Practice scene" };
+        var draft = JsonSerializer.Serialize(new { items = Enumerable.Range(1, 7).Select(day => new
+        {
+            topic = $"فكرة {day}", visualHeadline = $"عنوان {day}", caption = day == 3 ? historicalCaption : OriginalWeeklyCaption(day), imagePrompt = $"Visual concept {day}"
+        }) });
+        var gemini = new SequencedGeminiClient(new[] { draft }.Concat(Enumerable.Repeat(JsonSerializer.Serialize(invalidCopy), 10)).ToArray());
+        var service = new ContentWeeklyPlanService(db, gemini, new PassThroughSecretVault(), NullLogger<ContentWeeklyPlanService>.Instance);
+
+        var plan = await service.GenerateAsync(projectId, CancellationToken.None);
+
+        Assert.Equal(ContentWeekPlanStatus.GenerationFailed, plan.Status);
+        Assert.Contains("الكابشن", plan.Error);
+        Assert.Empty(await db.ContentWeekPlanItems.Where(item => item.PlanId == plan.Id).ToArrayAsync());
+        Assert.Equal(11, gemini.CallCount);
+    }
+
+    [Fact]
     public async Task Additional_week_starts_after_the_last_reserved_day_without_stopping_the_current_week()
     {
         var projectId = Guid.NewGuid();
@@ -1155,6 +1293,59 @@ public sealed class ContentAutomationTests
         Assert.Equal(ContentPostStatus.Approved, post.Status);
     }
 
+    [Fact]
+    public async Task Post_with_changed_reference_image_is_blocked_before_facebook()
+    {
+        var projectId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(projectId);
+        var settings = new ContentAutomationSettings
+        {
+            ProjectId = projectId,
+            LogoObjectKey = "logos/current.png",
+            StylePrompt = "هوية البراند",
+            DesignSource = "references",
+            ReferenceColorsJson = "[\"#E30613\"]",
+            ReferenceImagesJson = "[{\"Id\":\"old\",\"Kind\":\"post\",\"FileName\":\"old.png\",\"ObjectKey\":\"refs/old.png\",\"MimeType\":\"image/png\"}]",
+            FacebookPageId = "page-1"
+        };
+        var post = new ContentPost
+        {
+            ProjectId = projectId,
+            SettingsId = settings.Id,
+            Status = ContentPostStatus.Approved,
+            BrandLogoObjectKey = settings.LogoObjectKey,
+            BrandStylePrompt = ContentBrandReferences.Identity(settings),
+            ImageObjectKey = "posts/post.png"
+        };
+        dbContext.AddRange(settings, post);
+        await dbContext.SaveChangesAsync();
+        var publishing = new ContentPublishingService(
+            dbContext,
+            new UnexpectedObjectStorage(),
+            new FacebookPhotoPublisher(new HttpClient()),
+            NullLogger<ContentPublishingService>.Instance);
+
+        var currentBrandError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            publishing.PublishAsync(projectId, post.Id, CancellationToken.None));
+        Assert.Contains("صفحة Facebook", currentBrandError.Message);
+
+        settings.ReferenceImagesJson = settings.ReferenceImagesJson.Replace("old", "new", StringComparison.Ordinal);
+        await dbContext.SaveChangesAsync();
+        var changedBrandError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            publishing.PublishAsync(projectId, post.Id, CancellationToken.None));
+        Assert.Contains("شكل التصميم", changedBrandError.Message);
+        Assert.Equal(ContentPostStatus.Approved, post.Status);
+    }
+
+    [Fact]
+    public void Palette_reply_uses_printed_hex_codes_without_duplicates_or_partial_codes()
+    {
+        var colors = ContentBrandPaletteExtractor.ParseColors(
+            "[\"#0b0b0b\",\"#F8F8F6\",\"#0B0B0B\",\"#E30613F\",\"#0099A3\"]");
+
+        Assert.Equal(["#0B0B0B", "#F8F8F6", "#0099A3"], colors);
+    }
+
     [Theory]
     [InlineData(GeminiImageClient.SquareAspectRatio)]
     [InlineData(GeminiImageClient.PresentationAspectRatio)]
@@ -1224,6 +1415,7 @@ public sealed class ContentAutomationTests
         {
             ProjectId = projectId,
             PlanId = plan.Id,
+            ScheduledForUtc = DateTime.UtcNow.AddDays(1),
             ContentPostId = post.Id
         };
         dbContext.AddRange(settings, post, plan, item);
@@ -1242,7 +1434,7 @@ public sealed class ContentAutomationTests
         Assert.Equal(ContentAssetRoutes.PostImage(post.Id), response.RootElement.GetProperty("weeklyPlan").GetProperty("items")[0].GetProperty("imageUrl").GetString());
 
         var image = Assert.IsType<FileStreamResult>(await controller.GetPostImage(post.Id, CancellationToken.None));
-        using var preview = await Image.LoadAsync(image.FileStream);
+        using var preview = await RasterImage.LoadAsync(image.FileStream);
         Assert.Equal("image/jpeg", image.ContentType);
         Assert.Equal(40, preview.Width);
         Assert.Equal(20, preview.Height);
@@ -1257,6 +1449,124 @@ public sealed class ContentAutomationTests
         await logo.FileStream.CopyToAsync(logoBytes);
         Assert.Equal("image/png", logo.ContentType);
         Assert.Equal(Encoding.UTF8.GetBytes(settings.LogoObjectKey), logoBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task Expired_unapproved_week_disappears_and_preserves_published_history_2026_10_04_regression()
+    {
+        var projectId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(projectId);
+        var plan = new ContentWeekPlan { ProjectId = projectId, Status = ContentWeekPlanStatus.AwaitingApproval };
+        var preview = new ContentPost { ProjectId = projectId, Status = ContentPostStatus.Approved };
+        var published = new ContentPost { ProjectId = projectId, Status = ContentPostStatus.Published, FacebookPostId = "published-history" };
+        dbContext.AddRange(plan, preview, published,
+            new ContentWeekPlanItem { ProjectId = projectId, PlanId = plan.Id, ContentPostId = preview.Id, ScheduledForUtc = DateTime.UtcNow.AddHours(-1) },
+            new ContentWeekPlanItem { ProjectId = projectId, PlanId = plan.Id, ContentPostId = published.Id, ScheduledForUtc = DateTime.UtcNow.AddDays(1) });
+        await dbContext.SaveChangesAsync();
+        var controller = CreateContentController(dbContext, projectId, new UnexpectedObjectStorage());
+
+        var studio = Assert.IsType<OkObjectResult>(await controller.Get(CancellationToken.None));
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(studio.Value));
+
+        Assert.Empty(response.RootElement.GetProperty("weeklyPlans").EnumerateArray());
+        Assert.Equal(JsonValueKind.Null, response.RootElement.GetProperty("weeklyPlan").ValueKind);
+        Assert.Equal(ContentWeekPlanStatus.Expired, plan.Status);
+        Assert.Equal(ContentPostStatus.Rejected, preview.Status);
+        Assert.Equal(ContentPostStatus.Published, published.Status);
+        Assert.Equal("published-history", published.FacebookPostId);
+    }
+
+    [Theory]
+    [InlineData(ContentWeekPlanStatus.Approved, ContentPostStatus.Approved, -1, false)]
+    [InlineData(ContentWeekPlanStatus.Generating, ContentPostStatus.Generating, -1, false)]
+    [InlineData(ContentWeekPlanStatus.AwaitingApproval, ContentPostStatus.Approved, 1, false)]
+    [InlineData(ContentWeekPlanStatus.AwaitingApproval, ContentPostStatus.Publishing, -1, false)]
+    [InlineData(ContentWeekPlanStatus.AwaitingApproval, ContentPostStatus.PublishUnknown, -1, false)]
+    [InlineData(ContentWeekPlanStatus.GenerationFailed, ContentPostStatus.GenerationFailed, -1, true)]
+    public async Task Automatic_expiry_preserves_active_future_and_uncertain_publications(
+        ContentWeekPlanStatus planStatus, ContentPostStatus postStatus, int hoursFromNow, bool expires)
+    {
+        var projectId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(projectId);
+        var plan = new ContentWeekPlan { ProjectId = projectId, Status = planStatus };
+        var post = new ContentPost { ProjectId = projectId, Status = postStatus };
+        dbContext.AddRange(plan, post, new ContentWeekPlanItem
+        {
+            ProjectId = projectId, PlanId = plan.Id, ContentPostId = post.Id,
+            ScheduledForUtc = DateTime.UtcNow.AddHours(hoursFromNow)
+        });
+        await dbContext.SaveChangesAsync();
+        var service = new ContentWeeklyPlanService(dbContext, null!, null!, NullLogger<ContentWeeklyPlanService>.Instance);
+
+        await service.ExpireDraftPlansAsync(null, CancellationToken.None);
+
+        Assert.Equal(expires ? ContentWeekPlanStatus.Expired : planStatus, plan.Status);
+        Assert.Equal(expires ? ContentPostStatus.Rejected : postStatus, post.Status);
+    }
+
+    [Fact]
+    public async Task Opening_one_project_does_not_expire_another_projects_draft()
+    {
+        var projectId = Guid.NewGuid();
+        var otherProjectId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(projectId);
+        var ownPlan = new ContentWeekPlan { ProjectId = projectId, Status = ContentWeekPlanStatus.AwaitingApproval };
+        var otherPlan = new ContentWeekPlan { ProjectId = otherProjectId, Status = ContentWeekPlanStatus.AwaitingApproval };
+        dbContext.AddRange(ownPlan, otherPlan,
+            new ContentWeekPlanItem { ProjectId = projectId, PlanId = ownPlan.Id, ScheduledForUtc = DateTime.UtcNow.AddHours(-1) },
+            new ContentWeekPlanItem { ProjectId = otherProjectId, PlanId = otherPlan.Id, ScheduledForUtc = DateTime.UtcNow.AddHours(-1) });
+        await dbContext.SaveChangesAsync();
+        var service = new ContentWeeklyPlanService(dbContext, null!, null!, NullLogger<ContentWeeklyPlanService>.Instance);
+
+        await service.ExpireDraftPlansAsync(projectId, CancellationToken.None);
+
+        Assert.Equal(ContentWeekPlanStatus.Expired, ownPlan.Status);
+        Assert.Equal(ContentWeekPlanStatus.AwaitingApproval, otherPlan.Status);
+    }
+
+    [Fact]
+    public async Task Saving_openai_image_selection_encrypts_the_key_without_invalidating_approved_posts()
+    {
+        var projectId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(projectId);
+        var settings = new ContentAutomationSettings { ProjectId = projectId, StylePrompt = "Existing style", HasApprovedStyle = true };
+        var approvedPlan = new ContentWeekPlan { ProjectId = projectId, Status = ContentWeekPlanStatus.Approved };
+        dbContext.AddRange(settings, approvedPlan);
+        await dbContext.SaveChangesAsync();
+        var controller = CreateContentController(dbContext, projectId, new UnexpectedObjectStorage());
+        ((ClaimsIdentity)controller.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, "Owner"));
+
+        var saved = Assert.IsType<OkObjectResult>(await controller.UpdateSettings(
+            new UpdateContentSettingsRequest(null, "10:00", settings.StylePrompt, false,
+                ImageProvider: "OpenAI", OpenAiImageApiKey: "openai-image-private-key"), CancellationToken.None));
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(saved.Value));
+
+        Assert.Equal("OpenAI", settings.ImageProvider);
+        Assert.StartsWith("v1:", settings.OpenAiImageApiKey);
+        Assert.DoesNotContain("openai-image-private-key", JsonSerializer.Serialize(saved.Value));
+        Assert.True(response.RootElement.GetProperty("settings").GetProperty("openAiImageApiKeyConfigured").GetBoolean());
+        Assert.Equal(ContentWeekPlanStatus.Approved, approvedPlan.Status);
+        Assert.True(settings.HasApprovedStyle);
+    }
+
+    [Theory]
+    [InlineData("OpenAI")]
+    [InlineData("Unknown")]
+    public async Task Invalid_image_provider_or_missing_key_does_not_change_saved_selection(string provider)
+    {
+        var projectId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(projectId);
+        var settings = new ContentAutomationSettings { ProjectId = projectId, StylePrompt = "Existing style" };
+        dbContext.Add(settings);
+        await dbContext.SaveChangesAsync();
+        var controller = CreateContentController(dbContext, projectId, new UnexpectedObjectStorage());
+        ((ClaimsIdentity)controller.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, "Owner"));
+
+        Assert.IsType<BadRequestObjectResult>(await controller.UpdateSettings(
+            new UpdateContentSettingsRequest(null, "10:00", settings.StylePrompt, false, ImageProvider: provider), CancellationToken.None));
+
+        Assert.Equal("Gemini", settings.ImageProvider);
+        Assert.Empty(settings.OpenAiImageApiKey);
     }
 
     [Fact]
@@ -1350,19 +1660,11 @@ public sealed class ContentAutomationTests
 
     private static async Task<MemoryStream> TwoColorLogoAsync()
     {
-        using var image = new Image<Rgba32>(40, 20);
-        for (var y = 0; y < image.Height; y++)
-        {
-            for (var x = 0; x < image.Width; x++)
-            {
-                image[x, y] = x < 20
-                    ? new Rgba32(229, 31, 51, 255)
-                    : new Rgba32(23, 105, 224, 255);
-            }
-        }
-
+        using var image = new MagickImage(new MagickColor("#E51F33"), 40, 20);
+        using var blue = new MagickImage(new MagickColor("#1769E0"), 20, 20);
+        image.Composite(blue, 20, 0, CompositeOperator.Over);
         var stream = new MemoryStream();
-        await image.SaveAsync(stream, new PngEncoder());
+        await image.WriteAsync(stream, MagickFormat.Png);
         stream.Position = 0;
         return stream;
     }
@@ -1385,7 +1687,7 @@ public sealed class ContentAutomationTests
         var storage = new DownloadableContentStorage("saved-cover.png", [7, 8, 9], "logo.png");
         using var http = new HttpClient(new RecordingImageHandler()) { BaseAddress = new Uri("https://example.test/") };
         var service = new ContentDocumentGenerationService(db, new SequencedGeminiClient(), new GeminiImageClient(http),
-            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance);
+            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance, null!);
 
         await service.GenerateAsync(projectId, document.Id, CancellationToken.None);
 
@@ -1414,7 +1716,7 @@ public sealed class ContentAutomationTests
         var storage = new DownloadableContentStorage("unused", [], "logo.png");
         using var http = new HttpClient(new RecordingImageHandler()) { BaseAddress = new Uri("https://example.test/") };
         var service = new ContentDocumentGenerationService(db, new SequencedGeminiClient(), new GeminiImageClient(http),
-            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance);
+            new PassThroughSecretVault(), storage, NullLogger<ContentDocumentGenerationService>.Instance, null!);
 
         await service.RegenerateImageAsync(projectId, first.Id, CancellationToken.None);
 
@@ -1519,11 +1821,13 @@ public sealed class ContentAutomationTests
             new ProjectAuthorizationService(),
             objectStorage,
             new LogoBrandingService(),
+            null!,
             new ContentImagePreviewService(
                 objectStorage,
                 NullLogger<ContentImagePreviewService>.Instance),
+            new ContentWeeklyPlanService(dbContext, null!, null!, NullLogger<ContentWeeklyPlanService>.Instance),
             null!,
-            null!)
+            new ProjectSecretVault(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider()))
         {
             ControllerContext = new ControllerContext
             {
@@ -1629,9 +1933,11 @@ public sealed class ContentAutomationTests
     private sealed class SequencedGeminiClient(params string[] responses) : IGeminiClient
     {
         private readonly Queue<string> _responses = new(responses);
+        public int CallCount { get; private set; }
 
         public Task<string> GenerateReplyAsync(string messageContent, string apiKeyOverride = null!, string modelOverride = null!, string cachedContentId = null!)
         {
+            CallCount++;
             return Task.FromResult(_responses.Dequeue());
         }
 

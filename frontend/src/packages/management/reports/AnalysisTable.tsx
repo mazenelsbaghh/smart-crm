@@ -14,12 +14,15 @@ const reasons = [
 
 interface Props {
   rows: ConversationAnalysisItem[];
+  totalCount: number;
   canManage: boolean;
+  actionsDisabled: boolean;
+  timezone: string;
   onReanalyze: (conversationId: string) => Promise<void>;
   onCorrect: (conversationId: string, reason: string) => Promise<void>;
 }
 
-export function AnalysisTable({ rows, canManage, onReanalyze, onCorrect }: Props) {
+export function AnalysisTable({ rows, totalCount, canManage, actionsDisabled, timezone, onReanalyze, onCorrect }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
@@ -37,26 +40,27 @@ export function AnalysisTable({ rows, canManage, onReanalyze, onCorrect }: Props
 
   return (
     <section className={styles.section} aria-labelledby="analyses-title">
-      <div className={styles.sectionHeading}><div><span className={styles.eyebrow}>مراجعة قابلة للتدقيق</span><h2 id="analyses-title">تحليل كل محادثة</h2></div><span className={styles.contextNote}>السبب، الثقة، والدليل الأصلي</span></div>
-      {rows.length === 0 ? <div className={styles.emptyInline}><p>لم تُحلل محادثات هذه الفترة بعد.</p><span>اضغط «حلّل الآن» للبدء.</span></div> : (
+      <div className={styles.sectionHeading}><div><span className={styles.eyebrow}>مراجعة قابلة للتدقيق</span><h2 id="analyses-title">أحدث تحليلات المحادثات</h2></div><span className={styles.contextNote}>عرض {rows.length.toLocaleString('ar-EG')} من {totalCount.toLocaleString('ar-EG')} تحليل محفوظ</span></div>
+      {rows.length < totalCount && <p className={styles.contextNote}>الأحدث أولًا؛ حدد فترة أقدم للوصول إلى تحليلاتها.</p>}
+      {rows.length === 0 ? <div className={styles.emptyInline}><p>لم تُحلل محادثات هذه الفترة بعد.</p><span>المحادثات الجديدة تُحلل تلقائيًا؛ التحليل بأثر رجعي متوقف.</span></div> : (
         <div className={styles.analysisList}>{rows.map((row) => {
           const isOpen = openId === row.conversationId;
           return <article className={styles.analysisRow} key={row.conversationId}>
             <button className={styles.analysisSummary} type="button" aria-expanded={isOpen} onClick={() => setOpenId(isOpen ? null : row.conversationId)}>
-              <span className={styles.customerCell}><strong>{row.customerName}</strong><small>{row.channel} · {new Date(row.lastMessageAtUtc).toLocaleDateString('ar-EG')}</small></span>
-              <span className={styles.stageBadge}>{stageLabel(row.stage)}</span>
+              <span className={styles.customerCell}><strong>{row.customerName}</strong><small>{row.channel} · {new Date(row.lastMessageAtUtc).toLocaleDateString('ar-EG', { timeZone: timezone })}</small></span>
+              <span className={styles.stageBadge} title="المرحلة حسب السجلات الحالية">{stageLabel(row.stage)}</span>
               <span className={styles.reasonCell}>{row.reasonLabel}{row.manuallyCorrected && <small>مصحح يدويًا</small>}</span>
               <span className={styles.qualityCell}><small>جودة الرد</small><strong>{row.replyQualityScore}</strong></span>
               <span className={styles.confidence}>{Math.round(row.confidence * 100).toLocaleString('ar-EG')}٪ ثقة</span>
               <ChevronDown size={17} className={isOpen ? styles.chevronOpen : ''} aria-hidden="true" />
             </button>
             {isOpen && <div className={styles.analysisDetails}>
-              <div><h3>القراءة</h3><p>{row.summary || 'لا يوجد ملخص.'}</p></div>
+              <div><h3>القراءة المحفوظة</h3><p>{row.summary || 'لا يوجد ملخص.'}</p></div>
               <div><h3>الخطوة المقترحة</h3><p>{row.recommendation || 'لا يوجد إجراء مقترح.'}</p></div>
               <div><h3>الدليل</h3>{row.evidence.length ? <blockquote>{row.evidence.map((evidence) => <p key={evidence.messageId}>«{evidence.quote}»</p>)}</blockquote> : <p>لم يحتفظ النظام باقتباس مطابق حرفيًا، لذلك السبب يحتاج مراجعة.</p>}</div>
               {canManage && <div className={styles.analysisActions}>
-                <label>تصحيح السبب<select value={row.reason} disabled={busyId === row.conversationId} onChange={(event) => void run(row.conversationId, () => onCorrect(row.conversationId, event.target.value))}>{reasons.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-                <button type="button" disabled={busyId === row.conversationId} onClick={() => void run(row.conversationId, () => onReanalyze(row.conversationId))}><RefreshCw size={15} aria-hidden="true" />إعادة التحليل</button>
+                <label>تصحيح السبب<select value={row.reason} disabled={actionsDisabled || busyId === row.conversationId} onChange={(event) => void run(row.conversationId, () => onCorrect(row.conversationId, event.target.value))}>{reasons.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                <button type="button" disabled={actionsDisabled || busyId === row.conversationId} onClick={() => void run(row.conversationId, () => onReanalyze(row.conversationId))}><RefreshCw size={15} aria-hidden="true" />إعادة التحليل</button>
               </div>}
               {actionError && openId === row.conversationId && <p className={styles.inlineError} role="alert">{actionError}</p>}
             </div>}

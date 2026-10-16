@@ -5,6 +5,7 @@ namespace Modules.AI.Services
     public class AIBehaviorSettings
     {
         public bool MessengerWhatsAppTransitionEnabled { get; set; } = true;
+        public bool SubscribersOnlyAutoStop { get; set; }
         public AIIdentitySettings Identity { get; set; } = new();
         public AIToneSettings Tone { get; set; } = new();
         public CTASettings Cta { get; set; } = new();
@@ -71,10 +72,12 @@ namespace Modules.AI.Services
         public string GenericCustomerService { get; set; } = "أهلاً بك! سنقوم بالرد عليك في أقرب وقت ممكن.";
         public string FacebookPublicComment { get; set; } = "تم إرسال التفاصيل في رسالة خاصة.";
         public string WhatsAppTransitionSuccess { get; set; } = "تم إرسال رسالة على واتساب ويمكننا استكمال المحادثة هناك.";
-        public string WhatsAppTransitionFailure { get; set; } = "حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.";
+        public string WhatsAppTransitionFailure { get; set; } = "مش قادرين نبعت رسالة على واتساب دلوقتي. نقدر نكمل مع حضرتك هنا على ماسنجر.";
         public string WhatsAppTransitionMessage { get; set; } = "أهلاً يا {customerName}، معاك {agentName} من {projectName}. نكمل مع حضرتك هنا على واتساب عشان نساعدك بشكل أسرع.";
         public string FollowUpDefault { get; set; } = "مرحباً يا فندم، حابين نطمن على تفاصيل الحجز ونعرف لو في أي استفسار آخر؟";
         public string GroupReminderOnline { get; set; } = "أهلاً يا {customerName}، هذا هو رابط الجروب الذي سيرسل عليه رابط الحصة: {groupInviteLink}";
         public string GroupReminderOffline { get; set; } = "أهلاً يا {customerName}، هذا هو رابط الجروب: {groupInviteLink}. نحن بانتظاركم!";
+        public string GroupPreparationVideo { get; set; } = string.Empty;
+        public string GroupPreparationSite { get; set; } = string.Empty;
     }
 }

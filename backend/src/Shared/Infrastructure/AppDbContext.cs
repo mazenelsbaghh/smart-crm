@@ -17,6 +17,7 @@ namespace Shared.Infrastructure
 
         public DbSet<Modules.Auth.Domain.User> Users { get; set; }
         public DbSet<Modules.Auth.Domain.RefreshToken> RefreshTokens { get; set; }
+        public DbSet<Modules.Auth.Domain.ProjectMembership> ProjectMemberships { get; set; }
         public DbSet<Modules.Projects.Domain.Project> Projects { get; set; }
         public DbSet<Modules.Projects.Domain.ProjectSettings> ProjectSettings { get; set; }
         public DbSet<Modules.Conversations.Domain.Customer> Customers { get; set; }
@@ -55,6 +56,7 @@ namespace Shared.Infrastructure
         public DbSet<Modules.Media.Domain.Asset> Assets { get; set; }
         public DbSet<Modules.Media.Domain.AssetVariant> AssetVariants { get; set; }
         public DbSet<Modules.Audit.Domain.AuditLog> AuditLogs { get; set; }
+        public DbSet<Modules.GroupAppointments.Domain.GroupStaffNotification> GroupStaffNotifications { get; set; }
         public DbSet<Modules.GroupAppointments.Domain.GroupAppointment> GroupAppointments { get; set; }
         public DbSet<Modules.GroupAppointments.Domain.GroupAppointmentBooking> GroupAppointmentBookings { get; set; }
         public DbSet<Modules.Facebook.Domain.ConnectedPage> ConnectedPages { get; set; }
@@ -146,7 +148,17 @@ namespace Shared.Infrastructure
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<Modules.Auth.Domain.RefreshToken>().HasIndex(token => token.SessionId);
             base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<Modules.Auth.Domain.ProjectMembership>()
+                .HasIndex(membership => new { membership.UserId, membership.ProjectId }).IsUnique();
+            modelBuilder.Entity<Modules.Auth.Domain.ProjectMembership>()
+                .HasOne<Modules.Auth.Domain.User>().WithMany()
+                .HasForeignKey(membership => membership.UserId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<Modules.Auth.Domain.ProjectMembership>()
+                .HasOne<Modules.Projects.Domain.Project>().WithMany()
+                .HasForeignKey(membership => membership.ProjectId).OnDelete(DeleteBehavior.Cascade);
 
             if (Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
             {
@@ -168,6 +180,10 @@ namespace Shared.Infrastructure
 
             modelBuilder.Entity<Modules.Conversations.Domain.Conversation>()
                 .HasIndex(conversation => new { conversation.Status, conversation.LastMessageTimestamp });
+
+            modelBuilder.Entity<Modules.Conversations.Domain.Conversation>()
+                .HasIndex(conversation => new { conversation.ProjectId, conversation.LastMessageTimestamp, conversation.Id })
+                .IsDescending(false, true, true);
 
             modelBuilder.Entity<Modules.Conversations.Domain.Conversation>()
                 .HasIndex(conversation => new
@@ -241,6 +257,16 @@ namespace Shared.Infrastructure
                 .HasIndex(followUp => followUp.ConversationId);
 
             modelBuilder.Entity<Modules.CRM.Domain.FollowUp>()
+                .HasIndex(followUp => new { followUp.ProjectId, followUp.DueDate, followUp.Id })
+                .IsDescending(false, true, true);
+
+            modelBuilder.Entity<Modules.CRM.Domain.FollowUp>()
+                .HasIndex(followUp => new { followUp.ProjectId, followUp.Status, followUp.DueDate });
+
+            modelBuilder.Entity<Modules.CRM.Domain.Deal>()
+                .HasIndex(deal => new { deal.ProjectId, deal.CustomerId });
+
+            modelBuilder.Entity<Modules.CRM.Domain.FollowUp>()
                 .Property(followUp => followUp.ActiveAutomationSlotKey)
                 .HasMaxLength(220);
 
@@ -310,6 +336,11 @@ namespace Shared.Infrastructure
                 .HasIndex(recipient => new { recipient.CampaignId, recipient.CustomerId })
                 .IsUnique();
 
+            modelBuilder.Entity<Modules.GroupAppointments.Domain.GroupStaffNotification>()
+                .HasIndex(n => new { n.SentAtUtc, n.CancelledAtUtc, n.CreatedAt });
+            modelBuilder.Entity<Modules.GroupAppointments.Domain.GroupStaffNotification>()
+                .HasIndex(n => new { n.ProjectId, n.GroupAppointmentId });
+
             var bookingEntity = modelBuilder.Entity<Modules.GroupAppointments.Domain.GroupAppointmentBooking>();
             bookingEntity.HasIndex(booking => new { booking.ProjectId, booking.CustomerId });
 
@@ -339,6 +370,11 @@ namespace Shared.Infrastructure
                     Modules.GroupAppointments.Domain.GroupBookingPhoneFields.BookingCanonical)
                     .HasFilter("\"CustomerPhoneCanonical\" IS NOT NULL");
             }
+
+            modelBuilder.Entity<Modules.GroupAppointments.Domain.GroupAppointment>()
+                .Property(appointment => appointment.CourseType)
+                .HasMaxLength(16)
+                .HasDefaultValue(Modules.GroupAppointments.Domain.CourseTypes.Regular);
 
             modelBuilder.Entity<Modules.GroupAppointments.Domain.GroupAppointment>()
                 .HasMany(g => g.Bookings)

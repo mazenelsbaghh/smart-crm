@@ -84,7 +84,7 @@ public sealed class AdvertisingCommandWorker(AppDbContext db, MetaAdsClient meta
             await SaveCommandAndProgressAsync(command, desired, cancellationToken);
             return;
         }
-        var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId && x.State == AdvertisingConnectionState.Ready, cancellationToken);
+        var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken);
         if (connection?.ProtectedAccessToken is null)
         {
             command.State = CommandState.Blocked; command.LastError = "ConnectionUnavailable";
@@ -182,7 +182,7 @@ public sealed class AdvertisingCommandWorker(AppDbContext db, MetaAdsClient meta
         var ad = await db.ManagedAdvertisements.IgnoreQueryFilters().SingleOrDefaultAsync(item =>
             item.ProjectId == command.ProjectId && item.Id == desired.AdId, cancellationToken);
         var connection = await db.AdvertisingConnections.IgnoreQueryFilters().SingleOrDefaultAsync(item =>
-            item.ProjectId == command.ProjectId && item.State == AdvertisingConnectionState.Ready, cancellationToken);
+            item.ProjectId == command.ProjectId, cancellationToken);
         if (ad is null || connection?.ProtectedAccessToken is null || command.TargetExternalId is null)
         {
             command.State = CommandState.Blocked; command.LastError = "ADS_RECONCILIATION_UNAVAILABLE";

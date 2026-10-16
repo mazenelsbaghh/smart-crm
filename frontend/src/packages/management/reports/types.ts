@@ -129,7 +129,7 @@ export interface SalesIntelligenceDashboard {
   analysisCoverage: number;
   bookingConversionRate: number;
   paymentConversionRate: number;
-  medianFirstResponseMinutes: number;
+  medianFirstResponseMinutes: number | null;
   funnel: FunnelMetric[];
   funnelTransitions: FunnelTransitionMetric[];
   daily: DailySalesMetric[];
@@ -138,19 +138,6 @@ export interface SalesIntelligenceDashboard {
   opportunities: OpportunityItem[];
   analyses: ConversationAnalysisItem[];
   aiDigest?: AiDigest | null;
-}
-
-export interface RefreshResult {
-  requested: number;
-  analyzed: number;
-  skipped: number;
-  errors: string[];
-  digest?: AiDigest | null;
-}
-
-export interface AnalysisQueueResult {
-  pending: number;
-  jobId: string;
 }
 
 export interface AnalystAnswer {

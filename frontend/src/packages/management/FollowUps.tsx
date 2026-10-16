@@ -4,10 +4,9 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
-import { handleDialogKeyDown } from './dialog-accessibility';
+import Dialog from '../../components/shared/Dialog';
 import { 
   Calendar, 
-  CheckCircle2, 
   AlertCircle, 
   Clock, 
   MessageSquare,
@@ -15,11 +14,18 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  Search,
   Pencil,
-  X
+  X,
+  Sparkles,
+  CheckCircle2,
+  ListChecks
 } from 'lucide-react';
+import PageHeader from '../../components/ui/PageHeader';
+import StatusMessage from '../../components/ui/StatusMessage';
+import FilterTabs from '../../components/ui/FilterTabs';
+import SearchField from '../../components/ui/SearchField';
 import styles from './management.module.css';
+import { useListFilters } from './hooks/use-list-filters';
 
 interface FollowUp {
   id: string;
@@ -27,7 +33,7 @@ interface FollowUp {
   customerName?: string;
   customerPhoneNumber: string;
   dueDate: string;
-  status: 'Pending' | 'Completed' | 'Missed' | 'Bypassed';
+  status: 'Pending' | 'Completed' | 'Missed' | 'Bypassed' | 'Cancelled' | 'Processing' | 'DeliveryUnknown';
   notes: string;
   type?: 'Nurturing' | 'AppointmentReminder';
   appointmentTime?: string;
@@ -42,12 +48,18 @@ interface FollowUpPage {
   completedCount: number;
   missedCount: number;
   bypassedCount: number;
+  cancelledCount: number;
+  processingCount: number;
+  deliveryUnknownCount: number;
 }
 
 const statusMapAr: Record<string, string> = {
   'Pending': 'معلقة',
   'Completed': 'مكتملة',
-  'Bypassed': 'ملغية',
+  'Bypassed': 'تم تجاوزها',
+  'Cancelled': 'ملغية',
+  'Processing': 'قيد التنفيذ',
+  'DeliveryUnknown': 'الإرسال غير محسوم',
   'Missed': 'فائتة',
   'All': 'الكل'
 };
@@ -69,18 +81,19 @@ function formatCairoDate(value?: string): string {
   return `${date.toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', dateStyle: 'medium', timeStyle: 'short' })} بتوقيت القاهرة`;
 }
 
+const listFilterConfig = { statuses: ['All', 'Pending', 'Completed', 'Bypassed', 'Missed', 'Cancelled', 'Processing', 'DeliveryUnknown'] as const, defaultStatus: 'Pending' as const };
+
 export default function FollowUps() {
+  return <React.Suspense fallback={<p role="status">جاري تحميل القائمة…</p>}><FollowUpsList /></React.Suspense>;
+}
+
+function FollowUpsList() {
   const { activeProject } = useAuth();
   
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
-  const [counts, setCounts] = useState<Omit<FollowUpPage, 'items' | 'filteredCount'>>({
-    totalCount: 0,
-    pendingCount: 0,
-    completedCount: 0,
-    missedCount: 0,
-    bypassedCount: 0,
-  });
+  const [counts, setCounts] = useState<(Omit<FollowUpPage, 'items' | 'filteredCount'> & { projectId: string }) | null>(null);
   const [filteredCount, setFilteredCount] = useState(0);
+  const [loadedFilterKey, setLoadedFilterKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reEvaluating, setReEvaluating] = useState(false);
@@ -91,16 +104,12 @@ export default function FollowUps() {
   const [followUpToDelete, setFollowUpToDelete] = useState<string | null>(null);
   const [followUpToSend, setFollowUpToSend] = useState<FollowUp | null>(null);
 
-  // Pagination State
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [filter, setFilter] = useState<'All' | 'Pending' | 'Completed' | 'Bypassed' | 'Missed'>('Pending');
 
   // Search & Editing State
-  const [searchQuery, setSearchQuery] = useState('');
+  const { search: searchQuery, setSearch: setSearchQuery, status: filter, setStatus: setFilter,
+    page: currentPage, setPage: setCurrentPage, pageSize, setPageSize, clearFilters, hasFilters } = useListFilters(listFilterConfig);
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null);
   const [editNotes, setEditNotes] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
@@ -109,6 +118,8 @@ export default function FollowUps() {
   const [editTone, setEditTone] = useState<string>('');
   const loadRequestIdRef = React.useRef(0);
   const [referenceNow] = useState(() => Date.now());
+
+  const filterKey = JSON.stringify([activeProject?.id, filter, searchQuery.trim(), pageSize]);
 
   const fetchData = async () => {
     const requestId = ++loadRequestIdRef.current;
@@ -128,12 +139,17 @@ export default function FollowUps() {
       
       setFollowUps(response.data.items);
       setFilteredCount(response.data.filteredCount);
+      setLoadedFilterKey(filterKey);
       setCounts({
+        projectId: activeProject.id,
         totalCount: response.data.totalCount,
         pendingCount: response.data.pendingCount,
         completedCount: response.data.completedCount,
         missedCount: response.data.missedCount,
         bypassedCount: response.data.bypassedCount,
+        cancelledCount: response.data.cancelledCount,
+        processingCount: response.data.processingCount,
+        deliveryUnknownCount: response.data.deliveryUnknownCount,
       });
     } catch (e) {
       if (requestId !== loadRequestIdRef.current) return;
@@ -173,11 +189,6 @@ export default function FollowUps() {
     return () => window.clearTimeout(timeoutId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject, filter, currentPage, pageSize, searchQuery]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCurrentPage(1);
-  }, [filter, searchQuery]);
 
   const getCustomerName = (followUp: FollowUp) =>
     followUp.customerName || followUp.customerPhoneNumber || 'عميل غير مسجل';
@@ -281,184 +292,49 @@ export default function FollowUps() {
     }
   };
 
-  const { totalCount, pendingCount, completedCount, missedCount, bypassedCount } = counts;
+  const { totalCount, pendingCount, completedCount, missedCount, bypassedCount, cancelledCount, processingCount, deliveryUnknownCount }
+    = counts && counts.projectId === activeProject?.id ? counts : {};
   const totalPages = Math.ceil(filteredCount / pageSize) || 1;
+  useEffect(() => {
+    if (!loading && !loadError && loadedFilterKey === filterKey && currentPage > totalPages) setCurrentPage(totalPages, 'replace');
+  }, [loading, loadError, loadedFilterKey, filterKey, currentPage, totalPages, setCurrentPage]);
 
   return (
     <div className={styles.container}>
-      <div className={styles.header} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
-        <div>
-          <h1 className={styles.pageTitle}>جدول المتابعات</h1>
-          <p className={styles.pageSubtitle}>إدارة مواعيد المتابعات المعلقة والمتأخرة للاتصال بالعملاء أو مراسلتهم</p>
-        </div>
+      <div className={styles.header}>
+        <PageHeader icon={<Calendar size={22} aria-hidden="true" />} title="المتابعات" description="المواعيد والرسائل التي تحتاج متابعة فريقك." />
         <button
           type="button"
           onClick={triggerReEvaluateAll}
-          disabled={!activeProject || reEvaluating || pendingCount === 0}
+          disabled={!activeProject || reEvaluating || !pendingCount}
           title={!activeProject ? 'مساحة العمل غير متاحة' : pendingCount === 0 ? 'لا توجد متابعات معلقة لإعادة ضبطها' : undefined}
-          className={`${styles.btn} ${styles.btnPrimary}`}
-          style={{ 
-            padding: '10px 20px', 
-            fontSize: '0.85rem', 
-            backgroundColor: 'var(--accent-soft)', 
-            color: 'var(--accent)',
-            borderColor: 'var(--accent-soft-strong)',
-            borderRadius: 'var(--radius-sm)',
-            fontWeight: 700,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
+          className={`${styles.btn} ${styles.btnIntelligence}`}
         >
-          <Clock size={16} />
+          <Sparkles size={16} aria-hidden="true" />
           {reEvaluating ? 'جاري إعادة الضبط بالـ AI...' : 'ضبط المتابعات تلقائياً بالـ AI'}
         </button>
       </div>
 
-      {/* KPI Stats Cards */}
-      <div className={styles.statsGrid}>
-        <button type="button"
-          className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'All' ? styles.statCardActive : ''}`}
-          onClick={() => setFilter('All')}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className={styles.statLabel}>إجمالي المتابعات</span>
-            <Calendar size={18} style={{ color: 'hsl(var(--accent-primary))' }} />
-          </div>
-          <h2 className={styles.statValue}>{totalCount}</h2>
-          <span className={styles.statDesc}>كل المهام المجدولة</span>
-        </button>
+      <FilterTabs compactOnMobile label="تصفية المتابعات حسب الحالة" selected={filter} onChange={setFilter} options={[
+        { key: 'All', icon: <ListChecks size={16} aria-hidden="true" />, label: 'كل المتابعات', count: totalCount, description: 'كل المهام المجدولة' },
+        { key: 'Pending', icon: <Clock size={16} aria-hidden="true" />, tone: 'warning', label: 'معلقة', count: pendingCount, description: 'متابعات في انتظار الإرسال' },
+        { key: 'Processing', icon: <Send size={16} aria-hidden="true" />, tone: 'info', label: 'قيد التنفيذ', count: processingCount, description: 'يعالجها نظام الإرسال حاليًا' },
+        { key: 'Completed', icon: <CheckCircle2 size={16} aria-hidden="true" />, tone: 'success', label: 'مكتملة', count: completedCount, description: 'معلّمة كمكتملة' },
+        { key: 'Missed', icon: <AlertCircle size={16} aria-hidden="true" />, tone: 'danger', label: 'فائتة', count: missedCount, description: 'فشل الإرسال أو تجاوز الموعد' },
+        { key: 'DeliveryUnknown', icon: <AlertCircle size={16} aria-hidden="true" />, tone: 'warning', label: 'الإرسال غير محسوم', count: deliveryUnknownCount, description: 'لم يؤكد المصدر نتيجة الإرسال' },
+        { key: 'Cancelled', icon: <X size={16} aria-hidden="true" />, label: 'ملغية', count: cancelledCount, description: 'أوقفتها قواعد الحجز أو الدفع أو الإلغاء' },
+        { key: 'Bypassed', icon: <ChevronRight size={16} aria-hidden="true" />, label: 'تم تجاوزها', count: bypassedCount, description: 'لم تعد تحتاج الإرسال وفق حالة العميل' },
+      ]} />
 
-        <button type="button"
-          className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'Pending' ? styles.statCardActive : ''}`}
-          onClick={() => setFilter('Pending')}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className={styles.statLabel}>المتابعات المعلقة</span>
-            <Clock size={18} style={{ color: 'hsl(38, 92%, 60%)' }} />
-          </div>
-          <h2 className={styles.statValue}>{pendingCount}</h2>
-          <span className={styles.statDesc}>في انتظار الإرسال</span>
-        </button>
+      {message && <StatusMessage tone={message.type === 'error' ? 'danger' : 'success'}>{message.text}</StatusMessage>}
 
-        <button type="button"
-          className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'Completed' ? styles.statCardActive : ''}`}
-          onClick={() => setFilter('Completed')}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className={styles.statLabel}>المتابعات المكتملة</span>
-            <CheckCircle2 size={18} style={{ color: 'hsl(140, 100%, 65%)' }} />
-          </div>
-          <h2 className={styles.statValue}>{completedCount}</h2>
-          <span className={styles.statDesc}>تم إرسالها بنجاح</span>
-        </button>
-
-        <button type="button"
-          className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'Missed' ? styles.statCardActive : ''}`}
-          onClick={() => setFilter('Missed')}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className={styles.statLabel}>المتابعات الفائتة</span>
-            <AlertCircle size={18} style={{ color: 'hsl(0, 100%, 65%)' }} />
-          </div>
-          <h2 className={styles.statValue}>{missedCount}</h2>
-          <span className={styles.statDesc}>فشل الإرسال أو تجاوز الموعد</span>
-        </button>
-
-        <button type="button"
-          className={`glass-panel ${styles.statCard} ${styles.statCardClickable} ${filter === 'Bypassed' ? styles.statCardActive : ''}`}
-          onClick={() => setFilter('Bypassed')}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className={styles.statLabel}>المتابعات الملغية</span>
-            <AlertCircle size={18} style={{ color: 'hsl(215, 20%, 72%)' }} />
-          </div>
-          <h2 className={styles.statValue}>{bypassedCount}</h2>
-          <span className={styles.statDesc}>تجاوزها الرد اليدوي للعميل</span>
-        </button>
+      <div className={styles.listSearchTools}>
+      <SearchField label="بحث في المتابعات باسم العميل أو رقم الهاتف" placeholder="ابحث باسم العميل أو رقم الهاتف…"
+        value={searchQuery} onChange={event => setSearchQuery(event.target.value)} />
+        {hasFilters && <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={clearFilters}>إعادة ضبط التصفية</button>}
       </div>
 
-      {message && (
-        <div className={`glass-panel`} role={message.type === 'error' ? 'alert' : 'status'} style={{
-          padding: 'var(--space-md)', 
-          background: message.type === 'success' ? 'var(--success-soft)' : 'var(--danger-soft)',
-          border: '1px solid var(--border-subtle)',
-          color: 'var(--text-strong)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-sm)'
-        }}>
-          <CheckCircle2 size={18} style={{ color: message.type === 'success' ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))' }} />
-          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{message.text}</span>
-        </div>
-      )}
-
-      {/* Tabs and Search */}
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        gap: 'var(--space-md)', 
-        borderBottom: '1px solid var(--border-subtle)', 
-        paddingBottom: '8px',
-        flexWrap: 'wrap'
-      }}>
-        {/* Tabs */}
-        <div role="group" aria-label="تصفية المتابعات حسب الحالة" style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-          {(['Pending', 'Completed', 'Bypassed', 'Missed', 'All'] as const).map(fOpt => (
-            <button
-              key={fOpt}
-              type="button"
-              onClick={() => setFilter(fOpt)}
-              aria-pressed={filter === fOpt}
-              style={{
-                padding: '0.5rem 1rem',
-                background: filter === fOpt ? 'var(--accent-soft)' : 'transparent',
-                border: 'none',
-                borderBottom: filter === fOpt ? '2px solid var(--accent)' : '2px solid transparent',
-                color: filter === fOpt ? 'var(--accent)' : 'var(--text-soft)',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '0.85rem',
-                transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease'
-              }}
-            >
-              {statusMapAr[fOpt]}
-            </button>
-          ))}
-        </div>
-
-        {/* Search input */}
-        <div style={{ position: 'relative', minWidth: '280px' }}>
-          <input
-            type="text"
-            aria-label="بحث في المتابعات باسم العميل أو رقم الهاتف"
-            placeholder="بحث باسم العميل أو رقم الهاتف..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={styles.input}
-            style={{
-              width: '100%',
-              padding: '8px 36px 8px 12px',
-              textAlign: 'right'
-            }}
-          />
-          <Search 
-            size={16} 
-            style={{ 
-              position: 'absolute', 
-              right: '12px', 
-              top: '50%', 
-              transform: 'translateY(-50%)', 
-              color: 'hsl(var(--text-muted))',
-              pointerEvents: 'none'
-            }} 
-          />
-        </div>
-      </div>
-
-      <div className={`glass-panel ${styles.panel}`}>
+      <div className={`${styles.panel} ${styles.operationsPanel}`}>
         {loading ? (
           <div className={styles.emptyState}>
             <div className={styles.spinner}></div>
@@ -467,7 +343,7 @@ export default function FollowUps() {
         ) : loadError ? (
           <div className={styles.emptyState} role="alert">
             <h3 className={styles.emptyStateTitle}>تعذر تحميل المتابعات</h3>
-            <p className={styles.emptyStateDesc}>{loadError}</p>
+            <p className={styles.emptyStateDesc}>{loadError}{totalCount !== undefined && ' العدادات المعروضة من آخر تحميل ناجح.'}</p>
             {activeProject && <button type="button" onClick={() => void fetchData()} className={`${styles.btn} ${styles.btnPrimary}`}>إعادة المحاولة</button>}
           </div>
         ) : followUps.length === 0 ? (
@@ -478,15 +354,15 @@ export default function FollowUps() {
           </div>
         ) : (
           <div className={styles.tableWrapper}>
-            <table className={styles.table}>
+            <table role="table" className={`${styles.table} ${styles.followUpTable}`}>
               <caption className="sr-only">مهام المتابعة وحالة الإرسال</caption>
               <thead>
                 <tr>
                   <th className={styles.th}>العميل</th>
-                  <th className={styles.th}>تاريخ الاستحقاق</th>
-                  <th className={styles.th}>نوع المتابعة</th>
-                  <th className={styles.th}>ملاحظات</th>
-                  <th className={styles.th}>الحالة</th>
+                  <th className={styles.th}>الموعد والحالة</th>
+
+                  <th className={styles.th}>رسالة المتابعة</th>
+
                   <th className={styles.th} style={{ textAlign: 'center' }}>الإجراء</th>
                 </tr>
               </thead>
@@ -496,7 +372,7 @@ export default function FollowUps() {
                   const isOverdue = !Number.isNaN(dueDate.getTime()) && dueDate.getTime() < referenceNow && fu.status === 'Pending';
                   return (
                     <tr key={fu.id} className={styles.tr}>
-                      <td className={styles.td}>
+                      <td data-label="العميل" className={styles.td}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <div style={{
                             width: '28px',
@@ -517,10 +393,12 @@ export default function FollowUps() {
                             {getCustomerName(fu)}
                           </span>
                         </div>
+                        <div className={styles.recordMeta}><MessageSquare size={14} aria-hidden="true" />{fu.type ? followUpTypeMapAr[fu.type] ?? fu.type : 'نوع المتابعة غير متاح'}</div>
+                        {fu.tone && fu.tone !== 'Default' && <span className={`${styles.statusBadge} ${styles.statusIntelligence}`}>{toneMapAr[fu.tone] ?? `نبرة المصدر: ${fu.tone}`}</span>}
                       </td>
-                      <td className={styles.td}>
+                      <td data-label="الموعد والحالة" className={styles.td}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isOverdue ? 'hsl(var(--accent-danger))' : 'var(--text-base)' }}>
+                          <div className={styles.dueDateLine} data-overdue={isOverdue || undefined}>
                             {isOverdue ? <AlertCircle size={14} /> : <Clock size={14} />}
                             <span>{formatCairoDate(fu.dueDate)}</span>
                             {isOverdue && <span style={{ fontSize: '0.7rem', fontWeight: 700, marginRight: '4px', color: 'hsl(var(--accent-danger))' }}>متأخرة</span>}
@@ -531,46 +409,23 @@ export default function FollowUps() {
                             </span>
                           )}
                         </div>
+                        <span className={`${styles.statusBadge} ${
+                          fu.status === 'Completed' ? styles.statusCompleted :
+                          fu.status === 'Bypassed' || fu.status === 'Cancelled' ? styles.statusBypassed :
+                          fu.status === 'Missed' ? styles.statusFailed :
+                          styles.statusPending
+                        }`}>
+                          {fu.status === 'Completed' ? <CheckCircle2 size={14} aria-hidden="true" /> : fu.status === 'Missed' || fu.status === 'DeliveryUnknown' ? <AlertCircle size={14} aria-hidden="true" /> : <Clock size={14} aria-hidden="true" />}{statusMapAr[fu.status] ?? fu.status}
+                        </span>
                       </td>
-                      <td className={styles.td}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
-                          <span className={styles.statusBadge} style={{
-                            backgroundColor: fu.type === 'AppointmentReminder' ? 'rgba(16, 185, 129, 0.12)' : 'var(--accent-soft)',
-                            color: fu.type === 'AppointmentReminder' ? 'hsl(140, 100%, 65%)' : 'var(--accent)',
-                            border: fu.type === 'AppointmentReminder' ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid var(--border-strong)'
-                          }}>
-                            {fu.type ? followUpTypeMapAr[fu.type] ?? fu.type : 'نوع المتابعة غير متاح'}
-                          </span>
-                          {fu.tone && fu.tone !== 'Default' && (
-                            <span className={styles.statusBadge} style={{
-                              backgroundColor: 'rgba(168, 85, 247, 0.12)',
-                              color: 'hsl(270, 84%, 75%)',
-                              border: '1px solid rgba(168, 85, 247, 0.2)',
-                              fontSize: '0.7rem'
-                            }}>
-                              {toneMapAr[fu.tone] ?? `نبرة المصدر: ${fu.tone}`}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className={styles.td}>
+                      <td data-label="رسالة المتابعة" className={styles.td}>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                           <MessageSquare size={14} style={{ color: 'hsl(var(--text-muted))', marginTop: '2px' }} />
                           <span>{fu.notes || 'لا يوجد وصف.'}</span>
                         </div>
                       </td>
-                      <td className={styles.td}>
-                        <span className={`${styles.statusBadge} ${
-                          fu.status === 'Completed' ? styles.statusCompleted :
-                          fu.status === 'Bypassed' ? styles.statusBypassed :
-                          fu.status === 'Missed' ? styles.statusFailed :
-                          styles.statusPending
-                        }`}>
-                          {statusMapAr[fu.status]}
-                        </span>
-                      </td>
-                      <td className={styles.td} style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                      <td data-label="الإجراء" className={styles.td} style={{ textAlign: 'center' }}>
+                        <div className={styles.recordActions}>
                           {fu.status === 'Pending' ? (
                             <>
                               <button
@@ -597,6 +452,7 @@ export default function FollowUps() {
                             <span style={{ color: 'hsl(var(--text-muted))', fontSize: '0.8rem' }}>مغلقة</span>
                           )}
 
+                          <details className={styles.recordDisclosure}><summary>المزيد</summary>
                           <button
                             type="button"
                             onClick={() => triggerDelete(fu.id)}
@@ -608,6 +464,7 @@ export default function FollowUps() {
                             <Trash2 size={12} />
                             مسح
                           </button>
+                          </details>
                         </div>
                       </td>
                     </tr>
@@ -626,7 +483,6 @@ export default function FollowUps() {
                     value={pageSize}
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
-                      setCurrentPage(1);
                     }}
                     className={styles.paginationSelect}
                   >
@@ -644,7 +500,7 @@ export default function FollowUps() {
                 <div className={styles.paginationControls}>
                   <button
                     type="button"
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    onClick={() => setCurrentPage(Math.min(currentPage + 1, totalPages))}
                     disabled={currentPage === totalPages}
                     className={styles.paginationBtn}
                     title="الصفحة التالية"
@@ -677,7 +533,7 @@ export default function FollowUps() {
 
                   <button
                     type="button"
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    onClick={() => setCurrentPage(Math.max(currentPage - 1, 1))}
                     disabled={currentPage === 1}
                     className={styles.paginationBtn}
                     title="الصفحة السابقة"
@@ -693,8 +549,8 @@ export default function FollowUps() {
       </div>
 
       {editingFollowUp && (
-        <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`} role="dialog" aria-modal="true" aria-labelledby="follow-up-edit-title" onKeyDown={(event) => handleDialogKeyDown(event, () => setEditingFollowUp(null))}>
+        <Dialog label="تعديل متابعة" onClose={() => setEditingFollowUp(null)}>
+          <div className={styles.dialogContent}>
             <div className={styles.modalHeader}>
               <h3 id="follow-up-edit-title" className={styles.modalTitle}>تعديل تفاصيل المتابعة</h3>
               <button 
@@ -805,7 +661,7 @@ export default function FollowUps() {
               </div>
             </form>
           </div>
-        </div>
+        </Dialog>
       )}
 
       <ConfirmDialog 

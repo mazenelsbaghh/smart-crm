@@ -56,4 +56,14 @@ public sealed class TrackingHealthTests
         Assert.NotEqual(Guid.Empty, Policy.Id);
         Assert.Equal(3, Policy.Version);
     }
+
+    [Fact]
+    public void Official_exact_referrals_and_accepted_deliveries_do_not_require_an_unavailable_provider_quality_metric()
+    {
+        var health = AdvertisingTrackingHealthService.Evaluate(Policy,
+            new(100, 100, 100, 100, 1m, null, 1m, 0m, 1, true, DateTime.UtcNow));
+
+        Assert.Equal(TrackingHealthState.Healthy, health.State);
+        Assert.Empty(health.Reasons);
+    }
 }

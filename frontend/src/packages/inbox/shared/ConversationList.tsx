@@ -1,17 +1,19 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
+import SearchField from '../../../components/ui/SearchField';
+import EmptyState from '../../../components/ui/EmptyState';
 import { Conversation } from '../../../types/chat';
 import { 
-  Search, 
   MessageSquare,
   MessageCircle,
   MessageSquareMore,
   AlertTriangle,
-  SquarePen,
   RefreshCw
 } from 'lucide-react';
 import styles from '../inbox.module.css';
+import ConversationStatusBadge from './ConversationStatusBadge';
 
 interface ConversationListProps {
   conversations: Conversation[];
@@ -70,55 +72,35 @@ export default function ConversationList({
     : channel === 'Messenger'
       ? 'بحث بالاسم أو حساب ماسنجر...'
       : 'بحث في أصحاب التعليقات...';
+  const hasFilters = Boolean(searchQuery.trim()) || filterStatus !== 'All';
 
   return (
     <div className={styles.conversationPanel}>
-      {/* Chat List Header */}
       <div className={styles.chatListHeader}>
         <div className={styles.chatListTitleRow}>
           <h2 className={styles.chatListTitle}>المحادثات</h2>
-          <button
-            type="button"
-            className={styles.newChatBtn}
-            disabled
-            aria-label="محادثة جديدة، غير متاحة حاليًا"
-            title="إنشاء محادثة جديدة غير مدعوم من هذه الشاشة"
-          >
-            <SquarePen size={18} />
-          </button>
         </div>
 
-        {/* Search Bar */}
-        <div className={styles.searchContainer}>
-          <Search size={18} className={styles.searchBarIcon} />
-          <input
-            ref={searchInputRef}
-            type="text"
-            aria-label={`بحث في محادثات ${channel === 'WhatsApp' ? 'واتساب' : channel === 'Messenger' ? 'ماسنجر' : 'التعليقات'}`}
-            placeholder={searchPlaceholder}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={styles.searchBarInput}
-          />
-        </div>
+        <nav className={styles.channelTabs} aria-label="قنوات المحادثات">
+          {[
+            { path: '/inbox', key: 'WhatsApp', label: 'واتساب', icon: MessageSquare },
+            { path: '/inbox/messenger', key: 'Messenger', label: 'ماسنجر', icon: MessageCircle },
+            { path: '/inbox/comments', key: 'Comments', label: 'التعليقات', icon: MessageSquareMore },
+          ].map(destination => <Link key={destination.key} href={destination.path} data-dashboard-navigation
+            aria-current={channel === destination.key ? 'page' : undefined}><destination.icon size={15} aria-hidden="true" />{destination.label}</Link>)}
+        </nav>
 
-        {/* Filters/Tabs Scroll */}
-        <div className={styles.tabsFilterScroll}>
-          {Object.keys(statusLabels).map((key) => {
-            const isActive = filterStatus === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                className={`${styles.tabFilterBtn} ${isActive ? styles.tabFilterBtnActive : ''}`}
-                onClick={() => setFilterStatus(key)}
-                aria-pressed={isActive}
-              >
-                {statusLabels[key] || key}
-              </button>
-            );
-          })}
-        </div>
+        <SearchField inputRef={searchInputRef} label={`بحث في محادثات ${channel === 'WhatsApp' ? 'واتساب' : channel === 'Messenger' ? 'ماسنجر' : 'التعليقات'}`}
+          placeholder={searchPlaceholder} value={searchQuery} onChange={event => setSearchQuery(event.target.value)} />
+
+        <label className={styles.conversationStatusFilter}>
+          <span>الحالة</span>
+          <select value={filterStatus} onChange={event => setFilterStatus(event.target.value)} aria-label="حالة المحادثات">
+            {Object.entries(statusLabels).map(([status, label]) => (
+              <option key={status} value={status}>{status === 'All' ? 'كل المحادثات' : label}</option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {/* Scrollable Conversation List */}
@@ -163,10 +145,12 @@ export default function ConversationList({
             )}
           </div>
         ) : conversations.length === 0 ? (
-          <div className={styles.emptyState}>
-            <MessageSquare size={36} style={{ color: 'var(--text-soft)', marginBottom: '8px' }} />
-            <p>لا توجد محادثات متطابقة</p>
-          </div>
+          <EmptyState
+            title={hasFilters ? 'لا توجد محادثات بهذه التصفية' : 'لا توجد محادثات في هذه القناة'}
+            description={hasFilters ? 'جرّب اسمًا آخر أو اعرض كل الحالات.' : 'ستظهر المحادثات هنا عند وصول الرسائل.'}
+            action={hasFilters && <button type="button" className={styles.retryConversationsBtn}
+              onClick={() => { setSearchQuery(''); setFilterStatus('All'); }}>مسح البحث والتصفية</button>}
+          />
         ) : (
           conversations.map(conv => {
             const isActive = activeConv?.id === conv.id;
@@ -178,13 +162,13 @@ export default function ConversationList({
                 key={conv.id}
                 type="button"
                 className={`${styles.chatListItem} ${isActive ? styles.chatListItemActive : ''}`}
+                data-unread={conv.unreadCount !== null && conv.unreadCount > 0}
                 onClick={() => setActiveConv(conv)}
                 aria-pressed={isActive}
                 aria-label={`${customerName}، ${statusLabels[conv.status] || conv.status}${channel === 'WhatsApp' && conv.whatsAppAccountName ? `، عبر ${conv.whatsAppAccountName}` : ''}، آخر نشاط ${formatEgyptTime(conv.lastMessageAt)}`}
               >
-                {/* Avatar with status indicator */}
                 <div className={styles.avatarContainer}>
-                  <div className={styles.avatarCircle}>
+                  <div className={styles.avatarCircle} aria-hidden="true">
                     {avatarInitial}
                   </div>
                 </div>
@@ -198,43 +182,27 @@ export default function ConversationList({
 
                   <div className={styles.itemSnippetRow}>
                     <p className={styles.chatSnippet}>
-                      {conv.customer.label ? `تصنيف CRM: ${conv.customer.label}` : 'لا يتوفر ملخص للرسالة في هذا المصدر'}
+                      {conv.customer.label ? `تصنيف CRM: ${conv.customer.label}` : (
+                        conv.customer.phone ? <bdi dir="ltr">{conv.customer.phone}</bdi> : conv.assignedAgentName
+                      )}
                     </p>
                     
                     {/* Unread count badge if active/unread */}
-                    {conv.unreadCount > 0 && (
+                    {conv.unreadCount !== null && conv.unreadCount > 0 && (
                       <span className={styles.unreadBadge} aria-label={`${conv.unreadCount} رسائل غير مقروءة`}>
-                        {conv.unreadCount.toLocaleString('ar-EG')}
+                        {conv.unreadCount.toLocaleString('ar-EG')} غير مقروءة
                       </span>
                     )}
                   </div>
 
                   {/* Metadata & Tag row */}
                   <div className={styles.itemFooterRow}>
-                    <span className={`${styles.tagPill} ${styles.tagCommunicated}`}>
-                      {statusLabels[conv.status] || conv.status}
-                    </span>
-                    
-                    <span className={styles.chatChannelIcon} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: 500 }}>
-                      {channel === 'WhatsApp' && (
-                        <>
-                          <MessageSquare size={12} style={{ color: '#25D366' }} />
-                          <span>واتساب{conv.whatsAppAccountName ? ` · ${conv.whatsAppAccountName}` : ''}</span>
-                        </>
-                      )}
-                      {channel === 'Messenger' && (
-                        <>
-                          <MessageCircle size={12} style={{ color: '#0084FF' }} />
-                          <span>ماسنجر</span>
-                        </>
-                      )}
-                      {channel === 'Comments' && (
-                        <>
-                          <MessageSquareMore size={12} style={{ color: '#FF9900' }} />
-                          <span>تعليق</span>
-                        </>
-                      )}
-                    </span>
+                    <ConversationStatusBadge status={conv.status} label={statusLabels[conv.status] || conv.status} />
+                    {channel === 'WhatsApp' && conv.whatsAppAccountName ? (
+                      <span className={styles.chatChannelIcon}>
+                        <MessageSquare size={12} aria-hidden="true" />{conv.whatsAppAccountName}
+                      </span>
+                    ) : conv.assignedAgentName && <span className={styles.chatChannelIcon}>{conv.assignedAgentName}</span>}
                   </div>
                 </div>
               </button>

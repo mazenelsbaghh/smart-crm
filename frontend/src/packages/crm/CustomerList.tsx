@@ -1,47 +1,78 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useAuth } from '../../context/auth-context';
 import { useToast } from '../../context/toast-context';
-import { crmService, Customer } from '../../services/crm';
+import { crmService, CustomerPage } from '../../services/crm';
 import { api } from '../../services/api';
 import CustomerDetail from '../../components/shared/CustomerDetail';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
-import { 
-  Search, 
-  MapPin, 
-  UserCheck, 
+import {
+  MapPin,
   Sparkles,
-  Edit2,
+  MessageSquare,
+  CalendarPlus,
+  SlidersHorizontal,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   Upload,
   FileDown,
-  ShieldAlert
+  ShieldAlert,
+  Users,
+  UserRound,
+  UserRoundPlus,
+  PhoneCall,
+  CalendarClock,
+  CircleCheck,
+  CircleX,
+  ListFilter,
+  type LucideIcon
 } from 'lucide-react';
 import styles from './crm.module.css';
+import Badge from '../../components/ui/Badge';
+import PageHeader from '../../components/ui/PageHeader';
+import SearchField from '../../components/ui/SearchField';
+import Button from '../../components/ui/Button';
+import EmptyState from '../../components/ui/EmptyState';
+import FilterTabs from '../../components/ui/FilterTabs';
 import CustomerExport from './CustomerExport';
 
 const formatCount = (value: number) => Number.isFinite(value) ? value.toLocaleString('ar-EG') : 'غير متاح';
 const formatPhone = (value: string) => value.startsWith('+') ? value : `+${value}`;
+const stageStyles: Record<string, { tone: 'info' | 'success' | 'warning' | 'danger'; icon: LucideIcon }> = {
+  New: { tone: 'info', icon: UserRoundPlus }, 'عميل جديد': { tone: 'info', icon: UserRoundPlus },
+  Contacted: { tone: 'info', icon: PhoneCall }, 'تواصل أولي': { tone: 'info', icon: PhoneCall },
+  Qualified: { tone: 'warning', icon: CalendarClock }, 'مهتم': { tone: 'warning', icon: CalendarClock },
+  Proposal: { tone: 'warning', icon: CalendarClock }, Negotiation: { tone: 'warning', icon: CalendarClock },
+  'متابعة': { tone: 'warning', icon: CalendarClock }, 'حجز': { tone: 'success', icon: CircleCheck },
+  Won: { tone: 'success', icon: CircleCheck }, Lost: { tone: 'danger', icon: CircleX },
+};
 
 export default function CustomerList() {
   const { activeProject } = useAuth();
   const { showToast } = useToast();
-  
-  const [customers, setCustomers] = useState<Customer[]>([]);
+
+  const [customerPage, setCustomerPage] = useState<CustomerPage | null>(null);
+  const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  
+
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  
+
   // Search & Filter
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [stageFilter, setStageFilter] = useState('All');
   const [cityFilter, setCityFilter] = useState('All');
   const [selectedLabel, setSelectedLabel] = useState('All');
+  const [showTools, setShowTools] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [detailSection, setDetailSection] = useState<'profile' | 'followups'>('profile');
+  const [expandedCustomerId, setExpandedCustomerId] = useState<string | null>(null);
 
   const [importing, setImporting] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
@@ -63,26 +94,30 @@ export default function CustomerList() {
     return () => window.clearTimeout(resetTimer);
   }, [activeProject]);
 
-  // Calculate label counts dynamically from ALL customers
-  const labelStats = React.useMemo(() => {
-    const stats: Record<string, number> = {};
-    customers.forEach(c => {
-      const lbl = c.label || 'بدون تصنيف';
-      stats[lbl] = (stats[lbl] || 0) + 1;
-    });
-    return Object.entries(stats).map(([name, count]) => ({ name, count }));
-  }, [customers]);
-  
+  const visiblePage = loadedProjectId === activeProject?.id ? customerPage : null;
+  const customers = visiblePage?.items ?? [];
+  const labelStats = visiblePage?.labels ?? [];
+  const totalCustomers = visiblePage?.totalCustomers ?? 0;
+  const totalFiltered = visiblePage?.totalFiltered ?? 0;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { setDebouncedSearch(search); setCurrentPage(1); }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
   // Modal state
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
-  const [generatingIds, setGeneratingIds] = useState<string[]>([]);
   const loadRequestIdRef = React.useRef(0);
+  const loadAbortRef = React.useRef<AbortController | null>(null);
   const importFileInputRef = React.useRef<HTMLInputElement>(null);
 
   const fetchCustomers = useCallback(async () => {
     const requestId = ++loadRequestIdRef.current;
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
     if (!activeProject) {
-      setCustomers([]);
+      setCustomerPage(null);
       setLoading(false);
       setLoadError('تعذر تحميل مساحة العمل. أعد المحاولة أو تواصل مع المدير.');
       return;
@@ -90,33 +125,21 @@ export default function CustomerList() {
     try {
       setLoading(true);
       setLoadError(null);
-      setCustomers([]);
-      const data = await crmService.getCustomers(activeProject.id);
-      if (requestId !== loadRequestIdRef.current) return;
-      setCustomers(data);
+      const page = await crmService.getCustomerPage(activeProject.id, {
+        page: currentPage, pageSize, search: debouncedSearch, stage: stageFilter, city: cityFilter, label: selectedLabel,
+      }, controller.signal);
+      if (requestId !== loadRequestIdRef.current || controller.signal.aborted) return;
+      setCustomerPage(page);
+      setLoadedProjectId(activeProject.id);
+      if (page.page !== currentPage) setCurrentPage(page.page);
     } catch (e) {
-      if (requestId !== loadRequestIdRef.current) return;
+      if (requestId !== loadRequestIdRef.current || controller.signal.aborted) return;
       console.error('Failed to load CRM customers', e);
       setLoadError('تعذر تحميل سجل العملاء. لم يتم استبدال البيانات بقائمة فارغة.');
     } finally {
       if (requestId === loadRequestIdRef.current) setLoading(false);
     }
-  }, [activeProject]);
-
-  const handleGenerateAIProfile = async (customerId: string) => {
-    if (!activeProject) return;
-    setGeneratingIds(prev => [...prev, customerId]);
-    try {
-      await api.post(`/api/projects/${activeProject.id}/customers/${customerId}/memory/generate`);
-      await fetchCustomers();
-      showToast('تم تحديث وتوليد ملف التعريف بالذكاء الاصطناعي بنجاح! ✨', 'success');
-    } catch (err) {
-      console.error('Failed to generate customer profile', err);
-      showToast('فشل توليد ملف التعريف. تأكد من وجود رسائل سابقة للعميل.', 'error');
-    } finally {
-      setGeneratingIds(prev => prev.filter(id => id !== customerId));
-    }
-  };
+  }, [activeProject, currentPage, pageSize, debouncedSearch, stageFilter, cityFilter, selectedLabel]);
 
   const handleDownloadTemplate = async () => {
     try {
@@ -181,7 +204,7 @@ export default function CustomerList() {
             newPhones: string[];
           }>(`/api/projects/${projectId}/import-blacklist`, phones);
           const data = response.data;
-          
+
           setImportResult({
             matchedCount: data.matchedCount,
             newCount: data.newCount,
@@ -214,10 +237,10 @@ export default function CustomerList() {
 
   useEffect(() => {
     const loadTimer = window.setTimeout(() => void fetchCustomers(), 0);
-    return () => window.clearTimeout(loadTimer);
+    return () => { window.clearTimeout(loadTimer); loadAbortRef.current?.abort(); };
   }, [fetchCustomers]);
 
-  if (loading) {
+  if (loading && loadedProjectId !== activeProject?.id) {
     return (
       <div className={styles.loadingBox}>
         <div className={styles.spinner}></div>
@@ -242,7 +265,9 @@ export default function CustomerList() {
   if (selectedCustomerId && activeProject) {
     return (
       <div className={styles.container}>
-        <CustomerDetail 
+        <CustomerDetail
+          key={selectedCustomerId}
+          initialSection={detailSection}
           customerId={selectedCustomerId}
           projectId={activeProject.id}
           onClose={() => setSelectedCustomerId(null)}
@@ -253,66 +278,29 @@ export default function CustomerList() {
     );
   }
 
-  // Extract unique stages and cities for filters
-  const stages = ['All', ...Array.from(new Set(customers.map(c => c.pipelineStage).filter(Boolean)))];
-  const cities = ['All', ...Array.from(new Set(customers.map(c => c.city).filter(Boolean)))];
-
-  // Filtered List
-  const filteredCustomers = customers.filter(c => {
-    const matchesSearch = 
-      (c.name || '').toLowerCase().includes(search.toLowerCase()) || 
-      (c.phoneNumber || '').includes(search);
-    
-    const matchesStage = stageFilter === 'All' || c.pipelineStage === stageFilter;
-    const matchesCity = cityFilter === 'All' || c.city === cityFilter;
-    const matchesLabel = selectedLabel === 'All' || (c.label || 'بدون تصنيف') === selectedLabel;
-
-    return matchesSearch && matchesStage && matchesCity && matchesLabel;
-  });
-
-  // Paginated List
-  const totalPages = Math.ceil(filteredCustomers.length / pageSize) || 1;
-  const paginatedCustomers = filteredCustomers.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+  const stages = ['All', ...(visiblePage?.stages.map(stage => stage.name) ?? [])];
+  const cities = ['All', ...(visiblePage?.cities ?? [])];
+  const totalPages = Math.ceil(totalFiltered / pageSize) || 1;
+  const displayedPage = visiblePage?.page ?? currentPage;
+  const paginatedCustomers = customers;
 
   return (
-    <div className={styles.container}>
-      {/* Title */}
-      <div className={styles.header} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
-        <div>
-          <h1 className={styles.pageTitle}>إدارة العملاء CRM</h1>
-          <p className={styles.pageSubtitle}>راجع بيانات العملاء والتقييمات والوسوم ومراحل البيع</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowImportPanel(!showImportPanel)}
-          aria-expanded={showImportPanel}
-          aria-controls="blacklist-import-panel"
-          className={styles.editButton}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            fontSize: '0.85rem',
-            padding: '8px 16px',
-            background: 'rgba(16, 185, 129, 0.12)',
-            borderColor: 'rgba(16, 185, 129, 0.25)',
-            color: 'rgb(16, 185, 129)',
-            borderRadius: 'var(--radius-md)',
-            cursor: 'pointer',
-            fontWeight: 600,
-            transition: 'background-color 0.2s, border-color 0.2s, color 0.2s'
-          }}
-        >
-          <Upload size={16} />
-          استيراد الطلاب المدفوعة (Excel)
-        </button>
-      </div>
+    <div className={styles.container} aria-busy={loading}>
+      <PageHeader title="العملاء" icon={<Users size={24} />} actions={
+        <Button variant="ghost" onClick={() => setShowTools(!showTools)} aria-expanded={showTools}
+          aria-controls="customer-tools"><FileDown size={16} aria-hidden="true" />الاستيراد والتصدير</Button>
+      } />
 
-      {activeProject && <CustomerExport key={activeProject.id} projectId={activeProject.id} />}
+      {loadError && <p role="alert">{loadError} <button type="button" onClick={() => void fetchCustomers()}>إعادة المحاولة</button></p>}
+      {loading && <p role="status">جاري تحديث العملاء...</p>}
 
+      <section id="customer-tools" hidden={!showTools} className={styles.customerTools} aria-label="أدوات العملاء">
+        {activeProject && <details className={styles.exportMenu}>
+          <summary><FileDown size={16} aria-hidden="true" />تصدير العملاء</summary>
+          <div className={styles.exportContent}><CustomerExport key={activeProject.id} projectId={activeProject.id} /></div>
+        </details>}
+        <Button onClick={() => setShowImportPanel(!showImportPanel)} aria-expanded={showImportPanel}
+          aria-controls="blacklist-import-panel"><Upload size={16} aria-hidden="true" />استيراد قائمة الحظر</Button>
       {/* Import Blacklist Panel */}
       {showImportPanel && (
         <section id="blacklist-import-panel" className="glass-panel" aria-labelledby="blacklist-import-heading" style={{ padding: 'var(--space-md)', marginBottom: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
@@ -426,95 +414,53 @@ export default function CustomerList() {
         </section>
       )}
 
-      {/* AI Smart Labels Statistics & Filter Bar */}
-      <div className={styles.labelsStatsBar}>
-        <button 
-          type="button"
-          className={`${styles.labelCard} ${selectedLabel === 'All' ? styles.labelCardActive : ''}`}
-          onClick={() => {
-            setSelectedLabel('All');
-            setCurrentPage(1);
-          }}
-          style={{ font: 'inherit', color: 'inherit' }}
-        >
-          <span className={styles.labelCardName}>كل التصنيفات</span>
-          <span className={styles.labelCardCount}>{customers.length}</span>
-        </button>
-        {labelStats.map(stat => (
-          <button 
-            key={stat.name}
-            type="button"
-            className={`${styles.labelCard} ${selectedLabel === stat.name ? styles.labelCardActive : ''}`}
-            onClick={() => {
-              setSelectedLabel(stat.name);
-              setCurrentPage(1);
-            }}
-            style={{ font: 'inherit', color: 'inherit' }}
-          >
-            <span className={styles.labelCardName}>{stat.name}</span>
-            <span className={styles.labelCardCount}>{stat.count}</span>
-          </button>
-        ))}
-      </div>
+      </section>
 
-      {/* Search and Filters panel */}
-      <div className={`glass-panel ${styles.filterBar}`}>
-        <div className={styles.searchWrapper}>
-          <Search size={18} className={styles.searchIcon} />
-          <input 
-            type="text" 
-            aria-label="بحث في العملاء بالاسم أو رقم الهاتف"
-            placeholder="ابحث بالاسم أو رقم الهاتف..." 
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setCurrentPage(1);
-            }}
-            className={`neon-input ${styles.searchInput}`}
-          />
+      <section className={styles.customerSearch} aria-label="البحث وتصفية العملاء">
+        <FilterTabs compactOnMobile label="مراحل العملاء" selected={stageFilter} onChange={stage => { setStageFilter(stage); setCurrentPage(1); }}
+          options={stages.map(stage => {
+            const stageStyle = stageStyles[stage];
+            const StageIcon = stage === 'All' ? Users : stageStyle?.icon ?? ListFilter;
+            return { key: stage, label: stage === 'All' ? 'كل العملاء' : stage,
+              count: stage === 'All' ? totalCustomers : visiblePage?.stages.find(entry => entry.name === stage)?.count ?? 0,
+              tone: stageStyle?.tone, icon: <StageIcon size={16} aria-hidden="true" /> };
+          })} />
+        <div className={styles.searchToolbar}>
+          <SearchField containerClassName={styles.searchWrapper} label="بحث في العملاء بالاسم أو رقم الهاتف"
+            placeholder="ابحث بالاسم أو رقم الهاتف…" value={search}
+            onChange={event => setSearch(event.target.value)} />
+          <Button onClick={() => setShowFilters(!showFilters)} aria-expanded={showFilters} aria-controls="customer-filters">
+            <SlidersHorizontal size={16} aria-hidden="true" />تصفية
+            {[stageFilter, cityFilter, selectedLabel].filter(filter => filter !== 'All').length > 0 &&
+              <span>({[stageFilter, cityFilter, selectedLabel].filter(filter => filter !== 'All').length})</span>}
+          </Button>
         </div>
-
-        <div className={styles.filtersGroup}>
-          <div className={styles.filterSelectWrapper}>
-            <UserCheck size={16} className={styles.filterIcon} />
-            <select 
-              aria-label="تصفية العملاء حسب مرحلة البيع"
-              value={stageFilter} 
-              onChange={(e) => {
-                setStageFilter(e.target.value);
-                setCurrentPage(1);
-              }}
-              className={`neon-input ${styles.filterSelect}`}
-            >
-              {stages.map(st => (
-                <option key={st} value={st}>{st === 'All' ? 'كل المراحل' : st}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className={styles.filterSelectWrapper}>
-            <MapPin size={16} className={styles.filterIcon} />
-            <select 
-              aria-label="تصفية العملاء حسب المدينة"
-              value={cityFilter} 
-              onChange={(e) => {
-                setCityFilter(e.target.value);
-                setCurrentPage(1);
-              }}
-              className={`neon-input ${styles.filterSelect}`}
-            >
-              {cities.map(ct => (
-                <option key={ct} value={ct}>{ct === 'All' ? 'كل المدن' : ct}</option>
-              ))}
-            </select>
-          </div>
+        <div id="customer-filters" hidden={!showFilters} className={styles.customerFilters}>
+          <label>مرحلة البيع<select value={stageFilter} onChange={event => { setStageFilter(event.target.value); setCurrentPage(1); }}
+            className="neon-input" aria-label="تصفية العملاء حسب مرحلة البيع">
+            {stages.map(stage => <option key={stage} value={stage}>{stage === 'All' ? 'كل المراحل' : stage}</option>)}
+          </select></label>
+          <label>المدينة<select value={cityFilter} onChange={event => { setCityFilter(event.target.value); setCurrentPage(1); }}
+            className="neon-input" aria-label="تصفية العملاء حسب المدينة">
+            {cities.map(city => <option key={city} value={city}>{city === 'All' ? 'كل المدن' : city}</option>)}
+          </select></label>
+          <label>التصنيف<select value={selectedLabel} onChange={event => { setSelectedLabel(event.target.value); setCurrentPage(1); }}
+            className="neon-input" aria-label="تصفية العملاء حسب التصنيف">
+            <option value="All">كل التصنيفات</option>
+            {labelStats.map(label => <option key={label.name} value={label.name}>{label.name} ({label.count})</option>)}
+          </select></label>
         </div>
-      </div>
+        <div className={styles.resultsSummary} role="status">
+          <span>{formatCount(totalFiltered)} عميل{totalFiltered !== totalCustomers && ` من ${formatCount(totalCustomers)}`}</span>
+          {(search || stageFilter !== 'All' || cityFilter !== 'All' || selectedLabel !== 'All') &&
+            <Button variant="ghost" onClick={() => { setSearch(''); setStageFilter('All'); setCityFilter('All'); setSelectedLabel('All'); setCurrentPage(1); }}>مسح التصفية</Button>}
+        </div>
+      </section>
 
       {/* Customers Table / Grid */}
       <div className={`glass-panel ${styles.tablePanel}`}>
-        {filteredCustomers.length === 0 ? (
-          <div className={styles.emptyTable}>لا يوجد عملاء مطابقون للفلاتر الحالية.</div>
+        {totalFiltered === 0 ? (
+          <EmptyState title="لا توجد نتائج مطابقة" description="جرّب تعديل البحث أو إزالة أحد الفلاتر لعرض العملاء." />
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className={styles.table}>
@@ -531,13 +477,16 @@ export default function CustomerList() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedCustomers.map(c => (
-                  <tr key={c.id} className={styles.tr}>
-                    <td className={styles.td}>
-                      <button 
+                {paginatedCustomers.map(c => {
+                  const stageStyle = stageStyles[c.pipelineStage ?? ''];
+                  const StageIcon = stageStyle?.icon ?? ListFilter;
+                  return (
+                  <tr key={c.id} className={styles.tr} data-expanded={expandedCustomerId === c.id}>
+                    <td data-label="العميل" className={styles.td}>
+                      <button
                         type="button"
-                        className={styles.customerCell} 
-                        onClick={() => setSelectedCustomerId(c.id)} 
+                        className={styles.customerCell}
+                        onClick={() => { setDetailSection('profile'); setSelectedCustomerId(c.id); }}
                         style={{ border: 'none', background: 'none', display: 'flex', width: '100%', textAlign: 'right', font: 'inherit', color: 'inherit', padding: 0 }}
                       >
                         <div className={styles.avatar}>
@@ -546,24 +495,28 @@ export default function CustomerList() {
                         <div className={styles.customerNameBox}>
                           <span className={styles.customerName}>{c.name || 'عميل بدون اسم'}</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span className={styles.customerPhone}>{c.phoneNumber}</span>
+                            <span dir="ltr" className={styles.customerPhone}>{c.phoneNumber}</span>
                             {c.label && (
                               <span className={styles.smartLabelBadge}>{c.label}</span>
                             )}
                             {c.isBlacklisted && (
-                              <span className={styles.smartLabelBadge} style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: 'hsl(0, 100%, 65%)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
+                              <span className={styles.smartLabelBadge} style={{ backgroundColor: 'var(--danger-soft)', color: 'var(--danger)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
                                 حظر رد آلي
                               </span>
                             )}
                           </div>
                         </div>
                       </button>
+                      <button type="button" className={styles.mobileRowToggle} aria-expanded={expandedCustomerId === c.id}
+                        onClick={() => setExpandedCustomerId(expandedCustomerId === c.id ? null : c.id)}>
+                        {expandedCustomerId === c.id ? 'تفاصيل أقل' : 'تفاصيل أكثر'}<ChevronDown size={14} aria-hidden="true" />
+                      </button>
                     </td>
-                    <td className={styles.td}>
+                    <td data-label="المدينة" className={styles.td}>
                       <span className={styles.locationText}>
                         {c.city ? (
                           <>
-                            <MapPin size={12} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                            <MapPin size={13} aria-hidden="true" />
                             {c.city}
                           </>
                         ) : (
@@ -571,28 +524,24 @@ export default function CustomerList() {
                         )}
                       </span>
                     </td>
-                    <td className={styles.td}>
+                    <td data-label="التقييم" className={styles.td}>
                       <div className={styles.scoreBox}>
-                        <Sparkles size={12} style={{ color: 'hsl(var(--accent-secondary))', marginRight: '4px' }} />
+                        <Sparkles size={14} aria-hidden="true" />
                         <span className={styles.scoreVal}>{Number.isFinite(c.leadScore) ? c.leadScore : 'غير متاح'}</span>
                       </div>
                     </td>
-                    <td className={styles.td}>
-                      <span className={styles.stageBadge} style={{
-                        backgroundColor: c.pipelineStage === 'Won' ? 'rgba(16, 185, 129, 0.15)' : 
-                                         c.pipelineStage === 'Lost' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255,255,255,0.04)',
-                        color: c.pipelineStage === 'Won' ? 'hsl(140, 100%, 65%)' : 
-                               c.pipelineStage === 'Lost' ? 'hsl(0, 100%, 65%)' : 'hsl(var(--text-secondary))'
-                      }}>
+                    <td data-label="المرحلة" className={styles.td}>
+                      <Badge tone={stageStyle?.tone}>
+                        <StageIcon size={13} aria-hidden="true" />
                         {c.pipelineStage || 'غير محددة'}
-                      </span>
+                      </Badge>
                     </td>
-                    <td className={styles.td}>
+                    <td data-label="الميزانية" className={styles.td}>
                       <span className={styles.budgetText}>
-                        {c.budget ? `$${c.budget.toLocaleString()}` : <span style={{ color: 'hsl(var(--text-muted))' }}>-</span>}
+                        {c.budget !== null && c.budget !== undefined ? <span title="العملة غير مسجلة في بيانات العميل">{c.budget.toLocaleString('ar-EG')}<small className={styles.currencyHint}>العملة غير محددة</small></span> : <span style={{ color: 'hsl(var(--text-muted))' }}>-</span>}
                       </span>
                     </td>
-                    <td className={styles.td}>
+                    <td data-label="الوسوم" className={styles.td}>
                       <div className={styles.tagsContainer}>
                         {c.tags && c.tags.slice(0, 2).map(tag => (
                           <span key={tag} className={styles.tagBadge}>{tag}</span>
@@ -602,44 +551,27 @@ export default function CustomerList() {
                         )}
                       </div>
                     </td>
-                    <td className={styles.td} style={{ textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                        <button 
-                          onClick={() => setSelectedCustomerId(c.id)} 
-                          className={styles.editButton}
-                          title="تعديل الملف"
-                          aria-label={`تعديل ملف ${c.name || c.phoneNumber}`}
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => handleGenerateAIProfile(c.id)} 
-                          disabled={generatingIds.includes(c.id)}
-                          className={styles.editButton}
-                          style={{
-                            background: 'rgba(168, 85, 247, 0.12)',
-                            borderColor: 'rgba(168, 85, 247, 0.25)',
-                            color: 'hsl(270, 84%, 75%)'
-                          }}
-                          title="تحديث ذكي بالـ AI"
-                          aria-label={`توليد ملف ذكاء اصطناعي للعميل ${c.name || c.phoneNumber}`}
-                        >
-                          {generatingIds.includes(c.id) ? (
-                            <div className={styles.spinnerMini} />
-                          ) : (
-                            <Sparkles size={14} />
-                          )}
-                        </button>
+                    <td data-label="الإجراءات" className={styles.td} style={{ textAlign: 'center' }}>
+                      <div className={styles.rowActions}>
+                        <Link href={`/inbox?customerId=${encodeURIComponent(c.id)}&startConversation=1`} className={styles.conversationLink}
+                          aria-label={`فتح محادثة واتساب مع ${c.name || c.phoneNumber}`}>
+                          <MessageSquare size={15} aria-hidden="true" />محادثة
+                        </Link>
+                        <Button variant="ghost" onClick={() => { setDetailSection('followups'); setSelectedCustomerId(c.id); }}
+                          aria-label={`إضافة متابعة للعميل ${c.name || c.phoneNumber}`}>
+                          <CalendarPlus size={15} aria-hidden="true" />متابعة
+                        </Button>
+                        <Button variant="ghost" onClick={() => { setDetailSection('profile'); setSelectedCustomerId(c.id); }}
+                          aria-label={`فتح ملف ${c.name || c.phoneNumber}`}><UserRound size={15} aria-hidden="true" />الملف</Button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                ); })}
               </tbody>
             </table>
-            
+
             {/* Pagination Controls */}
-            {filteredCustomers.length > 0 && (
+            {totalFiltered > 0 && (
               <div className={styles.pagination}>
                 <div className={styles.paginationInfo}>
                   <span>عرض السطور:</span>
@@ -659,14 +591,14 @@ export default function CustomerList() {
                     ))}
                   </select>
                   <span style={{ marginRight: '12px', marginLeft: '12px' }}>
-                    عرض {Math.min((currentPage - 1) * pageSize + 1, filteredCustomers.length)} - {Math.min(currentPage * pageSize, filteredCustomers.length)} من {filteredCustomers.length}
+                    عرض {Math.min((displayedPage - 1) * pageSize + 1, totalFiltered)} - {Math.min(displayedPage * pageSize, totalFiltered)} من {totalFiltered}
                   </span>
                 </div>
 
                 <div className={styles.paginationControls}>
                   <button
                     onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                    disabled={currentPage === totalPages}
+                    disabled={loading || displayedPage === totalPages}
                     className={styles.paginationBtn}
                     title="الصفحة التالية"
                     aria-label="الصفحة التالية"
@@ -685,9 +617,10 @@ export default function CustomerList() {
                         <button
                           key={page}
                           onClick={() => setCurrentPage(page)}
-                          className={`${styles.paginationBtn} ${currentPage === page ? styles.paginationBtnActive : ''}`}
+                          disabled={loading}
+                          className={`${styles.paginationBtn} ${displayedPage === page ? styles.paginationBtnActive : ''}`}
                           aria-label={`الصفحة ${page}`}
-                          aria-current={currentPage === page ? 'page' : undefined}
+                          aria-current={displayedPage === page ? 'page' : undefined}
                         >
                           {page}
                         </button>
@@ -697,7 +630,7 @@ export default function CustomerList() {
 
                   <button
                     onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1}
+                    disabled={loading || displayedPage === 1}
                     className={styles.paginationBtn}
                     title="الصفحة السابقة"
                     aria-label="الصفحة السابقة"

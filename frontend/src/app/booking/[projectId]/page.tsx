@@ -2,7 +2,7 @@
 
 import React, { use, useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { AlertCircle, Calendar, CheckCircle, Clock, RefreshCw, Smartphone, User, Users } from 'lucide-react';
+import { AlertCircle, Calendar, CheckCircle, RefreshCw, Smartphone, User, Users } from 'lucide-react';
 import styles from './booking.module.css';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost';
@@ -11,6 +11,7 @@ const DISPLAY_TIMEZONE = 'Africa/Cairo';
 interface GroupAppointment {
   id: string;
   name: string;
+  courseType?: 'regular' | 'intensive';
   dateTime: string;
   capacity: number;
   bookedCount: number;
@@ -232,10 +233,8 @@ export default function PublicBookingPage({ params }: PageProps) {
                           />
                           <span className={styles.radioMark} aria-hidden="true" />
                           <span id={`group-${group.id}-details`} className={styles.groupCopy}>
-                            <strong>{group.name || (group.mode === 'online' ? 'أونلاين' : 'في المركز')}</strong>
-                            <span><Clock size={14} aria-hidden="true" /> أول جلسة: <time dateTime={group.dateTime}>{formatDate(group.dateTime)}</time></span>
-                            {group.courseSecondDateTime && <span><Clock size={14} aria-hidden="true" /> الجلسة الثانية: <time dateTime={group.courseSecondDateTime}>{formatDate(group.courseSecondDateTime)}</time></span>}
-                            {group.freeSessionDateTime && <span><Calendar size={14} aria-hidden="true" /> الجلسة المجانية: <time dateTime={group.freeSessionDateTime}>{formatDate(group.freeSessionDateTime)}</time></span>}
+                            <strong>{group.courseType === 'intensive' ? 'الكورس المكثف' : 'الكورس العادي'}: {group.name || (group.mode === 'online' ? 'أونلاين' : 'في المركز')}</strong>
+                            <span><Calendar size={14} aria-hidden="true" /> الحصة المجانية: <time dateTime={group.freeSessionDateTime || group.dateTime}>{formatDate(group.freeSessionDateTime || group.dateTime)}</time></span>
                             {group.instructorName && <span><User size={14} aria-hidden="true" /> المدرّب: {group.instructorName}</span>}
                           </span>
                           <span className={styles.capacity}>

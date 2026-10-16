@@ -32,6 +32,7 @@ public sealed class ContentAutomationJob
     public async Task PublishDueAsync()
     {
         var now = DateTime.UtcNow;
+        await _weeklyPlans.ExpireDraftPlansAsync(null, CancellationToken.None);
         await RecoverStalePublicationsAsync(now, CancellationToken.None);
         var projectIds = await _dbContext.ContentAutomationSettings.IgnoreQueryFilters()
             .Where(settings => settings.IsEnabled
@@ -80,15 +81,16 @@ public sealed class ContentAutomationJob
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    [DisableConcurrentExecution(timeoutInSeconds: 1800)]
     [AutomaticRetry(Attempts = 0)]
     public async Task GenerateSampleAsync(Guid projectId)
     {
+        await using var generationLock = await ContentGenerationLock.TryAcquireAsync(
+            _dbContext, ContentGenerationLock.Sample(projectId), CancellationToken.None);
+        if (generationLock is null) return;
         var activeGeneration = await _dbContext.ContentPosts.IgnoreQueryFilters()
             .AnyAsync(post => post.ProjectId == projectId
                 && post.IsStyleSample
-                && (post.Status == ContentPostStatus.Generating
-                    || post.Status == ContentPostStatus.AwaitingApproval));
+                && post.Status == ContentPostStatus.AwaitingApproval);
         if (activeGeneration) return;
         await _generation.GenerateSampleAsync(projectId, CancellationToken.None);
     }
@@ -108,10 +110,12 @@ public sealed class ContentAutomationJob
         await GenerateSampleAsync(projectId);
     }
 
-    [DisableConcurrentExecution(timeoutInSeconds: 3600)]
     [AutomaticRetry(Attempts = 0)]
     public async Task GenerateWeeklyPlanAsync(Guid projectId)
     {
+        await using var generationLock = await ContentGenerationLock.TryAcquireAsync(
+            _dbContext, ContentGenerationLock.Week(projectId), CancellationToken.None);
+        if (generationLock is null) return;
         var plan = await _weeklyPlans.GenerateAsync(projectId, CancellationToken.None);
         if (plan.Status is not (ContentWeekPlanStatus.Generating or ContentWeekPlanStatus.AwaitingApproval)) return;
         var generatedPreviews = await GenerateMissingPlanPreviewsAsync(plan, CancellationToken.None);
@@ -123,6 +127,8 @@ public sealed class ContentAutomationJob
     [AutomaticRetry(Attempts = 0)]
     public async Task RegenerateWeeklyPlanItemAsync(Guid projectId, Guid planId, Guid itemId)
     {
+        await using var generationLock = await ContentGenerationLock.AcquireAsync(
+            _dbContext, ContentGenerationLock.Week(projectId), CancellationToken.None);
         var item = await _weeklyPlans.RegenerableItemAsync(
             projectId,
             planId,
@@ -149,7 +155,7 @@ public sealed class ContentAutomationJob
             throw new InvalidOperationException("هذه العينة غير جاهزة للاعتماد.");
         if (!string.Equals(post.BrandLogoObjectKey, settings.LogoObjectKey, StringComparison.Ordinal))
             throw new InvalidOperationException("تم تغيير اللوجو بعد إنشاء هذه العينة. ولّد عينة جديدة أولاً.");
-        if (!string.Equals(post.BrandStylePrompt, settings.StylePrompt, StringComparison.Ordinal))
+        if (!string.Equals(post.BrandStylePrompt, ContentBrandReferences.Identity(settings), StringComparison.Ordinal))
             throw new InvalidOperationException("تم تغيير شكل التصميم بعد إنشاء هذه العينة. ولّد عينة جديدة أولاً.");
         if (string.IsNullOrWhiteSpace(settings.FacebookPageId))
             throw new InvalidOperationException("اختر صفحة Facebook قبل اعتماد العينة.");
@@ -282,7 +288,7 @@ public sealed class ContentAutomationJob
                 return;
             }
             if (post.Status == ContentPostStatus.Published)
-                await AdvanceApprovedPlanAsync(plan, dueItem, items, settings, cancellationToken);
+                await AdvanceApprovedPlanAsync(plan, items, settings, cancellationToken);
         }
         catch (FacebookPublishException exception) when (!exception.OutcomeUnknown)
         {
@@ -327,21 +333,37 @@ public sealed class ContentAutomationJob
             .SingleAsync(candidate => candidate.ProjectId == post.ProjectId
                 && candidate.Id == item.PlanId, cancellationToken);
         if (plan.Status != ContentWeekPlanStatus.Approved) return;
-        var items = await _dbContext.ContentWeekPlanItems.IgnoreQueryFilters()
-            .Where(candidate => candidate.ProjectId == post.ProjectId && candidate.PlanId == plan.Id)
-            .OrderBy(candidate => candidate.DayIndex)
-            .ToListAsync(cancellationToken);
-        await AdvanceApprovedPlanAsync(plan, item, items, settings, cancellationToken);
+        var hasUnpublishedItems = await _dbContext.ContentWeekPlanItems.IgnoreQueryFilters()
+            .AnyAsync(candidate => candidate.ProjectId == post.ProjectId && candidate.PlanId == plan.Id
+                && !_dbContext.ContentPosts.IgnoreQueryFilters().Any(linkedPost =>
+                    linkedPost.ProjectId == post.ProjectId && linkedPost.Id == candidate.ContentPostId
+                    && linkedPost.Status == ContentPostStatus.Published), cancellationToken);
+        if (!hasUnpublishedItems)
+        {
+            await CompletePlanAsync(plan, settings, cancellationToken);
+            return;
+        }
+        // A manually selected post may be in any week; keep the earliest remaining slot.
+        if (settings.IsEnabled)
+            settings.NextPublishAtUtc = await _weeklyPlans.NextApprovedPublishAtAsync(post.ProjectId, cancellationToken);
+        settings.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task AdvanceApprovedPlanAsync(
         ContentWeekPlan plan,
-        ContentWeekPlanItem publishedItem,
         IReadOnlyList<ContentWeekPlanItem> items,
         ContentAutomationSettings settings,
         CancellationToken cancellationToken)
     {
-        var nextItem = items.FirstOrDefault(item => item.DayIndex > publishedItem.DayIndex);
+        var postIds = items.Where(item => item.ContentPostId.HasValue)
+            .Select(item => item.ContentPostId!.Value).ToArray();
+        var publishedPostIds = await _dbContext.ContentPosts.IgnoreQueryFilters()
+            .Where(post => post.ProjectId == plan.ProjectId && postIds.Contains(post.Id)
+                && post.Status == ContentPostStatus.Published)
+            .Select(post => post.Id).ToListAsync(cancellationToken);
+        var nextItem = items.FirstOrDefault(item => item.ContentPostId is not Guid postId
+            || !publishedPostIds.Contains(postId));
         if (nextItem is null)
         {
             await CompletePlanAsync(plan, settings, cancellationToken);
@@ -349,11 +371,19 @@ public sealed class ContentAutomationJob
         }
         if (nextItem.ScheduledForUtc <= DateTime.UtcNow)
         {
-            nextItem.ScheduledForUtc = ContentSchedule.NextDayUtc(
+            nextItem.ScheduledForUtc = ContentSchedule.NextSlotUtc(
                 DateTime.UtcNow,
                 settings.DailyPublishTimeLocal,
-                settings.Timezone);
+                settings.Timezone,
+                Math.Max(1, items.Count / 7));
             nextItem.UpdatedAt = DateTime.UtcNow;
+            if (nextItem.ContentPostId is Guid nextPostId)
+            {
+                var nextPost = await _dbContext.ContentPosts.IgnoreQueryFilters()
+                    .SingleAsync(post => post.ProjectId == plan.ProjectId && post.Id == nextPostId, cancellationToken);
+                nextPost.ScheduledForUtc = nextItem.ScheduledForUtc;
+                nextPost.UpdatedAt = DateTime.UtcNow;
+            }
         }
         settings.NextPublishAtUtc = nextItem.ScheduledForUtc;
         settings.LastError = null;
@@ -372,6 +402,8 @@ public sealed class ContentAutomationJob
         settings.LastError = null;
         settings.UpdatedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (!settings.IsEnabled) return;
 
         var nextApprovedPublishAtUtc = await _weeklyPlans.NextApprovedPublishAtAsync(
             settings.ProjectId,

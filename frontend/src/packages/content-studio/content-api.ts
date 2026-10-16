@@ -1,6 +1,10 @@
 import { api } from '../../services/api';
 import type {
+  ContentImageTrial,
+  CreateContentImageTrial,
   ContentStudioData,
+  PaperDesignOptions,
+  PaperFrame,
   ContentVideo,
   ContentVideoPlanAccepted,
   ContentVideoSceneRetryIntent,
@@ -34,6 +38,20 @@ export const contentApi = {
     return (await api.post<ContentStudioData>('/api/content/logo', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })).data;
+  },
+
+  async uploadBrandReference(file: File, kind: 'palette' | 'post') {
+    const form = new FormData();
+    form.append('image', file);
+    form.append('kind', kind);
+    return (await api.post<ContentStudioData>('/api/content/brand-references', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120_000,
+    })).data;
+  },
+
+  async deleteBrandReference(id: string) {
+    return (await api.delete<ContentStudioData>(`/api/content/brand-references/${id}`)).data;
   },
 
   async downloadAsset(assetUrl: string, signal: AbortSignal) {
@@ -135,8 +153,26 @@ export const contentApi = {
     return (await api.post<{ message: string }>(`/api/content/videos/${videoId}/assembly/retry`)).data;
   },
 
-  async getDocuments(signal?: AbortSignal) {
-    return (await api.get<{ documents: ContentDocumentSummary[] }>('/api/content/documents', { signal })).data;
+  async getPaperOptions(signal?: AbortSignal) {
+    return (await api.get<PaperDesignOptions>('/api/content/papers/options', { signal })).data;
+  },
+
+  async generatePaperFrame(form: FormData) {
+    return (await api.post<PaperFrame>('/api/content/papers/frame', form, {
+      headers: { 'Content-Type': 'multipart/form-data' }, timeout: 600_000,
+    })).data;
+  },
+
+  async generateSingleImage(input: CreateContentImageTrial, signal?: AbortSignal) {
+    return (await api.post<ContentImageTrial>('/api/content/images/preview', input, { timeout: 600_000, signal })).data;
+  },
+
+  async previewPaperPage(input: { frameToken: string; content: string; title?: string }, signal?: AbortSignal) {
+    return (await api.post<ContentImageTrial>('/api/content/papers/preview', input, { timeout: 600_000, signal })).data;
+  },
+
+  async getDocuments(signal?: AbortSignal, kind?: 'Paper') {
+    return (await api.get<{ documents: ContentDocumentSummary[] }>('/api/content/documents', { signal, params: { kind } })).data;
   },
 
   async getDocument(documentId: string, signal?: AbortSignal) {
@@ -173,6 +209,10 @@ export const contentApi = {
 
   async regenerateDocumentImages(documentId: string) {
     return (await api.post<{ message: string }>(`/api/content/documents/${documentId}/regenerate-images`)).data;
+  },
+
+  async applyDocumentPaperFrame(documentId: string, paperFrameToken: string) {
+    return (await api.post<{ message: string }>(`/api/content/documents/${documentId}/paper-frame`, { paperFrameToken })).data;
   },
 };
 

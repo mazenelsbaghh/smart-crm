@@ -8,6 +8,8 @@ import {
   Download,
   Film,
   LoaderCircle,
+  Plus,
+  SlidersHorizontal,
   Play,
   RefreshCw,
   ShieldCheck,
@@ -80,6 +82,16 @@ export default function ContentVideos({ projectId, canManage, onDraftDirtyChange
   const detailRequestRef = useRef(0);
   const currentProjectRef = useRef(projectId);
   const mountedRef = useRef(true);
+  const reviewTargetRef = useRef<HTMLDivElement>(null);
+  const requestedFocusIdRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!requestedFocusIdRef.current || selectedVideoId !== requestedFocusIdRef.current
+      || detailLoading || (!selectedVideo && !detailError)) return;
+    requestedFocusIdRef.current = undefined;
+    revealVideoTarget(reviewTargetRef.current);
+  }, [selectedVideoId, selectedVideo, detailLoading, detailError]);
+
 
   useEffect(() => {
     currentProjectRef.current = projectId;
@@ -133,6 +145,21 @@ export default function ContentVideos({ projectId, canManage, onDraftDirtyChange
         && !signal?.aborted && requestNumber === detailRequestRef.current) setDetailLoading(false);
     }
   }, []);
+
+  const selectVideo = (videoId: string) => {
+    if (videoId === selectedVideo?.id) {
+      revealVideoTarget(reviewTargetRef.current);
+      return;
+    }
+    requestedFocusIdRef.current = videoId;
+    if (videoId === selectedVideoId) {
+      if (!detailLoading) void loadVideo(videoId);
+      return;
+    }
+    setDetailError(undefined);
+    setSelectedVideo(null);
+    setSelectedVideoId(videoId);
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -219,12 +246,17 @@ export default function ContentVideos({ projectId, canManage, onDraftDirtyChange
     </div>}
 
     <VideoReadiness readiness={workspace.readiness} />
-    <div className={styles.quotaNote} role="note">
-      <Clock3 size={18} aria-hidden="true" />
-      <div><strong>Gemini Omni في Public Preview وبحصة ثابتة</strong><span>كل مشهد يدخل مهمة مستقلة؛ وقت الانتظار قد يختلف، والمشاهد المكتملة تبقى محفوظة إذا احتاج مشهد آخر تدخلك.</span></div>
-    </div>
+    {!canManage && <p className={styles.readOnlyNote}>يمكنك مراجعة الفيديوهات فقط. التوليد متاح للمالك والمدير.</p>}
+    <details className={styles.mediaHelp}><summary><Clock3 size={16} aria-hidden="true" /> حدود وقت التوليد والحصة المتاحة</summary><p>Gemini Omni في Public Preview وبحصة ثابتة. كل مشهد يدخل مهمة مستقلة؛ وقت الانتظار قد يختلف، والمشاهد المكتملة تبقى محفوظة إذا احتاج مشهد آخر تدخلك.</p></details>
+
+    <VideoHistory
+      videos={workspace.videos}
+      selectedVideoId={selectedVideoId}
+      onSelect={selectVideo}
+    />
 
     <div className={styles.videoWorkspace}>
+      <details className={styles.mediaCreateDisclosure} open={workspace.videos.length === 0}><summary><Plus size={18} aria-hidden="true" /> إنشاء فيديو جديد<span>الفكرة والمشاهد</span></summary>
       <VideoPlanForm
         readiness={workspace.readiness}
         canManage={canManage}
@@ -232,29 +264,33 @@ export default function ContentVideos({ projectId, canManage, onDraftDirtyChange
         onCreate={createPlan}
         onDirtyChange={onDraftDirtyChange}
       />
-      <VideoDetail
-        key={selectedVideo?.id ?? 'empty-video'}
-        video={selectedVideo}
-        loading={detailLoading}
-        busy={busy}
-        canManage={canManage}
-        agentPlatformApiKeyConfigured={workspace.readiness.geminiAgentPlatformApiKeyConfigured}
-        enterpriseProjectIdConfigured={Boolean(workspace.readiness.enterpriseProjectId)}
-        onGenerate={(videoId) => runMutation('generate', videoId, () => contentApi.generateVideo(videoId))}
-        onRetryScene={(videoId, sceneId, intent) => runMutation(
-          `scene-${sceneId}`,
-          videoId,
-          () => contentApi.retryVideoScene(videoId, sceneId, intent),
-        )}
-        onRetryAssembly={(videoId) => runMutation('assembly', videoId, () => contentApi.retryVideoAssembly(videoId))}
-      />
+      </details>
+      <div ref={reviewTargetRef} className={styles.videoReviewTarget} tabIndex={-1} role="region"
+        aria-label={selectedVideo ? `مراجعة الفيديو: ${selectedVideo.ideaTitle}` : 'مراجعة الفيديو المختار'} aria-busy={detailLoading}>
+        {detailError && selectedVideoId && !selectedVideo ? <div className={styles.videoEmpty}>
+          <AlertTriangle size={32} aria-hidden="true" /><h2>تعذّر تحميل الفيديو المختار</h2>
+          <p>أعد تحميل تفاصيل الفيديو لعرض الفكرة والمشاهد المحفوظة.</p>
+          <button type="button" className={styles.btnSecondary} onClick={() => selectVideo(selectedVideoId)}><RefreshCw size={17} aria-hidden="true" /> إعادة تحميل الفيديو</button>
+        </div> : <VideoDetail
+          key={selectedVideo?.id ?? 'empty-video'}
+          video={selectedVideo}
+          loading={detailLoading}
+          busy={busy}
+          canManage={canManage}
+          agentPlatformApiKeyConfigured={workspace.readiness.geminiAgentPlatformApiKeyConfigured}
+          enterpriseProjectIdConfigured={Boolean(workspace.readiness.enterpriseProjectId)}
+          onGenerate={(videoId) => runMutation('generate', videoId, () => contentApi.generateVideo(videoId))}
+          onRetryScene={(videoId, sceneId, intent) => runMutation(
+            `scene-${sceneId}`,
+            videoId,
+            () => contentApi.retryVideoScene(videoId, sceneId, intent),
+          )}
+          onRetryAssembly={(videoId) => runMutation('assembly', videoId, () => contentApi.retryVideoAssembly(videoId))}
+        />}
+      </div>
     </div>
 
-    <VideoHistory
-      videos={workspace.videos}
-      selectedVideoId={selectedVideoId}
-      onSelect={(videoId) => { setSelectedVideo(null); setSelectedVideoId(videoId); }}
-    />
+
   </section>;
 }
 
@@ -279,12 +315,12 @@ function VideoReadiness({ readiness }: { readiness: ContentVideoReadiness }) {
     { label: 'قاعدة المعرفة', ready: readiness.knowledgeDocumentCount > 0, detail: `${readiness.knowledgeDocumentCount} مستند معتمد` },
     { label: 'موديل الفيديو', ready: readiness.configured, detail: readiness.configured ? readiness.model : readiness.reason ?? 'الإعداد غير مكتمل' },
   ];
-  return <section className={styles.videoReadiness} aria-label="جاهزية توليد الفيديو">
+  return <details className={styles.mediaReadiness} open={!readiness.configured}><summary>{readiness.configured ? <CheckCircle2 size={17} aria-hidden="true" /> : <AlertTriangle size={17} aria-hidden="true" />} {readiness.configured ? 'جاهز لإنشاء الفيديو' : 'إعدادات الفيديو تحتاج استكمال'}<span>التفاصيل والإعدادات</span></summary><section className={styles.videoReadiness} aria-label="جاهزية توليد الفيديو">
     {checks.map((check) => <div className={styles.videoReadinessItem} key={check.label}>
       <span className={check.ready ? styles.readyIcon : styles.waitIcon}>{check.ready ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}</span>
       <div><strong>{check.label}</strong><small>{check.detail}</small></div>
     </div>)}
-  </section>;
+  </section></details>;
 }
 
 interface VideoPlanFormProps {
@@ -325,7 +361,7 @@ function VideoPlanForm({ readiness, canManage, busy, onCreate, onDirtyChange }: 
 
   const disabled = busy || !canManage || !readiness.configured || !readiness.geminiAgentPlatformApiKeyConfigured;
   return <aside className={styles.videoPlanPanel} aria-labelledby="content-video-studio-heading">
-    <div className={styles.videoSectionHeading}><span>01</span><div><h2 id="content-video-studio-heading">فكرة فيديو جديدة</h2><p>سيقرأ النظام المعرفة المعتمدة، ثم يعرض الفكرة والمشاهد قبل بدء التوليد.</p></div></div>
+    <div className={styles.videoSectionHeading}><Film size={20} aria-hidden="true" /><div><h2 id="content-video-studio-heading">فكرة فيديو جديدة</h2><p>سيقرأ النظام المعرفة المعتمدة، ثم يعرض الفكرة والمشاهد قبل بدء التوليد.</p></div></div>
     <form onSubmit={submitPlan}>
       <fieldset disabled={busy || !canManage} className={styles.videoFieldset}>
         <label className={styles.field}>
@@ -333,17 +369,16 @@ function VideoPlanForm({ readiness, canManage, busy, onCreate, onDirtyChange }: 
           <textarea rows={4} maxLength={2000} value={brief} onChange={(event) => setBrief(event.target.value)} placeholder="مثال: فيديو يشرح الفرق الذي نصنعه للعميل، واتركه فارغًا ليختار النظام من قاعدة المعرفة." />
           <small>{brief.length} من 2000 حرف</small>
         </label>
-        <div className={styles.videoFormGrid}>
+        <details className={styles.mediaHelp}><summary><SlidersHorizontal size={16} aria-hidden="true" /> عدد المشاهد والمقاس والجودة</summary><div className={styles.videoFormGrid}>
           <label className={styles.field}><span>عدد المشاهد</span><select value={sceneCount} onChange={(event) => setSceneCount(Number(event.target.value))}>{[3, 4, 5, 6].map((count) => <option value={count} key={count}>{count} مشاهد</option>)}</select></label>
           <label className={styles.field}><span>مدة المشهد</span><select value={durationSeconds} onChange={(event) => setDurationSeconds(Number(event.target.value))}>{Array.from({ length: 8 }, (_, index) => index + 3).map((seconds) => <option value={seconds} key={seconds}>{seconds} ثوانٍ</option>)}</select></label>
           <label className={styles.field}><span>المقاس</span><select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as ContentVideoAspectRatio)}><option value="9:16">رأسي 9:16</option><option value="16:9">أفقي 16:9</option></select></label>
           <label className={styles.field}><span>الدقة</span><select value={resolution} onChange={(event) => setResolution(event.target.value as '720p' | '1080p')}><option value="720p">720p</option><option value="1080p">1080p</option></select></label>
-        </div>
+        </div></details>
       </fieldset>
       <button className={styles.btnPrimary} type="submit" disabled={disabled}>
         {busy ? <LoaderCircle className={styles.spin} size={18} /> : <Sparkles size={18} />} اقترح الفكرة وقسّم المشاهد
       </button>
-      {!canManage && <p className={styles.readOnlyNote}>يمكنك مراجعة الفيديوهات فقط. التوليد متاح للمالك والمدير.</p>}
       {canManage && !readiness.configured && <p className={styles.readOnlyNote}>{readiness.reason ?? 'كمّل مفتاح Gemini للأفكار، ومفتاح Agent Platform للفيديو، وGoogle Cloud Project ID، وقاعدة المعرفة أولًا.'}</p>}
     </form>
   </aside>;
@@ -364,9 +399,22 @@ interface VideoDetailProps {
 function VideoDetail({ video, loading, busy, canManage, agentPlatformApiKeyConfigured, enterpriseProjectIdConfigured, onGenerate, onRetryScene, onRetryAssembly }: VideoDetailProps) {
   const initialSceneId = video?.scenes.find((scene) => scene.status === 'Completed' && scene.videoUrl)?.id;
   const [selectedSceneId, setSelectedSceneId] = useState(initialSceneId);
+  const scenePreviewRef = useRef<HTMLHeadingElement>(null);
+  const requestedSceneFocusRef = useRef(false);
   const freshGenerationReady = agentPlatformApiKeyConfigured && enterpriseProjectIdConfigured;
   const selectedScene = video?.scenes.find((scene) => scene.id === selectedSceneId && scene.videoUrl)
     ?? video?.scenes.find((scene) => scene.status === 'Completed' && scene.videoUrl);
+
+  useEffect(() => {
+    if (!requestedSceneFocusRef.current) return;
+    requestedSceneFocusRef.current = false;
+    revealVideoTarget(scenePreviewRef.current);
+  }, [selectedScene?.id]);
+
+  const previewScene = (sceneId: string) => {
+    if (sceneId === selectedScene?.id) revealVideoTarget(scenePreviewRef.current);
+    else { requestedSceneFocusRef.current = true; setSelectedSceneId(sceneId); }
+  };
 
   if (loading && !video) return <div className={styles.videoDetailLoading} aria-busy="true"><LoaderCircle className={styles.spin} size={24} /><span>بنحمّل تفاصيل الفيديو…</span></div>;
   if (!video) return <div className={styles.videoEmpty}>
@@ -377,11 +425,15 @@ function VideoDetail({ video, loading, busy, canManage, agentPlatformApiKeyConfi
   return <section className={styles.videoDetail} aria-labelledby="selected-video-title">
     <p className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">{videoProgressAnnouncement(video)}</p>
     <header className={styles.videoDetailHeader}>
-      <div><span>02</span><div><p>الفكرة المقترحة</p><h2 id="selected-video-title">{video.ideaTitle || 'جارٍ بناء الفكرة'}</h2></div></div>
+      <div><Film size={20} aria-hidden="true" /><div><p>الفكرة المقترحة</p><h2 id="selected-video-title">{video.ideaTitle || 'جارٍ بناء الفكرة'}</h2></div></div>
       <strong className={`${styles.videoStatus} ${videoStatusClass(video.status)}`}>{videoStatusLabels[video.status]}</strong>
     </header>
 
     {video.status === 'Planning' ? <VideoPlanning /> : <>
+      {video.status === 'Ready' && video.finalVideoUrl && <div className={styles.finalVideo}>
+        <div><CheckCircle2 size={21} /><div><span>الفيديو النهائي جاهز</span><strong>{video.ideaTitle}</strong></div></div>
+        <AuthenticatedVideo key={video.finalVideoUrl} assetUrl={video.finalVideoUrl} downloadName={`content-video-${video.id}.mp4`} aspectRatio={video.aspectRatio} />
+      </div>}
       <div className={styles.videoConcept}>
         <div><span>الافتتاحية</span><strong>{video.hook}</strong></div>
         <div><span>ملخص الفكرة</span><p>{video.summary}</p></div>
@@ -399,6 +451,11 @@ function VideoDetail({ video, loading, busy, canManage, agentPlatformApiKeyConfi
         <button className={styles.btnPrimary} type="button" disabled={Boolean(busy) || !canManage || !freshGenerationReady} onClick={() => void onGenerate(video.id)}>{busy === 'generate' ? <LoaderCircle className={styles.spin} size={18} /> : <Play size={18} />} اعتمد وولّد المشاهد</button>
       </div>}
 
+      {selectedScene?.videoUrl && <div className={styles.scenePreview}>
+        <h3 ref={scenePreviewRef} tabIndex={-1} className={styles.videoPreviewHeading}><Play size={17} aria-hidden="true" /> معاينة المشهد {selectedScene.sceneIndex + 1}: {selectedScene.title}</h3>
+        <AuthenticatedVideo key={selectedScene.videoUrl} assetUrl={selectedScene.videoUrl} downloadName={`scene-${selectedScene.sceneIndex + 1}.mp4`} aspectRatio={video.aspectRatio} />
+      </div>}
+
       <div className={styles.storyboardHeading}><div><span>03</span><div><h3>لوحة المشاهد</h3><p>{video.completedSceneCount} من {video.sceneCount} مشاهد جاهزة</p></div></div></div>
       <div className={styles.sceneList}>
         {orderedScenes.map((scene) => <SceneRow
@@ -409,7 +466,7 @@ function VideoDetail({ video, loading, busy, canManage, agentPlatformApiKeyConfi
           canManage={canManage}
           agentPlatformApiKeyConfigured={agentPlatformApiKeyConfigured}
           enterpriseProjectIdConfigured={enterpriseProjectIdConfigured}
-          onPreview={() => setSelectedSceneId(scene.id)}
+          onPreview={() => previewScene(scene.id)}
           onRetry={(intent) => void onRetryScene(video.id, scene.id, intent)}
         />)}
       </div>
@@ -418,19 +475,9 @@ function VideoDetail({ video, loading, busy, canManage, agentPlatformApiKeyConfi
         <AlertTriangle size={15} aria-hidden="true" /> تفاصيل الصوت المخططة متاحة في المشاهد، لكن الكلام الناتج لا يملك captions موثقة بعد.
       </p>}
 
-      {selectedScene?.videoUrl && <div className={styles.scenePreview}>
-        <div><span>معاينة المشهد {selectedScene.sceneIndex + 1}</span><strong>{selectedScene.title}</strong></div>
-        <AuthenticatedVideo key={selectedScene.videoUrl} assetUrl={selectedScene.videoUrl} downloadName={`scene-${selectedScene.sceneIndex + 1}.mp4`} aspectRatio={video.aspectRatio} />
-      </div>}
-
       {video.status === 'AssemblyFailed' && <div className={styles.videoApprovalBar}>
         <div><AlertTriangle size={19} /><span>المشاهد مكتملة لكن تركيب الفيديو توقف. أعد التركيب من الملفات المحفوظة.</span></div>
         <button className={styles.btnSecondary} type="button" disabled={Boolean(busy) || !canManage} onClick={() => void onRetryAssembly(video.id)}>{busy === 'assembly' ? <LoaderCircle className={styles.spin} size={18} /> : <RefreshCw size={18} />} أعد تركيب الفيديو</button>
-      </div>}
-
-      {video.status === 'Ready' && video.finalVideoUrl && <div className={styles.finalVideo}>
-        <div><CheckCircle2 size={21} /><div><span>الفيديو النهائي جاهز</span><strong>{video.ideaTitle}</strong></div></div>
-        <AuthenticatedVideo key={video.finalVideoUrl} assetUrl={video.finalVideoUrl} downloadName={`content-video-${video.id}.mp4`} aspectRatio={video.aspectRatio} />
       </div>}
     </>}
   </section>;
@@ -505,7 +552,7 @@ function AuthenticatedVideo({ assetUrl, downloadName, aspectRatio }: { assetUrl:
     }
   };
 
-  return <div className={`${styles.authenticatedVideo} ${aspectRatio === '9:16' ? styles.authenticatedVideoPortrait : ''}`} style={{ aspectRatio: aspectRatio === '9:16' ? '9 / 16' : '16 / 9' }}>
+  return <div className={`${styles.authenticatedVideo} ${aspectRatio === '9:16' ? styles.authenticatedVideoPortrait : ''}`} style={{ aspectRatio: videoSource ? (aspectRatio === '9:16' ? '9 / 16' : '16 / 9') : undefined }}>
     {!videoSource && <button type="button" onClick={() => void loadPreview()} disabled={loading}>{loading ? <LoaderCircle className={styles.spin} size={20} /> : <Play size={20} />} {loading ? 'جارٍ تحميل الملف…' : 'حمّل المعاينة'}</button>}
     {error && <span role="alert"><AlertTriangle size={18} />{error}</span>}
     {videoSource && <>
@@ -516,17 +563,25 @@ function AuthenticatedVideo({ assetUrl, downloadName, aspectRatio }: { assetUrl:
 }
 
 function VideoHistory({ videos, selectedVideoId, onSelect }: { videos: ContentVideosData['videos']; selectedVideoId?: string; onSelect: (videoId: string) => void }) {
-  return <section className={styles.videoHistory} aria-labelledby="video-history-heading">
-    <div className={styles.historyHeading}><div><span>04</span><div><h2 id="video-history-heading">سجل الفيديوهات</h2><p>الأفكار السابقة وحالة كل فيديو.</p></div></div><strong>{videos.length} فيديو</strong></div>
+  const historyRef = useRef<HTMLDetailsElement>(null);
+  const selected = videos.find(video => video.id === selectedVideoId);
+  return <details ref={historyRef} className={styles.videoHistoryPicker}>
+    <summary><Film size={18} aria-hidden="true" /><span><strong>الفيديوهات المحفوظة ({videos.length} في أحدث 50)</strong><small>{selected?.ideaTitle || 'اختار فيديو للمراجعة'}</small></span><span className={styles.videoHistoryPrompt}>اختيار فيديو</span></summary>
     {videos.length === 0 ? <div className={styles.emptyHistory}>أول فكرة فيديو هتظهر هنا.</div> : <div className={styles.videoHistoryList}>
-      {videos.map((video) => <button type="button" key={video.id} className={video.id === selectedVideoId ? styles.videoHistoryActive : styles.videoHistoryRow} onClick={() => onSelect(video.id)} aria-current={video.id === selectedVideoId ? 'true' : undefined}>
+      {videos.map((video) => <button type="button" key={video.id} className={video.id === selectedVideoId ? styles.videoHistoryActive : styles.videoHistoryRow} onClick={() => { if (historyRef.current) historyRef.current.open = false; onSelect(video.id); }} aria-current={video.id === selectedVideoId ? 'true' : undefined}>
         <span className={styles.videoHistoryIcon}><Film size={19} /></span>
         <span><strong>{video.ideaTitle || 'فكرة قيد التخطيط'}</strong><small>{formatVideoDate(video.createdAt)} · {video.aspectRatio} · {video.resolution}</small></span>
         <span>{video.completedSceneCount}/{videoSceneTotal(video)}</span>
         <em className={`${styles.videoStatus} ${videoStatusClass(video.status)}`}>{videoStatusLabels[video.status]}</em>
       </button>)}
     </div>}
-  </section>;
+  </details>;
+}
+
+function revealVideoTarget(target: HTMLElement | null) {
+  if (!target) return;
+  target.focus({ preventScroll: true });
+  target.scrollIntoView({ behavior: 'instant', block: 'start' });
 }
 
 function VideoPlanning() {

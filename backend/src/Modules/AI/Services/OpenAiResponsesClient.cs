@@ -86,7 +86,7 @@ public sealed class OpenAiResponsesClient(HttpClient httpClient, ILogger<OpenAiR
         }
 
         var responseJson = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
-        return ResponsesApiOutputText.Extract(responseJson) ?? ApiError;
+        return ResponsesApiOutputText.Extract(responseJson, logger, "OpenAI", replyRequest.Model) ?? ApiError;
     }
 
     private async Task<string?> TranscribeAudioAsync(

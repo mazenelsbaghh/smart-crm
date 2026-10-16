@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 
 namespace Modules.Facebook.API
 {
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     [ApiController]
     [Route("api/webhooks/facebook")]
     public class FacebookWebhookController : ControllerBase
@@ -83,15 +84,11 @@ namespace Modules.Facebook.API
 
             // Validate signature
             var appSecret = _configuration["FACEBOOK_APP_SECRET"];
-            if (!string.IsNullOrEmpty(appSecret))
-            {
-                var signature = Request.Headers["X-Hub-Signature-256"].FirstOrDefault();
-                if (!string.IsNullOrEmpty(signature) && !ValidateSignature(body, signature, appSecret))
-                {
-                    Console.WriteLine("[FacebookWebhook] Invalid signature");
-                    return StatusCode(403, "Invalid signature");
-                }
-            }
+            if (string.IsNullOrWhiteSpace(appSecret))
+                return StatusCode(503, "Facebook webhook verification is not configured.");
+            var signature = Request.Headers["X-Hub-Signature-256"].FirstOrDefault();
+            if (string.IsNullOrEmpty(signature) || !ValidateSignature(body, signature, appSecret))
+                return StatusCode(403, "Invalid signature");
 
             try
             {
@@ -465,7 +462,8 @@ namespace Modules.Facebook.API
             var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
             var computedSignature = BitConverter.ToString(hash).Replace("-", "").ToLower();
 
-            return computedSignature == expectedSignature;
+            return CryptographicOperations.FixedTimeEquals(
+                Encoding.ASCII.GetBytes(computedSignature), Encoding.ASCII.GetBytes(expectedSignature));
         }
     }
 }

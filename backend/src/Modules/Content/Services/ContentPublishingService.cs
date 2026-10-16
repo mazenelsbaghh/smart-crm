@@ -42,7 +42,7 @@ public sealed class ContentPublishingService
             .SingleAsync(candidate => candidate.ProjectId == projectId, cancellationToken);
         if (!string.Equals(post.BrandLogoObjectKey, settings.LogoObjectKey, StringComparison.Ordinal))
             throw new InvalidOperationException("تم تغيير اللوجو بعد إنشاء هذا المنشور. أنشئ منشورًا جديدًا بالهوية الحالية.");
-        if (!string.Equals(post.BrandStylePrompt, settings.StylePrompt, StringComparison.Ordinal))
+        if (!string.Equals(post.BrandStylePrompt, ContentBrandReferences.Identity(settings), StringComparison.Ordinal))
             throw new InvalidOperationException("تم تغيير شكل التصميم بعد إنشاء هذا المنشور. أنشئ منشورًا جديدًا أولاً.");
         if (string.IsNullOrWhiteSpace(settings.FacebookPageId))
             throw new InvalidOperationException("اختر صفحة Facebook للنشر.");

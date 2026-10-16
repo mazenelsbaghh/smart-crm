@@ -5,6 +5,8 @@ namespace Shared.Security;
 public interface IProjectAuthorizationService
 {
     bool CanRead(ClaimsPrincipal user, Guid projectId);
+    bool CanWrite(ClaimsPrincipal user, Guid projectId);
+    bool CanDelete(ClaimsPrincipal user, Guid projectId);
     bool CanManageProject(ClaimsPrincipal user, Guid projectId);
     bool CanManageAdvertising(ClaimsPrincipal user, Guid projectId);
     Guid? GetProjectId(ClaimsPrincipal user);
@@ -16,6 +18,12 @@ public sealed class ProjectAuthorizationService : IProjectAuthorizationService
 {
     public bool CanRead(ClaimsPrincipal user, Guid projectId) =>
         user.Identity?.IsAuthenticated == true && GetProjectId(user) == projectId;
+
+    public bool CanWrite(ClaimsPrincipal user, Guid projectId) =>
+        CanRead(user, projectId) && JwtService.HasPermission(user, "write");
+
+    public bool CanDelete(ClaimsPrincipal user, Guid projectId) =>
+        CanRead(user, projectId) && JwtService.HasPermission(user, "delete");
 
     public bool CanManageProject(ClaimsPrincipal user, Guid projectId)
     {

@@ -5,7 +5,7 @@ import styles from './reports.module.css';
 
 const suggestions = ['ليه الحجوزات قلت؟', 'إيه أكبر اعتراض متكرر؟', 'مين محتاج متابعة دلوقتي؟'];
 
-export function AskAnalyst({ onAsk }: { onAsk: (question: string) => Promise<AnalystAnswer> }) {
+export function AskAnalyst({ onAsk, disabled }: { onAsk: (question: string) => Promise<AnalystAnswer>; disabled: boolean }) {
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState<AnalystAnswer | null>(null);
   const [loading, setLoading] = useState(false);
@@ -26,7 +26,7 @@ export function AskAnalyst({ onAsk }: { onAsk: (question: string) => Promise<Ana
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const clean = question.trim();
-    if (clean.length < 3 || loading) return;
+    if (clean.length < 3 || loading || disabled) return;
     setLoading(true);
     setError('');
     try {
@@ -44,7 +44,7 @@ export function AskAnalyst({ onAsk }: { onAsk: (question: string) => Promise<Ana
       <form className={styles.askForm} onSubmit={submit}>
         <label className={styles.srOnly} htmlFor="sales-analyst-question">سؤال لمحلل المبيعات</label>
         <input ref={inputRef} id="sales-analyst-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="مثال: ليه الناس اللي سألت عن المواعيد ما حجزتش؟" minLength={3} maxLength={600} />
-        <button type="submit" disabled={loading || question.trim().length < 3}>{loading ? 'يراجع كل التحليلات…' : 'اسأل'}<Send size={16} aria-hidden="true" /><kbd>Alt A</kbd></button>
+        <button type="submit" disabled={disabled || loading || question.trim().length < 3}>{loading ? 'يراجع كل التحليلات…' : 'اسأل'}<Send size={16} aria-hidden="true" /><kbd>Alt A</kbd></button>
       </form>
       <div className={styles.suggestions}>{suggestions.map((item) => <button type="button" key={item} onClick={() => { setQuestion(item); inputRef.current?.focus(); }}>{item}</button>)}</div>
       {error && <p className={styles.inlineError} role="alert">{error}</p>}

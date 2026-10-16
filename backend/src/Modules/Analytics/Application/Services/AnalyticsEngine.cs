@@ -25,24 +25,28 @@ namespace Modules.Analytics.Application.Services
 
         public async Task<AnalyticsSnapshot> CalculateMetricAsync(Guid projectId, string metricType, DateTime date)
         {
-            var startOfDay = date.Date;
-            var endOfDay = startOfDay.AddDays(1).AddTicks(-1);
+            var timezone = await _dbContext.ProjectSettings.IgnoreQueryFilters()
+                .Where(settings => settings.ProjectId == projectId).Select(settings => settings.Timezone).SingleOrDefaultAsync();
+            var reportingZone = AnalyticsReportingDay.TimeZone(timezone);
+            var (startOfDay, endOfDay) = AnalyticsReportingDay.Bounds(date, reportingZone.Id);
 
             decimal metricValue = 0;
             object metadata = new { };
 
             if (string.Equals(metricType, "Sales", StringComparison.OrdinalIgnoreCase))
             {
-                // Fetch all deals and calculate pipeline status
                 var deals = await _dbContext.Deals
                     .IgnoreQueryFilters()
-                    .Where(d => d.ProjectId == projectId && d.CreatedAt >= startOfDay && d.CreatedAt <= endOfDay)
+                    .Where(d => d.ProjectId == projectId && d.Status != DealStatus.Open &&
+                        d.ClosedAt >= startOfDay && d.ClosedAt < endOfDay)
                     .ToListAsync();
+                var undatedClosedDeals = await _dbContext.Deals.IgnoreQueryFilters()
+                    .CountAsync(d => d.ProjectId == projectId && d.Status != DealStatus.Open && d.ClosedAt == null);
 
                 var totalDeals = deals.Count;
                 var wonDeals = deals.Count(d => d.Status == DealStatus.Won);
                 var lostDeals = deals.Count(d => d.Status == DealStatus.Lost);
-                var totalAmount = deals.Sum(d => d.Amount);
+                var totalAmount = deals.Where(d => d.Status == DealStatus.Won).Sum(d => d.Amount);
 
                 metricValue = totalAmount;
                 metadata = new
@@ -50,7 +54,11 @@ namespace Modules.Analytics.Application.Services
                     totalDeals,
                     wonDeals,
                     lostDeals,
-                    conversionRate = totalDeals > 0 ? (double)wonDeals / totalDeals : 0.0
+                    conversionRate = totalDeals > 0 ? (double?)wonDeals / totalDeals : null,
+                    calculationVersion = 2,
+                    basis = "Won deals with a recorded closure time in the project reporting day. Undated closed deals are excluded.",
+                    undatedClosedDeals,
+                    timezone = reportingZone.Id
                 };
             }
             else if (string.Equals(metricType, "AI_Accuracy", StringComparison.OrdinalIgnoreCase))
@@ -62,7 +70,7 @@ namespace Modules.Analytics.Application.Services
                         m => m.ConversationId,
                         c => c.Id,
                         (m, c) => new { m, c })
-                    .Where(x => x.c.ProjectId == projectId && x.m.Timestamp >= startOfDay && x.m.Timestamp <= endOfDay)
+                    .Where(x => x.c.ProjectId == projectId && x.m.Timestamp >= startOfDay && x.m.Timestamp < endOfDay)
                     .Select(x => x.m)
                     .ToListAsync();
 
@@ -83,7 +91,7 @@ namespace Modules.Analytics.Application.Services
                 // Calculate average response time
                 var conversations = await _dbContext.Conversations
                     .IgnoreQueryFilters()
-                    .Where(c => c.ProjectId == projectId && c.UpdatedAt >= startOfDay && c.UpdatedAt <= endOfDay)
+                    .Where(c => c.ProjectId == projectId && c.UpdatedAt >= startOfDay && c.UpdatedAt < endOfDay)
                     .ToListAsync();
 
                 metricValue = 0m;
@@ -92,21 +100,28 @@ namespace Modules.Analytics.Application.Services
                     totalConversations = conversations.Count,
                     responseTimeAvailable = false,
                     unavailableReason = "Legacy snapshots do not retain paired incoming and outgoing message timestamps.",
-                    slaBreaches = conversations.Count(c => c.Status.ToString() == "Open" && (DateTime.UtcNow - c.UpdatedAt).TotalMinutes > 30)
+                    slaBreaches = (int?)null,
+                    slaBreachesAvailable = false
                 };
             }
-            else
+            else if (string.Equals(metricType, "Customer_Acquisition", StringComparison.OrdinalIgnoreCase))
             {
                 // Default: Customer acquisition metric
                 var newCustomersCount = await _dbContext.Customers
                     .IgnoreQueryFilters()
-                    .CountAsync(c => c.ProjectId == projectId && c.CreatedAt >= startOfDay && c.CreatedAt <= endOfDay);
+                    .CountAsync(c => c.ProjectId == projectId && c.CreatedAt >= startOfDay && c.CreatedAt < endOfDay);
 
                 metricValue = newCustomersCount;
                 metadata = new
                 {
-                    totalCustomersCount = newCustomersCount
+                    totalCustomersCount = newCustomersCount,
+                    calculationVersion = 2,
+                    timezone = reportingZone.Id
                 };
+            }
+            else
+            {
+                throw new ArgumentException("Unsupported analytics metric.", nameof(metricType));
             }
 
             return new AnalyticsSnapshot

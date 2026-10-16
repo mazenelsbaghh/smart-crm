@@ -1,10 +1,14 @@
 import React from 'react';
+import Link from 'next/link';
+import { ShieldCheck, ArrowRight } from 'lucide-react';
 import styles from '../../styles/legal.module.css';
 
 export default function PrivacyPolicy() {
   return (
     <main className={styles.page}>
+      <nav className={styles.navigation} aria-label="صفحات المعلومات"><Link href="/"><ArrowRight size={17} /> تسجيل الدخول</Link><Link href="/terms">شروط الاستخدام</Link></nav>
       <article className={styles.article}>
+        <span className={styles.icon}><ShieldCheck size={27} aria-hidden="true" /></span>
         <h1>سياسة الخصوصية (Privacy Policy)</h1>
         <p className={styles.intro}>
           توضح هذه السياسة كيف تجمع منصة <strong>Smart Customer Core (سمارت كاستمر)</strong> بياناتك وتستخدمها وتحميها عند ربط Facebook وWhatsApp بالخدمة.

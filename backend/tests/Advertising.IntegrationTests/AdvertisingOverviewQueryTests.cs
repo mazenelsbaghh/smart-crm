@@ -30,8 +30,8 @@ public sealed class AdvertisingOverviewQueryTests(PostgresFixture postgres)
                 advertisement => advertisement.LastSyncedAtUtc ?? DateTime.UnixEpoch));
         db.ChangeTracker.Clear();
 
-        var insights = await AdvertisingOverviewQuery.InsightsAsync(db, projectId, window, default);
-        var conversions = await AdvertisingOverviewQuery.ConversionsAsync(db, projectId, window, default);
+        var insights = await AdvertisingOverviewQuery.InsightsAsync(db, projectId, window, "EGP", default);
+        var conversions = await AdvertisingOverviewQuery.ConversionsAsync(db, projectId, window, "EGP", default);
         var advertisements = await AdvertisingOverviewQuery.AdvertisementsAsync(db, projectId, default);
 
         Assert.Equal(12m, insights.Spend);
@@ -40,7 +40,7 @@ public sealed class AdvertisingOverviewQueryTests(PostgresFixture postgres)
         Assert.Equal(2, insights.DaysLoaded);
         Assert.Equal(2, insights.Snapshots);
         Assert.Equal(17m, insights.AllTimeSpend);
-        Assert.Equal(70m, conversions.Revenue);
+        Assert.Equal(50m, conversions.Revenue);
         Assert.Equal(1, conversions.Leads);
         Assert.Equal(1, conversions.QualifiedLeads);
         Assert.Equal(1, conversions.Bookings);
@@ -59,8 +59,8 @@ public sealed class AdvertisingOverviewQueryTests(PostgresFixture postgres)
         await db.Database.MigrateAsync();
         var window = new AdvertisingOverviewWindow(DateTime.UtcNow.AddDays(-1), DateTime.UtcNow);
 
-        var insights = await AdvertisingOverviewQuery.InsightsAsync(db, projectId, window, default);
-        var conversions = await AdvertisingOverviewQuery.ConversionsAsync(db, projectId, window, default);
+        var insights = await AdvertisingOverviewQuery.InsightsAsync(db, projectId, window, "EGP", default);
+        var conversions = await AdvertisingOverviewQuery.ConversionsAsync(db, projectId, window, "EGP", default);
         var advertisements = await AdvertisingOverviewQuery.AdvertisementsAsync(db, projectId, default);
 
         Assert.Equal(0m, insights.Spend);
@@ -171,7 +171,7 @@ public sealed class AdvertisingOverviewQueryTests(PostgresFixture postgres)
             CanonicalKey = canonicalKey,
             EventType = eventType,
             OccurredAtUtc = occurredAtUtc,
-            CurrentValue = currentValue
+            CurrentValue = currentValue, Currency = "EGP", TruthState = "Verified"
         };
 
     private static ManagedAdvertisement Advertisement(

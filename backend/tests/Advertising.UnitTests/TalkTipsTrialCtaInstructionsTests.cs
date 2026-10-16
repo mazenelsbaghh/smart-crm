@@ -45,7 +45,7 @@ public sealed class TalkTipsTrialCtaInstructionsTests
 
         Assert.Contains($"فاضل {expectedDisplayedPlaces} أماكن", reply, StringComparison.Ordinal);
         Assert.Contains("أصحابك أو قرايبك", reply, StringComparison.Ordinal);
-        Assert.Contains("اسمه ورقم موبايله", reply, StringComparison.Ordinal);
+        Assert.Contains("اسمه ورقم واتسابه", reply, StringComparison.Ordinal);
         Assert.Contains(TalkTipsTrialCtaInstructions.TrialUrl, reply, StringComparison.Ordinal);
     }
 

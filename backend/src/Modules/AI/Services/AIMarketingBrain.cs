@@ -40,12 +40,16 @@ namespace Modules.AI.Services
 
         [System.Text.Json.Serialization.JsonIgnore]
         public bool IsFallbackResponse { get; internal set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool ShouldDeferReply { get; internal set; }
     }
 
     public class SuggestedGroupBookingPerson
     {
         public string? Name { get; set; }
         public string? PhoneNumber { get; set; }
+        public string? City { get; set; }
         public bool IsRequester { get; set; }
     }
 
@@ -113,7 +117,7 @@ namespace Modules.AI.Services
             CURRENT-TURN WHATSAPP OFFER DETAILS RULE (also applies when earlier instructions are cached):
             For a customer requesting an overview of the offer/course, e.g. 'ممكن تفاصيل', 'لو سمحت عاوزه اعرف تفاصيل الكورس و بكام', or 'Can I get more info on this?', answer in exactly THREE short message paragraphs within replyContent, separated by two newline characters. This overrides the usual one-to-two-paragraph preference.
             Paragraph 1: one brief welcome only if appropriate, then what the course/offer teaches or provides and its practical value, using approved project knowledge.
-            Paragraph 2: the verified study/service format and relevant price/payment terms. When the customer asks for details AND price, answer BOTH; a subscription-only reply is incomplete. Never invent a price, duration, employment guarantee, discount, availability, or free session.
+            Paragraph 2: the verified study/service format and benefits relevant to the customer's learning goal. Include price/payment terms only when the current customer explicitly asks for them, or after the first five delivered automated messages when relevant. When the customer asks for details AND price, answer BOTH; a subscription-only reply is incomplete. Never invent a price, duration, employment guarantee, discount, availability, or free session.
             Paragraph 3: when CTA is enabled, ONE useful next-step question tied to the customer's interest and configured CTA topics. Use an already stated preference; never ask again for a phone, city, or attendance mode already given. Do not confirm a booking or payment merely because the customer asked for details. If CTA is disabled, finish with relevant remaining information without a sales question.
             Keep each paragraph under 230 characters where practical; use plain friendly Egyptian Arabic, no numbered headings, exaggerated welcomes, repeated facts, or separate signature bubble. If a signature is enabled, attach it to paragraph 3 with a single newline.
             This three-message pattern is for offer-overview inquiries only. Answer specific timing, price-only, existing-booking, complaints, handoff requests, thanks, and stop requests directly without restarting the pitch. If approved information is missing or ambiguous, explain the gap and ask one necessary clarification instead of padding three messages or inventing facts.
@@ -208,14 +212,16 @@ Guidelines for suggestedReaction:
 - suggestedReaction: Set to a single emoji (👍, ❤️, 💖, 😢, 😂, 😮) or null. Suggest an emoji reaction to the customer's message only if it adds a warm, human-like touch (e.g. ❤️/💖 for gratitude, joy, or positive feedback; 😢 for sadness or complaints; 😂 for jokes; 👍 for agreement or simple acknowledgment). Otherwise, return null.
 
 Guidelines for suggestedGroupBookingId (Auto-Booking):
-- IMPORTANT: When the customer explicitly expresses intent to book or register in a group appointment (e.g. ""عايز أحجز"", ""سجلني"", ""أنا جاهز"", ""أيوه عايز"", ""احجزلي"", ""مواعيد المجموعات"", ""عندكم أماكن؟"", ""ينفع اشترك""), set suggestedGroupBookingId to the GUID of the appropriate group.
-- If there is only ONE available group with remaining slots, auto-select it directly and confirm the booking in your reply (e.g. ""تمام يا فندم، سجلتك in مجموعة X"").
+- IMPORTANT: When the customer explicitly expresses intent to book or register in a group appointment (e.g. ""عايز أحجز"", ""سجلني"", ""أنا جاهز"", ""أيوه عايز"", ""احجزلي"", ""ينفع اشترك""), set suggestedGroupBookingId to the GUID of the appropriate group.
+- If there is only ONE eligible group with remaining slots that matches the attendee's location and chosen attendance mode, auto-select it for an explicit booking request. Never choose an offline group as a substitute for an online group.
+- Anyone outside Alexandria must attend online only. Apply the city stated in the current message immediately, even if their saved profile still has a different city. For offline attendance, confirm the attendee lives in Alexandria; if their city is unknown, ask before suggesting a booking. Respect an explicit online choice even for Alexandria residents. If no matching online group is available, leave suggestedGroupBookingId null and explain that no suitable online time is available.
 - If there are MULTIPLE available groups, first ask which group they prefer. Once they specify or confirm, set suggestedGroupBookingId to that group's GUID.
 - If ALL groups are full (or no groups are listed), set to null and tell the customer there are no available slots currently.
 - When you set suggestedGroupBookingId, write a warm confirmation in replyContent telling the customer they have been registered successfully. The system will handle the actual booking automatically.
 - NEVER set suggestedGroupBookingId if the customer hasn't explicitly asked to book/register.
 - When suggestedGroupBookingId is null, suggestedGroupBookingPeople must be an empty array.
-- When suggestedGroupBookingId is set, each suggestedGroupBookingPeople entry must use this shape: { ""name"": ""person name or null"", ""phoneNumber"": ""phone supplied by customer or null"", ""isRequester"": true | false }.
+- When suggestedGroupBookingId is set, each suggestedGroupBookingPeople entry must use this shape: { ""name"": ""person name or null"", ""phoneNumber"": ""phone supplied by customer or null"", ""city"": ""attendee city explicitly supplied by customer or null"", ""isRequester"": true | false }.
+- Never infer a friend's city from the requester. For an offline booking, ask for each attendee's city if it has not been provided. Online bookings do not require a city.
 - suggestedGroupBookingPeople MUST list every person the customer explicitly wants registered in this booking. Use isRequester=true for the person currently chatting, and isRequester=false for a friend, relative, or any other person they are booking for.
 - If the customer is booking only for someone else, do NOT include the requester. Include only that other person with the exact name and phone number the customer supplied.
 - Preserve the entire supplied name, including an initial word that can also be a question (for example, ""ايه سعد جاد"" is a person's name in a name/phone submission). Never silently remove part of a name.
@@ -397,7 +403,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 if (!string.IsNullOrEmpty(customerProfile))
                 {
                     dynamicPrompt += $"\n\nHere is the customer's current CRM profile details:\n{customerProfile}\n" +
-                                     "Identify if any fields are marked as \"Missing\". If there are missing fields (such as Name or City), you MUST politely and naturally ask the customer for them during the conversation. Do not ask for everything at once; ask for them step-by-step in a friendly Arabic conversational style, only if it fits the flow of the conversation.";
+                                     "Reuse supplied customer details. Ask for a missing name, city or phone only when it is necessary to answer the current question or complete the requested action. Never collect profile fields merely because they are marked Missing.";
                 }
 
                 if (!string.IsNullOrEmpty(customerMemory))
@@ -476,7 +482,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             if (!string.IsNullOrEmpty(customerProfile))
             {
                 systemPrompt += $"\n\nHere is the customer's current CRM profile details:\n{customerProfile}\n" +
-                                 "Identify if any fields are marked as \"Missing\". If there are missing fields (such as Name or City), you MUST politely and naturally ask the customer for them during the conversation. Do not ask for everything at once; ask for them step-by-step in a friendly Arabic conversational style, only if it fits the flow of the conversation.";
+                                 "Reuse supplied customer details. Ask for a missing name, city or phone only when it is necessary to answer the current question or complete the requested action. Never collect profile fields merely because they are marked Missing.";
             }
 
             if (!string.IsNullOrEmpty(brainContext))
@@ -514,11 +520,20 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             if (string.Equals(channel, "WhatsApp", StringComparison.OrdinalIgnoreCase))
             {
                 fullPrompt += "\n\n" + OfferDetailsInstructions + $"\nCurrent CTA enabled: {resolvedBehaviorSettings.Cta.Enabled}.";
-                if (resolvedBehaviorSettings.Cta.Enabled)
-                    fullPrompt += $"\nCurrent CTA instructions: {resolvedBehaviorSettings.Cta.Instructions}\nCurrent CTA topics: {string.Join(", ", resolvedBehaviorSettings.Cta.Topics)}";
             }
 
             fullPrompt += customerReplyRuntime.LearnedInstructions;
+            fullPrompt += "\n\nApply the current project business and CTA instructions already supplied above; they take precedence over learned suggestions. Do not treat learned suggestions as commercial facts.";
+            if (resolvedBehaviorSettings.SubscribersOnlyAutoStop)
+                fullPrompt += "\n\nCURRENT AUTO-STOP RULE: Only subscribed/paid customers are stopped automatically. For every other customer, do not set requestHuman=true or disable the bot automatically. If they ask for a human, provide the verified configured contact when available without claiming a completed transfer or permanently pausing this conversation.";
+            if (CourseDiscoveryPricingPolicy.IsCourseContext(brainContext + " " + systemPromptOverride))
+                fullPrompt += "\n\n" + CourseDiscoveryPricingPolicy.Instructions;
+            if (brainContext?.Contains(Modules.CRM.Services.GroupSessionPreparationScheduler.ContextMarker, StringComparison.Ordinal) == true)
+                fullPrompt += "\n\n" + Modules.CRM.Services.GroupSessionPreparationScheduler.Instructions;
+            if (brainContext?.Contains(BookedAppointmentReplyPolicy.ContextMarker, StringComparison.Ordinal) == true)
+                fullPrompt += "\n\n" + BookedAppointmentReplyPolicy.Instructions;
+
+            fullPrompt += "\n\n" + CustomerReplyInstructionPolicy.Instructions;
 
             string rawResponse;
             if (customerReplyRuntime.Provider == CustomerReplyProviders.OpenAI)
@@ -552,7 +567,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 rawResponse = await _geminiClient.GenerateReplyAsync(fullPrompt, apiKeyOverride, replyModel, cachedContentId);
             }
 
-            if (string.IsNullOrWhiteSpace(rawResponse))
+            if (string.IsNullOrWhiteSpace(rawResponse) || IsAiErrorResponse(rawResponse))
             {
                 return new MarketingAnalysisResult
                 {
@@ -563,7 +578,8 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     Confidence = 0.5,
                     Label = "استفسار عام",
                     PipelineStage = "New",
-                    IsFallbackResponse = true
+                    IsFallbackResponse = true,
+                    ShouldDeferReply = true
                 };
             }
 
@@ -606,6 +622,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     {
                         result.ReplyContent = resolvedBehaviorSettings.Fallbacks.InvalidAiOutput;
                         result.IsFallbackResponse = true;
+                        result.ShouldDeferReply = true;
                     }
                     if (LooksLikeSerializedJson(result.ReplyContent))
                     {
@@ -614,6 +631,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                         {
                             result.ReplyContent = resolvedBehaviorSettings.Fallbacks.InvalidAiOutput;
                             result.IsFallbackResponse = true;
+                            result.ShouldDeferReply = true;
                         }
                         else
                         {
@@ -624,7 +642,9 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     {
                         result.ReplyContent = resolvedBehaviorSettings.Fallbacks.AiError;
                         result.IsFallbackResponse = true;
+                        result.ShouldDeferReply = true;
                     }
+                    CustomerReplyInstructionPolicy.Apply(result, resolvedBehaviorSettings.Tone.BusinessInstructions);
                     NormalizeReaction(result);
                     return result;
                 }
@@ -637,7 +657,10 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
             // Fallback if not valid JSON
             string fallbackReply = ExtractReplyContent(rawResponse) ?? rawResponse?.Trim();
             var isAiErrorResponse = IsAiErrorResponse(fallbackReply);
-            if (string.IsNullOrWhiteSpace(fallbackReply) || isAiErrorResponse || LooksLikeSerializedJson(fallbackReply))
+            var shouldDeferReply = string.IsNullOrWhiteSpace(fallbackReply)
+                || isAiErrorResponse
+                || LooksLikeSerializedJson(fallbackReply);
+            if (shouldDeferReply)
             {
                 fallbackReply = isAiErrorResponse
                     ? resolvedBehaviorSettings.Fallbacks.AiError
@@ -655,8 +678,10 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                 PipelineStage = "New",
                 SuggestedButtons = Array.Empty<string>(),
                 AIInsights = Array.Empty<string>(),
-                IsFallbackResponse = true
+                IsFallbackResponse = true,
+                ShouldDeferReply = shouldDeferReply
             };
+            CustomerReplyInstructionPolicy.Apply(fallbackResult, resolvedBehaviorSettings.Tone.BusinessInstructions);
             NormalizeReaction(fallbackResult);
             return fallbackResult;
         }
@@ -793,19 +818,12 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
 - لا تخلط أبداً بين النداء غير الرسمي والنداء الرسمي (مثال: لا تقل ""يا مارفن يا فندم""، بل قل ""يا فندم"" أو ""أستاذ مارفن"").
 {toneInstructions}- لا تذكر أبداً اسم الموظف أو ملاحظات إدارية.
 - لا تضع أي توقيع أو علامات ترقيم زائدة.
-- اكتب نص الرسالة فقط التي سيتم إرسالها للعميل مباشرة وبدون أي مقدمات أو شرح خارجي.
-الرسالة:";
+- اجعل نص الرسالة الذي سيراه العميل داخل حقل message فقط.
+{GeneratedMessageText.OutputContract}";
 
             var generatedMessage = await _geminiClient.GenerateReplyAsync(prompt, apiKeyOverride, modelOverride);
-            
-            if (!string.IsNullOrWhiteSpace(generatedMessage) && !generatedMessage.StartsWith("[Mock"))
-            {
-                return generatedMessage.Trim();
-            }
-            else
-            {
-                return "مرحباً يا فندم، كنا حابين نتابع مع حضرتك بخصوص ميعاد المجموعة الأونلاين والسيشن التجريبية.";
-            }
+            return GeneratedMessageText.Read(generatedMessage)
+                ?? "مرحباً يا فندم، حابين نتابع مع حضرتك بخصوص استفسارك.";
         }
     }
 }

@@ -4,7 +4,7 @@ using System.Text;
 namespace Shared.Infrastructure;
 
 [AttributeUsage(AttributeTargets.Method)]
-public sealed class WhatsAppGatewayAuthenticatedAttribute : Attribute
+public sealed class WhatsAppGatewayAuthenticatedAttribute : Attribute, Microsoft.AspNetCore.Authorization.IAllowAnonymous
 {
 }
 

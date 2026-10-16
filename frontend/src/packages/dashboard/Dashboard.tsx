@@ -1,9 +1,11 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   Activity,
+  LayoutDashboard,
+  CalendarClock,
   ArrowLeft,
   MessageSquare,
   RefreshCw,
@@ -13,23 +15,29 @@ import {
   Zap,
 } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
-import { api } from '../../services/api';
-import { crmService, Customer, Deal } from '../../services/crm';
+import { crmService, DashboardSummary } from '../../services/crm';
+import PageHeader from '../../components/ui/PageHeader';
+import Button from '../../components/ui/Button';
 import styles from './dashboard.module.css';
 
 const CAIRO_TIME_ZONE = 'Africa/Cairo';
+
+function formatCount(value: number | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value.toLocaleString('ar-EG') : 'غير متاح';
+}
 
 function DashboardSkeleton() {
   return (
     <div className={styles.container} aria-busy="true" aria-label="جاري تحميل لوحة التحكم">
       <div className={styles.dashboardHeader}>
         <div>
-          <div className={`${styles.skeleton} ${styles.skeletonTitle}`} style={{ width: '220px', height: '28px' }} />
+          <div className={styles.skeleton} style={{ width: '220px', height: '28px' }} />
           <div className={styles.skeleton} style={{ width: '300px', height: '14px', marginTop: '10px' }} />
         </div>
       </div>
       <div className={styles.statsGrid}>
-        {[1, 2, 3, 4].map((metric) => (
+        {[1, 2, 3].map((metric) => (
           <div key={metric} className={`glass-panel ${styles.statCard} ${styles.skeletonCard}`}>
             <div className={styles.skeleton} style={{ width: '42px', height: '42px', borderRadius: 'var(--radius-md)' }} />
             <div className={styles.skeleton} style={{ width: '90px', height: '14px', marginTop: '16px' }} />
@@ -43,16 +51,14 @@ function DashboardSkeleton() {
 
 export default function Dashboard() {
   const { activeProject } = useAuth();
-  const router = useRouter();
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [deals, setDeals] = useState<Deal[]>([]);
-  const [totalChats, setTotalChats] = useState(0);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [recalculating, setRecalculating] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [lastLoadedProjectId, setLastLoadedProjectId] = useState<string | null>(null);
-  const [stageFilter, setStageFilter] = useState('الكل');
+  const [stageSelection, setStageSelection] = useState({ projectId: '', stage: 'الكل' });
+  const stageFilter = stageSelection.projectId === activeProject?.id ? stageSelection.stage : 'الكل';
+  const [lastLoadedStage, setLastLoadedStage] = useState<string | null>(null);
   const loadRequestIdRef = React.useRef(0);
 
   const fetchDashboardData = useCallback(async () => {
@@ -66,17 +72,10 @@ export default function Dashboard() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [customerList, dealList, conversationsResponse] = await Promise.all([
-        crmService.getCustomers(activeProject.id),
-        crmService.getDeals(activeProject.id),
-        api.get<unknown[]>(`/api/projects/${activeProject.id}/conversations`, {
-          params: { channel: 'All', limit: 1000 },
-        }),
-      ]);
+      const response = await crmService.getDashboardSummary(activeProject.id, stageFilter === 'الكل' ? 'All' : stageFilter);
       if (requestId !== loadRequestIdRef.current) return;
-      setCustomers(customerList);
-      setDeals(dealList);
-      setTotalChats(conversationsResponse.data.length);
+      setSummary(response);
+      setLastLoadedStage(stageFilter);
       setLastUpdatedAt(new Date());
       setLastLoadedProjectId(activeProject.id);
     } catch (error) {
@@ -86,47 +85,33 @@ export default function Dashboard() {
     } finally {
       if (requestId === loadRequestIdRef.current) setLoading(false);
     }
-  }, [activeProject]);
+  }, [activeProject, stageFilter]);
 
   useEffect(() => {
     const requestTimer = window.setTimeout(() => void fetchDashboardData(), 0);
-    return () => window.clearTimeout(requestTimer);
+    return () => {
+      window.clearTimeout(requestTimer);
+      loadRequestIdRef.current += 1;
+    };
   }, [fetchDashboardData]);
 
-  const recalculateMetrics = async () => {
-    if (!activeProject || recalculating) return;
-    setRecalculating(true);
-    try {
-      await crmService.recalculateAnalytics(activeProject.id);
-      await fetchDashboardData();
-    } catch (error) {
-      console.error('Failed to recalculate metrics', error);
-      setLoadError('تعذر إعادة حساب المؤشرات. البيانات المعروضة هي آخر بيانات تم تحميلها بنجاح.');
-    } finally {
-      setRecalculating(false);
-    }
-  };
-
   const metrics = useMemo(() => {
-    const wonDeals = deals.filter((deal) => deal.status === 1).length;
     return {
-      customers: customers.length,
-      chats: totalChats,
-      conversionRate: deals.length > 0 ? Math.round((wonDeals / deals.length) * 1000) / 10 : null,
+      customers: summary?.customers,
+      chats: summary?.chats,
+      conversionRate: summary && Number.isFinite(summary.totalDeals) && summary.totalDeals > 0 &&
+        Number.isFinite(summary.wonDeals) && summary.wonDeals >= 0 && summary.wonDeals <= summary.totalDeals ? Math.round((summary.wonDeals / summary.totalDeals) * 1000) / 10 : null,
     };
-  }, [customers.length, deals, totalChats]);
+  }, [summary]);
 
   const stages = useMemo(
-    () => ['الكل', ...Array.from(new Set(customers.map((customer) => customer.pipelineStage).filter(Boolean)))],
-    [customers],
+    () => ['الكل', ...(summary?.stages ?? [])],
+    [summary],
   );
 
   const visibleLeads = useMemo(
-    () => customers
-      .filter((customer) => stageFilter === 'الكل' || customer.pipelineStage === stageFilter)
-      .sort((first, second) => second.leadScore - first.leadScore)
-      .slice(0, 10),
-    [customers, stageFilter],
+    () => summary?.topLeads ?? [],
+    [summary],
   );
 
   if (loading && !lastUpdatedAt) return <DashboardSkeleton />;
@@ -137,39 +122,16 @@ export default function Dashboard() {
     timeStyle: 'short',
   });
   const hasLoadedData = lastUpdatedAt !== null && lastLoadedProjectId === activeProject?.id;
-  const displayedLeads = hasLoadedData ? visibleLeads : [];
+  const hasLoadedStage = hasLoadedData && lastLoadedStage === stageFilter;
+  const displayedLeads = hasLoadedStage ? visibleLeads : [];
 
   return (
     <section className={styles.container} aria-labelledby="dashboard-title">
-      <div className={styles.dashboardHeader}>
-        <div>
-          <div className={styles.breadcrumbs} aria-label="مسار الصفحة">
-            <span>الرئيسية</span>
-            <span className={styles.chevron} aria-hidden="true">/</span>
-            <span className={styles.activeBreadcrumb}>لوحة التحكم</span>
-          </div>
-          <h1 id="dashboard-title" className={styles.pageTitle}>نظرة عامة على الأداء</h1>
-          <p className={styles.pageSubtitle}>
-            بيانات المشروع {activeProject?.name ?? 'غير محدد'}، دون تقديرات أو قيم تجريبية
-          </p>
-          <p className={styles.panelSubtitle} role="status">
-            {hasLoadedData && formattedUpdatedAt ? `آخر تحميل ناجح: ${formattedUpdatedAt} بتوقيت القاهرة` : 'لم يتم تحميل مصدر بيانات لهذا المشروع بعد'}
-          </p>
-        </div>
-        <div className={styles.headerActions}>
-          <span className={styles.rangeButton}>كل البيانات المتاحة من المصدر</span>
-          <button
-            type="button"
-            onClick={recalculateMetrics}
-            disabled={!activeProject || recalculating}
-            title={!activeProject ? 'مساحة العمل غير متاحة' : undefined}
-            className={styles.refreshButton}
-          >
-            <RefreshCw size={16} aria-hidden="true" className={recalculating ? styles.spinIcon : ''} />
-            {recalculating ? 'جاري التحديث...' : 'تحديث المؤشرات'}
-          </button>
-        </div>
-      </div>
+      <PageHeader title="نظرة عامة" icon={<LayoutDashboard size={24} aria-hidden="true" />} titleId="dashboard-title" description={`العملاء والمحادثات في ${activeProject?.name ?? 'مشروعك'}`}
+        eyebrow={<span role="status">{hasLoadedData && formattedUpdatedAt ? `آخر تحديث: ${formattedUpdatedAt} بتوقيت القاهرة` : 'بانتظار تحميل بيانات المشروع'}</span>}
+        actions={<><Link href="/inbox" className={styles.primaryLink}><MessageSquare size={17} aria-hidden="true" />افتح المحادثات</Link><Button onClick={() => void fetchDashboardData()} disabled={!activeProject} loading={loading}>
+          <RefreshCw size={16} aria-hidden="true" />تحديث المؤشرات
+        </Button></>} />
 
       {loadError && (
         <div className="glass-panel" role="alert" style={{ padding: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
@@ -185,13 +147,13 @@ export default function Dashboard() {
       <section className={styles.statsGrid} aria-label="مؤشرات المشروع">
         <article className={`glass-panel ${styles.statCard}`}>
           <div className={styles.statIconBox}><MessageSquare size={22} aria-hidden="true" /></div>
-          <span className={styles.statLabel}>المحادثات المحمّلة</span>
-          <strong className={styles.statValue}>{hasLoadedData ? metrics.chats.toLocaleString('ar-EG') : 'غير متاح'}</strong>
+          <span className={styles.statLabel}>إجمالي المحادثات</span>
+          <strong className={styles.statValue}>{hasLoadedData ? formatCount(metrics.chats) : 'غير متاح'}</strong>
         </article>
         <article className={`glass-panel ${styles.statCard}`}>
           <div className={styles.statIconBox}><Users size={22} aria-hidden="true" /></div>
           <span className={styles.statLabel}>إجمالي العملاء</span>
-          <strong className={styles.statValue}>{hasLoadedData ? metrics.customers.toLocaleString('ar-EG') : 'غير متاح'}</strong>
+          <strong className={styles.statValue}>{hasLoadedData ? formatCount(metrics.customers) : 'غير متاح'}</strong>
         </article>
         <article className={`glass-panel ${styles.statCard}`}>
           <div className={styles.statIconBox}><Star size={22} aria-hidden="true" /></div>
@@ -200,26 +162,18 @@ export default function Dashboard() {
             {!hasLoadedData || metrics.conversionRate === null ? 'غير متاح' : `${metrics.conversionRate.toLocaleString('ar-EG')}٪`}
           </strong>
         </article>
-        <article className={`glass-panel ${styles.statCard} ${styles.aiKpiCard}`}>
-          <div className={styles.statIconBox}><Sparkles size={20} aria-hidden="true" /></div>
-          <span className={styles.statLabel}>الرد الآلي</span>
-          <strong className={styles.aiKpiTitle}>
-            {!activeProject ? 'غير متاح' : activeProject.settings?.aiAutoReplyEnabled ? 'مفعّل في إعدادات المشروع' : 'غير مفعّل'}
-          </strong>
-          <p className={styles.aiKpiDesc}>هذه حالة إعداد فقط، وليست إثباتًا على اتصال مزود الذكاء الاصطناعي.</p>
-        </article>
       </section>
 
       <div className={styles.contentGrid}>
         <section className={`glass-panel ${styles.leadsPanel}`} aria-labelledby="top-leads-heading">
           <div className={styles.panelHeader}>
             <div>
-              <h2 id="top-leads-heading" className={styles.panelTitle}>أعلى العملاء تقييمًا</h2>
+              <h2 id="top-leads-heading" className={styles.panelTitle}><Users size={20} aria-hidden="true" />أعلى العملاء تقييمًا</h2>
               <p className={styles.panelSubtitle}>أول 10 نتائج من بيانات CRM الحالية</p>
             </div>
             <label className={styles.selectWrapper}>
-              <span className="sr-only">تصفية حسب المرحلة</span>
-              <select value={hasLoadedData ? stageFilter : 'الكل'} onChange={(event) => setStageFilter(event.target.value)} className={styles.stageSelect} disabled={!hasLoadedData || loading}>
+              <span>المرحلة</span>
+              <select value={hasLoadedData ? stageFilter : 'الكل'} onChange={(event) => setStageSelection({ projectId: activeProject!.id, stage: event.target.value })} className={styles.stageSelect} disabled={!hasLoadedData || loading}>
                 {(hasLoadedData ? stages : ['الكل']).map((stage) => <option key={stage} value={stage}>{stage}</option>)}
               </select>
             </label>
@@ -230,18 +184,18 @@ export default function Dashboard() {
               <thead><tr><th>العميل</th><th>التقييم</th><th>المرحلة</th><th>الإجراء</th></tr></thead>
               <tbody>
                 {displayedLeads.length === 0 ? (
-                  <tr><td colSpan={4} className={styles.emptyTable}>{hasLoadedData ? 'لا توجد نتائج. غيّر المرحلة أو أضف بيانات CRM.' : 'بيانات CRM غير متاحة قبل أول تحميل ناجح.'}</td></tr>
+                  <tr><td colSpan={4} className={styles.emptyTable}>{hasLoadedStage ? 'لا توجد نتائج. غيّر المرحلة أو أضف بيانات CRM.' : loading ? 'جاري تحميل نتائج المرحلة…' : 'بيانات هذه المرحلة غير متاحة؛ أعد المحاولة.'}</td></tr>
                 ) : displayedLeads.map((customer) => (
                   <tr key={customer.id}>
-                    <td>
+                    <td data-label="العميل">
                       <div className={styles.customerProfileCell}>
                         <div className={styles.avatarLetter}>{(customer.name || '؟')[0]}</div>
                         <div><div className={styles.customerName}>{customer.name || 'اسم غير مسجل'}</div><div className={styles.customerPhone}>{customer.phoneNumber || 'هاتف غير مسجل'}</div></div>
                       </div>
                     </td>
-                    <td><div className={styles.scoreCell}><Zap size={14} aria-hidden="true" /><span>{Number.isFinite(customer.leadScore) ? customer.leadScore : 'غير متاح'}</span></div></td>
-                    <td><span className={styles.stageBadge}>{customer.pipelineStage || 'غير محددة'}</span></td>
-                    <td><button type="button" className={styles.actionBtn} onClick={() => router.push('/crm')} aria-label={`فتح سجل العميل ${customer.name || customer.phoneNumber}`}><ArrowLeft size={16} aria-hidden="true" /></button></td>
+                    <td data-label="التقييم"><div className={styles.scoreCell}><Zap size={14} aria-hidden="true" /><span>{Number.isFinite(customer.leadScore) ? customer.leadScore : 'غير متاح'}</span></div></td>
+                    <td data-label="المرحلة"><span className={styles.stageBadge}>{customer.pipelineStage || 'غير محددة'}</span></td>
+                    <td data-label="الإجراء"><Link className={styles.actionBtn} href={`/inbox?customerId=${encodeURIComponent(customer.id)}&startConversation=1`} aria-label={`بدء محادثة مع ${customer.name || customer.phoneNumber}`}><MessageSquare size={16} aria-hidden="true" />محادثة</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -249,9 +203,20 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <aside className={styles.actionsColumn} aria-label="حالة المصادر">
-          <section className={`glass-panel ${styles.healthPanel}`}>
-            <h2 className={styles.healthTitle}><Activity size={18} aria-hidden="true" /> حالة البيانات</h2>
+        <aside className={styles.actionsColumn} aria-label="أدوات المتابعة وحالة المشروع">
+          <nav className={styles.quickLinks} aria-label="متابعة العمل">
+            <h2>متابعة العمل</h2>
+            <Link href="/management/follow-ups"><CalendarClock size={19} aria-hidden="true" /><span>المتابعات والتذكيرات<small>مواعيد التواصل مع العملاء</small></span><ArrowLeft size={16} aria-hidden="true" /></Link>
+            <Link href="/crm"><Users size={19} aria-hidden="true" /><span>سجل العملاء<small>البيانات والوسوم وملف العميل</small></span><ArrowLeft size={16} aria-hidden="true" /></Link>
+            <Link href="/management/reports"><Activity size={19} aria-hidden="true" /><span>تقارير المبيعات<small>نتائج التواصل والحجز</small></span><ArrowLeft size={16} aria-hidden="true" /></Link>
+          </nav>
+          <section className={styles.healthPanel}>
+            <h2 className={styles.healthTitle}><Sparkles size={18} aria-hidden="true" />الرد الآلي</h2>
+            <strong className={styles.aiKpiTitle}>{!activeProject ? 'غير متاح' : activeProject.settings?.aiAutoReplyEnabled ? 'مفعّل في إعدادات المشروع' : 'غير مفعّل'}</strong>
+            <p className={styles.aiKpiDesc}>هذه حالة إعداد فقط، وليست إثباتًا على اتصال مزود الذكاء الاصطناعي.</p>
+          </section>
+          <details className={styles.healthPanel}>
+            <summary className={styles.healthTitle}><Activity size={18} aria-hidden="true" />حالة البيانات وتحديثها</summary>
             <p className={styles.aiKpiDesc}>تُعرض الأرقام فقط بعد نجاح تحميل CRM والمحادثات. صحة الخادم واستهلاك API غير متاحين من هذه الواجهة.</p>
             <button
               type="button"
@@ -262,7 +227,7 @@ export default function Dashboard() {
             >
               <RefreshCw size={16} aria-hidden="true" /> {loading ? 'جاري التحميل...' : 'إعادة تحميل المصادر'}
             </button>
-          </section>
+          </details>
         </aside>
       </div>
     </section>

@@ -75,6 +75,10 @@ namespace Modules.AI.Services
                 ApplyChannelOverride(resolved, channelOverride);
             }
 
+            // Older saved defaults blamed the customer's number for connection failures.
+            if (resolved.Fallbacks.WhatsAppTransitionFailure == "حاولنا نبعتلك على الواتساب بس غالباً الرقم غلط أو مش عليه واتساب. يا ريت تبعتلي الرقم الصح هنا عشان نتواصل هناك.")
+                resolved.Fallbacks.WhatsAppTransitionFailure = new FallbackMessageSettings().WhatsAppTransitionFailure;
+
             return resolved;
         }
 
@@ -271,6 +275,7 @@ namespace Modules.AI.Services
         private static void MergeInto(AIBehaviorSettings target, AIBehaviorSettings source)
         {
             target.MessengerWhatsAppTransitionEnabled = source.MessengerWhatsAppTransitionEnabled;
+            target.SubscribersOnlyAutoStop = source.SubscribersOnlyAutoStop;
             if (source.Identity != null) target.Identity = MergeIdentity(target.Identity, source.Identity);
             if (source.Tone != null) target.Tone = MergeTone(target.Tone, source.Tone);
             if (source.Cta != null) target.Cta = MergeCta(target.Cta, source.Cta);
@@ -354,6 +359,8 @@ namespace Modules.AI.Services
             if (!string.IsNullOrWhiteSpace(source.FollowUpDefault)) target.FollowUpDefault = source.FollowUpDefault;
             if (!string.IsNullOrWhiteSpace(source.GroupReminderOnline)) target.GroupReminderOnline = source.GroupReminderOnline;
             if (!string.IsNullOrWhiteSpace(source.GroupReminderOffline)) target.GroupReminderOffline = source.GroupReminderOffline;
+            if (!string.IsNullOrWhiteSpace(source.GroupPreparationVideo)) target.GroupPreparationVideo = source.GroupPreparationVideo;
+            if (!string.IsNullOrWhiteSpace(source.GroupPreparationSite)) target.GroupPreparationSite = source.GroupPreparationSite;
             return target;
         }
 

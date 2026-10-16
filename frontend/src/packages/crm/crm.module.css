@@ -2,8 +2,9 @@
 .container {
   display: flex;
   flex-direction: column;
-  gap: var(--space-lg);
-  height: 100%;
+  height: auto;
+  min-height: 100%;
+  gap: 16px;
 }
 
 .loadingBox {
@@ -19,17 +20,8 @@
 .spinner {
   width: 30px;
   height: 30px;
-  border: 2px solid rgba(255, 255, 255, 0.05);
+  border: 2px solid var(--border-subtle);
   border-top-color: hsl(var(--accent-primary));
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.spinnerMini {
-  width: 14px;
-  height: 14px;
-  border: 1.5px solid rgba(255, 255, 255, 0.1);
-  border-top-color: currentColor;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -46,10 +38,11 @@
 }
 
 .pageTitle {
-  margin: 0;
-  font-size: 1.75rem;
-  font-weight: 800;
   color: hsl(var(--text-primary));
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: normal;
+  margin: 0;
 }
 
 .pageSubtitle {
@@ -59,14 +52,6 @@
 }
 
 /* Filters & Search */
-.filterBar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--space-md) var(--space-lg);
-  gap: var(--space-md);
-  flex-wrap: wrap;
-}
 
 .searchWrapper {
   position: relative;
@@ -74,48 +59,12 @@
   min-width: 240px;
 }
 
-.searchIcon {
-  position: absolute;
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: hsl(var(--text-muted));
-}
-
-.searchInput {
-  width: 100%;
-  padding: var(--space-sm) var(--space-md) var(--space-sm) 40px;
-  font-size: 0.9rem;
-}
-
-.filtersGroup {
-  display: flex;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-
-.filterSelectWrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.filterIcon {
-  position: absolute;
-  left: 12px;
-  color: hsl(var(--text-muted));
-  pointer-events: none;
-}
-
-.filterSelect {
-  padding: var(--space-sm) var(--space-lg) var(--space-sm) 36px;
-  font-size: 0.875rem;
-  cursor: pointer;
-}
-
 /* Customers CRM Table Layout */
 .tablePanel {
-  padding: var(--space-xs);
+  padding: 0;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-panel);
 }
 
 .emptyTable {
@@ -128,23 +77,23 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  text-align: left;
+  text-align: start;
 }
 
 .th {
-  padding: var(--space-md) var(--space-lg);
-  font-size: 0.8rem;
   font-weight: 700;
   color: hsl(var(--text-muted));
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 12px 16px;
+  font-size: .8125rem;
+  letter-spacing: normal;
+  background: var(--info-soft);
 }
 
 .tr {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--border-subtle);
   transition: background-color var(--transition-fast);
-  cursor: pointer;
 }
 
 .tr:hover {
@@ -152,15 +101,16 @@
 }
 
 .td {
-  padding: var(--space-md) var(--space-lg);
   font-size: 0.9rem;
   vertical-align: middle;
+  padding: 14px 16px;
 }
 
 .customerCell {
   display: flex;
   align-items: center;
   gap: var(--space-md);
+  cursor: pointer;
 }
 
 .avatar {
@@ -187,23 +137,31 @@
 }
 
 .customerPhone {
-  font-size: 0.75rem;
+  font-size: .8125rem;
   color: hsl(var(--text-muted));
 }
 
 .locationText {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: hsl(var(--text-secondary));
   font-size: 0.85rem;
 }
 
 .scoreBox {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--intelligence-soft);
+  color: var(--intelligence);
 }
 
 .scoreVal {
   font-weight: 700;
-  color: hsl(var(--text-primary));
+  color: inherit;
 }
 
 .stageBadge {
@@ -225,16 +183,17 @@
 }
 
 .tagBadge {
-  font-size: 0.7rem;
-  background-color: rgba(16, 13, 26, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: .75rem;
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   padding: 1px 6px;
   color: hsl(var(--text-secondary));
+  background: var(--surface-muted);
 }
 
 .smartLabelBadge {
-  font-size: 0.7rem;
+  font-size: .75rem;
   background-color: var(--accent-secondary-soft);
   color: hsl(var(--accent-secondary));
   border: 1px solid rgba(243, 92, 110, 0.2);
@@ -245,64 +204,15 @@
   font-weight: 600;
 }
 
-.labelsStatsBar {
-  display: flex;
-  gap: var(--space-sm);
-  overflow-x: auto;
-  padding: 4px;
-  margin-bottom: var(--space-md);
-  flex-shrink: 0;
-}
-
-.labelCard {
-  padding: var(--space-xs) var(--space-md);
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(16, 13, 26, 0.25);
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.labelCard:hover {
-  border-color: var(--accent-soft-strong);
-  background: var(--accent-soft);
-}
-
-.labelCardActive {
-  border-color: var(--accent) !important;
-  background: var(--accent-soft-strong) !important;
-  box-shadow: var(--shadow-neon) !important;
-}
-
-.labelCardName {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: hsl(var(--text-primary));
-}
-
-.labelCardCount {
-  font-size: 0.75rem;
-  background: rgba(255, 255, 255, 0.06);
-  padding: 2px 6px;
-  border-radius: var(--radius-full);
-  color: hsl(var(--text-secondary));
-  font-weight: 700;
-}
-
 .tagMore {
-  font-size: 0.7rem;
+  font-size: .75rem;
   color: hsl(var(--text-muted));
   font-weight: 600;
 }
 
 .editButton {
-  background-color: rgba(16, 13, 26, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: var(--radius-sm);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   color: hsl(var(--text-secondary));
   padding: 6px;
   cursor: pointer;
@@ -312,6 +222,8 @@
   justify-content: center;
   min-width: 44px;
   min-height: 44px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
 }
 
 .editButton:hover {
@@ -333,8 +245,8 @@
 .stageColumn {
   width: 280px;
   min-width: 280px;
-  background: rgba(16, 13, 26, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: var(--space-md);
   display: flex;
@@ -348,7 +260,7 @@
   justify-content: space-between;
   align-items: center;
   padding-bottom: var(--space-sm);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-subtle);
   margin-bottom: var(--space-sm);
 }
 
@@ -404,8 +316,8 @@
 }
 
 .addDealForm {
-  background: rgba(16, 13, 26, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-sm);
   display: flex;
@@ -415,10 +327,10 @@
 }
 
 .addInput {
-  background-color: rgba(16, 13, 26, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  color: white;
+  color: var(--text-strong);
   padding: 6px 8px;
   font-size: 0.8rem;
   outline: 2px solid transparent;
@@ -431,10 +343,10 @@
 }
 
 .addSelect {
-  background-color: rgba(16, 13, 26, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  color: white;
+  color: var(--text-strong);
   padding: 6px 8px;
   font-size: 0.8rem;
   outline: 2px solid transparent;
@@ -456,7 +368,7 @@
 .submitDealBtn {
   flex-grow: 1;
   background-color: hsl(var(--accent-primary));
-  color: #0a0e17;
+  color: var(--accent-ink);
   border: none;
   border-radius: var(--radius-sm);
   padding: 6px;
@@ -495,8 +407,8 @@
 }
 
 .dealCard {
-  background: rgba(16, 13, 26, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-md);
   display: flex;
@@ -506,7 +418,7 @@
 }
 
 .dealCard:hover {
-  background: rgba(16, 13, 26, 0.6);
+  background: var(--surface-muted);
   border-color: var(--accent-soft-strong);
   box-shadow: var(--shadow-neon);
 }
@@ -543,7 +455,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--border-subtle);
   padding-top: var(--space-sm);
   margin-top: 4px;
 }
@@ -554,8 +466,8 @@
 }
 
 .actionBtn {
-  background-color: rgba(16, 13, 26, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   color: hsl(var(--text-secondary));
   border-radius: var(--radius-sm);
   padding: 4px;
@@ -582,7 +494,7 @@
 .winBtn {
   background-color: rgba(16, 185, 129, 0.15);
   border: 1px solid rgba(16, 185, 129, 0.35);
-  color: hsl(140, 100%, 65%);
+  color: var(--success);
   border-radius: var(--radius-sm);
   padding: 4px 6px;
   cursor: pointer;
@@ -601,7 +513,7 @@
 .loseBtn {
   background-color: rgba(239, 68, 68, 0.15);
   border: 1px solid rgba(239, 68, 68, 0.35);
-  color: hsl(0, 100%, 65%);
+  color: var(--danger);
   border-radius: var(--radius-sm);
   padding: 4px 6px;
   cursor: pointer;
@@ -624,7 +536,7 @@
   align-items: center;
   margin-top: var(--space-md);
   padding: var(--space-md) var(--space-lg);
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--border-subtle);
   flex-wrap: wrap;
   gap: var(--space-md);
 }
@@ -690,7 +602,6 @@
 
 .editButton:focus-visible,
 .customerCell:focus-visible,
-.labelCard:focus-visible,
 .addDealTrigger:focus-visible,
 .actionBtn:focus-visible,
 .winBtn:focus-visible,
@@ -709,19 +620,10 @@
   }
 
   .header,
-  .filterBar,
-  .filtersGroup,
   .pagination,
   .paginationInfo {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .searchWrapper,
-  .filterSelectWrapper,
-  .filterSelect {
-    width: 100%;
-    min-width: 0;
   }
 
   .boardGrid {
@@ -742,7 +644,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .spinner,
-  .spinnerMini,
   .dealCard,
   .tr {
     animation: none !important;
@@ -778,4 +679,102 @@
   color: hsl(var(--text-secondary));
   font-size: 0.85rem;
   line-height: 1.6;
+}
+.exportMenu {
+  position: relative;
+}
+.exportMenu > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: .875rem;
+  list-style: none;
+}
+.exportMenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.currencyHint {
+  display: block;
+  margin-top: 3px;
+  font-size: .75rem;
+  line-height: 1.6;
+  font-weight: 400;
+  color: var(--text-soft);
+}
+@media (max-width: 767px) {
+   .container { gap: 14px; }
+   .table, .table tbody { display: block; width: 100%; } .table thead { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+   .tr { display: grid; grid-template-columns: 1fr 1fr; padding: 14px; gap: 12px 16px; }
+   .td { display: block; padding: 0; min-width: 0; border: 0; text-align: start !important; }
+   .td:first-child { grid-column: 1 / -1; } .td:not(:first-child)::before { content: attr(data-label); display: block; margin-bottom: 4px; color: var(--text-soft); font-size: .75rem; }
+   .td:last-child { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; } .td:last-child::before { margin: 0; }
+   .customerName { font-size: 1rem; } .customerNameBox { min-width: 0; } .customerNameBox > div { flex-wrap: wrap; } .customerPhone { direction: ltr; }
+   .tablePanel { overflow: visible; } .pagination { padding: 14px 0; } .paginationInfo { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 6px; }
+  }
+.rowActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  width: 100%;
+  align-items: center;
+}
+.mobileRowToggle {
+  display: none;
+}
+@media (max-width: 767px) {
+ .tr { gap: 10px 16px; padding: 14px; }
+ .tr:not([data-expanded='true']) .td:is([data-label='المدينة'],[data-label='الميزانية'],[data-label='الوسوم']) { display: none; }
+ .td[data-label='المرحلة'] { grid-column: 1; grid-row: 2; }
+ .td[data-label='التقييم'] { grid-column: 2; grid-row: 2; text-align: end !important; }
+ .td[data-label='المرحلة']::before, .td[data-label='التقييم']::before { display: inline; margin-inline-end: 6px; }
+ .scoreBox { display: inline-flex; }
+ .td:last-child::before { display: none; }
+ .mobileRowToggle { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .75rem; cursor: pointer; margin-inline-end: auto; }
+ .rowActions { gap: 8px; }
+ .rowActions .editButton { min-width: 44px; min-height: 44px; }
+ }
+
+.container > header { flex-direction: row; align-items: center; }
+.customerTools { display: grid; gap: 16px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.customerTools[hidden], .customerFilters[hidden] { display: none; }
+.customerTools > button { justify-self: start; }
+.exportContent { padding-block-start: 16px; }
+.customerSearch { display: grid; gap: 8px; }
+.searchToolbar { display: flex; gap: 8px; align-items: center; }
+.searchToolbar .searchWrapper { min-width: 0; }
+.searchToolbar > button { flex-shrink: 0; white-space: nowrap; }
+.customerFilters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding-block: 8px; }
+.customerFilters label { display: grid; gap: 6px; color: var(--text-soft); font-size: .8125rem; }
+.customerFilters select { width: 100%; min-width: 0; }
+.resultsSummary { display: flex; align-items: center; gap: 12px; min-height: 28px; color: var(--text-soft); font-size: .8125rem; }
+.resultsSummary button { min-height: 32px; padding-block: 2px; }
+.conversationLink { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; min-height: 44px; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--accent); text-decoration: none; font-size: .8125rem; font-weight: 600; white-space: nowrap; }
+.conversationLink:hover { background: var(--accent-soft-strong); }
+.conversationLink:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rowActions { flex-wrap: wrap; }
+.rowActions > button { font-size: .8125rem; padding-inline: 8px; }
+@media (min-width: 768px) {
+  .customerSearch { grid-template-columns: minmax(0, 1fr) auto; gap: 10px 20px; align-items: center; }
+  .customerSearch > :first-child { grid-column: 1 / -1; min-width: 0; }
+  .searchToolbar { width: 100%; max-width: 520px; }
+  .customerFilters { grid-column: 1 / -1; }
+  .resultsSummary { grid-column: 2; grid-row: 2; justify-content: flex-end; }
+}
+@media (max-width: 767px) {
+  .customerFilters { grid-template-columns: 1fr; gap: 10px; }
+  .container > header > div:last-child { width: auto; }
+  .container > header button { padding-inline: 8px; font-size: .75rem; }
+  .rowActions { justify-content: start; gap: 6px; }
+  .td:first-child { display: flex; align-items: center; gap: 8px; }
+  .td:first-child .customerCell { min-width: 0; flex: 1; }
+  .mobileRowToggle { flex-shrink: 0; margin: 0; min-height: 44px; font-size: .75rem; }
+  .customerCell { gap: 10px; }
+  .td[data-label='التقييم'] .scoreVal { font-weight: 600; color: var(--intelligence); }
 }

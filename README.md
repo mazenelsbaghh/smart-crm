@@ -26,7 +26,7 @@ Smart Customer Core
 
 ## Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 24+ or Docker Engine with Compose v2
+- Docker Engine 24+ with Compose v2, or [Docker Desktop](https://www.docker.com/products/docker-desktop/) with those components
 - [Python](https://www.python.org/) 3.11+ (for tests)
 - [GNU Make](https://www.gnu.org/software/make/)
 - [Git](https://git-scm.com/)
@@ -35,7 +35,7 @@ Smart Customer Core
 
 ```bash
 # 1. Clone the repository
-git clone <repository-url>
+git clone <repository-url> smart-customer-core
 cd smart-customer-core
 
 # 2. Set up environment
@@ -52,22 +52,50 @@ make test-setup
 make test-phase-0
 ```
 
+`make env` generates independent `JWT_SECRET` and `WHATSAPP_GATEWAY_WEBHOOK_SECRET`
+values in the ignored `.env` file when either is missing, too short, or still the
+old public default. The backend rejects unsafe JWT signing keys at startup.
+Access tokens last 15 minutes and require an active
+server-side refresh session; logout, account removal, and role changes invalidate
+access. The session-family migration `20261016040000_AddAccessSessionFamilies`
+adds session tracking. Previously issued access tokens without a session claim
+are rejected; clients with a valid refresh token can obtain a new access token,
+while clients without one must sign in again.
+
+For SSH deployment, copy `.env.deploy.example` (or `.env.deploy.sales.example`)
+to its ignored local counterpart and use SSH keys or set `SSH_PASS` locally.
+Keep TLS private keys outside Git. Removing a secret from the current files does
+not remove it from Git history or revoke it: exposed SSH credentials and TLS keys
+must be rotated, and shared history cleanup must be coordinated separately.
+
+Raster processing uses Magick.NET 15.0.0. The backend Docker image uses Debian
+Bookworm for its native runtime; deployments must rebuild the backend image after
+updating dependencies.
+
+As of 2026-10-16, the frontend development dependency audit reports five entries
+for the single unpatched [braces nesting advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm).
+Its dependency chain is `eslint-config-next` → `@next/eslint-plugin-next` →
+`fast-glob` → `micromatch` → `braces`. The Next.js lint plugin only calls that
+glob helper when `settings.next.rootDir` is configured; this project's
+`frontend/eslint.config.mjs` leaves that setting unset. This assessment does not
+remove the audit entries or claim that the dependency itself is patched.
+
 ## Available Commands
 
 Run `make help` to see all available commands:
 
 | Command | Description |
 |---------|-------------|
-| `make env` | Create `.env` from template |
+| `make env` | Create `.env` if absent and replace unsafe service secrets |
 | `make up` | Start all Docker services |
 | `make down` | Stop all services |
 | `make restart` | Restart all services |
 | `make logs` | Tail all service logs |
 | `make ps` | Show running containers |
-| `make clean` | Remove all Docker artifacts |
+| `make clean` | Remove this Compose project's containers, volumes and local images |
 | `make health` | Check all service health |
 | `make test-setup` | Install Python test dependencies |
-| `make test-all` | Run all tests |
+| `make test-all` | Run the Python tests under `tests/` |
 | `make test-phase-0` | Run infrastructure tests |
 | `make test-coverage` | Run tests with coverage |
 

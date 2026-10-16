@@ -22,9 +22,9 @@ public sealed class AdvertisingEvidenceService
         var asOf = asOfUtc ?? DateTime.UtcNow;
         if (windowStartUtc >= windowEndUtc || windowEndUtc > asOf.AddMinutes(1))
             throw new AdvertisingException("ADS_EVIDENCE_WINDOW_INVALID", "Decision evidence window is incoherent.", 422);
-        var insightRows = snapshots.Where(item => item.IntervalStartUtc >= windowStartUtc
-            && item.IntervalEndUtc <= windowEndUtc && item.FetchedAtUtc <= asOf).ToArray();
-        var outcomeRows = conversions.Where(item => item.OccurredAtUtc >= windowStartUtc
+        var insightRows = snapshots.Where(item => item.ProjectId == projectId && AdvertisingInsightWindow.StartUtc(item) >= windowStartUtc
+            && AdvertisingInsightWindow.EndUtc(item) <= windowEndUtc && item.FetchedAtUtc <= asOf).ToArray();
+        var outcomeRows = conversions.Where(item => item.ProjectId == projectId && item.OccurredAtUtc >= windowStartUtc
             && item.OccurredAtUtc < windowEndUtc).ToArray();
         var evaluation = Evaluate(insightRows, outcomeRows, targetCpa, asOf,
             trackingHealthy: tracking?.State == TrackingHealthState.Healthy);
@@ -51,10 +51,16 @@ public sealed class AdvertisingEvidenceService
         DateTime? nowUtc = null, int attributionDelayHours = 24, bool trackingHealthy = true)
     {
         var now = nowUtc ?? DateTime.UtcNow;
-        var rows = snapshots.Where(x => x.IsCurrent).ToList();
-        var outcomes = conversions.Where(x => x.State is not ConversionState.Suppressed).ToList();
-        var spend = rows.Sum(x => x.Spend); var impressions = rows.Sum(x => x.Impressions); var clicks = rows.Sum(x => x.Clicks);
-        var paid = outcomes.Where(x => IsPaid(x.EventType) && x.CurrentValue > 0).ToList();
+        var rows = snapshots.Where(x => x.IsCurrent && x.TargetType == "Ad" && x.BreakdownHash is "" or "none").ToList();
+        var sourceOutcomes = conversions.ToList();
+        var outcomes = sourceOutcomes.Where(x => AdvertisingOutcomePolicy.IsVerified(x)
+            && x.AttributionState == AttributionState.Attributed && x.AdvertisementId != null).ToList();
+        var currencies = rows.Select(row => row.Currency).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var currency = currencies.Length == 1 && !string.IsNullOrWhiteSpace(currencies[0]) ? currencies[0] : null;
+        var spend = currency is null ? 0m : rows.Sum(x => x.Spend);
+        var impressions = rows.Sum(x => x.Impressions); var clicks = rows.Sum(x => x.Clicks);
+        var paidOutcomes = outcomes.Where(x => AdvertisingOutcomePolicy.RevenueEvents.Contains(x.EventType) && x.CurrentValue > 0).ToList();
+        var paid = paidOutcomes.Where(x => currency != null && string.Equals(x.Currency, currency, StringComparison.OrdinalIgnoreCase)).ToList();
         var qualified = outcomes.Where(x => x.EventType == "QualifiedLead").ToList();
         var verifiedLeads = outcomes.Where(x => x.EventType is "Lead" or "BookingConfirmed").ToList();
         var revenue = paid.Sum(x => x.CurrentValue ?? 0m);
@@ -64,11 +70,12 @@ public sealed class AdvertisingEvidenceService
         var roas = spend > 0 ? revenue / spend : 0m; var cpa = count > 0 ? spend / count : 0m;
         var ctr = impressions > 0 ? (decimal)clicks / impressions * 100m : 0m; var frequency = rows.Count > 0 ? rows.Max(x => x.Frequency) : 0m;
         var waitReasons = new List<string>();
+        if ((rows.Count > 0 && currency is null) || paid.Count != paidOutcomes.Count) waitReasons.Add("ADS_WAIT_CURRENCY_MISMATCH");
         if (rows.Count < 2) waitReasons.Add("ADS_WAIT_INSUFFICIENT_SNAPSHOTS");
         if (spend < targetCpa && impressions < 1000) waitReasons.Add("ADS_WAIT_INSUFFICIENT_VOLUME");
-        if (rows.Count > 0 && now - rows.Max(x => x.IntervalEndUtc) < TimeSpan.FromHours(attributionDelayHours)) waitReasons.Add("ADS_WAIT_ATTRIBUTION_DELAY");
+        if (rows.Count > 0 && now - rows.Max(AdvertisingInsightWindow.EndUtc) < TimeSpan.FromHours(attributionDelayHours)) waitReasons.Add("ADS_WAIT_ATTRIBUTION_DELAY");
         if (rows.Any(x => x.LearningStatus?.Contains("LEARNING", StringComparison.OrdinalIgnoreCase) == true)) waitReasons.Add("ADS_WAIT_LEARNING");
-        if (outcomes.Any(x => x.CorrectionState == CorrectionState.PendingBase)) waitReasons.Add("ADS_WAIT_PENDING_CORRECTION");
+        if (sourceOutcomes.Any(x => x.CorrectionState == CorrectionState.PendingBase)) waitReasons.Add("ADS_WAIT_PENDING_CORRECTION");
         if (!trackingHealthy) waitReasons.Add("ADS_WAIT_TRACKING_UNSAFE");
         var verdict = waitReasons.Count > 0 ? EvidenceVerdict.Wait
             : frequency >= 4m && ctr < 0.8m ? EvidenceVerdict.Fatigued
@@ -85,10 +92,10 @@ public sealed class AdvertisingEvidenceService
     {
         using var document = JsonDocument.Parse(snapshot.ProviderActionsJson);
         if (!document.RootElement.TryGetProperty("Actions", out var actions) || actions.ValueKind != JsonValueKind.Object) return 0;
-        return actions.EnumerateObject().Where(action => action.Name.Contains("messaging", StringComparison.OrdinalIgnoreCase)
-                || action.Name.Contains("conversation", StringComparison.OrdinalIgnoreCase))
-            .Sum(action => decimal.ToInt32(action.Value.GetDecimal()));
+        foreach (var key in new[] { "onsite_conversion.messaging_conversation_started_7d", "messaging_conversation_started_7d" })
+            if (actions.TryGetProperty(key, out var count) && count.TryGetDecimal(out var value))
+                return decimal.ToInt32(Math.Clamp(value, 0m, int.MaxValue));
+        return 0;
     }
 
-    private static bool IsPaid(string eventType) => eventType is "Purchase" or "SubscriptionStarted" or "SubscriptionRenewed" or "EnrollmentPaid" or "DealWon";
 }

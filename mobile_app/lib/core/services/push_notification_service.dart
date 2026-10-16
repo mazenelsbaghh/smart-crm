@@ -139,7 +139,9 @@ class PushNotificationService {
     _foregroundSubscription = FirebaseMessaging.onMessage.listen((
       RemoteMessage message,
     ) {
-      if (_disposed) return;
+      if (_disposed || message.data['projectId']?.toString() != _projectId) {
+        return;
+      }
       final notification = message.notification;
       if (notification != null && _navigatorKey.currentState != null) {
         final type = message.data['type']?.toString() ?? 'General';
@@ -189,13 +191,17 @@ class PushNotificationService {
   }
 
   void _handleNotificationClick(RemoteMessage message) {
+    if (_disposed || message.data['projectId']?.toString() != _projectId) {
+      return;
+    }
     final type = message.data['type']?.toString() ?? 'General';
     if (type == 'Booking') {
       _onNavigate('/bookings');
     }
   }
 
-  void dispose() {
+  Future<void> dispose() async {
+    final token = tokenNotifier.value;
     _disposed = true;
     unawaited(_tokenRefreshSubscription?.cancel());
     unawaited(_foregroundSubscription?.cancel());
@@ -205,5 +211,20 @@ class PushNotificationService {
     _openedSubscription = null;
     tokenNotifier.value = null;
     statusNotifier.value = 'غير مسجل';
+    if (token != null) {
+      try {
+        await _apiClient.dio.delete(
+          '/api/projects/$_projectId/fcm-tokens',
+          data: {'token': token},
+        );
+      } catch (_) {
+        // The server also checks session ownership before every push delivery.
+      }
+    }
+    try {
+      await FirebaseMessaging.instance.deleteToken();
+    } catch (_) {
+      // Firebase can be unavailable offline; revoked sessions cannot receive server pushes.
+    }
   }
 }

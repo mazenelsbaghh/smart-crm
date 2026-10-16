@@ -36,6 +36,7 @@ public sealed class CampaignSenderConcurrencyTests(PostgresFixture postgres)
             campaignId,
             (firstRecipientId, Guid.NewGuid()),
             (secondRecipientId, Guid.NewGuid()));
+        await SeedConversationHistoryAsync(projectId, campaignId);
         var gateway = new CampaignGatewayHandler(waitForPostCount: 2);
         var ai = new FixedCampaignAiService();
 
@@ -54,6 +55,7 @@ public sealed class CampaignSenderConcurrencyTests(PostgresFixture postgres)
         await Task.WhenAll(sends);
 
         Assert.Equal(2, gateway.PostCount);
+        Assert.Equal(2, ai.CallCount);
         Assert.Equal(2, gateway.SendPayloads.Count);
         Assert.All(gateway.StatusRequestUris, uri =>
             Assert.Contains($"whatsappAccountId={accountId}", uri.Query, StringComparison.Ordinal));
@@ -69,14 +71,19 @@ public sealed class CampaignSenderConcurrencyTests(PostgresFixture postgres)
         await using var verification = postgres.CreateContext();
         var campaign = await verification.Campaigns.IgnoreQueryFilters().SingleAsync(candidate => candidate.Id == campaignId);
         Assert.Equal(2, campaign.SentCount);
-        Assert.Equal(2, campaign.DeliveredCount);
+        Assert.Equal(0, campaign.DeliveredCount);
         Assert.Equal(CampaignStatus.Completed, campaign.Status);
         Assert.NotNull(campaign.CompletedAt);
         Assert.All(
             await verification.CampaignRecipients.IgnoreQueryFilters()
                 .Where(recipient => recipient.CampaignId == campaignId)
                 .ToListAsync(),
-            recipient => Assert.Equal(RecipientStatus.Sent, recipient.Status));
+            recipient =>
+            {
+                Assert.Equal(RecipientStatus.Sent, recipient.Status);
+                Assert.NotNull(recipient.SentAt);
+                Assert.Null(recipient.DeliveredAt);
+            });
     }
 
     [Fact]
@@ -101,6 +108,65 @@ public sealed class CampaignSenderConcurrencyTests(PostgresFixture postgres)
         Assert.Equal(CampaignStatus.Completed, campaign.Status);
         Assert.Equal(0, campaign.SentCount);
         Assert.Equal(0, campaign.DeliveredCount);
+    }
+
+    [Theory]
+    [InlineData("B", true)]
+    [InlineData("A", false)]
+    public async Task Template_without_interest_or_customer_without_history_sends_without_paid_inference(string variant, bool hasHistory)
+    {
+        var projectId = Guid.NewGuid();
+        var campaignId = Guid.NewGuid();
+        var recipientId = Guid.NewGuid();
+        await SeedCampaignAsync(projectId, Guid.NewGuid(), campaignId, (recipientId, Guid.NewGuid()));
+        if (hasHistory) await SeedConversationHistoryAsync(projectId, campaignId);
+        await using var context = postgres.CreateContext();
+        await context.CampaignRecipients.IgnoreQueryFilters().Where(recipient => recipient.Id == recipientId)
+            .ExecuteUpdateAsync(update => update.SetProperty(recipient => recipient.Variant, variant));
+        var gateway = new CampaignGatewayHandler();
+        var ai = new FixedCampaignAiService();
+
+        await Job(context, gateway, ai).SendSingleMessageAsync(recipientId);
+
+        Assert.Equal(0, ai.CallCount);
+        using var payload = JsonDocument.Parse(Assert.Single(gateway.SendPayloads));
+        Assert.Equal(variant == "B" ? "أهلاً عميل" : "أهلاً عميل عن تفاصيل الكورس",
+            payload.RootElement.GetProperty("message").GetString());
+        Assert.Equal(RecipientStatus.Sent, (await context.CampaignRecipients.IgnoreQueryFilters()
+            .SingleAsync(recipient => recipient.Id == recipientId)).Status);
+    }
+
+    [Theory]
+    [InlineData("Paused")]
+    [InlineData("OptedOut")]
+    [InlineData("AccountChanged")]
+    public async Task Delivery_changes_while_paid_inference_runs_prevent_sending(string change)
+    {
+        var projectId = Guid.NewGuid();
+        var campaignId = Guid.NewGuid();
+        var recipientId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        await SeedCampaignAsync(projectId, Guid.NewGuid(), campaignId, (recipientId, customerId));
+        await SeedConversationHistoryAsync(projectId, campaignId);
+        var gateway = new CampaignGatewayHandler();
+        var ai = new BlockingCampaignAiService();
+        await using var sender = postgres.CreateContext();
+        var sending = Job(sender, gateway, ai).SendSingleMessageAsync(recipientId);
+        await ai.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await using var control = postgres.CreateContext();
+        if (change == "Paused") await control.Campaigns.IgnoreQueryFilters().Where(campaign => campaign.Id == campaignId)
+            .ExecuteUpdateAsync(update => update.SetProperty(campaign => campaign.Status, CampaignStatus.Paused));
+        if (change == "AccountChanged") await control.Campaigns.IgnoreQueryFilters().Where(campaign => campaign.Id == campaignId)
+            .ExecuteUpdateAsync(update => update.SetProperty(campaign => campaign.WhatsAppAccountId, (Guid?)null));
+        if (change == "OptedOut") await control.Customers.IgnoreQueryFilters().Where(customer => customer.Id == customerId)
+            .ExecuteUpdateAsync(update => update.SetProperty(customer => customer.IsBlacklisted, true));
+        ai.Release.SetResult();
+
+        await sending;
+
+        Assert.Equal(0, gateway.PostCount);
+        var recipient = await control.CampaignRecipients.IgnoreQueryFilters().SingleAsync(candidate => candidate.Id == recipientId);
+        Assert.Equal(change == "OptedOut" ? RecipientStatus.Failed : RecipientStatus.Pending, recipient.Status);
     }
 
     [Theory]
@@ -236,6 +302,21 @@ public sealed class CampaignSenderConcurrencyTests(PostgresFixture postgres)
         await seed.SaveChangesAsync();
     }
 
+    private async Task SeedConversationHistoryAsync(Guid projectId, Guid campaignId)
+    {
+        await using var db = postgres.CreateContext();
+        var customers = await db.CampaignRecipients.IgnoreQueryFilters().Where(recipient => recipient.CampaignId == campaignId)
+            .Select(recipient => recipient.CustomerId).ToListAsync();
+        foreach (var customerId in customers)
+        {
+            var conversation = new Conversation { ProjectId = projectId, CustomerId = customerId, Channel = "WhatsApp" };
+            db.Conversations.Add(conversation);
+            db.Messages.Add(new Message { ConversationId = conversation.Id, Direction = "Incoming", Content = "Interested in conversation practice",
+                ExternalMessageId = Guid.NewGuid().ToString("N"), MessageType = "Text", Timestamp = DateTime.UtcNow });
+        }
+        await db.SaveChangesAsync();
+    }
+
     private static CampaignSenderJob Job(
         AppDbContext context,
         CampaignGatewayHandler gateway,
@@ -276,6 +357,19 @@ public sealed class CampaignSenderConcurrencyTests(PostgresFixture postgres)
         {
             Interlocked.Increment(ref _callCount);
             return Task.FromResult("تفاصيل الكورس");
+        }
+    }
+
+    private sealed class BlockingCampaignAiService : ICampaignAIService
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<string> GenerateCampaignCopyAsync(string prompt, string baseTemplate, string targetContext) => throw new NotSupportedException();
+        public async Task<string> GenerateProjectCampaignCopyAsync(Guid projectId, string prompt, string baseTemplate, string targetContext)
+        {
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            return "تفاصيل الكورس";
         }
     }
 

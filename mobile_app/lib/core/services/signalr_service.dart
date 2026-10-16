@@ -5,8 +5,11 @@ import 'package:signalr_netcore/signalr_client.dart';
 import 'secure_storage.dart';
 
 class SignalRService {
-  final SecureStorageService _secureStorage;
   final String _wsUrl;
+  final Future<String?> Function() _accessTokenProvider;
+  Timer? _retryTimer;
+  String? _requestedProjectId;
+  void Function(String projectId)? onConnected;
   HubConnection? _connection;
   int _connectionGeneration = 0;
 
@@ -17,28 +20,47 @@ class SignalRService {
   void Function(String title, String body, String type)? onNotificationReceived;
   void Function(Map<String, dynamic> customer)? onCustomerUpdated;
 
-  SignalRService({required SecureStorageService secureStorage, String? wsUrl})
-    : _secureStorage = secureStorage,
-      _wsUrl = wsUrl ?? 'https://n8n-mazen.online/hubs';
+  SignalRService({
+    required SecureStorageService secureStorage,
+    String? wsUrl,
+    Future<String?> Function()? accessTokenProvider,
+  }) : _accessTokenProvider =
+           accessTokenProvider ?? secureStorage.getAccessToken,
+       _wsUrl = wsUrl ?? 'https://n8n-mazen.online/hubs';
 
   Future<bool> start({required String projectId}) async {
+    if (_requestedProjectId != null && _requestedProjectId != projectId) {
+      await stop();
+    }
     if (_connection != null &&
         _connection!.state != HubConnectionState.Disconnected) {
       return true;
     }
 
+    _requestedProjectId = projectId;
+    _retryTimer?.cancel();
     final connectionGeneration = ++_connectionGeneration;
-    final token = await _secureStorage.getAccessToken() ?? '';
-    if (connectionGeneration != _connectionGeneration) return false;
     final hubUrl = '$_wsUrl/notifications?projectId=$projectId';
 
     final connection = HubConnectionBuilder()
         .withUrl(
           hubUrl,
-          options: HttpConnectionOptions(accessTokenFactory: () async => token),
+          options: HttpConnectionOptions(
+            accessTokenFactory: () async => await _accessTokenProvider() ?? '',
+          ),
         )
         .build();
     _connection = connection;
+    connection.onclose(({error}) {
+      if (!_isCurrent(connection, connectionGeneration)) return;
+      _connection = null;
+      _scheduleReconnect(projectId, connectionGeneration);
+    });
+    connection.onreconnected(({connectionId}) {
+      if (_isCurrent(connection, connectionGeneration)) {
+        onConnected?.call(projectId);
+      }
+    });
 
     connection.on('ReceiveMessage', (arguments) {
       final payload = _firstMap(arguments);
@@ -99,15 +121,36 @@ class SignalRService {
         await _stopIgnoringErrors(connection);
         return false;
       }
+      onConnected?.call(projectId);
       return true;
     } catch (_) {
       await _stopIgnoringErrors(connection);
-      if (_isCurrent(connection, connectionGeneration)) _connection = null;
+      if (_isCurrent(connection, connectionGeneration)) {
+        _connection = null;
+        _scheduleReconnect(projectId, connectionGeneration);
+      }
       return false;
     }
   }
 
+  void _scheduleReconnect(String projectId, int generation) {
+    if (_requestedProjectId != projectId ||
+        _connectionGeneration != generation) {
+      return;
+    }
+    _retryTimer?.cancel();
+    _retryTimer = Timer(const Duration(seconds: 5), () {
+      if (_requestedProjectId == projectId &&
+          _connectionGeneration == generation) {
+        unawaited(start(projectId: projectId));
+      }
+    });
+  }
+
   Future<void> stop() async {
+    _requestedProjectId = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     final connection = _connection;
     _connectionGeneration++;
     _connection = null;

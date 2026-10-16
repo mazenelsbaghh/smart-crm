@@ -1,6 +1,6 @@
 FROM mwader/static-ffmpeg:7.1 AS ffmpeg
 
-FROM registry.access.redhat.com/ubi8/dotnet-90:latest AS build
+FROM mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim AS build
 USER root
 WORKDIR /src
 
@@ -13,7 +13,7 @@ COPY . ./
 RUN dotnet publish -c Release -o /app/out
 
 # Build runtime image
-FROM registry.access.redhat.com/ubi8/dotnet-90-runtime:latest AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-bookworm-slim AS runtime
 USER root
 WORKDIR /app
 COPY --from=build /app/out .

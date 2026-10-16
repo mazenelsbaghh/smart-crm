@@ -1,11 +1,9 @@
+using Shared.Imaging;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Modules.Advertising.Domain;
 using Shared.Storage;
 using Shared.Infrastructure;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Processing;
 
 namespace Modules.Advertising.Jobs;
 
@@ -41,10 +39,10 @@ public sealed class CreativeVariantJob(AppDbContext db, IObjectStorage storage, 
 
     private async Task GenerateImageAsync(Stream source, string outputKey, int width, int height, CancellationToken cancellationToken)
     {
-        using var image = await Image.LoadAsync(source, cancellationToken);
-        image.Mutate(x => x.Resize(new ResizeOptions { Size = new Size(width, height), Mode = ResizeMode.Crop, Position = AnchorPositionMode.Center }));
+        using var image = await RasterImage.LoadAsync(source, cancellationToken);
+        image.CropTo(width, height);
         await using var output = new MemoryStream();
-        await image.SaveAsync(output, new JpegEncoder { Quality = 86 }, cancellationToken);
+        await image.SaveJpegAsync(output, 86, cancellationToken);
         output.Position = 0;
         await storage.UploadAsync(outputKey, output, "image/jpeg", cancellationToken);
     }

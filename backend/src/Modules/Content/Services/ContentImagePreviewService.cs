@@ -1,11 +1,9 @@
+using Shared.Imaging;
 using System.Collections.Concurrent;
 using System.Net;
 using Amazon.S3;
 using Modules.Content.Domain;
 using Shared.Storage;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Processing;
 
 namespace Modules.Content.Services;
 
@@ -43,22 +41,15 @@ public sealed class ContentImagePreviewService
             try
             {
                 await using var original = await _objectStorage.DownloadAsync(post.ImageObjectKey, cancellationToken);
-                using var image = await Image.LoadAsync(original, cancellationToken);
-                image.Mutate(context => context.AutoOrient());
+                using var image = await RasterImage.LoadAsync(original, cancellationToken);
+                image.AutoOrient();
                 if (image.Width > PreviewMaxPixels || image.Height > PreviewMaxPixels)
                 {
-                    image.Mutate(context => context.Resize(new ResizeOptions
-                    {
-                        Size = new Size(PreviewMaxPixels, PreviewMaxPixels),
-                        Mode = ResizeMode.Max
-                    }));
+                    image.ResizeToFit(PreviewMaxPixels, PreviewMaxPixels);
                 }
 
                 await using var encoded = new MemoryStream();
-                await image.SaveAsJpegAsync(
-                    encoded,
-                    new JpegEncoder { Quality = PreviewJpegQuality },
-                    cancellationToken);
+                await image.SaveJpegAsync(encoded, PreviewJpegQuality, cancellationToken);
                 var bytes = encoded.ToArray();
                 try
                 {

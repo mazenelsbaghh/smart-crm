@@ -35,15 +35,28 @@ export default function ContextSidebar({
   const { showToast } = useToast();
   const customerId = customer?.id;
   
-  // Profile edit states
-  const [name, setName] = useState(() => customer?.name || '');
-  const [city, setCity] = useState(() => customer?.city || '');
-  const [notes, setNotes] = useState(() => customer?.notes || '');
-  const [tags, setTags] = useState<string[]>(() => customer?.tags || []);
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [cityDraft, setCityDraft] = useState<string | null>(null);
+  const [notesDraft, setNotesDraft] = useState<string | null>(null);
+  const [tagsDraft, setTagsDraft] = useState<string[] | null>(null);
   const [newTagText, setNewTagText] = useState('');
-  const [leadScore, setLeadScore] = useState<number | null>(() => (
+  const [leadScoreDraft, setLeadScoreDraft] = useState<number | null>(null);
+  const savedLeadScore = (
     customer && Number.isFinite(customer.leadScore) ? customer.leadScore : null
-  ));
+  );
+  const name = nameDraft ?? customer?.name ?? '';
+  const city = cityDraft ?? customer?.city ?? '';
+  const notes = notesDraft ?? customer?.notes ?? '';
+  const tags = tagsDraft ?? customer?.tags ?? [];
+  const leadScore = leadScoreDraft ?? savedLeadScore;
+
+  // The update callback also resolves on failure; only persisted values acknowledge a draft.
+  if (nameDraft !== null && nameDraft === customer?.name) setNameDraft(null);
+  if (cityDraft !== null && cityDraft === customer?.city) setCityDraft(null);
+  if (notesDraft !== null && notesDraft === customer?.notes) setNotesDraft(null);
+  if (leadScoreDraft !== null && leadScoreDraft === savedLeadScore) setLeadScoreDraft(null);
+  if (tagsDraft !== null && customer?.tags.length === tagsDraft.length
+    && tagsDraft.every((tag, index) => tag === customer.tags[index])) setTagsDraft(null);
 
   // Tasks list state
   const [taskList, setTaskList] = useState<CustomerTask[]>([]);
@@ -95,7 +108,7 @@ export default function ContextSidebar({
     const cleanTag = newTagText.trim();
     if (tags.includes(cleanTag)) return;
     const updatedTags = [...tags, cleanTag];
-    setTags(updatedTags);
+    setTagsDraft(updatedTags);
     setNewTagText('');
     await handleSaveField({ tags: updatedTags });
   };
@@ -103,7 +116,7 @@ export default function ContextSidebar({
   // Remove tag
   const handleRemoveTag = async (tagToRemove: string) => {
     const updatedTags = tags.filter(t => t !== tagToRemove);
-    setTags(updatedTags);
+    setTagsDraft(updatedTags);
     await handleSaveField({ tags: updatedTags });
   };
 
@@ -177,13 +190,19 @@ export default function ContextSidebar({
 
   return (
     <div className={styles.detailsPanel}>
-      
-      {/* 1. Customer Profile details & Lead Score card */}
-      <div className={styles.profileCard}>
-        <div className={styles.crmCardTitleRow}>
-          <User size={16} />
-          <h4>بيانات وتقييم العميل</h4>
+      <div className={styles.customerSummary}>
+        <h3>{customer.name || activeConv.customer.facebookName || activeConv.customer.name}</h3>
+        <p><bdi dir="ltr">{customer.phoneNumber || activeConv.customer.phone}</bdi>{customer.city && <span>{customer.city}</span>}</p>
+        {customer.notes && <p className={styles.customerSummaryNotes}>{customer.notes}</p>}
+        <div className={styles.customerSummaryTags}>
+          {customer.tags?.map(tag => <span key={tag} className={styles.tagPill}>{tag}</span>)}
+          {Number.isFinite(customer.leadScore) && <span className={styles.customerScore}>التقييم: {customer.leadScore}/100</span>}
         </div>
+      </div>
+
+      <details className={styles.detailsSection}>
+        <summary><User size={16} aria-hidden="true" />تعديل بيانات العميل وتقييمه</summary>
+        <div className={styles.detailsSectionBody}>
 
         {/* Name input */}
         <div className={styles.profileInputGroup}>
@@ -193,8 +212,8 @@ export default function ContextSidebar({
             type="text"
             className={styles.profileInput}
             value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => handleSaveField({ name })}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={() => nameDraft !== null && void handleSaveField({ name })}
             placeholder="اسم العميل..."
             disabled={updating}
           />
@@ -203,16 +222,15 @@ export default function ContextSidebar({
         {/* City input */}
         <div className={styles.profileInputGroup}>
           <label htmlFor={`customer-city-${customer.id}`} className={styles.profileLabel}>المدينة</label>
-          <div style={{ position: 'relative' }}>
-            <MapPin size={14} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} />
+          <div className={styles.profileCityField}>
+            <MapPin size={14} aria-hidden="true" />
             <input
               id={`customer-city-${customer.id}`}
               type="text"
               className={styles.profileInput}
-              style={{ paddingRight: '30px' }}
               value={city}
-              onChange={(e) => setCity(e.target.value)}
-              onBlur={() => handleSaveField({ city })}
+              onChange={(e) => setCityDraft(e.target.value)}
+              onBlur={() => cityDraft !== null && void handleSaveField({ city })}
               placeholder="المدينة..."
               disabled={updating}
             />
@@ -226,8 +244,8 @@ export default function ContextSidebar({
             id={`customer-notes-${customer.id}`}
             className={styles.profileTextarea}
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            onBlur={() => handleSaveField({ notes })}
+            onChange={(e) => setNotesDraft(e.target.value)}
+            onBlur={() => notesDraft !== null && void handleSaveField({ notes })}
             placeholder="ملاحظات العميل الإدارية..."
             disabled={updating}
           />
@@ -284,23 +302,21 @@ export default function ContextSidebar({
               max="100"
               className={styles.scoreSlider}
               value={leadScore}
-              onChange={(e) => setLeadScore(Number(e.target.value))}
-              onBlur={() => handleSaveField({ leadScore })}
-              onKeyUp={() => handleSaveField({ leadScore })}
+              onChange={(e) => setLeadScoreDraft(Number(e.target.value))}
+              onBlur={() => leadScoreDraft !== null && void handleSaveField({ leadScore })}
+              onKeyUp={() => leadScoreDraft !== null && void handleSaveField({ leadScore })}
               disabled={updating}
               aria-label="تقييم جودة العميل"
               aria-valuetext={`${leadScore} من 100`}
             />
           )}
         </div>
-      </div>
-
-      {/* 2. Tasks list card */}
-      <div className={styles.tasksCard}>
-        <div className={styles.crmCardTitleRow}>
-          <ListTodo size={16} />
-          <h4>المهام المجدولة والمطلوبة</h4>
         </div>
+      </details>
+
+      <details className={styles.detailsSection} open>
+        <summary><ListTodo size={16} aria-hidden="true" />المهام المطلوبة</summary>
+        <div className={styles.detailsSectionBody}>
 
         <div className={styles.taskListContainer}>
           {loadingTasks && taskList.length === 0 ? (
@@ -362,18 +378,15 @@ export default function ContextSidebar({
             <Plus size={16} />
           </button>
         </div>
-      </div>
-
-      {/* 3. AI Insights card */}
-      <div className={styles.aiInsightsCard}>
-        <div className={styles.crmCardTitleRow}>
-          <Sparkles size={16} className={styles.aiSparkleIcon} />
-          <h4>رؤى وتوصيات الذكاء الاصطناعي</h4>
         </div>
+      </details>
+
+      <details className={styles.detailsSection}>
+        <summary><Sparkles size={16} aria-hidden="true" />توصيات المساعد</summary>
         <div className={styles.aiInsightList}>
           {insightList.length === 0 ? (
             <p style={{ color: 'var(--text-soft)', fontSize: '0.74rem', textAlign: 'center', padding: '12px 0', direction: 'rtl' }}>
-              لا توجد رؤى صادرة من المصدر لهذه المحادثة حاليًا.
+              لا توجد توصيات لهذا العميل حاليًا.
             </p>
           ) : (
             insightList.map((insight, idx) => (
@@ -384,14 +397,10 @@ export default function ContextSidebar({
             ))
           )}
         </div>
-      </div>
+      </details>
 
-      {/* 4. Automations card */}
-      <div className={styles.automationsCard}>
-        <div className={styles.crmCardTitleRow}>
-          <Zap size={16} />
-          <h4>أتمتة المتابعة والتنبيهات</h4>
-        </div>
+      <details className={styles.detailsSection}>
+        <summary><Zap size={16} aria-hidden="true" />أتمتة المتابعة والتنبيهات</summary>
 
         <div className={styles.automationList}>
           <div className={styles.automationToggleRow}>
@@ -428,7 +437,7 @@ export default function ContextSidebar({
             </button>
           </div>
         </div>
-      </div>
+      </details>
       <ConfirmDialog
         isOpen={taskToDelete !== null}
         title="حذف مهمة العميل"

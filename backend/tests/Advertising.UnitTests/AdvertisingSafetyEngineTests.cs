@@ -54,6 +54,30 @@ public sealed class AdvertisingSafetyEngineTests
         Assert.Equal("ADS_HARD_CAP_RISK", capRisk.Code);
     }
 
+    [Fact]
+    public async Task Reactivation_rejects_a_fresh_but_exhausted_period_budget()
+    {
+        var setup = await SetupAsync();
+        setup.Ledger.ObservedSpend = setup.Ledger.UsableCap;
+        await setup.Db.SaveChangesAsync();
+
+        var response = await setup.Engine.EvaluateAsync(Request(setup) with { ActionType = "ResumeAd", ProposedBudget = 100m });
+
+        Assert.Equal("ADS_HARD_CAP_RISK", response.Code);
+    }
+
+    [Fact]
+    public async Task Experimental_gateway_cannot_authorize_financial_changes_even_with_a_healthy_snapshot()
+    {
+        var setup = await SetupAsync();
+        setup.Destination.WhatsAppIntegrationMode = WhatsAppIntegrationMode.BaileysObservedExperimental;
+        await setup.Db.SaveChangesAsync();
+
+        var response = await setup.Engine.EvaluateAsync(Request(setup));
+
+        Assert.Equal("ADS_TRACKING_UNHEALTHY", response.Code);
+    }
+
     private static SafetyRequest Request(SetupState setup) => new(setup.ProjectId, "IncreaseBudget", 100m, 110m,
         "AdvantagePlus", [], setup.Ad.Id, setup.Destination.Id, "provider-v1");
 

@@ -40,6 +40,7 @@ env: ## Create .env from .env.example (if .env doesn't exist)
 	else \
 		echo "ℹ️  .env already exists. Skipping."; \
 	fi
+	@$(PYTHON) deploy/ensure_service_secrets.py
 
 # === Docker Compose ===
 up: ## Start all Docker services (build if needed)
@@ -103,7 +104,7 @@ test-setup: ## Create Python virtual environment and install test dependencies
 	@$(PIP) install -r tests/requirements-test.txt -q
 	@echo "✅ Test environment ready."
 
-test-all: ## Run ALL tests (all phases)
+test-all: ## Run Python tests under tests/ (all phases)
 	@echo "🧪 Running all tests..."
 	$(PYTEST) tests/ -v --tb=short
 	@echo "✅ All tests complete."
@@ -290,7 +291,7 @@ prod-logs: ## Tail production backend container logs from the server
 		echo "❌ SSH_HOST not found in .env.deploy"; \
 		exit 1; \
 	fi
-	@sshpass -p "$(SSH_PASS)" ssh -t -o StrictHostKeyChecking=no "$(SSH_USER)@$(SSH_HOST)" \
+	@SSHPASS="$(SSH_PASS)" sshpass -e ssh -t -o StrictHostKeyChecking=no "$(SSH_USER)@$(SSH_HOST)" \
 		"docker compose -f $(REMOTE_DIR)/docker-compose.yml -f $(REMOTE_DIR)/docker-compose.production.yml logs -f --tail=100 backend"
 
 prod-logs-all: ## Tail all production container logs from the server
@@ -298,5 +299,5 @@ prod-logs-all: ## Tail all production container logs from the server
 		echo "❌ SSH_HOST not found in .env.deploy"; \
 		exit 1; \
 	fi
-	@sshpass -p "$(SSH_PASS)" ssh -t -o StrictHostKeyChecking=no "$(SSH_USER)@$(SSH_HOST)" \
+	@SSHPASS="$(SSH_PASS)" sshpass -e ssh -t -o StrictHostKeyChecking=no "$(SSH_USER)@$(SSH_HOST)" \
 		"docker compose -f $(REMOTE_DIR)/docker-compose.yml -f $(REMOTE_DIR)/docker-compose.production.yml logs -f --tail=100"

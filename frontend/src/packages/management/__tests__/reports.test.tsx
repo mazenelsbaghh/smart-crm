@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AuthProvider } from '../../../context/auth-context';
+import { AuthProvider, useAuth } from '../../../context/auth-context';
 import { api } from '../../../services/api';
 import Reports from '../Reports';
+import FunnelAnalyticsPage from '../reports/FunnelAnalyticsPage';
 
 const project = { id: 'project-1', name: 'المشروع', settings: { aiAutoReplyEnabled: true } };
 const currentTime = '2026-08-31T12:00:00.000Z';
@@ -41,7 +42,7 @@ const dashboard = {
   aiDigest: { executiveSummary: 'أكبر تسرب بعد عرض المواعيد.', findings: ['المواعيد السبب الأكبر.'], recommendations: ['اعرض بدائل.'], risks: [], generatedAtUtc: '2026-08-29T09:00:00Z', model: 'gemini-3.5-flash' },
 };
 
-const mockGet = (url: string, report = dashboard) => {
+const mockGet = (url: string, report: unknown = dashboard) => {
   if (url === '/api/projects') return Promise.resolve({ data: [{ id: project.id }] });
   if (url === `/api/projects/${project.id}`) return Promise.resolve({ data: project });
   if (url.endsWith('/sales-intelligence')) return Promise.resolve({ data: report });
@@ -83,6 +84,7 @@ describe('Sales intelligence reports', () => {
     expect(transitionAnalysis.getByText('١٢ محتاجين متابعة')).toBeInTheDocument();
     expect(screen.getByText('للمحادثات المتوقفة والمفقودة فقط')).toBeInTheDocument();
     expect(screen.getAllByText('أحمد').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('tab', { name: 'فرص المتابعة' }));
     expect(screen.getByRole('link', { name: 'فتح محادثة أحمد' })).toHaveAttribute(
       'href',
       '/inbox?conversationId=conversation-1',
@@ -105,25 +107,45 @@ describe('Sales intelligence reports', () => {
     expect(within(messengerCard as HTMLElement).getByText('المقترح: افتح المحادثة ورد يدويًا')).toBeInTheDocument();
     expect(screen.getByLabelText('خطة المتابعات لكل الفرص')).toHaveTextContent('يتبعت الآن١٢');
     expect(screen.getByLabelText('خطة المتابعات لكل الفرص')).toHaveTextContent('جدولة على أيام٧');
-    expect(screen.getByText(/النتائج تُتبع حتى 30 يومًا/)).toBeInTheDocument();
+    expect(screen.getByText(/الحجوزات تُنسب للشات إذا سُجلت خلال 30 يومًا/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'تفاصيل المحادثات' }));
+    expect(screen.getByText('عرض ١ من ١٦٠ تحليل محفوظ')).toBeVisible();
+    expect(screen.getByText('الأحدث أولًا؛ حدد فترة أقدم للوصول إلى تحليلاتها.')).toBeVisible();
   });
 
-  it('يبدأ تحليل كل المحادثات المتبقية في الخلفية', async () => {
-    vi.spyOn(api, 'get').mockImplementation((url) => mockGet(String(url)) as never);
-    const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
-      if (String(url) !== `/api/projects/${project.id}/reports/sales-intelligence/analyze-all`) {
-        throw new Error(`Unexpected POST: ${String(url)}`);
-      }
-      expect(body).toEqual(reportWindow);
-      return { data: { pending: 947, jobId: 'job-1' } } as never;
-    });
+  it('يحدث الأرقام من التقرير الفعلي بدل استدعاء تحليل تاريخي متوقف', async () => {
+    let totalConversations = 200;
+    vi.spyOn(api, 'get').mockImplementation((url) => mockGet(String(url), { ...dashboard, totalConversations }) as never);
+    const post = vi.spyOn(api, 'post').mockRejectedValue(new Error('Unexpected POST'));
     renderReports();
     await screen.findByText('أكبر تسرب بعد عرض المواعيد.');
 
-    fireEvent.click(screen.getByRole('button', { name: /حلّل الكل/ }));
+    totalConversations = 231;
+    fireEvent.click(screen.getByRole('button', { name: /تحديث البيانات/ }));
 
-    expect(await screen.findByText('بدأ تحليل كل الشاتات في الخلفية: ٩٤٧ شات منتظر.')).toBeInTheDocument();
-    expect(post).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.getByLabelText('المؤشرات الأساسية')).toHaveTextContent('٢٣١'));
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('يفرّق بين غياب أول رد وبين زمن رد صفر', async () => {
+    vi.spyOn(api, 'get').mockImplementation((url) => mockGet(String(url), { ...dashboard, medianFirstResponseMinutes: null }) as never);
+    renderReports();
+
+    const missingMedian = await screen.findByText('لا توجد ردود مسجلة لحسابه');
+    expect(missingMedian.parentElement).toHaveTextContent('—');
+    expect(missingMedian.parentElement).not.toHaveTextContent('٠ د');
+  });
+
+  it('يفتح تفاصيل اليوم على حدود توقيت المشروع لا توقيت المتصفح', async () => {
+    let loadedWindow: unknown;
+    vi.spyOn(api, 'get').mockImplementation((url, config) => {
+      if (String(url).endsWith('/sales-intelligence')) loadedWindow = config?.params;
+      return mockGet(String(url)) as never;
+    });
+    renderReports();
+    fireEvent.click(await screen.findByRole('button', { name: 'تفاصيل اليوم' }));
+
+    await waitFor(() => expect(loadedWindow).toEqual({ fromUtc: '2026-08-27T21:00:00.000Z', toUtc: '2026-08-28T21:00:00.000Z' }));
   });
 
   it('يرسل سؤالًا لمحلل المبيعات ويعرض الإجابة', async () => {
@@ -147,6 +169,8 @@ describe('Sales intelligence reports', () => {
     expect(screen.getByLabelText('نطاق تحليل الإجابة')).toHaveTextContent('غير محلل٤٠');
     expect(screen.getByLabelText('نطاق تحليل الإجابة')).toHaveTextContent('التغطية٨٠٪');
     expect(post).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: '30 يومًا' }));
+    expect(screen.queryByText('المشكلة الأساسية في المواعيد.')).not.toBeInTheDocument();
   });
 
   it('يجدول متابعة الفرصة من التقرير', async () => {
@@ -159,6 +183,7 @@ describe('Sales intelligence reports', () => {
     });
     renderReports();
     await screen.findByText('أكبر تسرب بعد عرض المواعيد.');
+    fireEvent.click(screen.getByRole('tab', { name: 'فرص المتابعة' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'جدولة 24 ساعة' }));
     expect(await screen.findByText('تمت جدولة متابعة أحمد بعد 24 ساعة.')).toBeInTheDocument();
@@ -179,6 +204,7 @@ describe('Sales intelligence reports', () => {
     });
     renderReports();
     await screen.findByText('أكبر تسرب بعد عرض المواعيد.');
+    fireEvent.click(screen.getByRole('tab', { name: 'فرص المتابعة' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'إرسال الآن' }));
     expect(screen.getByRole('button', { name: 'تأكيد الإرسال' })).toBeInTheDocument();
@@ -205,6 +231,7 @@ describe('Sales intelligence reports', () => {
     });
     renderReports();
     await screen.findByText('أكبر تسرب بعد عرض المواعيد.');
+    fireEvent.click(screen.getByRole('tab', { name: 'فرص المتابعة' }));
 
     fireEvent.click(screen.getByRole('button', { name: /يتبعت الآن.*١٢/ }));
     expect(screen.getByRole('button', { name: /تأكيد إرسال ١٢/ })).toBeInTheDocument();
@@ -242,6 +269,7 @@ describe('Sales intelligence reports', () => {
     });
     renderReports();
     await screen.findByText('أكبر تسرب بعد عرض المواعيد.');
+    fireEvent.click(screen.getByRole('tab', { name: 'فرص المتابعة' }));
 
     const firstCard = screen.getByRole('link', { name: 'فتح محادثة أحمد' }).closest('article') as HTMLElement;
     const secondCard = screen.getByRole('link', { name: 'فتح محادثة منى' }).closest('article') as HTMLElement;
@@ -275,6 +303,7 @@ describe('Sales intelligence reports', () => {
     const post = vi.spyOn(api, 'post').mockRejectedValue(new Error('Unexpected POST'));
     renderReports();
     await screen.findByText('أكبر تسرب بعد عرض المواعيد.');
+    fireEvent.click(screen.getByRole('tab', { name: 'فرص المتابعة' }));
 
     fireEvent.click(screen.getByRole('button', { name: '30 يومًا' }));
 
@@ -282,6 +311,49 @@ describe('Sales intelligence reports', () => {
     expect(screen.getByRole('button', { name: /يتبعت الآن.*١٢/ })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: /يتبعت الآن.*١٢/ }));
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: 'المبيعات', Component: Reports, reload: 'تحديث البيانات' },
+    { name: 'الأيام', Component: FunnelAnalyticsPage, reload: 'عرض الفترة' },
+  ])('يخفي بيانات المشروع السابق ويتجاهل رده المتأخر في $name', async ({ Component, reload }) => {
+    let authorizedProject = project;
+    let reportRequests = 0;
+    let resolveOld!: (response: { data: typeof dashboard }) => void;
+    let resolveNew!: (response: { data: typeof dashboard }) => void;
+    const nextProject = { ...project, id: 'project-2' };
+    vi.spyOn(api, 'get').mockImplementation((url) => {
+      const path = String(url);
+      if (path === '/api/projects') return Promise.resolve({ data: [{ id: authorizedProject.id }] }) as never;
+      if (path === `/api/projects/${authorizedProject.id}`) return Promise.resolve({ data: authorizedProject }) as never;
+      if (path === '/api/projects/project-2/reports/sales-intelligence') return new Promise((resolve) => { resolveNew = resolve; }) as never;
+      if (path === '/api/projects/project-1/reports/sales-intelligence') {
+        if (++reportRequests === 1) return Promise.resolve({ data: dashboard }) as never;
+        return new Promise((resolve) => { resolveOld = resolve; }) as never;
+      }
+      return Promise.reject(new Error(`Unexpected GET: ${path}`)) as never;
+    });
+    function ReloadProject() {
+      const { refreshProjects } = useAuth();
+      return <button type="button" onClick={() => void refreshProjects()}>تغيير المشروع</button>;
+    }
+    render(<AuthProvider><ReloadProject /><Component /></AuthProvider>);
+    await screen.findByRole('table');
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(reload) }));
+    await waitFor(() => expect(resolveOld).toBeTypeOf('function'));
+    authorizedProject = nextProject;
+    fireEvent.click(screen.getByRole('button', { name: 'تغيير المشروع' }));
+    await waitFor(() => expect(resolveNew).toBeTypeOf('function'));
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.queryByText('أكبر تسرب بعد عرض المواعيد.')).not.toBeInTheDocument();
+    const nextDashboard = { ...dashboard, projectId: nextProject.id, totalConversations: 73,
+      daily: [{ ...dashboard.daily[0], newConversations: 73 }],
+      aiDigest: { ...dashboard.aiDigest, executiveSummary: 'تقرير المشروع الثاني.' } };
+    await act(async () => resolveNew({ data: nextDashboard }));
+    expect(await screen.findByRole('table')).toHaveTextContent(/73|٧٣/);
+    await act(async () => resolveOld({ data: dashboard }));
+    expect(screen.getByRole('table')).toHaveTextContent(/73|٧٣/);
+    expect(screen.queryByText('أكبر تسرب بعد عرض المواعيد.')).not.toBeInTheDocument();
   });
 
   it('يعرض غياب البيانات بدل وصف المراحل الصفرية كنجاح', async () => {
@@ -310,7 +382,8 @@ describe('Sales intelligence reports', () => {
     vi.spyOn(api, 'get').mockImplementation((url) => mockGet(String(url)) as never);
     renderReports();
 
-    fireEvent.click(await screen.findByRole('button', { name: /أحمد.*WhatsApp/ }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'تفاصيل المحادثات' }));
+    fireEvent.click(screen.getByRole('button', { name: /أحمد.*WhatsApp/ }));
 
     expect(screen.queryByRole('button', { name: /إعادة التحليل/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('تصحيح السبب')).not.toBeInTheDocument();

@@ -15,7 +15,7 @@ else
     # Fallback to hardcoded defaults just in case
     SSH_HOST="76.13.42.100"
     SSH_USER="root"
-    SSH_PASS="Pro.1212##AA"
+    SSH_PASS="${SSH_PASS:?Set SSH_PASS outside the repository or use SSH key authentication}"
     REMOTE_DIR="/root/smart-crm"
 fi
 

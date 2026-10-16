@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider } from '../../../context/auth-context';
 import { ToastProvider } from '../../../context/toast-context';
@@ -40,6 +40,44 @@ describe('Channel-aware inbox deep links', () => {
     localStorage.clear();
     localStorage.setItem('user', JSON.stringify({ id: 'owner-1', email: 'owner@example.test', role: 'Owner' }));
     Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it('keeps the comments composer focused while late customer details load', async () => {
+    const conversation: Conversation = {
+      id: 'comments-draft', projectId: project.id, channel: 'FacebookComment', status: 'Open',
+      lastMessageAt: new Date().toISOString(), unreadCount: 0, assignedAgentId: null, assignedAgentName: null,
+      customer: { id: 'delayed-customer', name: 'عميل الرد', phone: '201000000001', avatarUrl: null },
+    };
+    let finishCustomer!: (response: unknown) => void;
+    const customerRequest = new Promise(resolve => { finishCustomer = resolve; });
+    window.history.replaceState({}, '', '/inbox/comments');
+    vi.spyOn(api, 'get').mockImplementation(async url => {
+      const path = String(url);
+      if (path === '/api/projects') return { data: [{ id: project.id }] } as never;
+      if (path === `/api/projects/${project.id}`) return { data: project } as never;
+      if (path === `/api/projects/${project.id}/conversations`) return { data: [conversation] } as never;
+      if (path === '/api/customers/delayed-customer') return customerRequest as never;
+      if (path.endsWith('/messages') || path.endsWith('/follow-ups') || path.endsWith('/tasks')) return { data: [] } as never;
+      throw new Error(`Unexpected GET: ${path}`);
+    });
+    render(<AuthProvider><ToastProvider><CommentsInbox /></ToastProvider></AuthProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: /عميل الرد، مفتوحة/ }));
+    const publicReply = screen.getByLabelText('الرد العام على التعليق', { exact: true });
+    publicReply.focus();
+
+    await act(async () => {
+      finishCustomer({ data: { id: 'delayed-customer', projectId: project.id, name: 'عميل الرد',
+        phoneNumber: '201000000001', tags: [], interests: [], notes: 'يفضل التواصل مساءً' } });
+      await customerRequest;
+    });
+
+    expect(publicReply).toHaveFocus();
+    fireEvent.change(publicReply, { target: { value: 'الرد العام المحفوظ' } });
+    fireEvent.change(screen.getByLabelText('الرسالة الخاصة في ماسنجر', { exact: true }), { target: { value: 'الرد الخاص المحفوظ' } });
+    expect(screen.getByLabelText('الرد العام على التعليق', { exact: true })).toHaveValue('الرد العام المحفوظ');
+    expect(screen.getByLabelText('الرسالة الخاصة في ماسنجر', { exact: true })).toHaveValue('الرد الخاص المحفوظ');
+    fireEvent.click(screen.getByRole('tab', { name: 'الملاحظات' }));
+    expect(screen.getByRole('textbox', { name: 'ملاحظات العميل عميل الرد' })).toHaveValue('يفضل التواصل مساءً');
   });
 
   it.each(channelCases)('يفتح محادثة $channel المطلوبة داخل صندوق القناة الصحيح', async ({

@@ -28,6 +28,26 @@ export interface CustomerTask {
   dueDate?: string;
 }
 
+export type CustomerListItem = Customer;
+export interface CustomerPage {
+  items: CustomerListItem[];
+  page: number;
+  pageSize: number;
+  totalFiltered: number;
+  totalCustomers: number;
+  labels: { name: string; count: number }[];
+  stages: { name: string; count: number }[];
+  cities: string[];
+}
+export interface DashboardSummary {
+  customers: number;
+  chats: number;
+  totalDeals: number;
+  wonDeals: number;
+  topLeads: CustomerListItem[];
+  stages: string[];
+}
+
 export interface PipelineStage {
   id: string;
   projectId: string;
@@ -50,11 +70,21 @@ export interface AnalyticsSnapshot {
   id: string;
   projectId: string;
   metricType: 'Sales' | 'AI_Accuracy' | 'Team_Performance' | string;
-  metricValue: number;
+  metricValue: number | null;
   snapshotDate: string;
 }
 
 export const crmService = {
+  getCustomerPage: async (projectId: string, params: { page: number; pageSize: number; search: string; stage: string; city: string; label: string }, signal?: AbortSignal): Promise<CustomerPage> => {
+    const response = await api.get<CustomerPage>(`/api/projects/${projectId}/customers/page`, { params, signal });
+    return response.data;
+  },
+
+  getDashboardSummary: async (projectId: string, stage: string): Promise<DashboardSummary> => {
+    const response = await api.get<DashboardSummary>(`/api/projects/${projectId}/dashboard/summary`, { params: { stage } });
+    return response.data;
+  },
+
   getCustomers: async (projectId: string): Promise<Customer[]> => {
     const response = await api.get<Customer[]>(`/api/projects/${projectId}/customers`);
     return response.data;

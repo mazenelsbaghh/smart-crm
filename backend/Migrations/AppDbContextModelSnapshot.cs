@@ -4844,6 +4844,32 @@ namespace backend.Migrations
                     b.ToTable("AuditLogs");
                 });
 
+            modelBuilder.Entity("Modules.Auth.Domain.ProjectMembership", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("UserId", "ProjectId")
+                        .IsUnique();
+
+                    b.ToTable("ProjectMemberships");
+                });
+
             modelBuilder.Entity("Modules.Auth.Domain.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4856,8 +4882,14 @@ namespace backend.Migrations
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime?>("RevokedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("SessionId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Token")
                         .IsRequired()
@@ -4867,6 +4899,8 @@ namespace backend.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("SessionId");
 
                     b.ToTable("RefreshTokens");
                 });
@@ -5074,6 +5108,8 @@ namespace backend.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ProjectId", "CustomerId");
+
                     b.ToTable("Deals");
                 });
 
@@ -5160,6 +5196,11 @@ namespace backend.Migrations
                         .HasFilter("\"ActiveAutomationSlotKey\" IS NOT NULL AND \"Status\" IN ('Pending', 'Processing')");
 
                     b.HasIndex("WhatsAppAccountId", "ProjectId");
+
+                    b.HasIndex("ProjectId", "DueDate", "Id")
+                        .IsDescending(false, true, true);
+
+                    b.HasIndex("ProjectId", "Status", "DueDate");
 
                     b.ToTable("FollowUps");
                 });
@@ -5408,6 +5449,10 @@ namespace backend.Migrations
                     b.Property<TimeSpan>("DailyPublishTimeLocal")
                         .HasColumnType("interval");
 
+                    b.Property<string>("DesignSource")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("FacebookPageId")
                         .HasColumnType("text");
 
@@ -5416,6 +5461,10 @@ namespace backend.Migrations
 
                     b.Property<bool>("HasApprovedStyle")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("ImageProvider")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean");
@@ -5435,11 +5484,33 @@ namespace backend.Migrations
                     b.Property<string>("LogoObjectKey")
                         .HasColumnType("text");
 
+                    b.Property<bool>("MatchReferenceTone")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime?>("NextPublishAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("OpenAiImageApiKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OpenAiImageModel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("PostsPerDay")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ReferenceColorsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReferenceImagesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("StylePrompt")
                         .IsRequired()
@@ -5504,9 +5575,10 @@ namespace backend.Migrations
 
                     b.Property<string>("DesignStatus")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
                         .HasMaxLength(32)
-                        .HasDefaultValue("Ready")
-                        .HasColumnType("character varying(32)");
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("Ready");
 
                     b.Property<string>("ImageModel")
                         .HasMaxLength(100)
@@ -5576,6 +5648,9 @@ namespace backend.Migrations
 
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
+
+                    b.Property<string>("PaperDesignJson")
+                        .HasColumnType("text");
 
                     b.Property<string>("PlannerModel")
                         .IsRequired()
@@ -6204,6 +6279,9 @@ namespace backend.Migrations
 
                     b.HasIndex("WhatsAppAccountId", "ProjectId");
 
+                    b.HasIndex("ProjectId", "LastMessageTimestamp", "Id")
+                        .IsDescending(false, true, true);
+
                     b.HasIndex("ProjectId", "CustomerId", "Channel", "WhatsAppAccountId", "Status");
 
                     b.ToTable("Conversations");
@@ -6567,6 +6645,13 @@ namespace backend.Migrations
                     b.Property<DateTime?>("CourseSecondDateTime")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("CourseType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("regular");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -6597,6 +6682,16 @@ namespace backend.Migrations
 
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("StaffSyncError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("StaffSyncedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SupervisorPhone")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -6669,6 +6764,59 @@ namespace backend.Migrations
                         .HasFilter("\"CustomerPhoneCanonical\" IS NOT NULL");
 
                     b.ToTable("GroupAppointmentBookings");
+                });
+
+            modelBuilder.Entity("Modules.GroupAppointments.Domain.GroupStaffNotification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BookingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("GroupAppointmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderMessageId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RecipientPhone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("SentAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("WhatsAppAccountId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "GroupAppointmentId");
+
+                    b.HasIndex("SentAtUtc", "CancelledAtUtc", "CreatedAt");
+
+                    b.ToTable("GroupStaffNotifications");
                 });
 
             modelBuilder.Entity("Modules.Integrations.Domain.ProjectIntegration", b =>
@@ -6875,7 +7023,15 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("GroupAutomationAdminPhones")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("GroupAutomationManagerPhone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("GroupStaffDirectoryJson")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -7605,6 +7761,21 @@ namespace backend.Migrations
                     b.HasOne("Modules.Analytics.Domain.ReplyReviewCase", null)
                         .WithMany()
                         .HasForeignKey("CaseId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Auth.Domain.ProjectMembership", b =>
+                {
+                    b.HasOne("Modules.Projects.Domain.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Modules.Auth.Domain.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

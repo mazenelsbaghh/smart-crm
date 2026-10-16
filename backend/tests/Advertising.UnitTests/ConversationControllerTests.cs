@@ -65,6 +65,7 @@ public sealed class ConversationControllerTests
         Assert.Equal(projectId, returnedConversation.GetProperty("projectId").GetGuid());
         Assert.Equal("WhatsApp", returnedConversation.GetProperty("channel").GetString());
         Assert.Equal("Open", returnedConversation.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, returnedConversation.GetProperty("unreadCount").ValueKind);
         var returnedCustomer = returnedConversation.GetProperty("customer");
         Assert.Equal(customer.Id, returnedCustomer.GetProperty("id").GetGuid());
         Assert.Equal("العميل المطلوب", returnedCustomer.GetProperty("name").GetString());
@@ -188,7 +189,17 @@ public sealed class ConversationControllerTests
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) =>
             targetMethod?.Name == nameof(IConnectionMultiplexer.GetDatabase)
-                ? NoOpProxy.Create<IDatabase>()
+                ? DispatchProxy.Create<IDatabase, RedisDatabaseProxy>()
                 : DefaultValue(targetMethod?.ReturnType);
+    }
+
+    private class RedisDatabaseProxy : NoOpProxy
+    {
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => targetMethod?.Name switch
+        {
+            nameof(IDatabase.KeyTimeToLiveAsync) => Task.FromResult<TimeSpan?>(null),
+            nameof(IDatabase.StringGetAsync) => Task.FromResult(RedisValue.Null),
+            _ => DefaultValue(targetMethod?.ReturnType)
+        };
     }
 }

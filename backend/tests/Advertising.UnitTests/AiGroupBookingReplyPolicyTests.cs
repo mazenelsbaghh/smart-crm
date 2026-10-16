@@ -6,6 +6,36 @@ namespace Advertising.UnitTests;
 
 public sealed class AiGroupBookingReplyPolicyTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Preparation_confirmation_explains_joining_the_group_and_ends_with_one_immediate_trial_link(bool shouldOfferTrial)
+    {
+        var reply = AiGroupBookingReplyPolicy.Apply(
+            "تم حجز السيشن يوم السبت\n\nجرّب السايت دلوقتي\n" + TalkTipsTrialCtaInstructions.TrialUrl,
+            shouldOfferTrial, new(true, 6), shouldPrepareBeforeSession: true);
+
+        Assert.Contains("يوم السبت", reply);
+        Assert.Contains("أونلاين أو في السنتر", reply);
+        Assert.Contains("تحديد المستوى", reply);
+        Assert.Contains("قبل السيشن بيومين", reply);
+        Assert.Contains("عشان يدخل", reply);
+        Assert.Contains("تذكير السايت قبلها بيوم", reply);
+        Assert.EndsWith("جرب الويبسايت من هنا:\n" + TalkTipsTrialCtaInstructions.TrialUrl, reply);
+        Assert.Equal(1, reply.Split(TalkTipsTrialCtaInstructions.TrialUrl).Length - 1);
+        Assert.DoesNotContain("جرّب السايت دلوقتي", reply);
+    }
+
+    [Fact]
+    public void Trial_link_on_the_same_line_as_confirmation_does_not_remove_the_booking_details()
+    {
+        var reply = AiGroupBookingReplyPolicy.Apply("تم حجز السيشن يوم السبت " + TalkTipsTrialCtaInstructions.TrialUrl,
+            false, new(true, 6), true);
+        Assert.Contains("يوم السبت", reply);
+        Assert.EndsWith(TalkTipsTrialCtaInstructions.TrialUrl, reply);
+        Assert.Equal(1, reply.Split(TalkTipsTrialCtaInstructions.TrialUrl).Length - 1);
+    }
+
     [Fact]
     public void Partial_booking_uses_truthful_override_without_trial_cta()
     {

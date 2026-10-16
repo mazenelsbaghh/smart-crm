@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -156,17 +157,9 @@ namespace Modules.AI.Services
                 };
             }
 
-            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
-
             try
             {
-                var response = await _httpClient.PostAsync(url, content);
-                response.EnsureSuccessStatusCode();
-
-                var responseString = await response.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(responseString);
-                LogUsage(doc.RootElement, model);
-                return ReadReply(doc.RootElement);
+                return await GenerateContentAsync(url, requestBody, model);
             }
             catch (Exception ex)
             {
@@ -241,22 +234,35 @@ namespace Modules.AI.Services
                 };
             }
 
-            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
-
             try
             {
-                var response = await _httpClient.PostAsync(url, content);
-                response.EnsureSuccessStatusCode();
-
-                var responseString = await response.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(responseString);
-                LogUsage(doc.RootElement, model);
-                return ReadReply(doc.RootElement);
+                return await GenerateContentAsync(url, requestBody, model);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error calling Gemini Multimodal API: {ex.Message}");
                 return "[AI_ERROR] Unable to reach AI engine.";
+            }
+        }
+
+        private async Task<string> GenerateContentAsync(string url, object requestBody, string model)
+        {
+            var requestJson = JsonSerializer.Serialize(requestBody);
+            for (var attempt = 1; ; attempt++)
+            {
+                using var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+                using var response = await _httpClient.PostAsync(url, content);
+                if (response.StatusCode == HttpStatusCode.ServiceUnavailable && attempt < 3)
+                {
+                    _logger.LogWarning("Gemini generation unavailable for {Model}; retrying attempt {Attempt}.", model, attempt + 1);
+                    await Task.Delay(TimeSpan.FromMilliseconds(500 * attempt));
+                    continue;
+                }
+
+                response.EnsureSuccessStatusCode();
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                LogUsage(doc.RootElement, model);
+                return ReadReply(doc.RootElement);
             }
         }
 

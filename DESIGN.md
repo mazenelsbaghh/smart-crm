@@ -1,154 +1,76 @@
----
-name: Smart Customer Core Design System
-description: A high-velocity, neon-drenched interface for instant AI-driven customer operations on WhatsApp.
-colors:
-  primary: "#00f3ff"
-  secondary: "#ff007f"
-  neutral-bg: "#0a0e17"
-  neutral-surface: "#121824"
-  neutral-border: "#1e293b"
-  neutral-text: "#f8fafc"
-  neutral-text-muted: "#94a3b8"
-  success: "#10b981"
-  warning: "#f59e0b"
-  error: "#ef4444"
-typography:
-  display:
-    fontFamily: "Outfit, Inter, sans-serif"
-    fontSize: "clamp(2rem, 5vw, 3.5rem)"
-    fontWeight: 800
-    lineHeight: 1.1
-    letterSpacing: "-0.02em"
-  body:
-    fontFamily: "Inter, sans-serif"
-    fontSize: "14px"
-    fontWeight: 400
-    lineHeight: 1.6
-    letterSpacing: "normal"
-rounded:
-  sm: "4px"
-  md: "8px"
-  lg: "16px"
-spacing:
-  xs: "4px"
-  sm: "8px"
-  md: "16px"
-  lg: "24px"
-  xl: "32px"
-components:
-  button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "#0a0e17"
-    rounded: "{rounded.md}"
-    padding: "10px 20px"
-  button-primary-hover:
-    backgroundColor: "#66f8ff"
-  input-field:
-    backgroundColor: "{colors.neutral-surface}"
-    textColor: "{colors.neutral-text}"
-    rounded: "{rounded.md}"
-    padding: "12px 16px"
----
+# Smart Customer Core Interface
 
-# Design System: Smart Customer Core
+Updated: 16 October 2026. The confirmed direction is light, Arabic RTL and responsive.
 
-## 1. Overview
+## Foundation
 
-**Creative North Star: "Neon Midnight Command"**
+`frontend/src/styles/variables.css` defines semantic colors in OKLCH, spacing, control height, radii and motion. Legacy HSL variables remain for feature modules. Components use semantic tokens; new palette values belong in this file.
 
-Smart Customer Core is a high-velocity workspace designed for modern operations agents who manage high-frequency WhatsApp conversations. The UI rejects the dry, sterile light-mode look of traditional corporate CRMs in favor of a sleek, dark console that reduces eye strain, maintains high focus, and feels like a modern developer tool or high-end game client. 
+- Canvas: `--canvas`, with `--surface` for content and `--sidebar-surface` for navigation.
+- Text: `--text-strong`, `--text-base`, `--text-soft`.
+- Actions and selection: `--accent`, `--accent-ink`, `--accent-soft`, `--accent-soft-strong`.
+- Feedback: `--success`, `--warning`, `--danger` and their soft backgrounds. Blue `--info` marks context/new items; violet `--intelligence` marks AI tools. Each has a matching soft background.
+- Navigation: ink surface with dedicated `--navigation-*` text, hover and selection tokens; these are scoped to the desktop sidebar.
+- Icons: Lucide icons accompany page headings, task/media tabs, status labels and actions; retain text for meaning. `PageHeader`, `Tabs` and `FilterTabs` accept icons. Filter options can carry semantic tones.
+- Borders: `--border-subtle`, `--border-strong`.
+- Controls: `--control-height` is 44px; standard radius is `--radius-md`.
 
-The interface emphasizes maximum density, speed, and real-time animation. Pages do not feel static; instead, they pulse with live updates from the WhatsApp gateway, responsive typing indicators, and immediate AI recommendations. Interactive elements utilize keyboard shortcuts to allow agents to control the entire system without taking their hands off the keyboard.
+`app/layout.tsx` loads IBM Plex Sans Arabic locally through `next/font/local`. Font files and their OFL license live under `app/fonts`. Body typography uses `--font-family`; identifiers can use `--font-mono` and explicit LTR isolation.
 
-**Key Characteristics:**
-- **Neon Dark Aesthetic**: Tinted space-navy backgrounds paired with sharp, glowing cybernetic accents.
-- **Shortcuts-First Interaction**: Visible keyboard shortcuts on every button, tab, and menu element.
-- **Instant Response Feel**: Micro-animations and transitions keep the UI feeling fast and reactive.
+## Theme
 
-## 2. Colors
+The CSS root defaults to light. `ThemeProvider` in `context/theme-context.tsx` applies the shared preference to every route, including direct inbox loads. Its storage key is `smart-customer-theme-v2`; older neon-theme preferences do not determine the new default. The header retains an optional dark-mode switch.
 
-The color palette uses a high-contrast dark mode. All background components are tinted with the brand's primary space-navy hue (hue 220 in OKLCH) to create depth.
+## Application Shell
 
-### Primary
-- **Vibrant Cyber Cyan** (#00f3ff): Used for primary action buttons, status highlights, cursor indicators, and key interface focus states.
+`components/layout/AppShell.tsx` is used by dashboard pages and the inbox. It contains the labeled sidebar, project switcher, page search and mobile navigation.
 
-### Secondary
-- **Vibrant Hot Pink** (#ff007f): Reserved for notifications, high-priority notifications, manual agent assignments, and critical action buttons.
+`config/navigation.ts` is the source for destinations, groups, shortcuts and role-filtered entries. Nested channel and daily-report destinations declare a parent. The sidebar selects the longest matching visible path; inbox channel links are also available inside the inbox.
 
-### Neutral
-- **Midnight Space** (#0a0e17): The core canvas background. Restful for long support shifts.
-- **Slate Slate Surface** (#121824): Used for cards, chat lists, messages, and input containers.
-- **Dark Slate Border** (#1e293b): Used for dividing columns and separating structural containers.
-- **Slate White** (#f8fafc): Primary text for readability.
-- **Slate Muted** (#94a3b8): Used for dates, secondary labels, and keyboard shortcut indicators.
+Desktop navigation has a fixed overview link and three native disclosure groups: daily work, growth and administration. The group containing the active destination opens on route changes. Below 1024px the sidebar becomes a drawer. Below 768px four bottom destinations appear: overview, conversations, customers and more. The header includes the current section, a project switcher and a search command that also works on phones. The open conversation hides global mobile chrome to prioritize messages and composition.
 
-### Named Rules
-**The 10% Accent Rule.** Vibrant Cyan and Hot Pink accent colors must collectively occupy less than 10% of the screen area. They are used purely for guidance, focus states, and indicators. The canvas must remain restful and clean.
+## Shared Components
 
-**The Space Navy Tint Rule.** Never use pure black (#000000) or pure white (#ffffff). All dark surfaces are tinted with space navy to create depth and cohesion.
+- `components/ui/Button.tsx`: primary, secondary, danger and ghost actions, with disabled and loading behavior.
+- `components/ui/PageHeader.tsx`: title, optional context, description and actions.
+- `components/ui/Badge.tsx`: labeled neutral, success, warning, danger and information badges.
+- `components/ui/EmptyState.tsx`: a readable next step for empty workspaces.
+- `components/ui/FormSection.tsx`: native disclosure sections for settings.
+- `components/ui/Tabs.tsx`: shared wrapping tabs, an optional labeled mobile select through `compactOnMobile`, RTL arrow navigation and a change callback that can refuse transitions with unsaved input. Used by settings, content and advertising.
+- `components/ui/FilterTabs.tsx`: wrapping status or category filters, optional counts and explanatory text. `compactOnMobile` shows a labeled select that retains the selected filter and every option. Used by CRM, groups, approvals and follow-ups.
+- `components/ui/SearchField.tsx`: shared accessible search fields for inbox, CRM and follow-ups.
+- `components/ui/StatusMessage.tsx`: consistent semantic feedback used by management editors and settings.
+- `components/layout/WorkspaceSearch.tsx`: page navigation search with keyboard selection, role-filtered results and Escape dismissal.
+- `components/ui/ui.module.css`: shared control, field, badge and header styles. Feature styles compose these classes. Its responsive table pattern presents management records as labeled summaries on phones.
+- `components/shared/Dialog.tsx`: native modal and drawer behavior, Escape dismissal, background isolation and focus restoration. Used by navigation, inbox details and management editors.
+- Existing `ConfirmDialog` and `CustomerDetail` retain their focus and isolation behavior.
 
-## 3. Typography
+Use the existing Toast, Tooltip and ConfirmDialog for their established purpose. Every actionable icon needs an accessible name. Avoid adding a new one-off control vocabulary inside a feature.
 
-**Display Font:** Outfit (fallback: Inter, sans-serif)
-**Body Font:** Inter (fallback: system-ui, sans-serif)
-**Label/Mono Font:** JetBrains Mono (fallback: monospace)
+## Page Patterns
 
-The typography prioritizes clean, high-readability letterforms. JetBrains Mono is specifically used for keyboard shortcuts (`kbd` tags) and telemetry data.
+- Inbox: channel tabs, search and a labeled status select precede the conversation list. The message log and composer share the workspace with that list; customer details open in a drawer at every width. The drawer retains unsaved task/tag input when closed. Status and assignment stay visible on phones; conversation actions are a disclosure. Customer editing, AI recommendations and automation are disclosures inside the drawer.
+- CRM: counted stage filters, search and records lead the page. City, stage and classification filters are revealed on demand; the result count and reset remain available. Import/export tools are separate. Each row links to the WhatsApp conversation and opens customer follow-ups or the profile. CustomerDetail separates profile, follow-ups and AI memory into tabs and retains field input across tab changes. Phone records expose secondary details on demand.
+- Settings: the general tab has task navigation for reply operation, behavior, connections, AI models and project details. The selected task uses the section query parameter. Form values remain mounted across task changes; saving reveals the section containing an invalid field. Channel names, states and controls stay together; inactive channel fields use disclosures that retain their values. On phones the task navigation uses a labeled select. The save bar occupies layout space and sticks to the top of the form while scrolling. The existing unsaved-change guard remains on top-level tab navigation.
+- Groups: counted availability filters distinguish available, full and inactive groups without overlapping counts. Secondary row operations use a disclosure. `/management/groups` exposes group records and booking actions before configuration. The management menu opens staff, import/export tools and schedule requests, keeping task input mounted. The course picker retains the `course` query for regular or intensive groups. Instructor filters are revealed on demand; status filters use a labeled select on phones.
+- Advertising: keep the safety strip and reporting context visible. Mobile section navigation uses a labeled select. Missing readiness requirements stay visible; completed requirements use a disclosure. Managed campaigns precede the import tools. Planned state, provider state, spend, attribution and evidence retain their meaning.
+- Content: under the media-type tabs, the task query selects review (default), create, schedule or brand. Review shows a selectable list of pending posts with a large preview, caption and adjacent review actions. The image opens in a keyboard-accessible zoom dialog; phones use a post selector and previous/next controls. Review also retains history; create contains image trials; schedule contains plan publication controls; brand contains logo and references. Trials retain input across these tasks; changing media type still uses the discard guard. Reporting keeps its existing data context.
+- Follow-ups: one compact status filter with counts replaces duplicated metric cards and status tabs.
+- Approvals: each request is a labeled article with requester, risk, time, sanitized payload and adjacent approval/rejection controls. Values wrap independently on phones; actions retain their confirmation dialogs.
+- Public booking, authentication and legal pages share typography and semantic colors. The Quran studio uses the light control surfaces while retaining its distinct video preview styling.
 
-### Hierarchy
-- **Display** (Extra Bold, 32px-56px, 1.1 line-height): Used for landing sections, login titles, and empty-state heroes.
-- **Headline** (Bold, 24px, 1.2 line-height): Used for main dashboard section headers and drawer titles.
-- **Title** (Semi-Bold, 16px, 1.4 line-height): Used for card headers, conversation names, and modal titles.
-- **Body** (Regular, 14px, 1.6 line-height): Used for chat messages, logs, customer info, and general descriptions. Max line length is restricted to 70ch.
-- **Label** (Medium, 12px, tracking 0.05em, uppercase): Used for table headers, metadata badges, and small telemetry details.
+- Dashboard: a compact metric strip precedes the ranked customer list, stage filter and direct conversation action. Workspace shortcuts and data freshness stay alongside the list.
+- Reports and reply review: separate tasks into tabs with a mobile select. Hidden task panels stay mounted to preserve input. Schedule-demand requests lead the page; grouped demand and open appointments have separate views.
+- Other content media: saved documents and games precede their previews. Videos use a compact history disclosure; selecting a video opens its review, and selecting a scene brings its preview into view. Finished videos precede the storyboard. Creation forms use disclosures and retain their inputs when closed. Read-only restrictions remain visible outside collapsed forms. Paper style references and teacher details are secondary disclosures.
+- Campaigns, knowledge and follow-ups retain search, status and pagination in the URL; workflows retain search and status, and approvals retain status and pagination. Typing replaces the current history entry; explicit filters and page changes remain available through browser back and forward. Reset preserves unrelated URL parameters.
+- Addons: sections group booking, WhatsApp automation, human transfer, schedule demand and trial invitations. Section links support quick navigation. Phone drafts have separate save actions and retain the guard against activation/navigation before save; the active transfer number is shown independently from its draft.
 
-### Named Rules
-**The KBD-Visibility Rule.** Every shortcut must be rendered in a distinct, monospaced `kbd` block (e.g. `[K]`) using JetBrains Mono, styled with a subtle border and background to stand out clearly as a keyboard trigger.
+## Responsive Verification
 
-## 4. Elevation
+Use structural changes rather than shrinking type. Test 375, 768, 1024 and 1440px, with additional narrow-phone checks when needed. Check direct loads, keyboard navigation, dialogs, long text, empty and failed requests. Phone form fields use 16px text; the shell tracks the visual viewport so the composer can remain inside the usable area when the keyboard changes it.
 
-The design utilizes a flat, high-density layer strategy. Depth is communicated through color value steps (darker background, slightly lighter surfaces) and sharp neon borders, rather than soft ambient shadows.
+Generated concept images in `output/ui-ux-concepts/2026-10-16` are design references. Rendered implementation screenshots and test evidence are identified separately from those concepts. The second design direction and its implementation evidence live in `output/ui-ux-redesign/2026-10-16`; `ai-direction.png` is the generated design reference.
 
-### Shadow Vocabulary
-- **Neon Glow** (`box-shadow: 0 0 15px rgba(0, 243, 255, 0.25)`): Used exclusively to highlight active inputs, selected chat cards, or open focus items.
-- **Flat UI**: Rest surfaces are completely flat with a 1px border (#1e293b).
+The remaining-page pass is recorded in `output/ui-ux-rest/2026-10-16/review.html`: 22 rendered views at four widths, using synthetic network fixtures. These are implementation screenshots, not generated concepts.
 
-### Named Rules
-**The Interactive Elevation Rule.** Surfaces never float or have shadows at rest. Shadow is a dynamic response to user hover or focus state, manifesting as a cybernetic glow.
-
-## 5. Components
-
-### Buttons
-- **Shape:** Rounded corners with a 8px radius.
-- **Primary:** cyber cyan (#00f3ff) background with midnight navy (#0a0e17) text. Bold, uppercase, with internal padding (10px 20px).
-- **Secondary:** Transparent background with a 1px border (#1e293b) and hover state that fills with slate slate surface (#121824).
-- **Shortcuts Indicator:** Every primary or secondary button includes a small right-aligned monospaced shortcut tip (e.g., `↵` or `⌘K`).
-
-### Inputs / Fields
-- **Shape:** Rounded corners (8px radius).
-- **Style:** Dark slate surface (#121824) background with dark slate border (#1e293b). Text is slate white (#f8fafc).
-- **Focus:** 1px cyber cyan (#00f3ff) border with a neon cyan glow.
-
-### Cards / Containers
-- **Corner Style:** Rounded corners (16px radius).
-- **Background:** Slate slate surface (#121824).
-- **Border:** 1px flat border (#1e293b).
-- **Internal Padding:** Spaced dynamically using 16px (md) or 24px (lg).
-
-### Keyboard Shortcut Tooltips (KBD)
-- **Shape:** 4px border radius.
-- **Style:** Charcoal black background, Slate Muted text, JetBrains Mono font, 1px border.
-
-## 6. Do's and Don'ts
-
-### Do:
-- **Do** provide visual keyboard shortcut indicators (`kbd` tags) directly beside every interactive control.
-- **Do** use cyber cyan (#00f3ff) for primary action states and focus indicators.
-- **Do** enforce a strict dark mode using space navy tints for all background levels.
-- **Do** respect user reduced motion preferences by setting animation transition times to `0s` when requested.
-
-### Don't:
-- **Don't** use standard side-stripe borders as indicators on list items or chat previews. Use full border transitions or background highlights.
-- **Don't** implement slow, multi-stage overlays when inline commands or shortcuts could perform the operation immediately.
-- **Don't** use neon colors as text colors on light backgrounds, ensuring all interactions meet WCAG 2.1 AA guidelines.
-- **Don't** use generic black-and-white scales; maintain the space navy brand tint throughout the dashboard.
+The final review is in `output/ui-ux-final/2026-10-16/review.html`: 46 views at 320, 375, 768, 1024 and 1440px in the light theme, plus 1440px in the dark theme. It uses the local production build with synthetic API data. Additional evidence covers empty and failed requests, open task panels, retained drafts, filter history, narrow subscriber records and landscape comment composition. `verification.json` records the checks and their limits.

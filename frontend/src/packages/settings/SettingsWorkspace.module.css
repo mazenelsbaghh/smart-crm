@@ -1,0 +1,232 @@
+.sectionPicker {
+  display: none;
+}
+
+.editor > h2 {
+  margin: 0;
+}
+
+.form :is(input, select, textarea, summary) {
+  scroll-margin-block-start: 100px;
+}
+
+.saveBar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: .8rem;
+}
+
+.saveBar > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.saveBar[data-dirty='true'] {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-strong);
+}
+
+.saveBar[data-dirty='true'] > span > svg {
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.saveBar button {
+  flex-shrink: 0;
+}
+
+.channel {
+  padding-block: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.channel:first-child {
+  padding-top: 0;
+}
+
+.channel:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.channelHeader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.channelIdentity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.channelIdentity > svg {
+  color: var(--text-soft);
+  flex-shrink: 0;
+}
+
+.channel[data-enabled='true'] .channelIdentity > svg {
+  color: var(--success);
+}
+
+.channelIdentity h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: .9375rem;
+  font-weight: 600;
+}
+
+.channelToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  color: var(--text-base);
+  font-size: .8rem;
+  cursor: pointer;
+}
+
+.channelToggle input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--success);
+}
+
+.channelDisclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  font-size: .8rem;
+  cursor: pointer;
+}
+
+.channelDisclosure:hover {
+  color: var(--accent);
+}
+
+.channelDisclosure[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
+}
+
+.channelFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 640px;
+  gap: 12px 16px;
+  margin-top: 10px;
+}
+
+.channelFields[hidden] {
+  display: none;
+}
+
+.channelFields > div {
+  gap: 5px;
+}
+
+.channelFields label {
+  line-height: 1.5;
+  font-size: .8rem;
+}
+
+@media (max-width: 900px) {
+  .sectionNav {
+    display: none;
+  }
+
+  .sectionPicker {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-base);
+    font-size: .8rem;
+    font-weight: 600;
+  }
+
+  .sectionPicker select {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-strong);
+    font: inherit;
+    font-size: 1rem;
+  }
+
+  .sectionPicker > span {
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .editor > h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .channelHeader {
+    gap: 2px 12px;
+  }
+
+  .channelIdentity {
+    gap: 6px;
+  }
+
+  .channelIdentity h3 {
+    font-size: .875rem;
+  }
+
+  .channelToggle {
+    font-size: .75rem;
+  }
+
+  .channelFields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .channelFields label {
+    min-height: 3em;
+  }
+
+  .saveBar {
+    gap: 8px;
+    padding: 10px 8px;
+    font-size: .75rem;
+  }
+
+  .saveBar button {
+    padding-inline: 10px;
+    font-size: .875rem;
+  }
+}

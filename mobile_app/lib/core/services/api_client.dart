@@ -76,6 +76,29 @@ class ApiClient {
     );
   }
 
+  Future<String?> accessTokenForRealtime() async {
+    final token = await _secureStorage.getAccessToken();
+    if (token == null) return null;
+    final segments = token.split('.');
+    if (segments.length != 3) return null;
+    try {
+      final payload = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(segments[1]))),
+      );
+      if (payload is! Map<String, dynamic>) return null;
+      final expiresAt = payload['exp'];
+      if (expiresAt is num &&
+          expiresAt * 1000 > DateTime.now().millisecondsSinceEpoch + 30000) {
+        return token;
+      }
+    } on FormatException {
+      return null;
+    }
+    final refreshToken = await _secureStorage.getRefreshToken();
+    if (refreshToken == null) return null;
+    return (await _refreshTokens(refreshToken))?.accessToken;
+  }
+
   bool _canRefresh(DioException error) {
     final path = error.requestOptions.path;
     return error.response?.statusCode == 401 &&

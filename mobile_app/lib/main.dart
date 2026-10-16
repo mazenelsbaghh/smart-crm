@@ -73,6 +73,7 @@ class _MyAppState extends State<MyApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<AuthState>? _authSubscription;
   PushNotificationService? _pushNotificationService;
+  Future<void> _pushServiceCleanup = Future.value();
   String? _lastInitializedProjectId;
   String? _realtimeProjectId;
   int _serviceGeneration = 0;
@@ -82,7 +83,18 @@ class _MyAppState extends State<MyApp> {
     super.initState();
     _secureStorage = SecureStorageService();
     _apiClient = ApiClient(secureStorage: _secureStorage);
-    _signalRService = SignalRService(secureStorage: _secureStorage);
+    _signalRService = SignalRService(
+      secureStorage: _secureStorage,
+      accessTokenProvider: _apiClient.accessTokenForRealtime,
+    );
+    _signalRService.onConnected = (projectId) {
+      final auth = _authBloc.state;
+      if (auth is AuthAuthenticated &&
+          auth.activeProject.id == projectId &&
+          _lastInitializedProjectId == projectId) {
+        _realtimeProjectId = projectId;
+      }
+    };
 
     _authRepository = AuthRepository(
       apiClient: _apiClient,
@@ -177,9 +189,7 @@ class _MyAppState extends State<MyApp> {
         final generation = ++_serviceGeneration;
         _lastInitializedProjectId = projectId;
         _realtimeProjectId = null;
-        _pushNotificationService?.dispose();
-        _pushNotificationService = null;
-        await _signalRService.stop();
+        await _stopProjectServices();
         if (generation != _serviceGeneration ||
             _lastInitializedProjectId != projectId) {
           return;
@@ -208,11 +218,20 @@ class _MyAppState extends State<MyApp> {
         _serviceGeneration++;
         _lastInitializedProjectId = null;
         _realtimeProjectId = null;
-        _pushNotificationService?.dispose();
-        _pushNotificationService = null;
-        await _signalRService.stop();
+        await _stopProjectServices();
       }
     }
+  }
+
+  Future<void> _stopProjectServices() {
+    final previousPushService = _pushNotificationService;
+    _pushNotificationService = null;
+    final realtimeStopped = _signalRService.stop();
+    if (previousPushService != null) {
+      _pushServiceCleanup = previousPushService.dispose();
+    }
+    // Firebase deletes the device-wide token, so a new session must await old cleanup.
+    return Future.wait([_pushServiceCleanup, realtimeStopped]);
   }
 
   bool get _canAcceptRealtimeEvents {
@@ -234,8 +253,7 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     _authSubscription?.cancel();
     _serviceGeneration++;
-    _pushNotificationService?.dispose();
-    unawaited(_signalRService.stop());
+    unawaited(_stopProjectServices());
     _authBloc.close();
     _inboxBloc.close();
     _crmBloc.close();
