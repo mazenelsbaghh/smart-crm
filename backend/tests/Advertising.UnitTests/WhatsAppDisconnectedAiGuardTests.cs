@@ -8,8 +8,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting.Internal;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.AI.Services;
 using Modules.Advertising.Services;
 using Modules.Campaigns.Application.Services;
@@ -21,6 +24,8 @@ using Modules.CRM.API;
 using Modules.CRM.Domain;
 using Modules.CRM.Services;
 using Modules.Customers.Services;
+using Modules.Projects.Domain;
+using Modules.TalkTips.Services;
 using Modules.WhatsApp.Domain;
 using Modules.WhatsApp.Services;
 using Shared.Infrastructure;
@@ -321,6 +326,77 @@ public sealed class WhatsAppDisconnectedAiGuardTests
             Assert.Contains($"whatsappAccountId={accountId}", uri.Query, StringComparison.Ordinal));
         using var payload = JsonDocument.Parse(Assert.IsType<string>(gateway.SendRequestBody));
         Assert.Equal(accountId, payload.RootElement.GetProperty("whatsappAccountId").GetGuid());
+    }
+
+    [Theory]
+    [InlineData(true, "Friendly", false)]
+    [InlineData(true, "Friendly", true)]
+    [InlineData(true, "Exact", true)]
+    [InlineData(false, "Friendly", false)]
+    public async Task TalkTips_follow_up_address_2026_10_16_names_Alexandria_but_preserves_exact_and_other_project_text(
+        bool isTalkTips, string tone, bool directNote)
+    {
+        const string address = "مرحباً، عنوان السنتر: ١٢ شارع فؤاد، الدور الثاني.\n\nhttps://maps.app.goo.gl/TestPlace";
+        var projectId = Guid.NewGuid();
+        await using var db = Context(projectId);
+        var customer = Customer(projectId);
+        var followUp = FollowUp(projectId, customer.Id);
+        followUp.Tone = tone;
+        followUp.Notes = directNote ? address : "ذكره بعنوان السنتر";
+        db.AddRange(customer, followUp, new ProjectSettings
+        {
+            ProjectId = projectId, IsTalkTipsTrialGateEnabled = isTalkTips, GeminiApiKey = "test-provider-key"
+        });
+        await db.SaveChangesAsync();
+        var gateway = new AccountAffinityGatewayHandler(DateTimeOffset.UtcNow.AddMinutes(-10));
+        using var generatedReplyHttp = new HttpClient(new RepeatingJsonHttpHandler(JsonSerializer.Serialize(new
+        {
+            candidates = new[] { new { finishReason = "STOP", content = new
+            {
+                parts = new[] { new { text = JsonSerializer.Serialize(new { message = address }) } }
+            } } }
+        })));
+        var gemini = new GeminiClient(Configuration(),
+            new GeminiMockHandler(new HostingEnvironment { EnvironmentName = "Production" }),
+            NullLogger<GeminiClient>.Instance, generatedReplyHttp);
+        using var trialHttp = new HttpClient(new RepeatingJsonHttpHandler("{\"has_tried\":true}"))
+        {
+            BaseAddress = new Uri("http://trial.test/")
+        };
+        using var trialCache = new MemoryCache(new MemoryCacheOptions());
+        var trialConfiguration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TALKTIPS_TRIAL_STATUS_API_KEY"] = "test-trial-key" }).Build();
+        using var services = new ServiceCollection()
+            .AddSingleton(db)
+            .AddSingleton<IConfiguration>(Configuration())
+            .AddSingleton(new WhatsAppGatewaySessionClient(new HttpClient(gateway), Configuration()))
+            .AddSingleton(new WhatsAppAccountService(db))
+            .AddSingleton(new WhatsAppConversationService(db))
+            .AddSingleton<IHttpClientFactory>(new TestHttpClientFactory(gateway))
+            .AddSingleton(RejectingProxy.Create<IHubContext<NotificationHub>>())
+            .AddSingleton<IProjectSecretVault, PlaintextTestVault>()
+            .AddSingleton<IAIMarketingBrain>(new AIMarketingBrain(gemini, null!, null!, new AIBehaviorSettingsService()))
+            .AddSingleton(new TalkTipsTrialStatusClient(trialHttp, trialConfiguration, trialCache,
+                NullLogger<TalkTipsTrialStatusClient>.Instance))
+            .BuildServiceProvider();
+
+        await new FollowUpScheduler(services).SendPlannedFollowUpJobAsync(followUp.Id);
+
+        Assert.Equal("Completed", followUp.Status);
+        using var payload = JsonDocument.Parse(Assert.IsType<string>(gateway.SendRequestBody));
+        var sentText = payload.RootElement.GetProperty("message").GetString();
+        Assert.Equal(sentText, Assert.Single(db.Messages).Content);
+        if (isTalkTips && tone != "Exact")
+        {
+            var paragraphs = sentText!.Split("\n\n");
+            Assert.All(paragraphs, paragraph => Assert.Contains("الإسكندرية", paragraph));
+            Assert.Contains("١٢ شارع فؤاد، الدور الثاني.", sentText);
+            Assert.Contains("https://maps.app.goo.gl/TestPlace", sentText);
+        }
+        else
+        {
+            Assert.Equal(address, sentText);
+        }
     }
 
     [Fact]

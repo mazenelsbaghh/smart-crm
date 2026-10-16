@@ -56,7 +56,7 @@ public sealed record AiGroupBookingResult(
             var attendanceGuidance = Failure switch
             {
                 AiGroupBookingFailure.OnlineRequired => "الحجز ده لازم يكون أونلاين. المجموعة دي في السنتر ومش متاحة للحضور أونلاين؛ اختار معاد من مجموعات الأونلاين علشان نأكد الحجز.",
-                AiGroupBookingFailure.CityRequired => "قبل تأكيد الحضور في السنتر، ممكن توضح مدينة الشخص المطلوب حجزه؟ الحضور في السنتر لسكان الإسكندرية، وخارجها الحجز أونلاين فقط.",
+                AiGroupBookingFailure.CityRequired => "السنتر في الإسكندرية. قبل تأكيد الحجز، هل الشخص المطلوب حجزه مقيم في الإسكندرية ويقدر يحضر السنتر هناك؟ خارج الإسكندرية الحضور أونلاين فقط.",
                 AiGroupBookingFailure.AttendanceModeMismatch => "المجموعة دي أونلاين ومش مطابقة لاختيار الحضور في السنتر. اختار مجموعة بنفس طريقة الحضور المطلوبة علشان نأكد الحجز.",
                 _ => null
             };

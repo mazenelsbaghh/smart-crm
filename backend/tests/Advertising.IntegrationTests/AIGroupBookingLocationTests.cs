@@ -86,8 +86,48 @@ public sealed class AIGroupBookingLocationTests(AIReplySideEffectsDatabase datab
             Assert.Empty(bookings);
             Assert.NotEqual(ModelConfirmation, reply.Content);
             Assert.DoesNotContain("تم تأكيد الحجز", reply.Content);
-            if (needsCity) Assert.Matches("مدينة|محافظة|منين|ساكن|بتسكن|مقيم", reply.Content);
+            if (needsCity)
+            {
+                Assert.Matches("مدينة|محافظة|منين|ساكن|بتسكن|مقيم", reply.Content);
+                Assert.Contains("الإسكندرية", reply.Content);
+                Assert.Contains("؟", reply.Content);
+            }
         }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Generated_center_address_names_Alexandria_only_for_the_TalkTips_project(bool talkTipsEnabled)
+    {
+        const string address = "العنوان تفصيلياً: سيدي جابر من على البحر، الشارع اللي قدام Point 6، على أوله كافيه ماسبيرو، شارع السلام، عمارة رقم 4، الدور الأول.";
+        const string map = "https://maps.app.goo.gl/BdAB9aCm3nJf3KgF9";
+        await using var scenario = await SeedAsync("", "offline", "ممكن عنوان السنتر واللوكيشن؟");
+        var settings = await scenario.Db.ProjectSettings.SingleAsync();
+        settings.IsTalkTipsTrialGateEnabled = talkTipsEnabled;
+        await scenario.Db.SaveChangesAsync();
+        var analysis = new MarketingAnalysisResult
+        {
+            ReplyContent = $"أهلاً بحضرتك.\n\n{address}\n\n{map}",
+            PublicCommentReply = address
+        };
+        var bus = new RecordingEventBus();
+        using var services = WorkerServices(scenario);
+        var worker = new AIReplyWorker(services, Brain(analysis), bus, NullLogger<AIReplyWorker>.Instance);
+
+        await worker.HandleAsync(new MessageAggregatedEvent
+        {
+            ProjectId = scenario.ProjectId, ConversationId = scenario.Conversation.Id,
+            Sender = scenario.Customer.FacebookPSID!, Channel = "Messenger",
+            Content = scenario.Incoming.Content, SourceMessageTimestampUtc = scenario.Incoming.Timestamp
+        });
+
+        var reply = Assert.Single(bus.Events.OfType<AIReplyGeneratedEvent>());
+        var cityPrefix = talkTipsEnabled ? "الإسكندرية — " : "";
+        Assert.Equal($"أهلاً بحضرتك.\n\n{cityPrefix}{address}\n\n{cityPrefix}{map}", reply.Content);
+        Assert.Equal(cityPrefix + address, reply.PublicCommentReply);
+        await using var verification = database.Database.CreateContext(scenario.Tenant);
+        Assert.Empty(await verification.GroupAppointmentBookings.ToListAsync());
     }
 
     [Theory]

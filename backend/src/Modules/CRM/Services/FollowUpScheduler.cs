@@ -468,6 +468,9 @@ namespace Modules.CRM.Services
                     }
 
                     messageContent = Modules.WhatsApp.Services.OutgoingMessageText.Normalize(messageContent);
+                    if (projectSettings?.IsTalkTipsTrialGateEnabled == true
+                        && !string.Equals(followUp.Tone, "Exact", StringComparison.Ordinal))
+                        messageContent = Modules.TalkTips.Services.TalkTipsLocationReplyPolicy.IncludeAlexandria(messageContent);
                     if (Modules.AI.Services.CourseDiscoveryPricingPolicy.IsCourseContext(messageContent + " " + projectSettings?.SystemPrompt)
                         || await dbContext.GroupAppointments.AnyAsync(group => group.ProjectId == followUp.ProjectId))
                     {

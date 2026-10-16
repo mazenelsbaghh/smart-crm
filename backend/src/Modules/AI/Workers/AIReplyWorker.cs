@@ -251,6 +251,8 @@ namespace Modules.AI.Workers
 
             var learnedInstructions = await new ReplyLearningService(dbContext).InstructionsAsync(@event.ProjectId, channel);
             var systemPromptForReply = settings.SystemPrompt;
+            if (settings.IsTalkTipsTrialGateEnabled)
+                systemPromptForReply = (systemPromptForReply ?? "") + "\n\n" + Modules.TalkTips.Services.TalkTipsLocationReplyPolicy.Instructions;
             if (settings.HumanTransferEnabled && !string.IsNullOrEmpty(settings.HumanTransferPhone))
             {
                 systemPromptForReply = (systemPromptForReply ?? "") + "\n\nCRITICAL CONTACT/PAYMENT RULE:\n" +
@@ -1113,6 +1115,7 @@ namespace Modules.AI.Workers
                     analysisResult.ReplyContent,
                     @event.Content + "\n" + analysisResult.Transcription,
                     deliveredCourseMessages);
+            Modules.TalkTips.Services.TalkTipsLocationReplyPolicy.Apply(settings, analysisResult);
 
             Console.WriteLine($"[AIReplyWorker] AI Response: {analysisResult.ReplyContent}");
 

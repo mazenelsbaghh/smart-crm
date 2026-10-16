@@ -33,8 +33,8 @@ jobs:
         run: |
           set -euo pipefail
           STAGED_DIR="/root/smart-crm-releases/${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$SSH_HOST" "mkdir -p '$STAGED_DIR'"
-          sshpass -e rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "root@$SSH_HOST" "mkdir -p '$STAGED_DIR'"
+          sshpass -e rsync -az -e "ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20" \
             --exclude-from=ops/deploy-excludes.txt ./ "root@$SSH_HOST:$STAGED_DIR/"
-          sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$SSH_HOST" \
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "root@$SSH_HOST" \
             "bash '$STAGED_DIR/ops/deploy-remote.sh' '$GITHUB_SHA' '$STAGED_DIR' /root/smart-crm && rm -rf -- '$STAGED_DIR'"
