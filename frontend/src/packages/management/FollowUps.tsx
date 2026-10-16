@@ -25,6 +25,7 @@ import StatusMessage from '../../components/ui/StatusMessage';
 import FilterTabs from '../../components/ui/FilterTabs';
 import SearchField from '../../components/ui/SearchField';
 import styles from './management.module.css';
+import dialogStyles from './ManagementDialogs.module.css';
 import { useListFilters } from './hooks/use-list-filters';
 
 interface FollowUp {
@@ -233,6 +234,7 @@ function FollowUpsList() {
   };
 
   const handleEditClick = (fu: FollowUp) => {
+    setMessage(null);
     setEditingFollowUp(fu);
     setEditNotes(fu.notes || '');
     
@@ -549,22 +551,32 @@ function FollowUpsList() {
       </div>
 
       {editingFollowUp && (
-        <Dialog label="تعديل متابعة" onClose={() => setEditingFollowUp(null)}>
+        <Dialog
+          label="تعديل متابعة" onClose={() => setEditingFollowUp(null)}
+          title="تعديل تفاصيل المتابعة"
+          footer={<>
+            {message?.type === 'error' && <div className={dialogStyles.feedback}>
+              <StatusMessage tone="danger">{message.text}</StatusMessage>
+            </div>}
+            <button
+              type="button"
+              onClick={() => setEditingFollowUp(null)}
+              className={`${styles.btn} ${styles.btnSecondary}`}
+            >
+              إلغاء
+            </button>
+            <button
+              type="submit"
+              form="follow-up-edit-form"
+              disabled={actionLoadingId !== null}
+              className={`${styles.btn} ${styles.btnPrimary}`}
+            >
+              {actionLoadingId === editingFollowUp.id ? 'جاري الحفظ...' : 'حفظ التعديلات'}
+            </button>
+          </>}
+        >
           <div className={styles.dialogContent}>
-            <div className={styles.modalHeader}>
-              <h3 id="follow-up-edit-title" className={styles.modalTitle}>تعديل تفاصيل المتابعة</h3>
-              <button 
-                type="button"
-                onClick={() => setEditingFollowUp(null)} 
-                className={styles.closeBtn}
-                aria-label="إغلاق"
-                style={{ background: 'none', border: 'none', padding: 0 }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-            
-            <form onSubmit={handleSaveEdit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+            <form id="follow-up-edit-form" onSubmit={handleSaveEdit} className={dialogStyles.form}>
               <div className={styles.formGroup}>
                 <label htmlFor="edit-follow-up-type" className={styles.label}>نوع المتابعة</label>
                 <select
@@ -641,23 +653,6 @@ function FollowUpsList() {
                   rows={4}
                   placeholder="اكتب رسالة المتابعة هنا..."
                 />
-              </div>
-
-              <div className={styles.formActions}>
-                <button 
-                  type="button" 
-                  onClick={() => setEditingFollowUp(null)} 
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                >
-                  إلغاء
-                </button>
-                <button 
-                  type="submit" 
-                  disabled={actionLoadingId !== null} 
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                >
-                  {actionLoadingId === editingFollowUp.id ? 'جاري الحفظ...' : 'حفظ التعديلات'}
-                </button>
               </div>
             </form>
           </div>

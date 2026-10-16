@@ -112,7 +112,8 @@ it('enlarges the selected post and returns to the same review after closing the 
   expect(await within(dialog).findByRole('img', { name: 'التصميم مكبر: عنوان 2' })).toBeInTheDocument();
   await userEvent.click(within(dialog).getByRole('button', { name: 'تكبير 200٪' }));
   expect(within(dialog).getByRole('button', { name: 'عرض الصورة كاملة' })).toHaveAttribute('aria-pressed', 'true');
-  await userEvent.tab();
+  await userEvent.tab({ shift: true });
+  await userEvent.tab({ shift: true });
   expect(within(dialog).getByRole('region', { name: 'منطقة الصورة المكبرة' })).toHaveFocus();
   await userEvent.click(within(dialog).getByRole('button', { name: 'إغلاق معاينة التصميم' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

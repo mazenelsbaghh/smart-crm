@@ -27,6 +27,7 @@ import FilterTabs from '../../components/ui/FilterTabs';
 import SearchField from '../../components/ui/SearchField';
 import StatusMessage from '../../components/ui/StatusMessage';
 import styles from './management.module.css';
+import dialogStyles from './ManagementDialogs.module.css';
 import { useListFilters } from './hooks/use-list-filters';
 
 interface KnowledgeDocument {
@@ -140,6 +141,7 @@ function KnowledgeBaseList() {
 
   const handleStartWizard = () => {
     setEditingDocumentId(null);
+    setMessage(null);
     setIsWizardOpen(true);
     setWizardStep(1);
     setWizardText('');
@@ -154,6 +156,7 @@ function KnowledgeBaseList() {
 
   const handleStartWizardFromEdit = () => {
     setIsModalOpen(false);
+    setMessage(null);
     setIsWizardOpen(true);
     setWizardStep(1);
     setWizardText(formContent);
@@ -170,6 +173,7 @@ function KnowledgeBaseList() {
     if (!activeProject || !wizardText.trim()) return;
     try {
       setWizardLoading(true);
+      setMessage(null);
       const response = await api.post<{ question: string; options: string[] }[]>(
         `/api/projects/${activeProject.id}/knowledge/wizard/analyze`,
         { rawText: wizardText }
@@ -221,6 +225,7 @@ function KnowledgeBaseList() {
     if (!activeProject) return;
     try {
       setWizardLoading(true);
+      setMessage(null);
       const answersPayload = wizardQuestions.map((q, idx) => ({
         question: q.question,
         answer: answers[idx] || ''
@@ -248,6 +253,7 @@ function KnowledgeBaseList() {
     if (!activeProject || !wizardTitle || generatedQas.length === 0) return;
     try {
       setWizardLoading(true);
+      setMessage(null);
       const formattedContent = generatedQas
         .map(qa => `س: ${qa.question.trim()}\nج: ${qa.answer.trim()}`)
         .join('\n\n');
@@ -335,6 +341,7 @@ function KnowledgeBaseList() {
     setFormTitle(doc.title);
     setFormContent(doc.content);
     setFormSourceUrl(doc.sourceUrl || '');
+    setMessage(null);
     setIsModalOpen(true);
   };
 
@@ -404,6 +411,7 @@ function KnowledgeBaseList() {
       const text = event.target?.result as string;
       setFormTitle(file.name.replace(/\.[^/.]+$/, '')); // Remove file extension
       setFormContent(text);
+      setMessage(null);
       setIsModalOpen(true);
       input.value = '';
     };
@@ -440,7 +448,7 @@ function KnowledgeBaseList() {
           <details className={styles.addSourceMenu}>
             <summary className={`${styles.btn} ${styles.btnPrimary}`}><Plus size={17} aria-hidden="true" /> إضافة مصدر</summary>
             <div className={styles.sourceOptions}>
-              <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => { setEditingDocumentId(null); setFormTitle(''); setFormContent(''); setFormSourceUrl(''); setIsModalOpen(true); }}><FileText size={17} aria-hidden="true" /> كتابة نص</button>
+              <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => { setEditingDocumentId(null); setFormTitle(''); setFormContent(''); setFormSourceUrl(''); setMessage(null); setIsModalOpen(true); }}><FileText size={17} aria-hidden="true" /> كتابة نص</button>
               <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => fileInputRef.current?.click()}><Upload size={17} aria-hidden="true" /> رفع ملف (.txt)</button>
               <button type="button" className={`${styles.btn} ${styles.btnIntelligence}`} onClick={handleStartWizard}><Sparkles size={17} aria-hidden="true" /> معالج الذكاء الاصطناعي</button>
             </div>
@@ -662,24 +670,43 @@ function KnowledgeBaseList() {
 
       {/* Manual document creation modal */}
       {isModalOpen && (
-        <Dialog label="تحرير قاعدة المعرفة" onClose={() => { setIsModalOpen(false); setEditingDocumentId(null); }}>
-          <div className={styles.dialogContent}>
-            <div className={styles.modalHeader}>
-              <h3 id="knowledge-document-dialog-title" className={styles.modalTitle}>
-                {editingDocumentId ? 'تعديل مستند معرفي' : 'إضافة مستند معرفي'}
-              </h3>
+        <Dialog
+          label="تحرير قاعدة المعرفة" onClose={() => { setIsModalOpen(false); setEditingDocumentId(null); }}
+          title={editingDocumentId ? 'تعديل مستند معرفي' : 'إضافة مستند معرفي'}
+          footer={<>
+            {message?.type === 'error' && <div className={dialogStyles.feedback}>
+              <StatusMessage tone="danger">{message.text}</StatusMessage>
+            </div>}
+            <button
+              type="button"
+              onClick={() => { setIsModalOpen(false); setEditingDocumentId(null); }}
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              disabled={actionLoading}
+            >
+              إلغاء
+            </button>
+            {editingDocumentId && (
               <button 
                 type="button"
-                onClick={() => { setIsModalOpen(false); setEditingDocumentId(null); }} 
-                className={styles.closeBtn}
-                aria-label="إغلاق"
-                style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
+                onClick={handleStartWizardFromEdit}
+                className={`${styles.btn} ${styles.btnSecondary}`}
+                disabled={actionLoading || !formContent.trim()}
               >
-                &times;
+                تعديل عبر معالج الذكاء الاصطناعي
               </button>
-            </div>
-
-            <form onSubmit={handleSaveDocument} className={styles.form}>
+            )}
+            <button
+              type="submit"
+              form="knowledge-document-form"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              disabled={actionLoading}
+            >
+              {actionLoading ? 'جاري الحفظ...' : (editingDocumentId ? 'تحديث وتعديل' : 'حفظ وتقسيم')}
+            </button>
+          </>}
+        >
+          <div className={styles.dialogContent}>
+            <form id="knowledge-document-form" onSubmit={handleSaveDocument} className={dialogStyles.form}>
               <div className={styles.formGroup}>
                 <label htmlFor="knowledge-document-title" className={styles.label}>عنوان المستند</label>
                 <input 
@@ -717,35 +744,6 @@ function KnowledgeBaseList() {
                   required 
                 />
               </div>
-
-              <div className={styles.formActions}>
-                <button 
-                  type="button" 
-                  onClick={() => { setIsModalOpen(false); setEditingDocumentId(null); }} 
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                  disabled={actionLoading}
-                >
-                  إلغاء
-                </button>
-                {editingDocumentId && (
-                  <button 
-                    type="button"
-                    onClick={handleStartWizardFromEdit}
-                    className={`${styles.btn}`}
-                    style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: 'hsl(210, 100%, 75%)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
-                    disabled={actionLoading || !formContent.trim()}
-                  >
-                    تعديل عبر معالج الذكاء الاصطناعي
-                  </button>
-                )}
-                <button 
-                  type="submit" 
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={actionLoading}
-                >
-                  {actionLoading ? 'جاري الحفظ...' : (editingDocumentId ? 'تحديث وتعديل' : 'حفظ وتقسيم')}
-                </button>
-              </div>
             </form>
           </div>
         </Dialog>
@@ -753,53 +751,117 @@ function KnowledgeBaseList() {
 
       {/* AI Wizard Modal */}
       {isWizardOpen && (
-        <Dialog label="تحرير قاعدة المعرفة" onClose={() => { setIsWizardOpen(false); setEditingDocumentId(null); }}>
-          <div className={styles.dialogContent}>
-            <div className={styles.modalHeader}>
-              <h3 id="knowledge-wizard-title" className={styles.modalTitle} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <BookOpen size={18} style={{ color: 'hsl(var(--accent-primary))' }} />
-                معالج قاعدة المعرفة بالذكاء الاصطناعي
-              </h3>
+        <Dialog
+          label="تحرير قاعدة المعرفة" onClose={() => { setIsWizardOpen(false); setEditingDocumentId(null); }}
+          title={<span className={dialogStyles.wizardTitle}><BookOpen size={18} aria-hidden="true" />معالج قاعدة المعرفة بالذكاء الاصطناعي</span>}
+          footer={<>
+            {message?.type === 'error' && <div className={dialogStyles.feedback}>
+              <StatusMessage tone="danger">{message.text}</StatusMessage>
+            </div>}
+            {wizardStep === 1 && (<>
               <button 
                 type="button"
                 onClick={() => { setIsWizardOpen(false); setEditingDocumentId(null); }} 
-                className={styles.closeBtn}
-                aria-label="إغلاق"
-                style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
+                className={`${styles.btn} ${styles.btnSecondary}`}
               >
-                &times;
+                إلغاء
               </button>
-            </div>
-
-            {/* Stepper Progress Bar */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-md)' }}>
-              {[1, 2, 3, 4].map((step) => (
-                <div key={step} aria-current={wizardStep === step ? 'step' : undefined} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 700,
-                    fontSize: '0.8rem',
-                    background: wizardStep === step ? 'var(--accent)' : wizardStep > step ? 'rgba(16, 185, 129, 0.2)' : 'var(--surface-muted)',
-                    color: wizardStep === step ? 'var(--accent-ink)' : wizardStep > step ? 'hsl(140, 100%, 65%)' : 'var(--text-soft)',
-                    border: wizardStep === step ? 'none' : '1px solid var(--border-subtle)'
-                  }}>
-                    {step}
-                  </div>
-                  <span style={{
-                    fontSize: '0.8rem',
-                    fontWeight: wizardStep === step ? 700 : 500,
-                    color: wizardStep === step ? 'var(--text-strong)' : 'var(--text-soft)'
-                  }}>
-                    {step === 1 ? 'إدخال النص' : step === 2 ? 'أسئلة توضيحية' : step === 3 ? 'مراجعة الأسئلة' : 'حفظ مسودة'}
-                  </span>
-                </div>
+              <button
+                type="button"
+                onClick={handleWizardAnalyze}
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                disabled={wizardLoading || !wizardText.trim()}
+              >
+                {wizardLoading ? 'جاري التحليل...' : 'التالي (تحليل النص)'}
+              </button>
+            </>)}
+            {wizardStep === 2 && wizardQuestions.length > 0 && (<>
+              <button
+                type="button"
+                onClick={() => {
+                  if (currentQuestionIndex > 0) {
+                    const prevIndex = currentQuestionIndex - 1;
+                    setCurrentQuestionIndex(prevIndex);
+                    const prevAns = wizardAnswers[prevIndex] || '';
+                    const prevOpts = wizardQuestions[prevIndex]?.options || [];
+                    if (prevAns && !prevOpts.includes(prevAns)) {
+                      setCustomAnswer(prevAns);
+                    } else {
+                      setCustomAnswer('');
+                    }
+                  } else {
+                    setWizardStep(1);
+                  }
+                }}
+                className={`${styles.btn} ${styles.btnSecondary}`}
+              >
+                السابق
+              </button>
+              <button
+                type="button"
+                onClick={handleNextQuestion}
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                disabled={wizardLoading || (!customAnswer.trim() && !wizardAnswers[currentQuestionIndex])}
+              >
+                {wizardLoading
+                  ? 'جاري التوليد...'
+                  : currentQuestionIndex === wizardQuestions.length - 1
+                    ? 'توليد الأسئلة والأجوبة'
+                    : 'السؤال التالي'}
+              </button>
+            </>)}
+            {wizardStep === 3 && (<>
+              <button
+                type="button"
+                onClick={() => {
+                  if (wizardQuestions.length > 0) {
+                    setCurrentQuestionIndex(wizardQuestions.length - 1);
+                    setWizardStep(2);
+                  } else {
+                    setWizardStep(1);
+                  }
+                }}
+                className={`${styles.btn} ${styles.btnSecondary}`}
+              >
+                السابق
+              </button>
+              <button
+                type="button"
+                onClick={() => setWizardStep(4)}
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                disabled={generatedQas.length === 0}
+              >
+                التالي (حفظ)
+              </button>
+            </>)}
+            {wizardStep === 4 && (<>
+              <button
+                type="button"
+                onClick={() => setWizardStep(3)}
+                className={`${styles.btn} ${styles.btnSecondary}`}
+              >
+                السابق
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveWizardDocument}
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                disabled={wizardLoading || !wizardTitle.trim()}
+              >
+                {wizardLoading ? 'جاري الحفظ...' : 'حفظ كمسودة'}
+              </button>
+            </>)}
+          </>}
+        >
+          <div className={styles.dialogContent}>
+            <ol className={dialogStyles.stepper} aria-label="خطوات إعداد قاعدة المعرفة">
+              {['إدخال النص', 'أسئلة توضيحية', 'مراجعة الأسئلة', 'حفظ مسودة'].map((label, index) => (
+                <li key={label} aria-current={wizardStep === index + 1 ? 'step' : undefined} data-complete={wizardStep > index + 1 || undefined}>
+                  <span className={dialogStyles.stepNumber}>{index + 1}</span>
+                  <span>{label}</span>
+                </li>
               ))}
-            </div>
+            </ol>
 
             {wizardStep === 1 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
@@ -818,24 +880,6 @@ function KnowledgeBaseList() {
                   <p style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>
                     يقوم الذكاء الاصطناعي بتحليل النص وصياغة أسئلة لسد أي فجوات معلوماتية.
                   </p>
-                </div>
-
-                <div className={styles.formActions}>
-                  <button 
-                    type="button" 
-                    onClick={() => { setIsWizardOpen(false); setEditingDocumentId(null); }} 
-                    className={`${styles.btn} ${styles.btnSecondary}`}
-                  >
-                    إلغاء
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={handleWizardAnalyze} 
-                    className={`${styles.btn} ${styles.btnPrimary}`}
-                    disabled={wizardLoading || !wizardText.trim()}
-                  >
-                    {wizardLoading ? 'جاري التحليل...' : 'التالي (تحليل النص)'}
-                  </button>
                 </div>
               </div>
             )}
@@ -899,48 +943,12 @@ function KnowledgeBaseList() {
                   </div>
                   {wizardValidationError && <p role="alert" style={{ color: 'hsl(var(--accent-danger))' }}>{wizardValidationError}</p>}
                 </div>
-
-                <div className={styles.formActions}>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      if (currentQuestionIndex > 0) {
-                        const prevIndex = currentQuestionIndex - 1;
-                        setCurrentQuestionIndex(prevIndex);
-                        const prevAns = wizardAnswers[prevIndex] || '';
-                        const prevOpts = wizardQuestions[prevIndex]?.options || [];
-                        if (prevAns && !prevOpts.includes(prevAns)) {
-                          setCustomAnswer(prevAns);
-                        } else {
-                          setCustomAnswer('');
-                        }
-                      } else {
-                        setWizardStep(1);
-                      }
-                    }} 
-                    className={`${styles.btn} ${styles.btnSecondary}`}
-                  >
-                    السابق
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={handleNextQuestion} 
-                    className={`${styles.btn} ${styles.btnPrimary}`}
-                    disabled={wizardLoading || (!customAnswer.trim() && !wizardAnswers[currentQuestionIndex])}
-                  >
-                    {wizardLoading 
-                      ? 'جاري التوليد...' 
-                      : currentQuestionIndex === wizardQuestions.length - 1 
-                        ? 'توليد الأسئلة والأجوبة' 
-                        : 'السؤال التالي'}
-                  </button>
-                </div>
               </div>
             )}
 
             {wizardStep === 3 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className={dialogStyles.wizardToolbar}>
                   <h4 style={{ fontSize: '0.95rem', fontWeight: 600 }}>مراجعة وتعديل الأسئلة والأجوبة الناتجة</h4>
                   <button
                     type="button"
@@ -952,7 +960,7 @@ function KnowledgeBaseList() {
                   </button>
                 </div>
 
-                <div style={{ maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px' }}>
+                <div className={dialogStyles.questionList}>
                   {generatedQas.map((qa, index) => (
                     <div key={index} style={{ padding: '12px', background: 'var(--surface-muted)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', position: 'relative' }}>
                       <button
@@ -990,31 +998,6 @@ function KnowledgeBaseList() {
                     </div>
                   ))}
                 </div>
-
-                <div className={styles.formActions}>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      if (wizardQuestions.length > 0) {
-                        setCurrentQuestionIndex(wizardQuestions.length - 1);
-                        setWizardStep(2);
-                      } else {
-                        setWizardStep(1);
-                      }
-                    }} 
-                    className={`${styles.btn} ${styles.btnSecondary}`}
-                  >
-                    السابق
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={() => setWizardStep(4)} 
-                    className={`${styles.btn} ${styles.btnPrimary}`}
-                    disabled={generatedQas.length === 0}
-                  >
-                    التالي (حفظ)
-                  </button>
-                </div>
               </div>
             )}
 
@@ -1032,24 +1015,6 @@ function KnowledgeBaseList() {
                     className={styles.input} 
                     required 
                   />
-                </div>
-
-                <div className={styles.formActions}>
-                  <button 
-                    type="button" 
-                    onClick={() => setWizardStep(3)} 
-                    className={`${styles.btn} ${styles.btnSecondary}`}
-                  >
-                    السابق
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={handleSaveWizardDocument} 
-                    className={`${styles.btn} ${styles.btnPrimary}`}
-                    disabled={wizardLoading || !wizardTitle.trim()}
-                  >
-                    {wizardLoading ? 'جاري الحفظ...' : 'حفظ كمسودة'}
-                  </button>
                 </div>
               </div>
             )}

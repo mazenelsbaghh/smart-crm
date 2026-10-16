@@ -19,6 +19,7 @@ import PageHeader from '../../components/ui/PageHeader';
 import StatusMessage from '../../components/ui/StatusMessage';
 import FilterTabs from '../../components/ui/FilterTabs';
 import styles from './management.module.css';
+import dialogStyles from './ManagementDialogs.module.css';
 import { useListFilters } from './hooks/use-list-filters';
 
 interface ApprovalRequest {
@@ -349,33 +350,32 @@ function ApprovalsList() {
         onCancel={() => setApprovalToConfirm(null)}
       />
       {rejectionToConfirm && (
-        <Dialog label="رفض طلب الموافقة" onClose={closeRejectionDialog}>
+        <Dialog
+          label="رفض طلب الموافقة" onClose={closeRejectionDialog}
+          title="رفض الطلب"
+          footer={<>
+            <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={closeRejectionDialog}>إلغاء</button>
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.btnDanger}`}
+              disabled={!rejectionReason.trim() || actionLoadingId !== null}
+              onClick={() => {
+                const request = rejectionToConfirm;
+                const reason = rejectionReason.trim();
+                closeRejectionDialog();
+                void handleReject(request.id, reason);
+              }}
+            >
+              رفض الطلب
+            </button>
+          </>}
+        >
           <div className={styles.dialogContent}>
-            <div className={styles.modalHeader}>
-              <h2 id="reject-approval-title" className={styles.modalTitle}>رفض الطلب</h2>
-              <button type="button" className={styles.closeBtn} onClick={closeRejectionDialog} aria-label="إغلاق">×</button>
-            </div>
-            <div className={styles.form}>
+            <div className={dialogStyles.form}>
               <p id="reject-approval-description">اكتب سببًا واضحًا لرفض الإجراء «{rejectionToConfirm.actionType}».</p>
               <div className={styles.formGroup}>
                 <label className={styles.label} htmlFor="approval-rejection-reason">سبب الرفض</label>
                 <textarea id="approval-rejection-reason" className={styles.textarea} value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} required autoFocus />
-              </div>
-              <div className={styles.formActions}>
-                <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={closeRejectionDialog}>إلغاء</button>
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnDanger}`}
-                  disabled={!rejectionReason.trim() || actionLoadingId !== null}
-                  onClick={() => {
-                    const request = rejectionToConfirm;
-                    const reason = rejectionReason.trim();
-                    closeRejectionDialog();
-                    void handleReject(request.id, reason);
-                  }}
-                >
-                  رفض الطلب
-                </button>
               </div>
             </div>
           </div>

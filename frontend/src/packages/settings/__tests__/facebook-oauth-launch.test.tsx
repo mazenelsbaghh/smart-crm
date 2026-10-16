@@ -7,6 +7,7 @@ import { api } from '../../../services/api';
 import Settings from '../Settings';
 
 vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
   useSearchParams: () => new URLSearchParams('section=connections'),
 }));
 

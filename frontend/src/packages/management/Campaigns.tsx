@@ -28,6 +28,7 @@ import FilterTabs from '../../components/ui/FilterTabs';
 import SearchField from '../../components/ui/SearchField';
 import StatusMessage from '../../components/ui/StatusMessage';
 import styles from './management.module.css';
+import dialogStyles from './ManagementDialogs.module.css';
 import { useListFilters } from './hooks/use-list-filters';
 
 interface Segment {
@@ -265,7 +266,7 @@ function CampaignsList() {
         {activeProject && (
           <button
             type="button"
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => { setMessage(null); setIsModalOpen(true); }}
             className={`${styles.btn} ${styles.btnPrimary}`}
           >
             <Plus size={16} />
@@ -309,7 +310,7 @@ function CampaignsList() {
             <Megaphone size={48} style={{ color: 'hsl(var(--text-muted))' }} />
             <h3 className={styles.emptyStateTitle}>{campaigns.length ? 'لا توجد حملات مطابقة' : 'لا توجد حملات'}</h3>
             <p className={styles.emptyStateDesc}>{campaigns.length ? 'غيّر البحث أو الحالة لعرض حملات أخرى.' : 'أنشئ أول حملة واختر الجمهور والرسالة قبل الإرسال.'}</p>
-            <button onClick={() => setIsModalOpen(true)} className={`${styles.btn} ${styles.btnPrimary}`}>
+            <button onClick={() => { setMessage(null); setIsModalOpen(true); }} className={`${styles.btn} ${styles.btnPrimary}`}>
               إنشاء حملة
             </button>
           </div>
@@ -456,22 +457,33 @@ function CampaignsList() {
 
       {/* Creation Modal Overlay */}
       {isModalOpen && (
-        <Dialog label="إنشاء حملة" onClose={() => setIsModalOpen(false)}>
+        <Dialog
+          label="إنشاء حملة" onClose={() => setIsModalOpen(false)}
+          title="إنشاء حملة جديدة"
+          footer={<>
+            {message?.type === 'error' && <div className={dialogStyles.feedback}>
+              <StatusMessage tone="danger">{message.text}</StatusMessage>
+            </div>}
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(false)}
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              disabled={actionLoading}
+            >
+              إلغاء
+            </button>
+            <button
+              type="submit"
+              form="campaign-create-form"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              disabled={actionLoading}
+            >
+              {actionLoading ? 'جاري الإنشاء...' : formScheduleDate ? 'حفظ وجدولة' : 'حفظ كمسودة'}
+            </button>
+          </>}
+        >
           <div className={styles.dialogContent}>
-            <div className={styles.modalHeader}>
-              <h3 id="campaign-dialog-title" className={styles.modalTitle}>إنشاء حملة جديدة</h3>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className={styles.closeBtn}
-                aria-label="إغلاق"
-                style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
-              >
-                &times;
-              </button>
-            </div>
-
-            <form onSubmit={submitCampaign} className={styles.form}>
+            <form id="campaign-create-form" onSubmit={submitCampaign} className={dialogStyles.form}>
               <div className={styles.formGroup}>
                 <label htmlFor="campaign-name" className={styles.label}>اسم الحملة</label>
                 <input
@@ -534,24 +546,6 @@ function CampaignsList() {
                   onChange={(e) => setFormScheduleDate(e.target.value)}
                   className={styles.input}
                 />
-              </div>
-
-              <div className={styles.formActions}>
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                  disabled={actionLoading}
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={actionLoading}
-                >
-                  {actionLoading ? 'جاري الإنشاء...' : formScheduleDate ? 'حفظ وجدولة' : 'حفظ كمسودة'}
-                </button>
               </div>
             </form>
           </div>

@@ -34,7 +34,7 @@ export function FunnelView({
 
       {daily.length > 0 && (
         <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="جدول نتائج العملاء، قابل للتمرير">
-          <p className={styles.dailyBookingNote}>«حجز» حسب يوم دخول الشات؛ «حجز في اليوم» حسب تاريخ تسجيل الحجز.</p>
+          <p className={styles.dailyBookingNote}>«حجز» حسب يوم دخول الشات؛ «حجز في اليوم» يجمع كل الكورسات حسب تاريخ تسجيل الحجز.</p>
           <table className={styles.dailyTable}>
             <caption className={styles.srOnly}>نتائج العملاء حسب يوم الدخول والحجوزات المسجلة يوميًا</caption>
             <thead><tr><th>يوم الدخول</th><th>شات</th><th>مؤهل</th><th>نية حجز</th><th>حجز</th><th>حجز في اليوم</th><th>دفع</th><th>حضور</th><th><span className={styles.srOnly}>إجراء</span></th></tr></thead>

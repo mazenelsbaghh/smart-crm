@@ -56,7 +56,7 @@ function DailyBreakdown({ dashboard, leaders }: { dashboard: SalesIntelligenceDa
       <div><span className={styles.eyebrow}>التفاصيل اليومية</span><h2 id="daily-breakdown-title">كل الأيام من البداية للنهاية</h2></div>
       <span>الأرقام المميزة هي الأعلى في العمود</span>
     </div>
-    <p className={styles.dailyBookingNote}>«حجز» حسب يوم دخول الشات؛ «حجز في اليوم» حسب تاريخ تسجيل الحجز.</p>
+    <p className={styles.dailyBookingNote}>«حجز» حسب يوم دخول الشات؛ «حجز في اليوم» يجمع كل الكورسات حسب تاريخ تسجيل الحجز.</p>
     {dashboard.daily.length === 0 ? <div className={styles.emptyInline}><p>لا توجد نتائج في هذه الفترة</p><span>جرّب توسيع تاريخ البداية والنهاية.</span></div> : (
       <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="جدول نتائج الأيام، قابل للتمرير"><table className={`${styles.dailyTable} ${styles.expandedDailyTable}`}>
         <thead><tr><th>اليوم</th>{stages.map((stage) => <th key={stage.key}>{stage.label}</th>)}</tr></thead>

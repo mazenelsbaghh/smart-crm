@@ -1577,7 +1577,7 @@
   border: 1px solid var(--border-subtle) !important;
   border-radius: 10px !important;
   padding: 8px 12px !important;
-  font-size: 0.75rem !important;
+  font-size: 0.75rem;
   color: var(--text-strong) !important;
   outline: 2px solid transparent !important;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -2055,7 +2055,7 @@
   border: 1px solid var(--border-subtle) !important;
   border-radius: 12px !important;
   padding: 8px 12px !important;
-  font-size: 0.8rem !important;
+  font-size: 0.8rem;
   color: var(--text-strong) !important;
   outline: 2px solid transparent !important;
   box-sizing: border-box;
@@ -2083,7 +2083,7 @@
   border: 1px solid var(--border-subtle) !important;
   border-radius: 12px !important;
   padding: 8px 12px !important;
-  font-size: 0.8rem !important;
+  font-size: 0.8rem;
   color: var(--text-strong) !important;
   outline: 2px solid transparent !important;
   min-height: 80px;
@@ -2147,7 +2147,7 @@
   border: 1px solid var(--border-subtle) !important;
   border-radius: 10px !important;
   padding: 6px 10px !important;
-  font-size: 0.72rem !important;
+  font-size: 0.72rem;
   color: var(--text-strong) !important;
   outline: 2px solid transparent !important;
 }
@@ -2858,20 +2858,7 @@
   .headerTopRow { min-height: 44px; }
  }
 
-.customerDetailsHeading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.customerDetailsHeading h2 {
-  margin: 0;
-  font-size: 1.125rem;
-}
-
-.customerDetailsHeading ~ .detailsPanel, .customerDetailsHeading ~ .detailsPanelEmpty {
+.customerDetailsBody > .detailsPanel, .customerDetailsBody > .detailsPanelEmpty {
   display: flex !important;
   width: 100%;
   height: auto;

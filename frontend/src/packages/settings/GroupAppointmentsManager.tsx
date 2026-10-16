@@ -5,6 +5,8 @@ import { api } from '../../services/api';
 import { SignalRService } from '../../services/signalr';
 import { useAuth } from '../../context/auth-context';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { useDialogViewport } from '../../components/shared/useDialogViewport';
+import { lockBodyScroll } from '../../components/shared/modal-accessibility';
 import FilterTabs from '../../components/ui/FilterTabs';
 import StatusMessage from '../../components/ui/StatusMessage';
 import { useUnsavedNavigationGuard } from '../../hooks/use-unsaved-navigation-guard';
@@ -26,7 +28,8 @@ import {
   ListFilter,
   CirclePause,
   Settings2,
-  ChevronDown
+  ChevronDown,
+  X
 } from 'lucide-react';
 import styles from './settings.module.css';
 import GroupStaffDirectoryEditor, { StaffContact } from './GroupStaffDirectoryEditor';
@@ -278,6 +281,7 @@ function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editorError, setEditorError] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<GroupAppointment | null>(null);
   const [participationGroup, setParticipationGroup] = useState<{ id: string; name: string; projectId: string } | null>(null);
   const participationTrigger = useRef<HTMLButtonElement | null>(null);
@@ -324,16 +328,16 @@ function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', 
   const subscribersHeadingRef = useRef<HTMLHeadingElement>(null);
   const subscribersTrigger = useRef<HTMLButtonElement | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const editorOverlayRef = useRef<HTMLDivElement>(null);
   const editorCloseRef = useRef<HTMLButtonElement>(null);
-
+  useDialogViewport(editorOverlayRef, isModalOpen);
 
   const closeEditor = useCallback(() => setIsModalOpen(false), []);
 
   useEffect(() => {
     if (!isModalOpen) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const releaseScrollLock = lockBodyScroll();
     const focusTimer = window.setTimeout(() => editorCloseRef.current?.focus(), 0);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); closeEditor(); return; }
@@ -351,7 +355,7 @@ function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', 
     return () => {
       window.clearTimeout(focusTimer);
       document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = previousOverflow;
+      releaseScrollLock();
       previouslyFocused?.focus();
     };
   }, [closeEditor, isModalOpen]);
@@ -465,16 +469,17 @@ function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', 
     e.preventDefault();
     if (!freeSessionDateTime || capacity <= 0) return;
     if (supervisorPhone.trim() && !normalizeManualBookingPhone(supervisorPhone)) {
-      setMessage({ type: 'error', text: 'اكتب رقم واتساب صحيحًا للمسؤولة.' });
+      setEditorError('اكتب رقم واتساب صحيحًا للمسؤولة.');
       return;
     }
     if (!selectedInstructor.trim()) {
-      setMessage({ type: 'error', text: 'اختار اسم الإنستراكتور المسؤول عن المجموعة.' });
+      setEditorError('اختر الدكتور المسؤول عن المجموعة.');
       return;
     }
 
     try {
       setActionLoading(true);
+      setEditorError('');
       setMessage(null);
 
       const freeSessionUtcDate = projectLocalToUtc(freeSessionDateTime, projectTimezone);
@@ -508,11 +513,13 @@ function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', 
       void fetchGroups();
     } catch (e) {
       console.error(e);
-      setMessage({ type: 'error', text: e instanceof Error && e.message === 'INVALID_LOCAL_DATE'
+      const errorText = e instanceof Error && e.message === 'INVALID_LOCAL_DATE'
         ? `هذا الوقت غير موجود في المنطقة الزمنية ${projectTimezone} بسبب تغيير التوقيت. اختر وقتًا آخر.`
         : e instanceof Error && e.message === 'AMBIGUOUS_LOCAL_DATE'
           ? `هذا الوقت يتكرر مرتين في المنطقة الزمنية ${projectTimezone} بسبب تغيير التوقيت. اختر وقتًا أوضح قبله أو بعده.`
-          : 'حدث خطأ أثناء حفظ المجموعة.' });
+          : 'تعذر حفظ المجموعة. حاول مرة أخرى.';
+      setEditorError(errorText);
+      setMessage({ type: 'error', text: errorText });
     } finally {
       setActionLoading(false);
     }
@@ -520,6 +527,7 @@ function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', 
 
   const handleStartEdit = (group: GroupAppointment) => {
     if (manualBookingSubmitting) return;
+    setEditorError('');
     setEditingGroupId(group.id);
     setMode(group.mode || 'offline');
     setFreeSessionDateTime(projectDateTimeInput(group.freeSessionDateTime || group.dateTime, projectTimezone));
@@ -551,6 +559,7 @@ function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', 
 
   const openNewGroupEditor = () => {
     if (manualBookingSubmitting) return;
+    setEditorError('');
     setEditingGroupId(null);
     setMode('offline');
     setFreeSessionDateTime('');
@@ -1723,131 +1732,140 @@ function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', 
 
       {/* Add/Edit Modal */}
       {isModalOpen && (
-        <div className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }}>
-          <div ref={editorRef} className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="group-editor-title" aria-describedby="group-editor-timezone" style={{ maxWidth: '560px', maxHeight: '92dvh', overflowY: 'auto', background: 'var(--surface)', color: 'var(--text-strong)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
-              <h3 id="group-editor-title" style={{ fontSize: '1.1rem', fontWeight: 600 }}>
-                {editingGroupId ? 'تعديل مجموعة مواعيد' : 'إنشاء مجموعة جديدة'}
-              </h3>
+        <div ref={editorOverlayRef} className={`${styles.overlay} ${styles.groupEditorOverlay}`} onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }}>
+          <div ref={editorRef} className={`${styles.modal} ${styles.groupEditor}`} role="dialog" aria-modal="true" aria-labelledby="group-editor-title" aria-describedby="group-editor-timezone">
+            <div className={styles.groupEditorHeader}>
+              <div>
+                <h3 id="group-editor-title" className={styles.modalTitle}>
+                  {editingGroupId ? 'تعديل المجموعة' : 'مجموعة جديدة'}
+                </h3>
+                <p id="group-editor-timezone" className={styles.groupEditorTimezone}>
+                  <Clock size={15} aria-hidden="true" />
+                  {projectTimezone === 'Africa/Cairo' ? 'المواعيد بتوقيت القاهرة' : <>المواعيد بتوقيت <b dir="ltr">{projectTimezone}</b></>}
+                </p>
+              </div>
               <button
                 ref={editorCloseRef}
                 type="button"
                 aria-label="إغلاق نموذج المجموعة"
                 onClick={closeEditor}
                 className={styles.closeBtn}
-                style={{ fontSize: '1.5rem' }}
               >
-                &times;
+                <X size={20} aria-hidden="true" />
               </button>
             </div>
 
-            <p id="group-editor-timezone" className={styles.sectionHint}>أدخل كل المواعيد بتوقيت <b dir="ltr">{projectTimezone}</b>.</p>
+            <form onSubmit={handleSaveGroup} className={styles.groupEditorForm}>
+              <div className={styles.groupEditorBody}>
+                <div className={styles.groupEditorGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="group-editor-mode">نوع المجموعة</label>
+                    <select
+                      id="group-editor-mode"
+                      value={mode}
+                      onChange={(e) => setMode(e.target.value)}
+                      className={styles.select}
+                      required
+                    >
+                      <option value="offline">في السنتر</option>
+                      <option value="online">أونلاين</option>
+                    </select>
+                  </div>
 
-            <form onSubmit={handleSaveGroup} className={styles.form}>
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-editor-mode">نوع المجموعة</label>
-                <select
-                  id="group-editor-mode"
-                  value={mode}
-                  onChange={(e) => setMode(e.target.value)}
-                  className={styles.select}
-                  required
-                >
-                  <option value="offline">في السنتر (Offline)</option>
-                  <option value="online">أونلاين (Online)</option>
-                </select>
-              </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="group-editor-instructor">دكتور المجموعة</label>
+                    <select
+                      id="group-editor-instructor"
+                      value={selectedInstructor}
+                      onChange={(e) => setSelectedInstructor(e.target.value)}
+                      className={styles.select}
+                      required
+                    >
+                      <option value="">اختر الدكتور</option>
+                      {selectedInstructor && !instructors.includes(selectedInstructor) && <option value={selectedInstructor}>{selectedInstructor} (محفوظ سابقًا)</option>}
+                      {instructors.map((instructor) => (
+                        <option key={instructor} value={instructor}>{instructor}</option>
+                      ))}
+                    </select>
+                    {instructors.length === 0 && (
+                      <span style={{ fontSize: '0.72rem', color: 'hsl(var(--accent-danger))' }}>
+                        أضف دكتورًا من قائمة فريق العمل أولًا.
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-editor-instructor">دكتور المجموعة</label>
-                <select
-                  id="group-editor-instructor"
-                  value={selectedInstructor}
-                  onChange={(e) => setSelectedInstructor(e.target.value)}
-                  className={styles.select}
-                  required
-                >
-                  <option value="">اختر الإنستراكتور</option>
-                  {selectedInstructor && !instructors.includes(selectedInstructor) && <option value={selectedInstructor}>{selectedInstructor} (محفوظ سابقًا)</option>}
-                  {instructors.map((instructor) => (
-                    <option key={instructor} value={instructor}>{instructor}</option>
-                  ))}
-                </select>
-                {instructors.length === 0 && (
-                  <span style={{ fontSize: '0.72rem', color: 'hsl(var(--accent-danger))' }}>
-                    أضف الإنستراكتورز من قائمة فريق العمل خارج النموذج ثم احفظها.
-                  </span>
-                )}
-              </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="group-supervisor-phone">المسؤولة عن المجموعة</label>
+                  <select id="group-supervisor-phone" value={supervisorPhone} onChange={event => setSupervisorPhone(event.target.value)}
+                    className={styles.select} aria-describedby="group-supervisor-help">
+                    <option value="">بدون مسؤولة</option>
+                    {supervisorPhone && !supervisors.some(contact => contact.phone === supervisorPhone) && (
+                      <option value={supervisorPhone}>الرقم المحفوظ سابقًا: +{supervisorPhone}</option>
+                    )}
+                    {supervisors.map(contact => <option key={contact.id} value={contact.phone}>{contact.name} (+{contact.phone})</option>)}
+                  </select>
+                  <small id="group-supervisor-help">اختياري. تُضاف للجروب ويصلها كل حجز جديد على الخاص.</small>
+                </div>
 
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-supervisor-phone">المسؤولة عن المجموعة</label>
-                <select id="group-supervisor-phone" value={supervisorPhone} onChange={event => setSupervisorPhone(event.target.value)}
-                  className={styles.select} aria-describedby="group-supervisor-help">
-                  <option value="">بدون مسؤولة</option>
-                  {supervisorPhone && !supervisors.some(contact => contact.phone === supervisorPhone) && (
-                    <option value={supervisorPhone}>الرقم المحفوظ سابقًا: +{supervisorPhone}</option>
-                  )}
-                  {supervisors.map(contact => <option key={contact.id} value={contact.phone}>{contact.name} (+{contact.phone})</option>)}
-                </select>
-                <small id="group-supervisor-help">تُضاف للجروب كعضوة، ويصلها اسم ورقم كل حجز جديد على الخاص. أضف الأسماء من قائمة مسؤولات المتابعة خارج النموذج.</small>
-              </div>
-
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-editor-free-session">موعد الجلسة المجانية</label>
-                <input
-                  id="group-editor-free-session"
-                  type="datetime-local"
-                  value={freeSessionDateTime}
-                  onChange={(e) => setFreeSessionDateTime(e.target.value)}
-                  className={styles.input}
-                  required
-                />
-              </div>
-
-              <p className={styles.sectionHint}>مواعيد الكورس تتحدد في الحصة المجانية حسب مستوى الطالب، مع الدكتور المسؤول عن المجموعة.</p>
-
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="group-editor-capacity">السعة (عدد المشتركين الأقصى)</label>
-                <input
-                  id="group-editor-capacity"
-                  type="number"
-                  min={1}
-                  value={capacity}
-                  onChange={(e) => setCapacity(Number(e.target.value))}
-                  className={styles.input}
-                  required
-                />
-              </div>
-
-              <div className={styles.formGroup} style={{ marginTop: 'var(--space-xs)' }}>
-                <label className={styles.checkboxGroup}>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="group-editor-free-session">موعد الجلسة المجانية</label>
                   <input
-                    type="checkbox"
-                    checked={isActive}
-                    onChange={(e) => setIsActive(e.target.checked)}
-                    className={styles.checkbox}
+                    id="group-editor-free-session"
+                    type="datetime-local"
+                    value={freeSessionDateTime}
+                    onChange={(e) => setFreeSessionDateTime(e.target.value)}
+                    className={styles.input}
+                    aria-describedby="group-editor-schedule-help"
+                    required
                   />
-                  <span className={styles.label} style={{ userSelect: 'none' }}>مجموعة نشطة ومتاحة للحجز</span>
-                </label>
-              </div>
+                  <small id="group-editor-schedule-help">الدكتور بيحدد باقي مواعيد الكورس في الجلسة المجانية.</small>
+                </div>
 
-              <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
-                <button
-                  type="button"
-                  onClick={closeEditor}
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                  disabled={actionLoading}
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={actionLoading}
-                >
-                  {actionLoading ? 'جاري الحفظ...' : 'حفظ'}
-                </button>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="group-editor-capacity">الحد الأقصى للمشتركين</label>
+                  <input
+                    id="group-editor-capacity"
+                    type="number"
+                    min={1}
+                    value={capacity}
+                    onChange={(e) => setCapacity(Number(e.target.value))}
+                    className={styles.input}
+                    required
+                  />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={`${styles.checkboxGroup} ${styles.groupEditorAvailability}`}>
+                    <input
+                      type="checkbox"
+                      checked={isActive}
+                      onChange={(e) => setIsActive(e.target.checked)}
+                      className={styles.checkbox}
+                    />
+                    <span>متاحة للحجز</span>
+                  </label>
+                </div>
+              </div>
+              <div className={styles.groupEditorFooter}>
+                {editorError && <p className={styles.groupEditorError} role="alert">{editorError}</p>}
+                <div className={styles.groupEditorActions}>
+                  <button
+                    type="button"
+                    onClick={closeEditor}
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                    disabled={actionLoading}
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="submit"
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={actionLoading}
+                  >
+                    {actionLoading ? 'جاري الحفظ...' : editingGroupId ? 'حفظ التعديلات' : 'إنشاء المجموعة'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

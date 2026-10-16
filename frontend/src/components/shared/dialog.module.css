@@ -1,6 +1,30 @@
-.dialog { width: min(640px, calc(100vw - 32px)); max-width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface); color: var(--text-strong); box-shadow: var(--shadow-soft); overflow: auto; }
+.dialog { position: fixed; inset-inline: 0; inset-block-start: var(--dialog-viewport-top, 0px); inset-block-end: calc(100dvh - var(--dialog-viewport-height, 100dvh) - var(--dialog-viewport-top, 0px)); margin: auto; width: min(640px, calc(100vw - 32px)); max-width: min(640px, calc(100vw - 32px)); height: fit-content; max-height: calc(var(--dialog-viewport-height, 100dvh) - 32px); padding: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface); color: var(--text-strong); box-shadow: var(--shadow-soft); overflow: hidden; }
+.dialog[open] { display: flex; flex-direction: column; }
 .dialog::backdrop { background: var(--overlay); }
-.surface { padding: 24px; }
-.dialog[data-placement='drawer'] { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(340px, 90vw); max-width: 90vw; height: 100dvh; max-height: 100dvh; border-radius: 0; border-block: 0; border-inline-end: 1px solid var(--border-subtle); }
-.dialog[data-placement='drawer'] .surface { min-height: 100%; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
-@media (max-width: 767px) { .surface { padding: 18px; } }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; padding: 16px 24px; border-bottom: 1px solid var(--border-subtle); }
+.header h2 { min-width: 0; margin: 0; font-size: 1.125rem; line-height: 1.5; overflow-wrap: anywhere; }
+.closeButton { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: 0 0 44px; padding: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-muted); color: var(--text-base); cursor: pointer; }
+.closeButton:hover { color: var(--accent); background: var(--accent-soft); }
+.closeButton:disabled { opacity: .55; cursor: not-allowed; }
+.closeButton:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.body { min-width: 0; min-height: 0; padding: 20px 24px; overflow: auto; overscroll-behavior: contain; }
+.body select:not([multiple]) { height: 48px; }
+.footer { display: flex; flex-shrink: 0; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 24px max(14px, env(safe-area-inset-bottom)); border-top: 1px solid var(--border-subtle); background: var(--surface); }
+.footer button { min-height: 44px; font-size: .875rem; }
+.dialog[data-placement='drawer'] { left: auto; right: 0; inset-block-end: auto; margin: 0; width: min(340px, 90vw); max-width: 90vw; height: var(--dialog-viewport-height, 100dvh); max-height: var(--dialog-viewport-height, 100dvh); border-radius: 0; border-block: 0; border-inline-end: 1px solid var(--border-subtle); }
+.dialog[data-placement='drawer'] .header { padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
+.dialog[data-placement='drawer'] .body { flex: 1; padding: 16px; }
+@media (max-width: 767px) {
+  .dialog { width: calc(100vw - 20px); max-width: calc(100vw - 20px); max-height: calc(var(--dialog-viewport-height, 100dvh) - 20px); }
+  .header { padding: 12px 16px; }
+  .body { padding: 16px; }
+  .body input, .body select, .body textarea { min-width: 0; max-width: 100%; font-size: 16px; }
+  .footer { padding: 12px 16px max(12px, env(safe-area-inset-bottom)); }
+  .footer > button, .footer > a { flex: 1 1 auto; }
+}
+@media (max-height: 480px) {
+  .header { padding-block: 8px; }
+  .body { padding-block: 12px; }
+  .body input, .body select, .body textarea { font-size: 16px; }
+  .footer { padding-block-start: 8px; padding-block-end: max(8px, env(safe-area-inset-bottom)); }
+}

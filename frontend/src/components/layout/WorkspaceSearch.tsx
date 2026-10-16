@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowUpLeft, Search, X } from 'lucide-react';
+import { ArrowUpLeft, Search } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { navigationItemsForRole, navigationGroups } from '../../config/navigation';
 import Dialog from '../shared/Dialog';
@@ -18,10 +18,11 @@ function SearchResults({ onClose }: { onClose: () => void }) {
     return navigationItemsForRole(user?.role).filter(destination => !normalizedQuery
       || [destination.name, ...(destination.keywords ?? [])].some(label => label.toLocaleLowerCase('ar').includes(normalizedQuery)));
   }, [query, user?.role]);
-  return <>
+  return <Dialog label="البحث في مساحة العمل" title="البحث في مساحة العمل" closeLabel="إغلاق البحث" onClose={onClose}
+    footer={<><p className={styles.keyboardHint}>↑ ↓ للتنقل <span>Enter لفتح الصفحة</span><span>Esc للإغلاق</span></p><Button variant="secondary" onClick={onClose}>إغلاق</Button></>}>
     <div className={styles.searchField}>
       <Search size={20} aria-hidden="true" />
-      <input type="search" role="combobox" aria-label="البحث في صفحات لوحة التحكم" placeholder="اكتب اسم الصفحة أو القسم…"
+      <input autoFocus type="search" role="combobox" aria-label="البحث في صفحات لوحة التحكم" placeholder="اكتب اسم الصفحة أو القسم…"
         aria-expanded="true" aria-controls="workspace-search-results" aria-autocomplete="list"
         aria-activedescendant={destinations[activeIndex] ? `workspace-result-${activeIndex}` : undefined}
         value={query} onChange={event => { setQuery(event.target.value); setActiveIndex(0); }}
@@ -40,7 +41,6 @@ function SearchResults({ onClose }: { onClose: () => void }) {
             event.preventDefault(); document.getElementById(`workspace-result-${activeIndex}`)?.click();
           }
         }} />
-      <Button variant="ghost" onClick={onClose} aria-label="إغلاق البحث"><X size={20} aria-hidden="true" /></Button>
     </div>
     <p className={styles.resultContext} role="status">{query ? `${destinations.length.toLocaleString('ar-EG')} نتيجة للبحث` : 'انتقل مباشرة إلى أي قسم في مساحة العمل'}</p>
     <div id="workspace-search-results" role="listbox" aria-label="نتائج البحث" className={styles.results}>
@@ -55,8 +55,7 @@ function SearchResults({ onClose }: { onClose: () => void }) {
       })}
       {!destinations.length && <p className={styles.empty}>لا توجد صفحة بهذا الاسم. جرّب «العملاء» أو «المواعيد».</p>}
     </div>
-    <p className={styles.keyboardHint}>↑ ↓ للتنقل <span>Enter لفتح الصفحة</span><span>Esc للإغلاق</span></p>
-  </>;
+  </Dialog>;
 }
 
 export default function WorkspaceSearch() {
@@ -74,6 +73,6 @@ export default function WorkspaceSearch() {
     <button type="button" className={styles.trigger} aria-label="البحث في مساحة العمل" aria-haspopup="dialog" onClick={() => setOpen(true)}>
       <Search size={18} aria-hidden="true" /><span>ابحث في مساحة العمل…</span><kbd aria-hidden="true">⌘ K</kbd>
     </button>
-    {open && <Dialog label="البحث في مساحة العمل" onClose={() => setOpen(false)}><SearchResults onClose={() => setOpen(false)} /></Dialog>}
+    {open && <SearchResults onClose={() => setOpen(false)} />}
   </>;
 }

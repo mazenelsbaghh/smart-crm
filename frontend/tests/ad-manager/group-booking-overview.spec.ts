@@ -60,8 +60,10 @@ for (const width of [390, 1440]) {
     const fixture = await mockBookings(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/management/groups');
-    const today = page.getByRole('group', { name: 'حجوزات سُجلت اليوم', exact: true });
-    const total = page.getByRole('group', { name: 'إجمالي الحجوزات الحالية', exact: true });
+    const today = page.getByRole('group', { name: /^حجوزات .+ اليوم$/ });
+    const total = page.getByRole('group', { name: /^إجمالي حجوزات / });
+    await expect(today).toHaveAccessibleName('حجوزات العادي اليوم');
+    await expect(total).toHaveAccessibleName('إجمالي حجوزات العادي');
     await expect(today.locator('dd').first()).toHaveText('٣');
     await expect(total.locator('dd').first()).toHaveText('٤');
     await expect(page.getByRole('button', { name: 'المشتركين (4)', exact: true })).toBeVisible();
@@ -82,6 +84,8 @@ for (const width of [390, 1440]) {
     await page.getByLabel('اختيار نوع الكورس', { exact: true }).click();
     await page.getByRole('link', { name: 'الكورس المكثف', exact: true }).click();
     await expect(page).toHaveURL(/course=intensive/);
+    await expect(today).toHaveAccessibleName('حجوزات المكثف اليوم');
+    await expect(total).toHaveAccessibleName('إجمالي حجوزات المكثف');
     await expect(page.getByRole('button', { name: 'المشتركين (2)', exact: true })).toBeVisible();
     await expect(page.getByText('طالب العادي 1', { exact: true })).toBeHidden();
     await expect(total.locator('dd').first()).toHaveText('جاري التحميل');

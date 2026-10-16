@@ -6,8 +6,6 @@ import GroupBookingStats from '../GroupBookingStats';
 
 const originalAdapter = api.defaults.adapter;
 const initialProps = { projectId: 'project-a', courseType: 'regular' as const, refreshKey: 0 };
-const todayLabel = 'حجوزات سُجلت اليوم';
-const totalLabel = 'إجمالي الحجوزات الحالية';
 const snapshot = (bookedToday: number, totalBooked: number, courseType = 'regular') => ({
   bookedToday, totalBooked, courseType, timezone: 'Africa/Cairo',
   dayStartUtc: '2026-10-15T21:00:00Z', dayEndUtc: '2026-10-16T21:00:00Z', asOfUtc: '2026-10-16T12:00:00Z',
@@ -33,9 +31,9 @@ function holdRequests() {
   return requests;
 }
 
-function expectCounts(today: string, total: string) {
-  expect(within(screen.getByRole('group', { name: todayLabel })).getByText(today)).toBeVisible();
-  expect(within(screen.getByRole('group', { name: totalLabel })).getByText(total)).toBeVisible();
+function expectCounts(today: string, total: string, courseLabel = 'العادي') {
+  expect(within(screen.getByRole('group', { name: `حجوزات ${courseLabel} اليوم` })).getByText(today)).toBeVisible();
+  expect(within(screen.getByRole('group', { name: `إجمالي حجوزات ${courseLabel}` })).getByText(total)).toBeVisible();
 }
 
 beforeEach(() => {
@@ -130,7 +128,7 @@ describe('group booking statistics', () => {
     await act(async () => requests[2].complete(snapshot(3, 25, props.courseType)));
     await act(async () => requests[1].complete(snapshot(99, 999)));
 
-    expectCounts('٣', '٢٥');
+    expectCounts('٣', '٢٥', props.courseType === 'regular' ? 'العادي' : 'المكثف');
     expect(screen.queryByText('٩٩٩')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });

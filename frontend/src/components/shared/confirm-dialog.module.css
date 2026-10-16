@@ -1,26 +1,36 @@
 .overlay {
   position: fixed;
-  top: 0;
+  top: var(--dialog-viewport-top, 0px);
   left: 0;
   right: 0;
-  bottom: 0;
-  background-color: var(--overlay);
-  display: flex;
+  bottom: auto;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: var(--dialog-viewport-height, 100dvh);
+  margin: 0;
+  border: 0;
+  padding: 12px;
+  background: transparent;
+  color: var(--text-strong);
   align-items: center;
   justify-content: center;
   z-index: 1000;
   animation: fadeIn var(--transition-fast) ease-out;
 }
 
+.overlay[open] { display: flex; }
+.overlay::backdrop { background: var(--overlay); }
+
 .modal {
   width: min(440px, calc(100vw - 32px));
+  max-height: calc(var(--dialog-viewport-height, 100dvh) - 24px);
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  padding: var(--space-lg);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
   box-shadow: var(--shadow-panel);
   animation: scaleUp var(--transition-normal) cubic-bezier(0.16, 1, 0.3, 1);
   direction: rtl;
@@ -29,6 +39,9 @@
 .header {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .title {
@@ -39,7 +52,10 @@
 }
 
 .body {
-  min-height: 48px;
+  min-height: 0;
+  padding: 18px 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .message {
@@ -47,13 +63,18 @@
   font-size: 0.9rem;
   line-height: 1.6;
   color: var(--text-base);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-sm);
-  margin-top: var(--space-sm);
+  flex-shrink: 0;
+  padding: 12px 20px max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface);
 }
 
 .confirmBtn,
@@ -75,7 +96,7 @@
   color: var(--accent-ink);
 }
 
-.confirmBtn:hover {
+.confirmBtn.confirmBtn:hover:not(:disabled) {
   background-color: var(--accent-hover);
 }
 
@@ -90,7 +111,7 @@
   color: var(--text-base);
 }
 
-.cancelBtn:hover {
+.cancelBtn.cancelBtn:hover:not(:disabled) {
   background-color: var(--accent-soft);
   border-color: var(--border-strong);
   color: var(--accent);
@@ -111,18 +132,21 @@
 }
 
 @media (max-width: 480px) {
-  .modal {
-    padding: var(--space-md);
-  }
-
   .actions {
-    flex-direction: column-reverse;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
   }
 
   .confirmBtn,
   .cancelBtn {
     width: 100%;
   }
+}
+
+@media (max-height: 480px) {
+  .header, .body { padding-block: 12px; }
+  .actions { padding-block-start: 8px; padding-block-end: max(8px, env(safe-area-inset-bottom)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
