@@ -56,33 +56,35 @@ namespace Modules.GroupAppointments.API
         // --- Admin/Agent Authorized Endpoints ---
 
         [HttpGet("group-appointments")]
-        public async Task<IActionResult> GetGroups([FromQuery] string? courseType = null)
+        public async Task<IActionResult> GetGroups([FromQuery] string? courseType = null,
+            [FromQuery] bool includeBookings = true, CancellationToken cancellationToken = default)
         {
             var projectId = _tenantContext.ProjectId;
             if (!_authorization.CanRead(User, projectId)) return Forbid();
-            var settings = await _context.ProjectSettings.FirstOrDefaultAsync(s => s.ProjectId == projectId);
+            var settings = await _context.ProjectSettings.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.ProjectId == projectId, cancellationToken);
             var timezone = settings?.Timezone ?? "Africa/Cairo";
 
             if (courseType != null && !CourseTypes.IsValid(courseType))
                 return BadRequest(new { code = "INVALID_COURSE_TYPE" });
 
-            var groups = await _context.GroupAppointments
-                .Where(g => courseType == null || g.CourseType == courseType)
-                .Include(g => g.Bookings)
+            var query = _context.GroupAppointments
+                .Where(g => g.ProjectId == projectId && (courseType == null || g.CourseType == courseType));
+            if (includeBookings) query = query.Include(g => g.Bookings);
+            var groups = await query
                 .OrderBy(g => g.FreeSessionDateTime ?? g.DateTime)
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
+            await DeactivateExpiredGroupsAsync(groups, timezone, cancellationToken);
+            var bookingCounts = includeBookings
+                ? groups.ToDictionary(group => group.Id, group => group.Bookings.Count)
+                : await _context.GroupAppointmentBookings
+                    .Where(booking => booking.ProjectId == projectId && booking.GroupAppointment.ProjectId == projectId
+                        && (courseType == null || booking.GroupAppointment.CourseType == courseType))
+                    .GroupBy(booking => booking.GroupAppointmentId)
+                    .Select(bookings => new { GroupId = bookings.Key, Count = bookings.Count() })
+                    .ToDictionaryAsync(bookings => bookings.GroupId, bookings => bookings.Count, cancellationToken);
 
-            var adjustedGroups = new List<GroupAppointment>();
-            foreach (var g in groups)
-            {
-                var adjusted = await AdjustGroupIfPassedAsync(g, timezone);
-                if (adjusted != null)
-                {
-                    adjustedGroups.Add(adjusted);
-                }
-            }
-
-            var result = adjustedGroups.Select(g => new
+            var result = groups.Select(g => new
             {
                 g.Id,
                 g.ProjectId,
@@ -102,8 +104,8 @@ namespace Modules.GroupAppointments.API
                 g.WhatsAppAccountId,
                 g.CreatedAt,
                 g.UpdatedAt,
-                BookedCount = g.Bookings.Count,
-                Bookings = g.Bookings.OrderByDescending(b => b.CreatedAt).Select(b => new
+                BookedCount = bookingCounts.GetValueOrDefault(g.Id),
+                Bookings = g.Bookings.Where(_ => includeBookings).OrderByDescending(b => b.CreatedAt).Select(b => new
                 {
                     b.Id,
                     b.CustomerName,
@@ -116,6 +118,36 @@ namespace Modules.GroupAppointments.API
             });
 
             return Ok(result);
+        }
+
+        [HttpGet("group-appointments/{id}/bookings")]
+        public async Task<IActionResult> GetGroupBookings(Guid id, CancellationToken cancellationToken = default)
+        {
+            var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
+            if (!await _context.GroupAppointments.AnyAsync(group => group.Id == id && group.ProjectId == projectId, cancellationToken))
+                return NotFound();
+            var bookings = await _context.GroupAppointmentBookings.AsNoTracking()
+                .Where(booking => booking.ProjectId == projectId && booking.GroupAppointmentId == id)
+                .OrderByDescending(booking => booking.CreatedAt).ThenBy(booking => booking.Id)
+                .Select(booking => new
+                {
+                    booking.Id, booking.CustomerName, booking.CustomerPhone, booking.CustomerId,
+                    booking.CreatedAt, booking.IsAttended, booking.IsPaid
+                }).ToListAsync(cancellationToken);
+            return Ok(bookings);
+        }
+
+        [HttpGet("group-appointments/booking-stats")]
+        public async Task<IActionResult> GetBookingStats([FromQuery] string? courseType = null,
+            CancellationToken cancellationToken = default)
+        {
+            var projectId = _tenantContext.ProjectId;
+            if (!_authorization.CanRead(User, projectId)) return Forbid();
+            if (courseType != null && !CourseTypes.IsValid(courseType))
+                return BadRequest(new { code = "INVALID_COURSE_TYPE" });
+            return Ok(await new GroupBookingStatisticsQuery(_context)
+                .ReadAsync(projectId, courseType, DateTime.UtcNow, cancellationToken));
         }
 
         [HttpGet("group-appointments/automation-overview")]
@@ -576,7 +608,7 @@ namespace Modules.GroupAppointments.API
 
         [AllowAnonymous]
         [HttpGet("public/group-appointments/active/{projectId}")]
-        public async Task<IActionResult> GetActiveGroupsForPublic(Guid projectId)
+        public async Task<IActionResult> GetActiveGroupsForPublic(Guid projectId, CancellationToken cancellationToken = default)
         {
             _tenantContext.SetProjectId(projectId);
 
@@ -594,15 +626,9 @@ namespace Modules.GroupAppointments.API
                 .OrderBy(g => g.FreeSessionDateTime ?? g.DateTime)
                 .ToListAsync();
 
-            var adjustedGroups = new List<GroupAppointment>();
-            foreach (var g in groups)
-            {
-                var adjusted = await AdjustGroupIfPassedAsync(g, timezone);
-                if (adjusted != null && adjusted.IsActive && (adjusted.FreeSessionDateTime ?? adjusted.DateTime) > DateTime.UtcNow)
-                {
-                    adjustedGroups.Add(adjusted);
-                }
-            }
+            await DeactivateExpiredGroupsAsync(groups, timezone, cancellationToken);
+            var adjustedGroups = groups.Where(group => group.IsActive
+                && (group.FreeSessionDateTime ?? group.DateTime) > DateTime.UtcNow);
 
             var result = adjustedGroups.Select(g => new
             {
@@ -816,27 +842,20 @@ namespace Modules.GroupAppointments.API
             return Ok(new { instructors = directory.InstructorContacts.Select(c => c.Name), directory.InstructorContacts, directory.Supervisors });
         }
 
-        private async Task<GroupAppointment?> AdjustGroupIfPassedAsync(GroupAppointment group, string timezone)
+        private async Task DeactivateExpiredGroupsAsync(IEnumerable<GroupAppointment> groups, string timezone,
+            CancellationToken cancellationToken)
         {
             var projectZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone(timezone);
-            var localGroupDateTime = TimeZoneInfo.ConvertTimeFromUtc(group.FreeSessionDateTime ?? group.DateTime, projectZone);
             var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, projectZone);
-
-            if (localNow > localGroupDateTime)
+            var expired = groups.Where(group => group.IsActive
+                && localNow - TimeZoneInfo.ConvertTimeFromUtc(group.FreeSessionDateTime ?? group.DateTime, projectZone)
+                    >= TimeSpan.FromHours(24)).ToArray();
+            foreach (var group in expired)
             {
-                var timeDiff = localNow - localGroupDateTime;
-                if (timeDiff.TotalHours >= 24)
-                {
-                    if (group.IsActive)
-                    {
-                        group.IsActive = false;
-                        _context.Entry(group).State = EntityState.Modified;
-                        await _context.SaveChangesAsync();
-                        Console.WriteLine($"[GroupAppointments] Deactivated expired group {group.Id} because 24 hours have passed.");
-                    }
-                }
+                group.IsActive = false;
+                _context.Entry(group).Property(candidate => candidate.IsActive).IsModified = true;
             }
-            return group;
+            if (expired.Length > 0) await _context.SaveChangesAsync(cancellationToken);
         }
 
         private static DateTime? ToUtcOrNull(DateTime? value)

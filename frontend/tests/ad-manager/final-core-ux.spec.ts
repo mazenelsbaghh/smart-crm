@@ -102,6 +102,10 @@ for (const scenario of [
 ]) {
   test(`failed ${scenario.name} loading does not claim an empty list and can recover`, async ({ page }) => {
     await mockAddonContext(page);
+    await page.route('**/api/group-appointments/booking-stats?**', route => route.fulfill({ json: {
+      courseType: 'regular', totalBooked: 0, bookedToday: 0, timezone: 'Africa/Cairo',
+      dayStartUtc: '2026-10-15T21:00:00Z', dayEndUtc: '2026-10-16T21:00:00Z', asOfUtc: '2026-10-16T12:00:00Z',
+    } }));
     let unavailable = true;
     await page.route(scenario.endpoint, route => route.fulfill(unavailable
       ? { status: 503, json: { error: 'Temporarily unavailable' } }
@@ -125,9 +129,16 @@ for (const width of [320, 1440]) {
     await page.route('**/api/group-appointments?**', route => route.fulfill({ json: [{
       id: 'group-long-name', name: 'مجموعة المهارات العملية المسائية', dateTime: '2026-10-20T15:00:00Z',
       capacity: 2, bookedCount: 1, isActive: true, days: '2', mode: 'online',
-      bookings: [{ id: 'booking-long-name', customerId: customer.id, customerName: customer.name,
-        customerPhone: customer.phoneNumber, createdAt: '2026-10-16T10:00:00Z', isPaid: false, isAttended: true }],
+      bookings: [],
     }] }));
+    await page.route('**/api/group-appointments/group-long-name/bookings', route => route.fulfill({ json: [{
+      id: 'booking-long-name', customerId: customer.id, customerName: customer.name,
+      customerPhone: customer.phoneNumber, createdAt: '2026-10-16T10:00:00Z', isPaid: false, isAttended: true,
+    }] }));
+    await page.route('**/api/group-appointments/booking-stats?**', route => route.fulfill({ json: {
+      courseType: 'regular', totalBooked: 1, bookedToday: 1, timezone: 'Africa/Cairo',
+      dayStartUtc: '2026-10-15T21:00:00Z', dayEndUtc: '2026-10-16T21:00:00Z', asOfUtc: '2026-10-16T12:00:00Z',
+    } }));
     await page.route('**/api/group-appointments/instructors', route => route.fulfill({ json: {
       instructors: [], instructorContacts: [], supervisors: [],
     } }));
