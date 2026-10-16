@@ -160,9 +160,7 @@
 .weekItem .weekCopy > :not(.weekActions) { grid-column: 1; }
 .weekItem .weekActions { grid-column: 2; grid-row: 1 / 6; }
 :global(dialog):has(.imageZoomViewer) { width: min(1040px, calc(100vw - 24px)); max-width: min(1040px, calc(100vw - 24px)); }
-.imageZoomHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
-.imageZoomHeader h2 { margin: 0; font-size: 1.125rem; }
-.imageZoomViewport { max-height: 72dvh; overflow: auto; margin-top: 12px; background: var(--surface-muted); border-radius: var(--radius-md); }
+.imageZoomViewport { max-height: min(62dvh, 720px); overflow: auto; background: var(--surface-muted); border-radius: var(--radius-md); }
 .imageZoomViewport:focus-visible { outline: 2px solid var(--intelligence); outline-offset: 3px; }
 .imageZoomCanvas { position: relative; width: min(100%, 72dvh); aspect-ratio: 1; margin-inline: auto; }
 .imageZoomCanvas img { object-fit: contain; }

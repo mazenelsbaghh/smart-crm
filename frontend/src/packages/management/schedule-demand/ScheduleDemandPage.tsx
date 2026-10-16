@@ -2,6 +2,7 @@
 
 import PageHeader from '../../../components/ui/PageHeader';
 import Tabs from '../../../components/ui/Tabs';
+import Dialog from '../../../components/shared/Dialog';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
@@ -11,6 +12,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../../context/auth-context';
 import { api } from '../../../services/api';
+import managementStyles from '../management.module.css';
+import dialogStyles from '../ManagementDialogs.module.css';
 import styles from './schedule-demand.module.css';
 
 interface DemandRow {
@@ -256,22 +259,27 @@ function ScheduleDemandWorkspace({ projectId, canManage, timezone }: {
         <button type="button" className={styles.exportButton} onClick={() => void exportSelected()} disabled={exporting || loading}>
           <Download size={17} aria-hidden="true" />{exporting ? 'جاري تجهيز الشيت…' : 'تنزيل المحددين (Excel)'}
         </button>
-        {canManage && <button type="button" onClick={() => setConfirming(true)} disabled={!overview?.openAppointments.length}>
+        {canManage && <button type="button" onClick={() => { setError(''); setConfirming(true); }} disabled={!overview?.openAppointments.length}>
           <Send size={17} /> إرسال المواعيد المفتوحة
         </button>}
       </div>
     </div>}
 
-    {confirming && <section className={styles.confirmPanel} aria-labelledby="confirm-title">
-      <div><span className={styles.confirmIcon}><Send size={19} /></span><div><h2 id="confirm-title">تأكيد إرسال المواعيد</h2>
-        <p>سيتم إرسال المجموعات المفتوحة الآن إلى {selected.size.toLocaleString('ar-EG')} عميل. لن تتكرر نفس الرسالة، ولن تُرسل مجموعة ممتلئة.</p></div></div>
-      <div className={styles.confirmActions}>
-        <button type="button" className={styles.cancelButton} onClick={() => setConfirming(false)} disabled={sending}>رجوع</button>
-        <button type="button" className={styles.sendButton} onClick={() => void sendAvailable()} disabled={sending}>
-          <Send size={16} />{sending ? 'جاري الإضافة للإرسال…' : 'تأكيد الإرسال'}
+    {confirming && <Dialog
+      label="تأكيد إرسال المواعيد"
+      title="تأكيد إرسال المواعيد"
+      onClose={() => { if (!sending) setConfirming(false); }}
+      closeDisabled={sending}
+      footer={<>
+        {error && <div className={dialogStyles.feedback}><p className={styles.errorBanner} role="alert">{error}</p></div>}
+        <button type="button" className={`${managementStyles.btn} ${managementStyles.btnSecondary}`} onClick={() => setConfirming(false)} disabled={sending}>رجوع</button>
+        <button type="button" className={`${managementStyles.btn} ${managementStyles.btnPrimary}`} onClick={() => void sendAvailable()} disabled={sending}>
+          <Send size={16} aria-hidden="true" />{sending ? 'جاري الإضافة للإرسال…' : 'تأكيد الإرسال'}
         </button>
-      </div>
-    </section>}
+      </>}
+    >
+      <p>سيتم إرسال المجموعات المفتوحة الآن إلى {selected.size.toLocaleString('ar-EG')} عميل. لن تتكرر نفس الرسالة، ولن تُرسل مجموعة ممتلئة.</p>
+    </Dialog>}
     </> : <p role="status">لم تُحمّل بيانات طلبات المواعيد بعد. أعد المحاولة باستخدام تحديث.</p>}
   </section>;
 }

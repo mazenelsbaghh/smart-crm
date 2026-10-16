@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import PageHeader from '../../components/ui/PageHeader';
 import StatusMessage from '../../components/ui/StatusMessage';
 import FormSection from '../../components/ui/FormSection';
@@ -21,7 +21,8 @@ import {
   MessageCircle,
   MessageSquareText,
   RefreshCw,
-  LogOut
+  LogOut,
+  X
 } from 'lucide-react';
 
 const FacebookIcon = ({ size = 20 }: { size?: number }) => (
@@ -33,9 +34,10 @@ import styles from './settings.module.css';
 import workspace from './SettingsWorkspace.module.css';
 
 import Addons from './Addons';
-import GroupAppointmentsManager from './GroupAppointmentsManager';
 import WhatsAppAccountsPanel from './WhatsAppAccountsPanel';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { useDialogViewport } from '../../components/shared/useDialogViewport';
+import { lockBodyScroll } from '../../components/shared/modal-accessibility';
 import { useUnsavedNavigationGuard } from '../../hooks/use-unsaved-navigation-guard';
 
 interface ApiErrorResponse {
@@ -334,10 +336,13 @@ function SettingsProjectView() {
   const [connectedPages, setConnectedPages] = useState<Array<{ id: string; pageId: string; pageName: string; connectedAt: string }>>([]);
   const [fbLoading, setFbLoading] = useState(false);
   const [pagesToConnect, setPagesToConnect] = useState<Array<{ id: string; name: string; access_token: string }>>([]);
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
+  const [pageConnectionError, setPageConnectionError] = useState<string | null>(null);
   const [showPagesModal, setShowPagesModal] = useState(false);
   const [userAccessToken, setUserAccessToken] = useState('');
   const [pendingDisconnect, setPendingDisconnect] = useState<{ id: string; name?: string } | null>(null);
   const oauthPopupRef = useRef<Window | null>(null);
+  const pagesOverlayRef = useRef<HTMLDivElement>(null);
   const pagesModalRef = useRef<HTMLDivElement>(null);
   const modalCloseRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
@@ -348,8 +353,10 @@ function SettingsProjectView() {
   const [generalDirty, setGeneralDirty] = useState(false);
   const [addonsDirty, setAddonsDirty] = useState(false);
   const navigationGuard = useUnsavedNavigationGuard(generalDirty || addonsDirty);
+  useDialogViewport(pagesOverlayRef, showPagesModal);
 
   // Tabs / Navigation state
+  const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = searchParams.get('tab') === 'addons' ? 'addons' : 'general';
   const settingsSection = SETTINGS_SECTIONS.find(section => section.key === searchParams.get('section')) ?? SETTINGS_SECTIONS[0];
@@ -367,18 +374,10 @@ function SettingsProjectView() {
     field.focus();
     field.reportValidity();
   });
-  const requestedView = searchParams.get('view');
-  const viewMode = requestedView === 'manage-groups' || requestedView === 'manage-intensive-groups' ? requestedView : 'list';
   const setActiveTab = (tab: 'general' | 'addons') => {
     const query = new URLSearchParams(searchParams.toString());
     query.set('tab', tab);
     query.delete('view');
-    window.history.replaceState(null, '', `/settings?${query}`);
-  };
-  const setViewMode = (view: 'list' | 'manage-groups' | 'manage-intensive-groups') => {
-    const query = new URLSearchParams(window.location.search);
-    if (view === 'list') query.delete('view');
-    else query.set('view', view);
     window.history.replaceState(null, '', `/settings?${query}`);
   };
 
@@ -398,7 +397,6 @@ function SettingsProjectView() {
       return false;
     }
     setActiveTab('general');
-    setViewMode('list');
     return true;
   };
 
@@ -465,6 +463,8 @@ function SettingsProjectView() {
   const closePagesModal = useCallback(() => {
     setShowPagesModal(false);
     setPagesToConnect([]);
+    setSelectedPageId(null);
+    setPageConnectionError(null);
     setUserAccessToken('');
   }, []);
 
@@ -490,6 +490,8 @@ function SettingsProjectView() {
             return;
           }
           setPagesToConnect(mapped);
+          setSelectedPageId(null);
+          setPageConnectionError(null);
           setUserAccessToken(typeof uToken === 'string' ? uToken : '');
           setShowPagesModal(true);
           setFbLoading(false);
@@ -523,9 +525,7 @@ function SettingsProjectView() {
 
   useEffect(() => {
     if (!showPagesModal) return;
-    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const releaseScrollLock = lockBodyScroll();
     const focusTimer = window.setTimeout(() => modalCloseRef.current?.focus(), 0);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -547,7 +547,7 @@ function SettingsProjectView() {
     return () => {
       window.clearTimeout(focusTimer);
       document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = previousOverflow;
+      releaseScrollLock();
       previouslyFocusedRef.current?.focus();
     };
   }, [closePagesModal, showPagesModal]);
@@ -632,9 +632,10 @@ function SettingsProjectView() {
 
   }, [activeProject, fetchProjectSettings, fetchConnectedPages]);
 
-  const handleConnectFacebook = async () => {
+  const handleConnectFacebook = async (event: React.MouseEvent<HTMLButtonElement>) => {
     if (!activeProject || fbLoading) return;
 
+    previouslyFocusedRef.current = event.currentTarget;
     setFbLoading(true);
     setMessage(null);
 
@@ -671,6 +672,7 @@ function SettingsProjectView() {
   const handleConfirmPage = async (page: { id: string; name: string; access_token: string }) => {
     if (!activeProject) return;
     setActionLoading(true);
+    setPageConnectionError(null);
     try {
       await api.post(`/api/projects/${activeProject.id}/facebook/pages/confirm`, {
         facebookPageId: page.id,
@@ -684,7 +686,9 @@ function SettingsProjectView() {
       void fetchConnectedPages();
     } catch (e: unknown) {
       console.error(e);
-      setMessage({ type: 'error', text: getApiErrorMessage(e, 'تعذر ربط هذه الصفحة.') });
+      const errorMessage = getApiErrorMessage(e, 'تعذر ربط هذه الصفحة. حاول مرة أخرى.');
+      setPageConnectionError(errorMessage);
+      setMessage({ type: 'error', text: errorMessage });
     } finally {
       setActionLoading(false);
     }
@@ -1079,32 +1083,26 @@ function SettingsProjectView() {
                   </div>
                 ))}
 
-                <button
-                  onClick={handleConnectFacebook}
-                  disabled={fbLoading}
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                  style={{ gap: '6px' }}
-                >
-                  <FacebookIcon size={16} />
-                  {fbLoading ? 'جاري الربط...' : 'ربط صفحة أخرى'}
-                </button>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                 <p style={{ fontSize: '0.9rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.5' }}>
                   اربط صفحة فيسبوك عشان تقدر ترد على رسائل الماسنجر والتعليقات تلقائياً.
                 </p>
-                <button
-                  onClick={handleConnectFacebook}
-                  disabled={fbLoading}
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  style={{ gap: '6px' }}
-                >
-                  <FacebookIcon size={18} />
-                  {fbLoading ? 'جاري فتح نافذة فيسبوك...' : 'ربط صفحة فيسبوك'}
-                </button>
               </div>
             )}
+            <button
+              type="button"
+              onClick={handleConnectFacebook}
+              disabled={fbLoading}
+              className={`${styles.btn} ${connectedPages.length > 0 ? styles.btnSecondary : styles.btnPrimary}`}
+              style={{ gap: '6px' }}
+            >
+              <FacebookIcon size={connectedPages.length > 0 ? 16 : 18} />
+              {connectedPages.length > 0
+                ? fbLoading ? 'جاري الربط...' : 'ربط صفحة أخرى'
+                : fbLoading ? 'جاري فتح نافذة فيسبوك...' : 'ربط صفحة فيسبوك'}
+            </button>
           </div>
 
           </div>
@@ -1868,88 +1866,67 @@ function SettingsProjectView() {
         </div>
       ) : (
         <div id="settings-panel-addons" role="tabpanel" aria-labelledby="settings-tab-addons" style={{ width: '100%' }}>
-          {viewMode === 'manage-groups' || viewMode === 'manage-intensive-groups' ? (
-            <GroupAppointmentsManager key={viewMode} courseType={viewMode === 'manage-intensive-groups' ? 'intensive' : 'regular'} onBack={() => setViewMode('list')} timezone={timezone} onDirtyChange={setAddonsDirty} />
-          ) : (
-            <Addons
-              messengerWhatsAppTransitionEnabled={aiBehavior.messengerWhatsAppTransitionEnabled ?? true}
-              onMessengerBookingRouteChange={handleMessengerBookingRouteChange}
-              isGroupAppointmentsEnabled={isGroupAppointmentsEnabled}
-              onToggleGroupAppointments={handleToggleGroupAppointments}
-              isWhatsAppGroupAutomationEnabled={isWhatsAppGroupAutomationEnabled}
-              onToggleWhatsAppGroupAutomation={handleToggleWhatsAppGroupAutomation}
-              groupAutomationManagerPhone={groupAutomationManagerPhone}
-              onUpdateGroupAutomationManagerPhone={handleUpdateGroupAutomationManagerPhone}
-              humanTransferEnabled={humanTransferEnabled}
-              onToggleHumanTransfer={handleToggleHumanTransfer}
-              humanTransferPhone={humanTransferPhone}
-              onUpdateHumanTransferPhone={handleUpdateHumanTransferPhone}
-              isTalkTipsTrialGateEnabled={isTalkTipsTrialGateEnabled}
-              onToggleTalkTipsTrialGate={handleToggleTalkTipsTrialGate}
-              timezone={timezone}
-              onDirtyChange={setAddonsDirty}
-              onManageGroups={(courseType) => setViewMode(courseType === 'intensive' ? 'manage-intensive-groups' : 'manage-groups')}
-            />
-          )}
+          <Addons
+            messengerWhatsAppTransitionEnabled={aiBehavior.messengerWhatsAppTransitionEnabled ?? true}
+            onMessengerBookingRouteChange={handleMessengerBookingRouteChange}
+            isGroupAppointmentsEnabled={isGroupAppointmentsEnabled}
+            onToggleGroupAppointments={handleToggleGroupAppointments}
+            isWhatsAppGroupAutomationEnabled={isWhatsAppGroupAutomationEnabled}
+            onToggleWhatsAppGroupAutomation={handleToggleWhatsAppGroupAutomation}
+            groupAutomationManagerPhone={groupAutomationManagerPhone}
+            onUpdateGroupAutomationManagerPhone={handleUpdateGroupAutomationManagerPhone}
+            humanTransferEnabled={humanTransferEnabled}
+            onToggleHumanTransfer={handleToggleHumanTransfer}
+            humanTransferPhone={humanTransferPhone}
+            onUpdateHumanTransferPhone={handleUpdateHumanTransferPhone}
+            isTalkTipsTrialGateEnabled={isTalkTipsTrialGateEnabled}
+            onToggleTalkTipsTrialGate={handleToggleTalkTipsTrialGate}
+            timezone={timezone}
+            onDirtyChange={setAddonsDirty}
+            onManageGroups={(courseType) => router.push(courseType === 'intensive' ? '/management/groups?course=intensive' : '/management/groups')}
+          />
         </div>
       )}
 
       {/* Facebook Pages Selection Modal */}
       {showPagesModal && (
-        <div className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) closePagesModal(); }}>
-          <div ref={pagesModalRef} className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="facebook-pages-modal-title" aria-describedby="facebook-pages-modal-description">
-            <div className={styles.modalHeader}>
-              <h3 id="facebook-pages-modal-title" className={styles.modalTitle}>ربط صفحة فيسبوك</h3>
-              <button ref={modalCloseRef} type="button" aria-label="إغلاق نافذة اختيار الصفحة" onClick={closePagesModal} className={styles.closeBtn} style={{ fontSize: '1.5rem' }}>
-                &times;
+        <div ref={pagesOverlayRef} className={workspace.pagePickerOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget) closePagesModal(); }}>
+          <div ref={pagesModalRef} className={workspace.pagePicker} role="dialog" aria-modal="true" aria-labelledby="facebook-pages-modal-title" aria-describedby="facebook-pages-modal-description">
+            <div className={workspace.pagePickerHeader}>
+              <h3 id="facebook-pages-modal-title">ربط صفحة فيسبوك</h3>
+              <button ref={modalCloseRef} type="button" aria-label="إغلاق نافذة اختيار الصفحة" onClick={closePagesModal} className={workspace.pagePickerClose}>
+                <X size={20} aria-hidden="true" />
               </button>
             </div>
 
-            <p id="facebook-pages-modal-description" style={{ fontSize: '0.9rem', color: 'var(--text-soft)' }}>
-              تم العثور على الصفحات التالية. يرجى اختيار الصفحة التي تريد ربطها بالمشروع لتفعيل الماسنجر والتعليقات:
-            </p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', maxHeight: '300px', overflowY: 'auto', paddingRight: '4px' }}>
-              {pagesToConnect.length === 0 ? (
-                <p style={{ fontSize: '0.85rem', color: 'hsl(var(--accent-warning))', textAlign: 'center' }}>
-                  لم يتم العثور على أي صفحات فيسبوك مسؤولة في هذا الحساب.
-                </p>
-              ) : (
-                pagesToConnect.map(page => (
-                  <div key={page.id} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '12px', borderRadius: 'var(--radius-md)',
-                    background: 'var(--surface-muted)', border: '1px solid var(--border-subtle)',
-                    gap: 'var(--space-md)'
-                  }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {page.name}
-                      </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-soft)' }}>ID: {page.id}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleConfirmPage(page)}
-                      disabled={actionLoading}
-                      className={`${styles.btn} ${styles.btnPrimary}`}
-                      style={{ padding: '6px 12px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
-                    >
-                      {actionLoading ? 'جاري الربط...' : 'ربط الصفحة'}
-                    </button>
-                  </div>
-                ))
-              )}
+            <div className={workspace.pagePickerBody}>
+              <p id="facebook-pages-modal-description">اختر صفحة لتفعيل رسائلها وتعليقاتها في هذا المشروع.</p>
+              <fieldset className={workspace.pagePickerChoices} disabled={actionLoading}>
+                <legend>الصفحات المتاحة ({pagesToConnect.length})</legend>
+                {pagesToConnect.length === 0 ? (
+                  <p>لا توجد صفحات متاحة للربط في هذا الحساب.</p>
+                ) : (
+                  pagesToConnect.map(page => (
+                    <label key={page.id} className={workspace.pagePickerChoice}>
+                      <input type="radio" name="facebook-page" value={page.id} checked={selectedPageId === page.id}
+                        onChange={() => { setSelectedPageId(page.id); setPageConnectionError(null); }} />
+                      <span><strong>{page.name}</strong><small>معرّف الصفحة: <bdi>{page.id}</bdi></small></span>
+                    </label>
+                  ))
+                )}
+              </fieldset>
             </div>
 
-            <div className={styles.formActions} style={{ marginTop: 'var(--space-md)' }}>
-              <button
-                type="button"
-                onClick={closePagesModal}
-                className={`${styles.btn} ${styles.btnSecondary}`}
-              >
-                إغلاق
-              </button>
+            <div className={workspace.pagePickerFooter}>
+              {pageConnectionError && <StatusMessage tone="danger">{pageConnectionError}</StatusMessage>}
+              <div className={workspace.pagePickerActions}>
+                <button type="button" className={`${styles.btn} ${styles.btnPrimary}`}
+                  disabled={!selectedPageId || actionLoading}
+                  onClick={() => { const page = pagesToConnect.find(candidate => candidate.id === selectedPageId); if (page) void handleConfirmPage(page); }}>
+                  <Link2 size={17} aria-hidden="true" />{actionLoading ? 'جاري الربط…' : 'ربط الصفحة المحددة'}
+                </button>
+                <button type="button" onClick={closePagesModal} className={`${styles.btn} ${styles.btnSecondary}`}>إغلاق</button>
+              </div>
             </div>
           </div>
         </div>

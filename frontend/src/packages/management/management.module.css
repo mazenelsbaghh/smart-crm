@@ -153,46 +153,47 @@
   padding: 9px 16px;
 }
 
-.btnPrimary {
+.btn.btnPrimary {
   background: var(--accent);
   color: var(--accent-ink);
   box-shadow: var(--shadow-panel);
 }
 
-.btnPrimary:hover {
+.btn.btnPrimary:hover:not(:disabled) {
+  background: var(--accent-hover);
   box-shadow: var(--shadow-soft);
   filter: brightness(0.96);
 }
 
-.btnSecondary {
+.btn.btnSecondary {
   background: var(--surface-muted);
   border: 1px solid var(--border-subtle);
   color: var(--text-strong);
 }
 
-.btnSecondary:hover {
+.btn.btnSecondary:hover:not(:disabled) {
   background: var(--surface);
   border-color: var(--border-strong);
 }
 
-.btnDanger {
+.btn.btnDanger {
   background: var(--danger-soft);
   border: 1px solid color-mix(in oklab, hsl(var(--accent-danger)) 28%, transparent);
   color: hsl(var(--accent-danger));
 }
 
-.btnDanger:hover {
+.btn.btnDanger:hover:not(:disabled) {
   background: hsl(var(--accent-danger));
   color: var(--accent-ink);
 }
 
-.btnSuccess {
+.btn.btnSuccess {
   background: var(--success-soft);
   border: 1px solid color-mix(in oklab, hsl(var(--accent-success)) 30%, transparent);
   color: hsl(var(--accent-success));
 }
 
-.btnSuccess:hover {
+.btn.btnSuccess:hover:not(:disabled) {
   background: hsl(var(--accent-success));
   color: var(--accent-ink);
 }

@@ -226,7 +226,7 @@ describe('GroupAppointmentsManager manual booking', () => {
     expect(screen.queryByLabelText('موعد الجلسة الأولى للكورس')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('موعد الجلسة الثانية للكورس')).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'أيام الكورس الأسبوعية (اختر يومين)' })).not.toBeInTheDocument();
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'حفظ' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'إنشاء المجموعة' }));
     expect(await screen.findByText('تمت إضافة المجموعة بنجاح.')).toBeInTheDocument();
     expect(post).toHaveBeenCalledWith('/api/group-appointments', expect.objectContaining({ courseType: 'intensive', dateTime: '2026-10-01T15:00:00.000Z', freeSessionDateTime: '2026-10-01T15:00:00.000Z', instructorName: 'أحمد', supervisorPhone: '201515089806' }));
   });

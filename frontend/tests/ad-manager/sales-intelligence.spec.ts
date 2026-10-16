@@ -24,6 +24,7 @@ const dashboard = {
 };
 
 test('renders the AI sales funnel and remains usable on a mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.route('**/api/**/reports/sales-intelligence**', route => route.fulfill({ json: dashboard }));
   await page.goto('/management/reports');
 
@@ -53,6 +54,7 @@ test('renders the AI sales funnel and remains usable on a mobile viewport', asyn
 });
 
 test('previews custom spacing and priority distribution before confirming a bounded batch', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   const requests: unknown[] = [];
   const report = { ...dashboard, followUpPlan: { sendNow: 418, schedule: 493, scheduled: 0,
     sendNowToken: 'send-token', scheduleToken: 'schedule-token' } };

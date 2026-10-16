@@ -410,35 +410,35 @@
   padding: 9px 16px;
 }
 
-.btnPrimary {
+.btn.btnPrimary {
   background: hsl(var(--accent-primary));
   color: var(--accent-ink);
   box-shadow: none;
 }
 
-.btnPrimary:hover {
+.btn.btnPrimary:hover:not(:disabled) {
   background: var(--accent-hover);
   box-shadow: var(--shadow-neon);
 }
 
-.btnSecondary {
+.btn.btnSecondary {
   background: hsl(var(--bg-secondary));
   border: 1px solid hsl(var(--bg-tertiary));
   color: hsl(var(--text-primary));
 }
 
-.btnSecondary:hover {
+.btn.btnSecondary:hover:not(:disabled) {
   background: var(--accent-soft);
   border-color: var(--accent);
 }
 
-.btnDanger {
+.btn.btnDanger {
   background: var(--danger-soft);
   border: 1px solid color-mix(in oklch, hsl(var(--accent-danger)) 30%, var(--border-subtle));
   color: hsl(var(--accent-danger));
 }
 
-.btnDanger:hover {
+.btn.btnDanger:hover:not(:disabled) {
   background: hsl(var(--accent-danger));
   color: var(--accent-ink);
 }
@@ -912,6 +912,167 @@
   justify-content: flex-end;
   gap: var(--space-md);
   margin-top: var(--space-md);
+}
+
+.groupEditorOverlay {
+  top: var(--dialog-viewport-top, 0px);
+  bottom: auto;
+  height: var(--dialog-viewport-height, 100dvh);
+}
+
+.modal.groupEditor {
+  max-width: 560px;
+  max-height: min(780px, calc(var(--dialog-viewport-height, 100dvh) - 2rem));
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-strong);
+  box-shadow: 0 24px 64px rgb(15 35 40 / 22%);
+}
+
+.groupEditorHeader {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.groupEditorHeader .closeBtn {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: var(--surface-muted);
+}
+
+.groupEditorTimezone {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+}
+
+.groupEditorForm {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.groupEditorBody {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+  padding: 20px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.groupEditorGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.groupEditorBody .formGroup {
+  min-width: 0;
+  margin: 0;
+  gap: 8px;
+}
+
+.groupEditorBody :is(input:not([type="checkbox"]), select) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 48px;
+  box-sizing: border-box;
+  font-size: 1rem;
+}
+
+.groupEditorBody select { height: 48px; }
+
+.groupEditorBody input[type="datetime-local"] {
+  display: block;
+  direction: ltr;
+  text-align: start;
+}
+
+.groupEditorBody input[type="datetime-local"]::-webkit-date-and-time-value {
+  min-height: 1.5em;
+  text-align: start;
+}
+
+.groupEditorBody small {
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.groupEditorAvailability {
+  min-height: 44px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.groupEditorFooter {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 12px;
+  padding: 16px 24px max(16px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
+.groupEditorActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.groupEditorError {
+  margin: 0;
+  color: hsl(var(--accent-danger));
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.groupEditorFooter .btn {
+  min-height: 48px;
+  justify-content: center;
+  padding-inline: 24px;
+}
+
+@media (max-width: 560px) {
+  .groupEditorHeader,
+  .groupEditorBody {
+    padding-inline: 16px;
+  }
+
+  .groupEditorGrid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+
+  .groupEditorFooter {
+    padding-inline: 16px;
+    gap: 10px;
+  }
+
+  .groupEditorFooter .btn {
+    flex: 1;
+    padding-inline: 10px;
+  }
 }
 
 .tableCaption {

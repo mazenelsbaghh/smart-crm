@@ -4,6 +4,24 @@ interface IsolatedSibling {
   ariaHidden: string | null;
 }
 
+let bodyScrollLocks = 0;
+let originalBodyOverflow = '';
+
+export function lockBodyScroll() {
+  if (bodyScrollLocks === 0) {
+    originalBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+  }
+  bodyScrollLocks += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    bodyScrollLocks -= 1;
+    if (bodyScrollLocks === 0) document.body.style.overflow = originalBodyOverflow;
+  };
+}
+
 /**
  * Makes every branch outside a modal unavailable to pointer and assistive-
  * technology navigation, while preserving pre-existing accessibility state.

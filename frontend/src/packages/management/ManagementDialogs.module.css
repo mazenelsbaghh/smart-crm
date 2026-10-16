@@ -1,0 +1,117 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.feedback {
+  flex: 0 0 100%;
+  min-width: 0;
+  max-height: min(140px, calc(var(--dialog-viewport-height, 100dvh) * .25));
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.feedback > * {
+  margin: 0;
+}
+
+.wizardTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wizardTitle svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 var(--space-lg);
+  padding: 0 0 var(--space-md);
+  border-bottom: 1px solid var(--border-subtle);
+  list-style: none;
+}
+
+.stepper li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-soft);
+  font-size: .8125rem;
+  line-height: 1.6;
+}
+
+.stepNumber {
+  display: flex;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: var(--surface-muted);
+  font-weight: 700;
+}
+
+.stepper li[aria-current='step'] {
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.stepper li[aria-current='step'] .stepNumber {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.stepper li[data-complete='true'] .stepNumber {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.wizardToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.questionList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.fieldPair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+@media (max-width: 480px) {
+  .stepper {
+    gap: 6px;
+  }
+
+  .stepper li {
+    flex-direction: column;
+    gap: 4px;
+    text-align: center;
+    font-size: .75rem;
+  }
+
+  .fieldPair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

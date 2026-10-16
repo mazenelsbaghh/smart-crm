@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Ellipsis, Home, MessageSquare, Users, X } from 'lucide-react';
+import { Ellipsis, Home, MessageSquare, Users } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { navigationItemsForRole } from '../../config/navigation';
 import Dialog from '../shared/Dialog';
@@ -68,8 +68,8 @@ export default function AppShell({ children, workspace = false, mobileConversati
       <div hidden>{navigationItemsForRole(user?.role).filter(destination => destination.parent && destination.shortcut).map(destination =>
         <Link key={destination.path} href={destination.path} data-dashboard-navigation>{destination.name}</Link>)}</div>
     </div>
-    {menuOpen && <Dialog label="قائمة التنقل" placement="drawer" onClose={() => setMenuOpen(false)}>
-      <div className={styles.drawerHeader}><Brand /><Button variant="ghost" onClick={() => setMenuOpen(false)} aria-label="إغلاق القائمة"><X size={21} /></Button></div>
+    {menuOpen && <Dialog label="قائمة التنقل" title={<Brand />} closeLabel="إغلاق القائمة" placement="drawer" onClose={() => setMenuOpen(false)}
+      footer={<Button variant="secondary" onClick={() => setMenuOpen(false)}>العودة لمساحة العمل</Button>}>
       <AppNavigation onNavigate={() => setMenuOpen(false)} />
     </Dialog>}
   </div>;

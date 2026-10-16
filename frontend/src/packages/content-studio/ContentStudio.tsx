@@ -27,7 +27,6 @@ import {
   Sparkles,
   Trash2,
   Upload,
-  X,
   ZoomIn,
 } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
@@ -1045,10 +1044,12 @@ function ExpandablePostImage({ assetUrl, title, imageSize }: { assetUrl: string;
       {imageSize && <small className={styles.weekResolution}>{imageSize}</small>}
       <span><ZoomIn size={16} aria-hidden="true" /> تكبير التصميم</span>
     </button>
-    {expanded && <Dialog label={`معاينة التصميم: ${title}`} onClose={() => setExpanded(false)}>
-      <div className={styles.imageZoomViewer}>
-        <div className={styles.imageZoomHeader}><h2>{title}</h2><button type="button" className={styles.iconButton} aria-label="إغلاق معاينة التصميم" onClick={() => setExpanded(false)}><X size={20} aria-hidden="true" /></button></div>
+    {expanded && <Dialog label={`معاينة التصميم: ${title}`} title={title} closeLabel="إغلاق معاينة التصميم" onClose={() => setExpanded(false)}
+      footer={<>
+        <button type="button" className={styles.btnSecondary} onClick={() => setExpanded(false)}>إغلاق المعاينة</button>
         <button type="button" className={styles.btnSecondary} aria-pressed={zoomed} onClick={() => setZoomed(!zoomed)}><ZoomIn size={16} aria-hidden="true" />{zoomed ? 'عرض الصورة كاملة' : 'تكبير 200٪'}</button>
+      </>}>
+      <div className={styles.imageZoomViewer}>
         <div className={styles.imageZoomViewport} tabIndex={0} role="region" aria-label="منطقة الصورة المكبرة"><div className={`${styles.imageZoomCanvas} ${zoomed ? styles.imageZoomed : ''}`}>
           <AuthenticatedImage assetUrl={assetUrl} alt={`التصميم مكبر: ${title}`} sizes="90vw" />
         </div></div>

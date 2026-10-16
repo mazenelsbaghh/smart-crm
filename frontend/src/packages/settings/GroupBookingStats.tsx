@@ -62,9 +62,10 @@ export default function GroupBookingStats({ projectId, courseType, refreshKey }:
     return () => controller.abort();
   }, [projectId, courseType, refreshKey, retry]);
 
+  const courseLabel = courseType === 'regular' ? 'العادي' : 'المكثف';
   const metrics = [
-    { key: 'today', label: 'حجوزات سُجلت اليوم', count: stats?.bookedToday, hint: 'يشمل الحجز الجديد والنقل بين المجموعات', Icon: CalendarCheck2 },
-    { key: 'total', label: 'إجمالي الحجوزات الحالية', count: stats?.totalBooked, hint: 'حسب نوع الكورس المختار', Icon: Users },
+    { key: 'today', label: `حجوزات ${courseLabel} اليوم`, count: stats?.bookedToday, hint: 'يشمل الحجز الجديد والنقل بين المجموعات', Icon: CalendarCheck2 },
+    { key: 'total', label: `إجمالي حجوزات ${courseLabel}`, count: stats?.totalBooked, hint: 'الحجوزات الحالية لهذا الكورس فقط', Icon: Users },
   ];
 
   return <section className={styles.stats} aria-label="إحصائيات الحجوزات">

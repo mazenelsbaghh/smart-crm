@@ -19,4 +19,10 @@ Object.defineProperty(globalThis, 'localStorage', {
 });
 Object.defineProperty(window, 'localStorage', { configurable: true, value: testLocalStorage });
 
+// JSDOM has no native dialog methods. Browser tests cover top-layer focus and layout.
+Object.defineProperties(HTMLDialogElement.prototype, {
+  showModal: { configurable: true, value(this: HTMLDialogElement) { this.setAttribute('open', ''); } },
+  close: { configurable: true, value(this: HTMLDialogElement) { this.removeAttribute('open'); } },
+});
+
 afterEach(() => cleanup());

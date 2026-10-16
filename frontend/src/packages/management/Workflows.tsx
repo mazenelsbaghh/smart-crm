@@ -21,6 +21,7 @@ import FilterTabs from '../../components/ui/FilterTabs';
 import SearchField from '../../components/ui/SearchField';
 import StatusMessage from '../../components/ui/StatusMessage';
 import styles from './management.module.css';
+import dialogStyles from './ManagementDialogs.module.css';
 import { useListFilters } from './hooks/use-list-filters';
 
 interface AutomationWorkflow {
@@ -213,7 +214,7 @@ function WorkflowsList() {
         {activeProject && (
           <button
             type="button"
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => { setMessage(null); setIsModalOpen(true); }}
             className={`${styles.btn} ${styles.btnPrimary}`}
           >
             <Plus size={16} />
@@ -252,7 +253,7 @@ function WorkflowsList() {
             <GitFork size={48} style={{ color: 'hsl(var(--text-muted))' }} />
             <h3 className={styles.emptyStateTitle}>{workflows.length ? 'لا توجد قواعد مطابقة' : 'لا توجد قواعد أتمتة'}</h3>
             <p className={styles.emptyStateDesc}>أنشئ قواعد تلقائية مثل تصنيف جهات الاتصال تلقائياً أو جدولة مهام عند استقبال الرسائل.</p>
-            <button onClick={() => setIsModalOpen(true)} className={`${styles.btn} ${styles.btnPrimary}`}>
+            <button onClick={() => { setMessage(null); setIsModalOpen(true); }} className={`${styles.btn} ${styles.btnPrimary}`}>
               إنشاء قاعدة
             </button>
           </div>
@@ -316,22 +317,33 @@ function WorkflowsList() {
 
       {/* Creation Modal Overlay */}
       {isModalOpen && (
-        <Dialog label="تحرير الأتمتة" onClose={() => setIsModalOpen(false)}>
+        <Dialog
+          label="تحرير الأتمتة" onClose={() => setIsModalOpen(false)}
+          title="تهيئة قاعدة الأتمتة"
+          footer={<>
+            {message?.type === 'error' && <div className={dialogStyles.feedback}>
+              <StatusMessage tone="danger">{message.text}</StatusMessage>
+            </div>}
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(false)}
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              disabled={actionLoading}
+            >
+              إلغاء
+            </button>
+            <button
+              type="submit"
+              form="workflow-create-form"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              disabled={actionLoading}
+            >
+              {actionLoading ? 'جاري الإنشاء...' : 'إنشاء قاعدة'}
+            </button>
+          </>}
+        >
           <div className={styles.dialogContent}>
-            <div className={styles.modalHeader}>
-              <h3 id="workflow-dialog-title" className={styles.modalTitle}>تهيئة قاعدة الأتمتة</h3>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className={styles.closeBtn}
-                aria-label="إغلاق"
-                style={{ background: 'none', border: 'none', fontSize: '1.5rem', padding: 0 }}
-              >
-                &times;
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateWorkflow} className={styles.form}>
+            <form id="workflow-create-form" onSubmit={handleCreateWorkflow} className={dialogStyles.form}>
               <div className={styles.formGroup}>
                 <label htmlFor="workflow-name" className={styles.label}>اسم سير العمل</label>
                 <input
@@ -360,7 +372,7 @@ function WorkflowsList() {
                 </select>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
+              <div className={dialogStyles.fieldPair}>
                 <div className={styles.formGroup}>
                   <label htmlFor="workflow-filter-key" className={styles.label}>مفتاح شرط التصفية</label>
                   <input
@@ -411,23 +423,6 @@ function WorkflowsList() {
                 />
               </div>
 
-              <div className={styles.formActions}>
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                  disabled={actionLoading}
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={actionLoading}
-                >
-                  {actionLoading ? 'جاري الإنشاء...' : 'إنشاء قاعدة'}
-                </button>
-              </div>
             </form>
           </div>
         </Dialog>

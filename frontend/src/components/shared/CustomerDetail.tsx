@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import axios from 'axios';
 import { Customer, crmService } from '../../services/crm';
 import { api } from '../../services/api';
@@ -6,7 +6,8 @@ import { X, Plus, Calendar, Tag, Sparkles, ArrowRight, UserRound, CalendarClock,
 import { useToast } from '../../context/toast-context';
 import Tooltip from './Tooltip';
 import PhantomLoader from './PhantomLoader';
-import { isolateModal } from './modal-accessibility';
+import { isolateModal, lockBodyScroll } from './modal-accessibility';
+import { useDialogViewport } from './useDialogViewport';
 import styles from './customer-detail.module.css';
 import Tabs from '../ui/Tabs';
 
@@ -40,6 +41,7 @@ interface ScheduleAvailabilityPreference {
 
 export default function CustomerDetail({ customerId, projectId, onClose, onUpdate, isInline = false, initialSection = 'profile' }: CustomerDetailProps) {
   const { showToast } = useToast();
+  const formId = useId();
   const [section, setSection] = useState<'profile' | 'followups' | 'memory'>(initialSection);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,6 +82,8 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   const overlayRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
+
+  useDialogViewport(overlayRef, !isInline);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -161,8 +165,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   useEffect(() => {
     if (isInline) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const releaseScrollLock = lockBodyScroll();
     closeButtonRef.current?.focus();
     const restoreIsolation = overlayRef.current ? isolateModal(overlayRef.current) : () => undefined;
 
@@ -191,7 +194,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
     document.addEventListener('keydown', trapCustomerDialogKeyboard);
     return () => {
       document.removeEventListener('keydown', trapCustomerDialogKeyboard);
-      document.body.style.overflow = previousOverflow;
+      releaseScrollLock();
       restoreIsolation();
       previouslyFocused?.focus();
     };
@@ -338,7 +341,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               <div className={styles.customerLoadingTitle}>ملف العميل والتفاصيل الأساسية</div>
               <div className={styles.customerLoadingSubtitle}>بيانات التواصل وسجل المحادثات</div>
             </div>
-            <button ref={closeButtonRef} type="button" className={styles.customerLoadingAction} onClick={onClose}>إغلاق</button>
+            <button ref={closeButtonRef} type="button" data-shimmer-ignore className={styles.customerLoadingAction} onClick={onClose}>إغلاق</button>
           </div>
           <div className={styles.customerLoadingGrid}>
             <div className={styles.customerLoadingColumn}>
@@ -379,11 +382,11 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
         className={styles.customerError}
         role={isInline ? 'alert' : 'dialog'}
         aria-modal={isInline ? undefined : true}
-        aria-labelledby="customer-error-title"
-        aria-describedby="customer-error-description"
+        aria-labelledby={`${formId}-customer-error-title`}
+        aria-describedby={`${formId}-customer-error-description`}
       >
-        <h2 id="customer-error-title">تعذر تحميل ملف العميل</h2>
-        <p id="customer-error-description">تحقق من الاتصال ثم أعد المحاولة. لم يتم تغيير أي بيانات.</p>
+        <h2 id={`${formId}-customer-error-title`}>تعذر تحميل ملف العميل</h2>
+        <p id={`${formId}-customer-error-description`}>تحقق من الاتصال ثم أعد المحاولة. لم يتم تغيير أي بيانات.</p>
         <div>
           <button type="button" className={styles.scheduleBtn} onClick={() => void fetchCustomerData()}>إعادة المحاولة</button>
           <button ref={isInline ? undefined : closeButtonRef} type="button" className={styles.backBtn} onClick={onClose}>إغلاق</button>
@@ -394,6 +397,34 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
   }
 
   const clampedDisplayScore = Math.min(100, Math.max(0, leadScore));
+  const saveProfileAction = (
+    <Tooltip content="حفظ التغييرات في ملف العميل الحالي" position="top" style={{ width: '100%' }}>
+      <button type="submit" form={`${formId}-panel-profile`} disabled={saving} className={styles.saveBtn} style={{ width: '100%' }}>
+        <PhantomLoader loading={saving} label="حفظ التغييرات"><span>حفظ التغييرات</span></PhantomLoader>
+      </button>
+    </Tooltip>
+  );
+  const memoryActions = (
+    <div className={styles.memoryActions}>
+      <Tooltip content="حفظ الملخص المكتوب والبيانات الحالية للعميل" position="top" style={{ flex: 1 }}>
+        <button type="submit" form={`${formId}-memory`} disabled={savingMemory || generatingMemory} className={styles.scheduleBtn} style={{ width: '100%' }}>
+          <PhantomLoader loading={savingMemory} label="حفظ التعديلات"><span>حفظ التعديلات</span></PhantomLoader>
+        </button>
+      </Tooltip>
+      <Tooltip content="تحليل المحادثات عبر الذكاء الاصطناعي وتحديث الملخص والسمات تلقائياً" position="top" style={{ flex: 1 }}>
+        <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={`${styles.scheduleBtn} ${styles.generateMemoryBtn}`}>
+          <Sparkles size={14} aria-hidden="true" />
+          <PhantomLoader loading={generatingMemory} label="تحديث ملف العميل بالذكاء الاصطناعي"><span>تحديث بالذكاء الاصطناعي</span></PhantomLoader>
+        </button>
+      </Tooltip>
+    </div>
+  );
+  const followUpAction = (
+    <button type="submit" form={`${formId}-followups`} disabled={creatingFollowUp} className={styles.scheduleBtn}>
+      <Calendar size={16} aria-hidden="true" />
+      {newFollowUpType === 'AvailabilityAlert' ? 'حفظ انتظار الموعد' : 'جدولة المهمة'}
+    </button>
+  );
 
   const contentMarkup = (
     <div
@@ -401,15 +432,15 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       className={isInline ? styles.inlineCard : styles.modal}
       role={isInline ? 'region' : 'dialog'}
       aria-modal={isInline ? undefined : true}
-      aria-labelledby="customer-detail-title"
+      aria-labelledby={`${formId}-customer-detail-title`}
     >
       {/* Header */}
       <div className={styles.header}>
         <div className={styles.customerIdentity}>
           <span className={styles.customerAvatar} aria-hidden="true">{(customer?.name || 'ع')[0]}</span>
           <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h2 id="customer-detail-title" className={styles.title}>{customer?.name || 'تفاصيل العميل'}</h2>
+          <div className={styles.identityTitle}>
+            <h2 id={`${formId}-customer-detail-title`} className={styles.title}>{customer?.name || 'تفاصيل العميل'}</h2>
             {customer?.label && (
               <span className={styles.smartLabelBadge}>{customer.label}</span>
             )}
@@ -436,20 +467,20 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       </div>
 
         <div className={styles.taskNavigation}>
-          <Tabs idPrefix="customer-detail" label="أقسام ملف العميل" selected={section} onChange={setSection}
+          <Tabs idPrefix={formId} label="أقسام ملف العميل" selected={section} onChange={setSection} compactOnMobile={!isInline}
             tabs={[{ key: 'profile', label: 'بيانات العميل', icon: <UserRound size={17} aria-hidden="true" /> },
               { key: 'followups', label: 'المتابعات', icon: <CalendarClock size={17} aria-hidden="true" /> },
               { key: 'memory', label: 'ملخص الذكاء الاصطناعي', icon: <Sparkles size={17} aria-hidden="true" /> }]} />
         </div>
         <div className={styles.bodySections}>
           <form onSubmit={handleSave} className={styles.formColumn} hidden={section !== 'profile'}
-            role="tabpanel" id="customer-detail-panel-profile" aria-labelledby="customer-detail-tab-profile">
+            role="tabpanel" id={`${formId}-panel-profile`} aria-labelledby={`${formId}-tab-profile`}>
             <h3 className={styles.sectionTitle}><UserRound size={19} aria-hidden="true" />بيانات العميل وتصنيفه</h3>
             
             <div className={styles.formGroup}>
-              <label htmlFor="customer-detail-name" className={styles.label}>الاسم الكامل</label>
+              <label htmlFor={`${formId}-customer-detail-name`} className={styles.label}>الاسم الكامل</label>
               <input 
-                id="customer-detail-name"
+                id={`${formId}-customer-detail-name`}
                 type="text" 
                 value={name} 
                 onChange={(e) => setName(e.target.value)} 
@@ -461,20 +492,20 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             <div className={styles.formGroup} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0 12px 0' }}>
               <input
                 type="checkbox"
-                id="isBlacklistedCheckbox"
+                id={`${formId}-isBlacklistedCheckbox`}
                 checked={isBlacklisted}
                 onChange={(e) => setIsBlacklisted(e.target.checked)}
                 style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'hsl(var(--accent-primary))' }}
               />
-              <label htmlFor="isBlacklistedCheckbox" className={styles.label} style={{ marginBottom: 0, cursor: 'pointer', fontWeight: '500' }}>
+              <label htmlFor={`${formId}-isBlacklistedCheckbox`} className={styles.label} style={{ marginBottom: 0, cursor: 'pointer', fontWeight: '500' }}>
                 حظر الرد الآلي بالذكاء الاصطناعي
               </label>
             </div>
 
             <div className={styles.formGroup}>
-              <label htmlFor="customer-detail-label" className={styles.label}>تصنيف العميل</label>
+              <label htmlFor={`${formId}-customer-detail-label`} className={styles.label}>تصنيف العميل</label>
               <input 
-                id="customer-detail-label"
+                id={`${formId}-customer-detail-label`}
                 type="text" 
                 value={label} 
                 onChange={(e) => setLabel(e.target.value)} 
@@ -485,9 +516,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
             <div className={styles.formRow}>
               <div className={styles.formGroup}>
-                <label htmlFor="customer-detail-city" className={styles.label}>المدينة</label>
+                <label htmlFor={`${formId}-customer-detail-city`} className={styles.label}>المدينة</label>
                 <input 
-                  id="customer-detail-city"
+                  id={`${formId}-customer-detail-city`}
                   type="text" 
                   value={city} 
                   onChange={(e) => setCity(e.target.value)} 
@@ -496,9 +527,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               </div>
 
               <div className={styles.formGroup}>
-                <label htmlFor="customer-detail-score" className={styles.label}>تقييم الاهتمام من 100</label>
+                <label htmlFor={`${formId}-customer-detail-score`} className={styles.label}>تقييم الاهتمام من 100</label>
                 <input
-                  id="customer-detail-score"
+                  id={`${formId}-customer-detail-score`}
                   type="number"
                   min="0"
                   max="100"
@@ -510,9 +541,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             </div>
 
             <div className={styles.formGroup}>
-              <label htmlFor="customer-detail-notes" className={styles.label}>ملاحظات المحادثة</label>
+              <label htmlFor={`${formId}-customer-detail-notes`} className={styles.label}>ملاحظات المحادثة</label>
               <textarea
-                id="customer-detail-notes"
+                id={`${formId}-customer-detail-notes`}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 className={styles.textarea}
@@ -522,10 +553,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
             {/* Tag manager */}
             <div className={styles.formGroup}>
-              <label htmlFor="customer-detail-tag" className={styles.label}>الوسوم والكلمات الدلالية</label>
+              <label htmlFor={`${formId}-customer-detail-tag`} className={styles.label}>الوسوم والكلمات الدلالية</label>
               <div className={styles.tagInputRow}>
                 <input
-                  id="customer-detail-tag"
+                  id={`${formId}-customer-detail-tag`}
                   type="text"
                   placeholder="وسم جديد..."
                   value={newTag}
@@ -556,26 +587,20 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               </div>
             </div>
 
-            <Tooltip content="حفظ التغييرات في ملف العميل الحالي" position="top" style={{ width: '100%' }}>
-              <button type="submit" disabled={saving} className={styles.saveBtn} style={{ width: '100%' }}>
-                <PhantomLoader loading={saving} label="حفظ التغييرات">
-                  <span>حفظ التغييرات</span>
-                </PhantomLoader>
-              </button>
-            </Tooltip>
+            {isInline && saveProfileAction}
           </form>
 
             <div className={styles.memorySection} hidden={section !== 'memory'} role="tabpanel"
-              id="customer-detail-panel-memory" aria-labelledby="customer-detail-tab-memory">
+              id={`${formId}-panel-memory`} aria-labelledby={`${formId}-tab-memory`}>
               <h3 className={styles.sectionTitle}><Sparkles size={19} aria-hidden="true" />ملخص العميل ودرجة الاهتمام</h3>
               <p className={styles.scoreSummary}>درجة الاهتمام <strong>{clampedDisplayScore}/100</strong></p>
 
               {/* Editable Customer Memory */}
-              <form onSubmit={handleSaveMemory} style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
+              <form id={`${formId}-memory`} onSubmit={handleSaveMemory} style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
                 <div className={styles.formGroup}>
-                  <label htmlFor="customer-memory-summary" className={styles.label}>ملخص العميل بالذكاء الاصطناعي</label>
+                  <label htmlFor={`${formId}-customer-memory-summary`} className={styles.label}>ملخص العميل بالذكاء الاصطناعي</label>
                   <textarea 
-                    id="customer-memory-summary"
+                    id={`${formId}-customer-memory-summary`}
                     value={editableSummary} 
                     onChange={(e) => setEditableSummary(e.target.value)} 
                     className={styles.textarea} 
@@ -584,9 +609,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   />
                 </div>
                 <div className={styles.formGroup}>
-                  <label htmlFor="customer-memory-facts" className={styles.label}>الحقائق المكتشفة، مفصولة بفاصلة</label>
+                  <label htmlFor={`${formId}-customer-memory-facts`} className={styles.label}>الحقائق المكتشفة، مفصولة بفاصلة</label>
                   <input 
-                    id="customer-memory-facts"
+                    id={`${formId}-customer-memory-facts`}
                     type="text"
                     value={editableFacts} 
                     onChange={(e) => setEditableFacts(e.target.value)} 
@@ -596,9 +621,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 </div>
                 <div className={styles.formRow}>
                   <div className={styles.formGroup}>
-                    <label htmlFor="customer-memory-objections" className={styles.label}>الاعتراضات</label>
+                    <label htmlFor={`${formId}-customer-memory-objections`} className={styles.label}>الاعتراضات</label>
                     <input 
-                      id="customer-memory-objections"
+                      id={`${formId}-customer-memory-objections`}
                       type="text"
                       value={editableObjections} 
                       onChange={(e) => setEditableObjections(e.target.value)} 
@@ -607,9 +632,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     />
                   </div>
                   <div className={styles.formGroup}>
-                    <label htmlFor="customer-memory-triggers" className={styles.label}>المحفزات</label>
+                    <label htmlFor={`${formId}-customer-memory-triggers`} className={styles.label}>المحفزات</label>
                     <input 
-                      id="customer-memory-triggers"
+                      id={`${formId}-customer-memory-triggers`}
                       type="text"
                       value={editableTriggers} 
                       onChange={(e) => setEditableTriggers(e.target.value)} 
@@ -618,35 +643,19 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     />
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                  <Tooltip content="حفظ الملخص المكتوب والبيانات الحالية للعميل" position="top" style={{ flex: 1 }}>
-                    <button type="submit" disabled={savingMemory || generatingMemory} className={styles.scheduleBtn} style={{ width: '100%', background: 'var(--accent-soft)', borderColor: 'var(--border-strong)', color: 'var(--accent)' }}>
-                      <PhantomLoader loading={savingMemory} label="حفظ التعديلات">
-                        <span>حفظ التعديلات</span>
-                      </PhantomLoader>
-                    </button>
-                  </Tooltip>
-                  <Tooltip content="تحليل المحادثات عبر الذكاء الاصطناعي وتحديث الملخص والسمات تلقائياً" position="top" style={{ flex: 1 }}>
-                    <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'var(--accent-soft)', borderColor: 'var(--border-strong)', color: 'var(--accent)' }}>
-                      <Sparkles size={14} />
-                      <PhantomLoader loading={generatingMemory} label="تحديث ملف العميل بالذكاء الاصطناعي">
-                        <span>تحديث بالذكاء الاصطناعي</span>
-                      </PhantomLoader>
-                    </button>
-                  </Tooltip>
-                </div>
+                {isInline && memoryActions}
               </form>
             </div>
 
             <section className={styles.followupsSection} hidden={section !== 'followups'} role="tabpanel"
-              id="customer-detail-panel-followups" aria-labelledby="customer-detail-tab-followups">
+              id={`${formId}-panel-followups`} aria-labelledby={`${formId}-tab-followups`}>
             <div className={styles.followUpFormBox}>
               <h3 className={styles.sectionTitle}><CalendarClock size={19} aria-hidden="true" />جدولة متابعة / تذكير</h3>
-              <form onSubmit={handleAddFollowUp} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              <form id={`${formId}-followups`} onSubmit={handleAddFollowUp} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
                 <div className={styles.formGroup}>
-                  <label htmlFor="customer-follow-up-type" className={styles.label}>نوع الإجراء</label>
+                  <label htmlFor={`${formId}-customer-follow-up-type`} className={styles.label}>نوع الإجراء</label>
                   <select
-                    id="customer-follow-up-type"
+                    id={`${formId}-customer-follow-up-type`}
                     value={newFollowUpType}
                     onChange={(e) => setNewFollowUpType(e.target.value as 'Nurturing' | 'AppointmentReminder' | 'AvailabilityAlert')}
                     className={styles.select}
@@ -659,9 +668,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
                 {newFollowUpType === 'Nurturing' ? (
                   <div className={styles.formGroup}>
-                    <label htmlFor="customer-follow-up-date" className={styles.label}>تاريخ ووقت المتابعة</label>
+                    <label htmlFor={`${formId}-customer-follow-up-date`} className={styles.label}>تاريخ ووقت المتابعة</label>
                     <input 
-                      id="customer-follow-up-date"
+                      id={`${formId}-customer-follow-up-date`}
                       type="datetime-local" 
                       value={newFollowUpDate}
                       onChange={(e) => setNewFollowUpDate(e.target.value)}
@@ -671,9 +680,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   </div>
                 ) : newFollowUpType === 'AppointmentReminder' ? (
                   <div className={styles.formGroup}>
-                    <label htmlFor="customer-appointment-date" className={styles.label}>تاريخ ووقت الكورس أو الموعد</label>
+                    <label htmlFor={`${formId}-customer-appointment-date`} className={styles.label}>تاريخ ووقت الكورس أو الموعد</label>
                     <input 
-                      id="customer-appointment-date"
+                      id={`${formId}-customer-appointment-date`}
                       type="datetime-local" 
                       value={newAppointmentTime}
                       onChange={(e) => setNewAppointmentTime(e.target.value)}
@@ -687,9 +696,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 ) : (
                   <div className={styles.availabilityFields}>
                     <div className={styles.formGroup}>
-                      <label htmlFor="customer-schedule-window" className={styles.label}>فترة الساعة المناسبة</label>
+                      <label htmlFor={`${formId}-customer-schedule-window`} className={styles.label}>فترة الساعة المناسبة</label>
                       <select
-                        id="customer-schedule-window"
+                        id={`${formId}-customer-schedule-window`}
                         value={scheduleTimeWindow}
                         onChange={(event) => setScheduleTimeWindow(event.target.value as ScheduleTimeWindow)}
                         className={styles.select}
@@ -700,9 +709,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                       </select>
                     </div>
                     <div className={styles.formGroup}>
-                      <label htmlFor="customer-schedule-horizon" className={styles.label}>الفترة المطلوبة</label>
+                      <label htmlFor={`${formId}-customer-schedule-horizon`} className={styles.label}>الفترة المطلوبة</label>
                       <select
-                        id="customer-schedule-horizon"
+                        id={`${formId}-customer-schedule-horizon`}
                         value={scheduleHorizon}
                         onChange={(event) => setScheduleHorizon(event.target.value as ScheduleHorizon)}
                         className={styles.select}
@@ -718,9 +727,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 )}
 
                 {newFollowUpType !== 'AvailabilityAlert' && <div className={styles.formGroup}>
-                  <label htmlFor="customer-follow-up-tone" className={styles.label}>نبرة المتابعة</label>
+                  <label htmlFor={`${formId}-customer-follow-up-tone`} className={styles.label}>نبرة المتابعة</label>
                   <select
-                    id="customer-follow-up-tone"
+                    id={`${formId}-customer-follow-up-tone`}
                     value={newFollowUpTone}
                     onChange={(e) => setNewFollowUpTone(e.target.value)}
                     className={styles.select}
@@ -732,9 +741,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 </div>}
 
                 {newFollowUpType !== 'AvailabilityAlert' && <div className={styles.formGroup}>
-                  <label htmlFor="customer-follow-up-notes" className={styles.label}>نص الرسالة أو الملاحظات</label>
+                  <label htmlFor={`${formId}-customer-follow-up-notes`} className={styles.label}>نص الرسالة أو الملاحظات</label>
                   <input 
-                    id="customer-follow-up-notes"
+                    id={`${formId}-customer-follow-up-notes`}
                     type="text" 
                     placeholder="اكتب رسالة مخصصة أو اتركها فارغة للإرسال التلقائي"
                     value={newFollowUpNotes}
@@ -743,10 +752,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                   />
                 </div>}
 
-                <button type="submit" disabled={creatingFollowUp} className={styles.scheduleBtn} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                  <Calendar size={16} />
-                  {newFollowUpType === 'AvailabilityAlert' ? 'حفظ انتظار الموعد' : 'جدولة المهمة'}
-                </button>
+                {isInline && followUpAction}
               </form>
             </div>
 
@@ -813,6 +819,12 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             </div>
           </section>
         </div>
+        {!isInline && <footer className={styles.modalFooter} aria-label="إجراءات ملف العميل">
+          <button type="button" className={styles.backBtn} onClick={onClose}>إغلاق</button>
+          <div className={styles.footerActions}>
+            {section === 'profile' ? saveProfileAction : section === 'memory' ? memoryActions : followUpAction}
+          </div>
+        </footer>}
     </div>
   );
 

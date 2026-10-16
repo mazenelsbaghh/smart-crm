@@ -131,7 +131,7 @@ for (const width of [375, 1440]) {
     await expect(toggle).toBeChecked();
     expect(changes[1]).toMatchObject({ isWhatsAppGroupAutomationEnabled: true });
     await page.getByRole('button', { name: 'إدارة مواعيد الكورس العادي', exact: true }).click();
-    await expect(page).toHaveURL(/\/settings\?tab=addons&view=manage-groups$/);
+    await expect(page).toHaveURL(/\/management\/groups$/);
     await expect(page.getByRole('button', { name: 'إضافة مجموعة جديدة', exact: true })).toBeVisible();
   });
 }

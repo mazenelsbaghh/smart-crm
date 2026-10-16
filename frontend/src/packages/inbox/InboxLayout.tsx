@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
 import { Conversation, Message } from '../../types/chat';
 import Dialog from '../../components/shared/Dialog';
 import Button from '../../components/ui/Button';
@@ -172,11 +171,9 @@ export default function InboxLayout({
         onOpenDetails={() => setDetailsOpen(true)}
       />
 
-      {activeConv && <Dialog label="بيانات العميل" placement="drawer" open={detailsOpen} onClose={() => setDetailsOpen(false)}>
-        <div className={styles.customerDetailsHeading}><h2>بيانات العميل</h2>
-          <Button variant="ghost" onClick={() => setDetailsOpen(false)} aria-label="إغلاق بيانات العميل"><X size={20} /></Button>
-        </div>
-        {customerDetails}
+      {activeConv && <Dialog label="بيانات العميل" title="بيانات العميل" closeLabel="إغلاق بيانات العميل" placement="drawer" open={detailsOpen} onClose={() => setDetailsOpen(false)}
+        footer={<Button variant="secondary" onClick={() => setDetailsOpen(false)}>العودة للمحادثة</Button>}>
+        <div className={styles.customerDetailsBody}>{customerDetails}</div>
       </Dialog>}
     </div>
     </AppShell>

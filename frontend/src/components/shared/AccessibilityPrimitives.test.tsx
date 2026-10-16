@@ -15,25 +15,27 @@ describe('accessible shared feedback primitives', () => {
 
   it('focuses the safe dialog action, closes with Escape, and restores focus', async () => {
     const onCancel = vi.fn();
+    const parentKeyDown = vi.fn();
     const opener = document.createElement('button');
     document.body.append(opener);
     opener.focus();
 
     const { unmount } = render(
-      <ConfirmDialog
+      <div onKeyDown={parentKeyDown}><ConfirmDialog
         isOpen
         title="تأكيد"
         message="هل تريد المتابعة؟"
         onConfirm={vi.fn()}
         onCancel={onCancel}
-      />,
+      /></div>,
     );
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'إلغاء' })).toHaveFocus());
     expect(opener).toHaveAttribute('inert');
     expect(opener).toHaveAttribute('aria-hidden', 'true');
-    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'إلغاء' }), { key: 'Escape' });
     expect(onCancel).toHaveBeenCalledOnce();
+    expect(parentKeyDown).not.toHaveBeenCalled();
     unmount();
     expect(opener).toHaveFocus();
     expect(opener).not.toHaveAttribute('inert');
