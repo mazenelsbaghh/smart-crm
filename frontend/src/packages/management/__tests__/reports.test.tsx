@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { CanceledError, type GenericAbortSignal } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider, useAuth } from '../../../context/auth-context';
 import { api } from '../../../services/api';
@@ -125,6 +126,43 @@ describe('Sales intelligence reports', () => {
 
     await waitFor(() => expect(screen.getByLabelText('المؤشرات الأساسية')).toHaveTextContent('٢٣١'));
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it('يلغي طلب الفترة السابقة وعند المغادرة دون إظهار خطأ أو إيقاف تحميل الفترة الجديدة', async () => {
+    const pending: { signal?: GenericAbortSignal; resolve: (response: { data: typeof dashboard }) => void }[] = [];
+    let firstReport = true;
+    vi.spyOn(api, 'get').mockImplementation((url, config) => {
+      const path = String(url);
+      if (!path.endsWith('/sales-intelligence')) return mockGet(path) as never;
+      if (firstReport) {
+        firstReport = false;
+        return Promise.resolve({ data: dashboard }) as never;
+      }
+      return new Promise((resolve, reject) => {
+        pending.push({ signal: config?.signal, resolve });
+        config?.signal?.addEventListener?.('abort', () => reject(new CanceledError()), { once: true });
+      }) as never;
+    });
+    const view = renderReports();
+    await screen.findByText('أكبر تسرب بعد عرض المواعيد.');
+
+    fireEvent.click(screen.getByRole('button', { name: '30 يومًا' }));
+    await waitFor(() => expect(pending).toHaveLength(1));
+    expect(pending[0].signal?.aborted).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '7 أيام' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(pending[0].signal?.aborted).toBe(true);
+    expect(pending[1].signal?.aborted).toBe(false);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /يحدّث البيانات/ })).toBeDisabled();
+
+    await act(async () => pending[1].resolve({ data: { ...dashboard, totalConversations: 231 } }));
+    expect(screen.getByLabelText('المؤشرات الأساسية')).toHaveTextContent('٢٣١');
+    expect(screen.getByRole('button', { name: /تحديث البيانات/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '30 يومًا' }));
+    await waitFor(() => expect(pending).toHaveLength(3));
+    view.unmount();
+    expect(pending[2].signal?.aborted).toBe(true);
   });
 
   it('يفرّق بين غياب أول رد وبين زمن رد صفر', async () => {
@@ -321,14 +359,16 @@ describe('Sales intelligence reports', () => {
     let reportRequests = 0;
     let resolveOld!: (response: { data: typeof dashboard }) => void;
     let resolveNew!: (response: { data: typeof dashboard }) => void;
+    let oldSignal: GenericAbortSignal | undefined;
     const nextProject = { ...project, id: 'project-2' };
-    vi.spyOn(api, 'get').mockImplementation((url) => {
+    vi.spyOn(api, 'get').mockImplementation((url, config) => {
       const path = String(url);
       if (path === '/api/projects') return Promise.resolve({ data: [{ id: authorizedProject.id }] }) as never;
       if (path === `/api/projects/${authorizedProject.id}`) return Promise.resolve({ data: authorizedProject }) as never;
       if (path === '/api/projects/project-2/reports/sales-intelligence') return new Promise((resolve) => { resolveNew = resolve; }) as never;
       if (path === '/api/projects/project-1/reports/sales-intelligence') {
         if (++reportRequests === 1) return Promise.resolve({ data: dashboard }) as never;
+        oldSignal = config?.signal;
         return new Promise((resolve) => { resolveOld = resolve; }) as never;
       }
       return Promise.reject(new Error(`Unexpected GET: ${path}`)) as never;
@@ -344,6 +384,7 @@ describe('Sales intelligence reports', () => {
     authorizedProject = nextProject;
     fireEvent.click(screen.getByRole('button', { name: 'تغيير المشروع' }));
     await waitFor(() => expect(resolveNew).toBeTypeOf('function'));
+    expect(oldSignal?.aborted).toBe(true);
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.queryByText('أكبر تسرب بعد عرض المواعيد.')).not.toBeInTheDocument();
     const nextDashboard = { ...dashboard, projectId: nextProject.id, totalConversations: 73,

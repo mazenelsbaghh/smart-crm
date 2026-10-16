@@ -15,9 +15,10 @@ export interface ReportWindow {
 const base = (projectId: string) => `/api/projects/${projectId}/reports`;
 
 export const reportsApi = {
-  async dashboard(projectId: string, window: ReportWindow) {
+  async dashboard(projectId: string, window: ReportWindow, signal: AbortSignal) {
     const response = await api.get<SalesIntelligenceDashboard>(`${base(projectId)}/sales-intelligence`, {
       params: window,
+      signal,
     });
     return response.data;
   },

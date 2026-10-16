@@ -87,16 +87,21 @@ function FunnelWorkspace({ project }: { project: Project }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const requestId = useRef(0);
+  const reportController = useRef<AbortController | null>(null);
   const requestedWindow = useRef(windowRange);
   useLayoutEffect(() => { requestedWindow.current = windowRange; }, [windowRange]);
 
   const load = useCallback(async () => {
+    reportController.current?.abort();
+    const controller = new AbortController();
+    reportController.current = controller;
     const request = ++requestId.current;
-    const isCurrent = () => request === requestId.current && requestedWindow.current === windowRange;
+    const isCurrent = () => !controller.signal.aborted
+      && request === requestId.current && requestedWindow.current === windowRange;
     setLoading(true);
     setError('');
     try {
-      const report = await reportsApi.dashboard(project.id, windowRange);
+      const report = await reportsApi.dashboard(project.id, windowRange, controller.signal);
       if (isCurrent()) setDashboard(report);
     } catch {
       if (isCurrent()) setError('تعذر تحميل تحليل الأيام. تحقق من اتصال الخادم ثم حاول مرة أخرى.');
@@ -107,7 +112,10 @@ function FunnelWorkspace({ project }: { project: Project }) {
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      reportController.current?.abort();
+    };
   }, [load]);
 
   const leaders = useMemo(() => stageLeaders(dashboard?.daily ?? []), [dashboard]);

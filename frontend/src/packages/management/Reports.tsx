@@ -56,6 +56,7 @@ function ReportWorkspace({ activeProject, canManage }: { activeProject: Project;
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const requestId = useRef(0);
+  const reportController = useRef<AbortController | null>(null);
   const reportRequestKey = `${activeProject.id}:${windowRange.fromUtc}:${windowRange.toUtc}`;
   const reportIntentKeyRef = useRef(reportRequestKey);
 
@@ -66,27 +67,35 @@ function ReportWorkspace({ activeProject, canManage }: { activeProject: Project;
   const load = useCallback(async () => {
     const nextReportKey = `${activeProject.id}:${windowRange.fromUtc}:${windowRange.toUtc}`;
     if (reportIntentKeyRef.current !== nextReportKey) return;
+    reportController.current?.abort();
+    const controller = new AbortController();
+    reportController.current = controller;
     const currentRequest = ++requestId.current;
+    const isCurrent = () => !controller.signal.aborted
+      && currentRequest === requestId.current && reportIntentKeyRef.current === nextReportKey;
     setLoading(true);
     setError('');
     try {
-      const next = await reportsApi.dashboard(activeProject.id, windowRange);
-      if (currentRequest === requestId.current && reportIntentKeyRef.current === nextReportKey) {
+      const next = await reportsApi.dashboard(activeProject.id, windowRange, controller.signal);
+      if (isCurrent()) {
         setDashboard(next);
         setLoadedReportKey(nextReportKey);
       }
     } catch {
-      if (currentRequest === requestId.current && reportIntentKeyRef.current === nextReportKey) {
+      if (isCurrent()) {
         setError('تعذر تحميل تحليلات المبيعات. تحقق من اتصال الخادم ثم أعد المحاولة.');
       }
     } finally {
-      if (currentRequest === requestId.current && reportIntentKeyRef.current === nextReportKey) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [activeProject, windowRange]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      reportController.current?.abort();
+    };
   }, [load]);
 
   const changePreset = (next: ReportPreset) => {

@@ -97,3 +97,43 @@ test('previews custom spacing and priority distribution before confirming a boun
   expect(requests[1]).toMatchObject({ action: 'Schedule', planToken: 'schedule-token',
     dispatchOptions: { count: 5, minIntervalSeconds: 30, maxIntervalSeconds: 60, scheduleDays: 2 } });
 });
+
+// Regression: iPhone report content shifted horizontally while the header/footer stayed fixed (2026-10-16).
+test('scrolling a wide daily table keeps the RTL report workspace fixed on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 852 });
+  await page.route('**/api/**/reports/sales-intelligence**', route => route.fulfill({ json: {
+    ...dashboard, aiDigest: null, totalConversations: 60243, uniqueCustomers: 58000,
+    funnel: dashboard.funnel.map((stage, index) => ({ ...stage, count: [60243, 50751, 514, 514, 514, 0][index] })),
+    daily: Array.from({ length: 7 }, (_, index) => ({ ...dashboard.daily[0],
+      date: `2026-10-${index + 10}`, newConversations: 193 + index * 100,
+      qualified: 13, bookingIntent: 13, booked: 13, bookedOnDate: 14, paid: 0, attended: 0,
+    })),
+  } }));
+  await page.goto('/management/reports');
+  await expect(page.getByText('الأرقام جاهزة، لكن الملخص الإداري لم يُنشأ لهذه الفترة بعد.')).toBeVisible();
+  const main = page.locator('#workspace-main-content');
+  const expectFixedWorkspace = async () => {
+    const dimensions = await main.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth, scrollLeft: element.scrollLeft }));
+    expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.width + 1);
+    expect(Math.abs(dimensions.scrollLeft)).toBeLessThanOrEqual(1);
+  };
+  const daily = page.getByRole('region', { name: 'جدول نتائج العملاء، قابل للتمرير', exact: true });
+  await daily.scrollIntoViewIfNeeded();
+  await expectFixedWorkspace();
+  await daily.evaluate(element => { element.scrollLeft = -element.scrollWidth; });
+  await expect.poll(() => daily.evaluate(element => Math.abs(element.scrollLeft))).toBeGreaterThan(0);
+  await expect(daily.getByRole('button', { name: 'تفاصيل اليوم', exact: true }).first()).toBeInViewport();
+  await expectFixedWorkspace();
+  await daily.evaluate(element => { element.scrollLeft = 0; });
+  await expect(daily.getByRole('columnheader', { name: 'يوم الدخول', exact: true })).toBeInViewport();
+  await expectFixedWorkspace();
+
+  await page.getByRole('link', { name: 'عرض الأيام بالتفصيل', exact: true }).click();
+  const expanded = page.getByRole('region', { name: 'جدول نتائج الأيام، قابل للتمرير', exact: true });
+  await expanded.scrollIntoViewIfNeeded();
+  await expectFixedWorkspace();
+  await expanded.evaluate(element => { element.scrollLeft = -element.scrollWidth; });
+  await expect.poll(() => expanded.evaluate(element => Math.abs(element.scrollLeft))).toBeGreaterThan(0);
+  await expect(expanded.getByRole('columnheader').last()).toBeInViewport();
+  await expectFixedWorkspace();
+});

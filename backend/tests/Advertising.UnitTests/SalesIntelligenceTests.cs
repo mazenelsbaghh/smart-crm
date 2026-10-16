@@ -274,6 +274,43 @@ public sealed class SalesIntelligenceTests
         Assert.Null(report.MedianFirstResponseMinutes);
     }
 
+    [Theory]
+    [InlineData(-2, null)]
+    [InlineData(0, 0)]
+    [InlineData(4, 4)]
+    public async Task Dashboard_response_count_and_median_share_the_first_reply_after_inbound(
+        int outgoingOffsetMinutes, int? expectedResponseMinutes)
+    {
+        var setup = CreateDatabase();
+        await using var db = setup.Db;
+        var conversation = SeedConversation(db, setup.ProjectId);
+        var incoming = db.Messages.Local.Single();
+        incoming.Direction = "incoming";
+        db.Messages.AddRange(
+            new Message
+            {
+                ConversationId = conversation.Id, ExternalMessageId = Guid.NewGuid().ToString("N"),
+                Direction = "OUTGOING", Content = "رد", MessageType = "Text",
+                Timestamp = incoming.Timestamp.AddMinutes(outgoingOffsetMinutes)
+            },
+            new Message
+            {
+                ConversationId = conversation.Id, ExternalMessageId = Guid.NewGuid().ToString("N"),
+                Direction = "Incoming", Content = "سؤال آخر", MessageType = "Text",
+                Timestamp = incoming.Timestamp.AddMinutes(1)
+            });
+        await db.SaveChangesAsync();
+        var service = new SalesIntelligenceService(db, new FakeGemini(), new PassthroughVault());
+
+        var report = await service.GetDashboardAsync(setup.ProjectId,
+            DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(1), CancellationToken.None);
+
+        Assert.Equal(expectedResponseMinutes.HasValue ? 1 : 0,
+            report.Funnel.Single(stage => stage.Key == "responded").Count);
+        Assert.Equal(expectedResponseMinutes.HasValue ? (decimal?)expectedResponseMinutes.Value : null,
+            report.MedianFirstResponseMinutes);
+    }
+
     [Fact]
     public async Task Dashboard_counts_actual_payment_and_attendance_across_all_eligible_bookings()
     {

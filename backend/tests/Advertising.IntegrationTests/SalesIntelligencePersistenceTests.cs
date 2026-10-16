@@ -1,9 +1,13 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Modules.AI.Services;
 using Modules.Analytics.Application;
 using Modules.Analytics.Application.Services;
 using Modules.Analytics.Domain;
 using Modules.Conversations.Domain;
+using Modules.CRM.Domain;
+using Modules.GroupAppointments.Domain;
 using Modules.Projects.Domain;
 using Shared.Security;
 using Xunit;
@@ -13,6 +17,58 @@ namespace Advertising.IntegrationTests;
 [Collection(PostgresCollection.Name)]
 public sealed class SalesIntelligencePersistenceTests(PostgresFixture postgres)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Dashboard_without_followup_candidates_reads_only_needed_sources_and_preserves_live_metrics(bool hasAnalysis)
+    {
+        var projectId = Guid.NewGuid();
+        var tenant = new TenantContext(); tenant.SetProjectId(projectId);
+        var reads = new RecordedReads();
+        await using var isolated = await postgres.CreateIsolatedDatabaseAsync();
+        await using var db = isolated.CreateContext(tenant, reads);
+        await db.Database.MigrateAsync();
+        var customer = new Customer { ProjectId = projectId, Name = "طالب اختبار", City = "الإسكندرية", PhoneNumber = "201000000001" };
+        var conversation = new Conversation { ProjectId = projectId, CustomerId = customer.Id, Channel = "WhatsApp" };
+        var group = new GroupAppointment { ProjectId = projectId, Name = "مجموعة اختبار", Capacity = 20, DateTime = DateTime.UtcNow.AddDays(7) };
+        var incomingAt = DateTime.UtcNow.AddMinutes(-10);
+        db.AddRange(customer, conversation, group,
+            new ProjectSettings { ProjectId = projectId, Timezone = "Africa/Cairo" },
+            new GroupAppointmentBooking { ProjectId = projectId, GroupAppointmentId = group.Id, CustomerId = customer.Id,
+                CustomerName = customer.Name, CustomerPhone = customer.PhoneNumber, IsPaid = true },
+            new FollowUp { ProjectId = projectId, CustomerId = customer.Id, Type = "Nurturing", Status = "Pending",
+                Notes = "متابعة اختبار", DueDate = DateTime.UtcNow.AddDays(1) },
+            new Message { ConversationId = conversation.Id, Direction = "Incoming", Timestamp = incomingAt,
+                ExternalMessageId = Guid.NewGuid().ToString("N"), Content = "سؤال", MessageType = "Text" },
+            new Message { ConversationId = conversation.Id, Direction = "Outgoing", Timestamp = incomingAt.AddMinutes(4),
+                ExternalMessageId = Guid.NewGuid().ToString("N"), Content = "رد", MessageType = "Text" });
+        if (hasAnalysis)
+        {
+            var analysis = Analysis(projectId, conversation.Id);
+            analysis.CustomerId = customer.Id;
+            db.Add(analysis);
+        }
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        reads.Commands.Clear();
+        var service = new SalesIntelligenceService(db, new CoordinatedGemini(), new PassthroughVault());
+
+        var report = await service.GetDashboardAsync(projectId,
+            DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(1), CancellationToken.None);
+
+        Assert.Equal(1, report.TotalConversations);
+        Assert.Equal(100m, report.BookingConversionRate);
+        Assert.Equal(100m, report.PaymentConversionRate);
+        Assert.Equal(4m, report.MedianFirstResponseMinutes);
+        Assert.Equal(1, Assert.Single(report.Daily).BookedOnDate);
+        Assert.Equal(hasAnalysis ? 1 : 0, report.AnalyzedConversations);
+        Assert.Empty(report.Opportunities);
+        Assert.Equal(0, report.FollowUpPlan.Scheduled);
+        Assert.DoesNotContain(reads.Commands, command => command.Contains("FROM \"FollowUps\"", StringComparison.Ordinal));
+        Assert.Equal(hasAnalysis, reads.Commands.Any(command => command.Contains("FROM \"Customers\"", StringComparison.Ordinal)));
+        Assert.Empty(db.ChangeTracker.Entries());
+    }
+
     [Theory]
     [InlineData(FollowUpPlanAction.SendNow, 1)]
     [InlineData(FollowUpPlanAction.Schedule, 2)]
@@ -220,6 +276,17 @@ public sealed class SalesIntelligencePersistenceTests(PostgresFixture postgres)
         public bool IsProtected(string? storedValue) => false;
         public string Protect(Guid projectId, string secret) => secret;
         public string? Unprotect(Guid projectId, string? storedValue) => storedValue;
+    }
+
+    private sealed class RecordedReads : DbCommandInterceptor
+    {
+        public List<string> Commands { get; } = [];
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Commands.Add(command.CommandText);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     private sealed class CoordinatedGemini : IGeminiClient
