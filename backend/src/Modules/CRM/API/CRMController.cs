@@ -883,6 +883,9 @@ namespace Modules.CRM.API
             }
 
             messageContent = Modules.WhatsApp.Services.OutgoingMessageText.Normalize(messageContent);
+            if (projectSettings?.IsTalkTipsTrialGateEnabled == true
+                && !string.Equals(followUp.Tone, "Exact", StringComparison.Ordinal))
+                messageContent = Modules.TalkTips.Services.TalkTipsLocationReplyPolicy.IncludeAlexandria(messageContent);
 
             var claimed = _context.Database.IsRelational()
                 ? await _context.FollowUps
