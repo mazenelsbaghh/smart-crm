@@ -10,10 +10,11 @@ import GroupAppointmentsManager from './GroupAppointmentsManager';
 import styles from './settings.module.css';
 
 export default function GroupAppointmentsPage() {
-  const { activeProject, user } = useAuth();
+  const { activeProject, user, loading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const courseType = searchParams.get('course') === 'intensive' ? 'intensive' : 'regular';
+  if (loading) return <p role="status">جاري تحميل المشروع والمواعيد…</p>;
   if (!activeProject) return <EmptyState title="اختر مشروعًا لعرض المواعيد" />;
   if (user?.role !== 'Owner' && user?.role !== 'Admin') return <EmptyState title="إدارة المجموعات متاحة للمالك أو المدير" />;
   return <div className={`${styles.container} ${styles.groupPage}`}>

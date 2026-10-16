@@ -42,6 +42,16 @@ const secondGroup = {
   mode: 'offline',
 };
 
+const ancillaryGroupResponse = (url: string) => {
+  if (url === '/api/group-appointments/booking-stats') return { data: {
+    totalBooked: 12, bookedToday: 3, timezone: 'Africa/Cairo', courseType: 'regular',
+    dayStartUtc: '2026-10-15T21:00:00Z', dayEndUtc: '2026-10-16T21:00:00Z', asOfUtc: '2026-10-16T12:00:00Z',
+  } };
+  if (url === `/api/group-appointments/${group.id}/bookings`) return { data: group.bookings };
+  if (url === `/api/group-appointments/${secondGroup.id}/bookings`) return { data: secondGroup.bookings };
+  return null;
+};
+
 const renderManager = (onBack: () => void = vi.fn()) => render(
   <AuthProvider>
     <GroupAppointmentsManager onBack={onBack} timezone="Africa/Cairo" />
@@ -58,12 +68,105 @@ describe('GroupAppointmentsManager manual booking', () => {
     localStorage.clear();
     localStorage.setItem('user', JSON.stringify({ id: 'owner-1', email: 'owner@example.test', role: 'Owner' }));
     vi.spyOn(api, 'get').mockImplementation((url) => {
+      const ancillary = ancillaryGroupResponse(url);
+      if (ancillary) return Promise.resolve(ancillary) as never;
       if (url === '/api/projects') return Promise.resolve({ data: [{ id: project.id }] }) as never;
       if (url === `/api/projects/${project.id}`) return Promise.resolve({ data: project }) as never;
       if (url === '/api/group-appointments') return Promise.resolve({ data: [group, secondGroup] }) as never;
       if (url === '/api/group-appointments/instructors') return Promise.resolve({ data: { instructors: ['أحمد'], instructorContacts: [{ id: 'teacher-1', name: 'أحمد', phone: '201112345678' }], supervisors: [{ id: 'staff-1', name: 'سارة', phone: '201515089806' }] } }) as never;
       return Promise.reject(new Error(`Unexpected URL: ${String(url)}`)) as never;
     });
+  });
+
+  it('loads summary counts first and ignores an older subscriber response after selecting another group', async () => {
+    const user = userEvent.setup();
+    const originalGet = vi.mocked(api.get).getMockImplementation()!;
+    let resolveFirst!: (response: { data: typeof group.bookings }) => void;
+    const firstSubscribers = new Promise<{ data: typeof group.bookings }>(resolve => { resolveFirst = resolve; });
+    vi.mocked(api.get).mockImplementation((url, config) => url === `/api/group-appointments/${group.id}/bookings`
+      ? firstSubscribers as never : originalGet(url, config));
+    renderManager();
+
+    const firstGroup = await screen.findByRole('button', { name: 'المشتركين (1)' });
+    expect(api.get).toHaveBeenCalledWith('/api/group-appointments', expect.objectContaining({
+      params: { courseType: 'regular', includeBookings: false },
+    }));
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringMatching(/\/group-appointments\/[^/]+\/bookings$/), expect.anything());
+    await user.click(firstGroup);
+    expect(screen.getByText('جاري تحميل المشتركين…')).toBeVisible();
+    expect(screen.queryByText(/لا يوجد مشتركون مسجلون/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'المشتركين (0)' })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'المشتركين (0)' }));
+    expect(await screen.findByText(/لا يوجد مشتركون مسجلون/)).toBeVisible();
+    await act(async () => { resolveFirst({ data: group.bookings }); await firstSubscribers; });
+    expect(screen.getByRole('heading', { name: /المشتركون في مجموعة: في السنتر الصباح/ })).toBeVisible();
+    expect(screen.queryByText(existingBooking.customerName)).not.toBeInTheDocument();
+  });
+
+  it('keeps the group count when subscriber loading fails and retries the selected group', async () => {
+    const user = userEvent.setup();
+    const originalGet = vi.mocked(api.get).getMockImplementation()!;
+    let subscriberReads = 0;
+    vi.mocked(api.get).mockImplementation((url, config) => {
+      if (url === `/api/group-appointments/${group.id}/bookings` && ++subscriberReads === 1)
+        return Promise.reject(new Error('Subscribers unavailable'));
+      return originalGet(url, config);
+    });
+    renderManager();
+    await user.click(await screen.findByRole('button', { name: 'المشتركين (1)' }));
+    expect(await screen.findByText('تعذر تحميل المشتركين.')).toBeVisible();
+    expect(screen.queryByText(/لا يوجد مشتركون مسجلون/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'المشتركين (1)' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'إعادة تحميل المشتركين' }));
+    expect(await screen.findByRole('checkbox', { name: 'تحديد دفع سارة أحمد' })).toBeVisible();
+    expect(screen.queryByText('تعذر تحميل المشتركين.')).not.toBeInTheDocument();
+  });
+
+  it('drops the previous project subscriber response after the authorized project changes', async () => {
+    const user = userEvent.setup();
+    const originalGet = vi.mocked(api.get).getMockImplementation()!;
+    const otherProject = { ...project, id: 'project-2', name: 'المشروع الثاني' };
+    const otherGroup = { ...secondGroup, id: 'other-group', name: 'مجموعة المشروع الثاني' };
+    let nextProject = project;
+    let resolveSubscribers!: (response: { data: typeof group.bookings }) => void;
+    const subscribers = new Promise<{ data: typeof group.bookings }>(resolve => { resolveSubscribers = resolve; });
+    vi.mocked(api.get).mockImplementation((url, config) => {
+      if (url === '/api/projects') return Promise.resolve({ data: [nextProject] });
+      if (url === `/api/projects/${otherProject.id}`) return Promise.resolve({ data: otherProject });
+      if (url === '/api/group-appointments' && nextProject.id === otherProject.id) return Promise.resolve({ data: [otherGroup] });
+      if (url === `/api/group-appointments/${group.id}/bookings`) return subscribers;
+      return originalGet(url, config);
+    });
+    render(<AuthProvider><ProjectReload /><GroupAppointmentsManager onBack={vi.fn()} timezone="Africa/Cairo" /></AuthProvider>);
+    await user.click(await screen.findByRole('button', { name: 'المشتركين (1)' }));
+    expect(screen.getByText('جاري تحميل المشتركين…')).toBeVisible();
+
+    nextProject = otherProject;
+    await user.click(screen.getByRole('button', { name: 'تحديث المشروع' }));
+    expect(await screen.findByText(otherGroup.name)).toBeVisible();
+    await act(async () => { resolveSubscribers({ data: group.bookings }); await subscribers; });
+    expect(screen.queryByRole('heading', { name: /المشتركون في مجموعة/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(existingBooking.customerName)).not.toBeInTheDocument();
+  });
+
+  it('loads complete inactive bookings only when export is requested and reports a failed export', async () => {
+    const user = userEvent.setup();
+    const originalGet = vi.mocked(api.get).getMockImplementation()!;
+    vi.mocked(api.get).mockImplementation((url, config) => {
+      if (url === '/api/group-appointments' && (config?.params as { includeBookings?: boolean } | undefined)?.includeBookings === true)
+        return Promise.reject(new Error('Export unavailable'));
+      return originalGet(url, config);
+    });
+    renderManager();
+    await screen.findByRole('button', { name: 'المشتركين (1)' });
+    await user.click(screen.getByLabelText('إدارة المجموعات'));
+    await user.click(screen.getByRole('button', { name: 'الاستيراد والتصدير' }));
+    await user.click(screen.getByRole('button', { name: 'تصدير حجوزات المجموعات غير النشطة' }));
+    expect(await screen.findByText('تعذر تحميل حجوزات المجموعات غير النشطة للتصدير.')).toBeVisible();
+    expect(api.get).toHaveBeenCalledWith('/api/group-appointments', expect.objectContaining({
+      params: { courseType: 'regular', includeBookings: true },
+    }));
   });
 
   it('keeps the latest booking count, payment and attendance when an older group refresh arrives last', async () => {
@@ -75,6 +178,9 @@ describe('GroupAppointmentsManager manual booking', () => {
     let resolveOlder!: (response: { data: typeof group[] }) => void;
     const olderRefresh = new Promise<{ data: typeof group[] }>(resolve => { resolveOlder = resolve; });
     vi.mocked(api.get).mockImplementation((url) => {
+      if (url === `/api/group-appointments/${group.id}/bookings`) return Promise.resolve({ data: groupReads >= 3 ? latestGroup.bookings : group.bookings });
+      const ancillary = ancillaryGroupResponse(url);
+      if (ancillary) return Promise.resolve(ancillary) as never;
       if (url === '/api/projects') return Promise.resolve({ data: [project] });
       if (url === `/api/projects/${project.id}`) return Promise.resolve({ data: { ...project } });
       if (url === '/api/group-appointments') {
@@ -103,6 +209,8 @@ describe('GroupAppointmentsManager manual booking', () => {
     const user = userEvent.setup();
     const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never);
     vi.spyOn(api, 'get').mockImplementation((url, config) => {
+      const ancillary = ancillaryGroupResponse(url);
+      if (ancillary) return Promise.resolve(ancillary) as never;
       if (url === '/api/projects') return Promise.resolve({ data: [{ id: project.id }] }) as never;
       if (url === `/api/projects/${project.id}`) return Promise.resolve({ data: project }) as never;
       if (url === '/api/group-appointments') return Promise.resolve({ data: (config?.params as { courseType?: string } | undefined)?.courseType === 'intensive' ? [] : [group] }) as never;
@@ -229,7 +337,7 @@ describe('GroupAppointmentsManager manual booking', () => {
       await pendingPost;
     });
 
-    expect(await screen.findByRole('status')).toHaveTextContent('تمت إضافة محمود علي إلى مجموعة أونلاين المساء بنجاح');
+    expect(await screen.findByText('تمت إضافة محمود علي إلى مجموعة أونلاين المساء بنجاح.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'المشتركين (2)' })).toBeInTheDocument();
     expect(screen.getByText('المجموعة ممتلئة (2 من 2).')).toBeInTheDocument();
     const subscribersHeading = screen.getByRole('heading', { name: /المشتركون في مجموعة: أونلاين المساء/ });
@@ -297,6 +405,8 @@ describe('GroupAppointmentsManager manual booking', () => {
     const fullGroup = { ...group, id: 'full', name: 'مجموعة مكتملة نشطة', bookedCount: 2 };
     const inactiveFullGroup = { ...fullGroup, id: 'inactive-full', name: 'مجموعة مكتملة متوقفة', isActive: false };
     vi.spyOn(api, 'get').mockImplementation((url) => {
+      const ancillary = ancillaryGroupResponse(url);
+      if (ancillary) return Promise.resolve(ancillary) as never;
       if (url === '/api/projects') return Promise.resolve({ data: [{ id: project.id }] }) as never;
       if (url === `/api/projects/${project.id}`) return Promise.resolve({ data: project }) as never;
       if (url === '/api/group-appointments') return Promise.resolve({ data: [group, secondGroup, fullGroup, inactiveFullGroup] }) as never;
@@ -322,6 +432,8 @@ describe('GroupAppointmentsManager manual booking', () => {
     const inactiveGroup = { ...group, isActive: false };
     let groupFetchCount = 0;
     vi.spyOn(api, 'get').mockImplementation((url) => {
+      const ancillary = ancillaryGroupResponse(url);
+      if (ancillary) return Promise.resolve(ancillary) as never;
       if (url === '/api/projects') return Promise.resolve({ data: [{ id: project.id }] }) as never;
       if (url === `/api/projects/${project.id}`) return Promise.resolve({ data: project }) as never;
       if (url === '/api/group-appointments') {

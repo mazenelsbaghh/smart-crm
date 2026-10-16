@@ -68,7 +68,8 @@
 .track span, .reasonTrack span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width var(--transition-normal); }
 .rate { color: var(--text-soft); text-align: end; font-size: .8125rem; }
 .dailyBookingNote { margin: 0 0 .75rem; color: var(--text-soft); font-size: .8125rem; line-height: 1.7; }
-.tableScroll { overflow-x: auto; margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--border-subtle); }
+/* Keep absolute screen-reader labels inside the table's scroll area, not the workspace. */
+.tableScroll { position: relative; overflow-x: auto; margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--border-subtle); }
 .dailyTable { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: .8125rem; text-align: center; }
 .dailyTable th { color: var(--text-soft); font-weight: 600; }
 .dailyTable th, .dailyTable td { padding: .5rem .45rem; border-bottom: 1px solid var(--border-subtle); }

@@ -31,6 +31,7 @@ import {
 import styles from './settings.module.css';
 import GroupStaffDirectoryEditor, { StaffContact } from './GroupStaffDirectoryEditor';
 import GroupParticipationPanel from './GroupParticipationPanel';
+import GroupBookingStats from './GroupBookingStats';
 
 interface Booking {
   id: string;
@@ -180,6 +181,8 @@ interface GroupAppointment {
   staffSyncedAtUtc?: string | null;
 }
 
+type GroupSummary = Omit<GroupAppointment, 'bookings'>;
+
 type GroupStatus = 'available' | 'full' | 'inactive';
 
 const getGroupStatus = (group: GroupAppointment): GroupStatus => {
@@ -245,7 +248,12 @@ const validTimezone = (timezone: string) => {
   catch { return 'Africa/Cairo'; }
 };
 
-export default function GroupAppointmentsManager({ onBack, timezone, courseType = 'regular', backLabel = 'العودة للإضافات', onDirtyChange, heading, courseNavigation }: GroupAppointmentsManagerProps) {
+export default function GroupAppointmentsManager(props: GroupAppointmentsManagerProps) {
+  const { activeProject } = useAuth();
+  return activeProject ? <GroupAppointmentsWorkspace key={`${activeProject.id}:${props.courseType ?? 'regular'}`} {...props} /> : null;
+}
+
+function GroupAppointmentsWorkspace({ onBack, timezone, courseType = 'regular', backLabel = 'العودة للإضافات', onDirtyChange, heading, courseNavigation }: GroupAppointmentsManagerProps) {
   const { activeProject } = useAuth();
   const projectTimezone = validTimezone(timezone);
   const [groups, setGroups] = useState<GroupAppointment[]>([]);
@@ -256,6 +264,14 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
   const [loading, setLoading] = useState(true);
   const [groupsLoadFailed, setGroupsLoadFailed] = useState(false);
   const groupsLoadController = useRef<AbortController | null>(null);
+  const bookingsLoadController = useRef<AbortController | null>(null);
+  const staffLoadController = useRef<AbortController | null>(null);
+  const exportController = useRef<AbortController | null>(null);
+  const selectedGroupIdRef = useRef<string | null>(null);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingsLoadFailed, setBookingsLoadFailed] = useState(false);
+  const [statsRefreshKey, setStatsRefreshKey] = useState(0);
+  const [exporting, setExporting] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -340,20 +356,45 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
     };
   }, [closeEditor, isModalOpen]);
 
+  const fetchBookings = useCallback(async (groupId: string) => {
+    bookingsLoadController.current?.abort();
+    const controller = new AbortController();
+    bookingsLoadController.current = controller;
+    setBookingsLoading(true);
+    setBookingsLoadFailed(false);
+    try {
+      const response = await api.get<Booking[]>(`/api/group-appointments/${groupId}/bookings`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setSelectedGroup(current => current?.id === groupId ? { ...current, bookings: response.data } : current);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      console.error(error);
+      setBookingsLoadFailed(true);
+    } finally {
+      if (!controller.signal.aborted) setBookingsLoading(false);
+    }
+  }, []);
+
   const fetchGroups = useCallback(async () => {
     if (!activeProject) return;
+    if (groupsLoadController.current) setStatsRefreshKey(previous => previous + 1);
     groupsLoadController.current?.abort();
     const controller = new AbortController();
     groupsLoadController.current = controller;
     try {
       setLoading(true);
       setGroupsLoadFailed(false);
-      const response = await api.get<GroupAppointment[]>('/api/group-appointments', { params: { courseType }, signal: controller.signal });
+      const response = await api.get<GroupSummary[]>('/api/group-appointments', { params: { courseType, includeBookings: false }, signal: controller.signal });
       if (controller.signal.aborted) return;
-      setGroups(response.data);
-      setSelectedGroup(current => current
-        ? response.data.find(group => group.id === current.id) ?? null
-        : null);
+      const summaries = response.data.map(group => ({ ...group, bookings: [] }));
+      setGroups(summaries);
+      const selected = summaries.find(group => group.id === selectedGroupIdRef.current);
+      setSelectedGroup(current => current && selected ? { ...selected, bookings: current.bookings } : null);
+      if (selected) void fetchBookings(selected.id);
+      else {
+        selectedGroupIdRef.current = null;
+        bookingsLoadController.current?.abort();
+      }
     } catch (e) {
       if (controller.signal.aborted) return;
       console.error(e);
@@ -361,7 +402,7 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [activeProject, courseType]);
+  }, [activeProject, courseType, fetchBookings]);
 
   useEffect(() => {
     if (!activeProject) return;
@@ -369,20 +410,29 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
     if (!token) return;
 
     const signalR = new SignalRService(activeProject.id, token);
-    signalR.registerOnGroupBookingUpdate(() => void fetchGroups());
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    signalR.registerOnGroupBookingUpdate(() => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void fetchGroups(), 150);
+    });
     void signalR.start().catch(error => {
       console.error('Group booking live updates failed to start:', error);
     });
     return () => {
+      clearTimeout(refreshTimer);
       void signalR.stop();
     };
   }, [activeProject, fetchGroups]);
 
   const fetchInstructors = useCallback(async () => {
     if (!activeProject) return;
+    staffLoadController.current?.abort();
+    const controller = new AbortController();
+    staffLoadController.current = controller;
     setStaffLoaded(false);
     try {
-      const response = await api.get<InstructorsResponse>('/api/group-appointments/instructors');
+      const response = await api.get<InstructorsResponse>('/api/group-appointments/instructors', { signal: controller.signal });
+      if (controller.signal.aborted) return;
       const nextInstructors = response.data.instructors || [];
       setInstructors(nextInstructors);
       const contacts = response.data.instructorContacts ?? nextInstructors.map(name => ({ id: `legacy:${name}`, name, phone: '' }));
@@ -392,6 +442,7 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
       setDraftSupervisors(response.data.supervisors ?? []);
       setStaffLoaded(true);
     } catch (e) {
+      if (controller.signal.aborted) return;
       console.error(e);
       setMessage({ type: 'error', text: 'فشل تحميل أسماء الإنستراكتورز.' });
     }
@@ -401,8 +452,14 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchGroups();
     void fetchInstructors();
-    return () => groupsLoadController.current?.abort();
+    return () => {
+      groupsLoadController.current?.abort();
+      bookingsLoadController.current?.abort();
+      staffLoadController.current?.abort();
+    };
   }, [fetchGroups, fetchInstructors]);
+
+  useEffect(() => () => exportController.current?.abort(), []);
 
   const handleSaveGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -611,6 +668,8 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
       setPaidImportResult(response.data);
       setPaidImportPhones([]);
       setPaidImportFileName('');
+      selectedGroupIdRef.current = null;
+      bookingsLoadController.current?.abort();
       setSelectedGroup(null);
       setMessage({
         type: 'success',
@@ -642,6 +701,8 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
       await api.delete(`/api/group-appointments/${id}`);
       setMessage({ type: 'success', text: 'تم حذف المجموعة بنجاح.' });
       if (selectedGroup?.id === id) {
+        selectedGroupIdRef.current = null;
+        bookingsLoadController.current?.abort();
         setSelectedGroup(null);
       }
       void fetchGroups();
@@ -661,7 +722,9 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
 
   const handleSelectGroup = (group: GroupAppointment) => {
     if (manualBookingSubmitting) return;
+    selectedGroupIdRef.current = group.id;
     setSelectedGroup(group);
+    void fetchBookings(group.id);
     setSearchQuery('');
     setManualBookingOpen(false);
     resetManualBookingEditor();
@@ -669,6 +732,8 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
   };
 
   const closeSelectedGroup = () => {
+    selectedGroupIdRef.current = null;
+    bookingsLoadController.current?.abort();
     setSelectedGroup(null);
     setSearchQuery('');
     setManualBookingOpen(false);
@@ -693,6 +758,11 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
   };
 
   const applyManualBookingCreation = (groupId: string, groupName: string, response: ManualBookingResponse) => {
+    groupsLoadController.current?.abort();
+    bookingsLoadController.current?.abort();
+    setLoading(false);
+    setBookingsLoading(false);
+    setStatsRefreshKey(previous => previous + 1);
     const mergeCreatedBookingIntoGroup = (group: GroupAppointment) => mergeManualBookingIntoGroup(group, response);
     setGroups(previous => previous.map(group => group.id === groupId ? mergeCreatedBookingIntoGroup(group) : group));
     setSelectedGroup(previous => previous?.id === groupId ? mergeCreatedBookingIntoGroup(previous) : previous);
@@ -764,15 +834,18 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
       setPendingDeleteBookingId(booking.id);
       return;
     }
+    const groupId = selectedGroup?.id;
 
     try {
+      bookingsLoadController.current?.abort();
+      setBookingsLoading(false);
       setDeletingBookingId(booking.id);
       setMessage(null);
       await api.delete(`/api/group-appointments/bookings/${booking.id}`);
       setMessage({ type: 'success', text: `تم حذف ${booking.customerName || 'المشترك'} من المجموعة.` });
 
       setSelectedGroup(prev => {
-        if (!prev) return prev;
+        if (!prev || prev.id !== groupId) return prev;
         return {
           ...prev,
           bookedCount: Math.max(0, prev.bookedCount - 1),
@@ -781,7 +854,7 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
       });
 
       setGroups(prev => prev.map(group => {
-        if (!group.bookings.some(item => item.id === booking.id)) return group;
+        if (group.id !== groupId) return group;
         return {
           ...group,
           bookedCount: Math.max(0, group.bookedCount - 1),
@@ -801,6 +874,8 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
   const handleToggleBookingStatus = async (bookingId: string, updates: { isAttended?: boolean; isPaid?: boolean }) => {
     if (manualBookingSubmitting) return;
     try {
+      bookingsLoadController.current?.abort();
+      setBookingsLoading(false);
       await api.patch(`/api/group-appointments/bookings/${bookingId}`, updates);
 
       // Update local state
@@ -840,10 +915,17 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
   };
 
   const handleExportExcel = async (group: GroupAppointment) => {
-    if (!group || group.bookings.length === 0) return;
+    if (group.bookedCount === 0 || exporting) return;
+    const controller = new AbortController();
+    exportController.current = controller;
+    setExporting(true);
+    try {
+    const response = await api.get<Booking[]>(`/api/group-appointments/${group.id}/bookings`, { signal: controller.signal });
+    if (controller.signal.aborted) return;
     const XLSX = await import('xlsx');
+    if (controller.signal.aborted) return;
 
-    const sortedBookings = [...group.bookings].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const sortedBookings = [...response.data].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const data = sortedBookings.map(b => ({
       'اسم الطالب': b.customerName,
       'رقم الهاتف': `+${b.customerPhone}`,
@@ -871,10 +953,27 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        console.error(error);
+        setMessage({ type: 'error', text: 'تعذر تحميل الحجوزات للتصدير. حاول مرة أخرى.' });
+      }
+    } finally {
+      if (!controller.signal.aborted) setExporting(false);
+    }
   };
 
   const handleExportInactiveGroupsExcel = async () => {
-    const inactiveGroups = groups.filter(group => !group.isActive && group.bookings.length > 0);
+    if (exporting) return;
+    const controller = new AbortController();
+    exportController.current = controller;
+    setExporting(true);
+    try {
+    const response = await api.get<GroupAppointment[]>('/api/group-appointments', {
+      params: { courseType, includeBookings: true }, signal: controller.signal,
+    });
+    if (controller.signal.aborted) return;
+    const inactiveGroups = response.data.filter(group => !group.isActive && group.bookings.length > 0);
     const data = inactiveGroups.flatMap(group => {
       const groupMode = group.mode === 'online' ? 'أونلاين (Online)' : 'في السنتر (Offline)';
       return group.bookings.map(booking => ({
@@ -896,6 +995,7 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
     }
 
     const XLSX = await import('xlsx');
+    if (controller.signal.aborted) return;
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'المجموعات غير النشطة');
@@ -909,6 +1009,14 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        console.error(error);
+        setMessage({ type: 'error', text: 'تعذر تحميل حجوزات المجموعات غير النشطة للتصدير.' });
+      }
+    } finally {
+      if (!controller.signal.aborted) setExporting(false);
+    }
   };
 
   const formatTime = (isoString: string) => {
@@ -1004,11 +1112,13 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
       {message && <StatusMessage tone={message.type === 'error' ? 'danger' : 'success'}>{message.text}</StatusMessage>}
 
       <div id="groups-workspace-panel-groups" role="region" aria-label="المجموعات والحجوزات" hidden={workspaceSection !== 'groups'} className={styles.groupWorkspacePanel}>
+      {activeProject && <GroupBookingStats projectId={activeProject.id} courseType={courseType} refreshKey={statsRefreshKey} />}
       {groupsLoadFailed && <StatusMessage tone="danger">
         <span>{groups.length ? 'تعذر تحديث المجموعات. البيانات المعروضة من آخر تحميل ناجح.' : 'فشل تحميل مجموعات المواعيد.'}</span>
         <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => void fetchGroups()}>إعادة تحميل المجموعات</button>
       </StatusMessage>}
-      {loading ? (
+      {loading && groups.length > 0 && <p role="status" className={styles.sectionHint}>جاري تحميل مجموعات المواعيد…</p>}
+      {loading && groups.length === 0 ? (
         <div role="status" aria-live="polite" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 'var(--space-sm)', padding: '4rem 0' }}>
           <div className={styles.spinner} aria-hidden="true"></div>
           <span>جاري تحميل مجموعات المواعيد…</span>
@@ -1057,7 +1167,7 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
                     ref={manualBookingToggleRef}
                     type="button"
                     onClick={manualBookingOpen ? closeManualBookingEditor : openManualBookingEditor}
-                    disabled={!selectedGroup.isActive || selectedGroup.bookedCount >= selectedGroup.capacity || manualBookingSubmitting}
+                    disabled={!selectedGroup.isActive || selectedGroup.bookedCount >= selectedGroup.capacity || manualBookingSubmitting || bookingsLoading || bookingsLoadFailed}
                     aria-expanded={manualBookingOpen}
                     aria-controls="manual-booking-editor"
                     aria-describedby="manual-booking-availability"
@@ -1069,11 +1179,11 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
                   <button
                     type="button"
                     onClick={() => handleExportExcel(selectedGroup)}
-                    disabled={selectedGroup.bookings.length === 0}
+                    disabled={selectedGroup.bookedCount === 0 || exporting}
                     className={`${styles.btn} ${styles.btnSecondary}`}
                   >
                     <Download size={12} />
-                    تصدير المشتركين (Excel)
+                    {exporting ? 'جاري تجهيز التصدير…' : 'تصدير المشتركين (Excel)'}
                   </button>
                   <button
                     type="button"
@@ -1251,7 +1361,12 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
                 />
               </div>
 
-              {selectedGroup.bookings.length === 0 ? (
+              {bookingsLoading && <p role="status" className={styles.sectionHint}>جاري تحميل المشتركين…</p>}
+              {bookingsLoadFailed && <StatusMessage tone="danger">
+                <span>{selectedGroup.bookings.length ? 'تعذر تحديث المشتركين. البيانات المعروضة من آخر تحميل ناجح.' : 'تعذر تحميل المشتركين.'}</span>
+                <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => void fetchBookings(selectedGroup.id)}>إعادة تحميل المشتركين</button>
+              </StatusMessage>}
+              {(bookingsLoading || bookingsLoadFailed) && selectedGroup.bookings.length === 0 ? null : selectedGroup.bookings.length === 0 ? (
                 <p style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', textAlign: 'center', padding: '2rem 0' }}>
                   لا يوجد مشتركون مسجلون في هذه المجموعة بعد. استخدم زر «إضافة مشترك يدويًا» للبدء.
                 </p>
@@ -1515,8 +1630,8 @@ export default function GroupAppointmentsManager({ onBack, timezone, courseType 
       <div id="groups-workspace-panel-data" role="region" aria-label="الاستيراد والتصدير" hidden={workspaceSection !== 'data'} className={styles.groupWorkspacePanel}>
         <section className={styles.groupExport} aria-label="تصدير الحجوزات">
           <div><h3 className={styles.sectionTitle}>تصدير الحجوزات</h3><p className={styles.sectionHint}>نزّل حجوزات المجموعات غير النشطة في ملف Excel.</p></div>
-          <button type="button" onClick={handleExportInactiveGroupsExcel} className={`${styles.btn} ${styles.btnSecondary}`}>
-            <Download size={16} />تصدير حجوزات المجموعات غير النشطة
+          <button type="button" onClick={handleExportInactiveGroupsExcel} disabled={exporting} className={`${styles.btn} ${styles.btnSecondary}`}>
+            <Download size={16} />{exporting ? 'جاري تجهيز التصدير…' : 'تصدير حجوزات المجموعات غير النشطة'}
           </button>
         </section>
       <section className={styles.importPanel} aria-label="استيراد المحظورين للدفع">

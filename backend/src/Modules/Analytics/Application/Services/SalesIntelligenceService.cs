@@ -400,7 +400,7 @@ public sealed class SalesIntelligenceService(
         DateTime toUtc,
         CancellationToken cancellationToken)
     {
-        var conversations = await db.Conversations.IgnoreQueryFilters()
+        var conversations = await db.Conversations.IgnoreQueryFilters().AsNoTracking()
             .Where(conversation => conversation.ProjectId == projectId
                 && conversation.CreatedAt >= fromUtc
                 && conversation.CreatedAt < toUtc)
@@ -409,22 +409,26 @@ public sealed class SalesIntelligenceService(
         if (conversations.Count == 0) return new([], [], [], [], [], []);
         var conversationIds = conversations.Select(conversation => conversation.Id).ToArray();
         var customerIds = conversations.Select(conversation => conversation.CustomerId).Distinct().ToArray();
-        var analyses = await db.ConversationSalesAnalyses.IgnoreQueryFilters()
+        var analyses = await db.ConversationSalesAnalyses.IgnoreQueryFilters().AsNoTracking()
             .Where(analysis => analysis.ProjectId == projectId && conversationIds.Contains(analysis.ConversationId))
             .ToListAsync(cancellationToken);
-        var customers = await db.Customers.IgnoreQueryFilters()
+        var customers = analyses.Count == 0 ? [] : await db.Customers.IgnoreQueryFilters()
             .Where(customer => customer.ProjectId == projectId && customerIds.Contains(customer.Id))
             .Select(customer => new CustomerNameFact(customer.Id, customer.Name))
             .ToListAsync(cancellationToken);
-        var bookings = await db.GroupAppointmentBookings.IgnoreQueryFilters()
+        var bookings = await db.GroupAppointmentBookings.IgnoreQueryFilters().AsNoTracking()
             .Where(booking => booking.ProjectId == projectId && customerIds.Contains(booking.CustomerId))
             .ToListAsync(cancellationToken);
         var messages = await db.Messages.IgnoreQueryFilters()
             .Where(message => conversationIds.Contains(message.ConversationId))
             .Select(message => new MessageTimingFact(message.ConversationId, message.Direction, message.Timestamp))
             .ToListAsync(cancellationToken);
-        var followUps = await db.FollowUps.IgnoreQueryFilters()
-            .Where(followUp => followUp.ProjectId == projectId && customerIds.Contains(followUp.CustomerId))
+        var followUpConversationIds = analyses.Where(analysis => analysis.NeedsFollowUp)
+            .Select(analysis => analysis.ConversationId).ToHashSet();
+        var followUpCustomerIds = conversations.Where(conversation => followUpConversationIds.Contains(conversation.Id))
+            .Select(conversation => conversation.CustomerId).Distinct().ToArray();
+        var followUps = followUpCustomerIds.Length == 0 ? [] : await db.FollowUps.IgnoreQueryFilters()
+            .Where(followUp => followUp.ProjectId == projectId && followUpCustomerIds.Contains(followUp.CustomerId))
             .Select(followUp => new FollowUpFact(
                 followUp.CustomerId,
                 followUp.ConversationId,
@@ -440,17 +444,18 @@ public sealed class SalesIntelligenceService(
     private static IReadOnlyList<ConversationFact> BuildFacts(ReportSources sources)
     {
         var analyses = sources.Analyses.ToDictionary(analysis => analysis.ConversationId);
+        var bookingsByCustomer = sources.Bookings.ToLookup(booking => booking.CustomerId);
         var messageTimings = sources.Messages
             .GroupBy(message => message.ConversationId)
             .ToDictionary(group => group.Key, group => group.OrderBy(message => message.Timestamp).ToArray());
         return sources.Conversations.Select(conversation =>
         {
             analyses.TryGetValue(conversation.Id, out var analysis);
-            var bookings = BookingsForConversation(conversation, sources.Bookings);
+            var bookings = BookingsForConversation(conversation, bookingsByCustomer[conversation.CustomerId]);
             var stage = EffectiveStage(analysis?.VerifiedStage ?? SalesConversationStage.New, bookings);
-            var responded = HasResponse(messageTimings.GetValueOrDefault(conversation.Id));
-            return new ConversationFact(conversation, analysis, stage, responded,
-                bookings.Any(booking => booking.IsPaid), bookings.Any(booking => booking.IsAttended));
+            var firstResponseMinutes = FirstResponseMinutes(messageTimings.GetValueOrDefault(conversation.Id));
+            return new ConversationFact(conversation, analysis, stage, firstResponseMinutes.HasValue,
+                bookings.Any(booking => booking.IsPaid), bookings.Any(booking => booking.IsAttended), firstResponseMinutes);
         }).ToArray();
     }
 
@@ -468,7 +473,9 @@ public sealed class SalesIntelligenceService(
             rows.Count, rows.Select(row => row.Conversation.CustomerId).Distinct().Count(),
             rows.Count(IsActive), analyzedRows, Percentage(analyzedRows, rows.Count),
             Percentage(rows.Count(IsBooked), rows.Count), Percentage(rows.Count(IsPaid), rows.Count),
-            Median(ResponseTimes(context.Sources.Messages)), BuildFunnel(rows), BuildFunnelTransitions(rows), BuildDaily(rows, context.Timezone),
+            Median(rows.Where(row => row.FirstResponseMinutes.HasValue).Select(row => row.FirstResponseMinutes!.Value)
+                .OrderBy(minutes => minutes).ToArray()),
+            BuildFunnel(rows), BuildFunnelTransitions(rows), BuildDaily(rows, context.Timezone),
             BuildReasons(rows), FollowUpPlan(opportunityCandidates),
             Opportunities(opportunityCandidates, customerNames), AnalysisItems(rows, customerNames), digest);
     }
@@ -594,14 +601,6 @@ public sealed class SalesIntelligenceService(
         FollowUpTargetsOpportunity(followUp, row)
         && followUp.Status is "Completed" or "Done" or "Resolved"
         && followUp.UpdatedAt >= row.Analysis!.AnalyzedAtUtc;
-
-    private static IReadOnlyList<decimal> ResponseTimes(IEnumerable<MessageTimingFact> messages) => messages
-        .GroupBy(message => message.ConversationId)
-        .Select(group => FirstResponseMinutes(group.OrderBy(message => message.Timestamp)))
-        .Where(minutes => minutes.HasValue)
-        .Select(minutes => minutes!.Value)
-        .OrderBy(minutes => minutes)
-        .ToArray();
 
     private static bool IsActive(ConversationFact row) =>
         row.Analysis?.Outcome == SalesConversationOutcome.Active || row.Conversation.Status is "Open" or "Pending";
@@ -804,7 +803,7 @@ public sealed class SalesIntelligenceService(
         DateTime toUtc,
         CancellationToken cancellationToken)
     {
-        var digest = await db.SalesIntelligenceDigests.IgnoreQueryFilters()
+        var digest = await db.SalesIntelligenceDigests.IgnoreQueryFilters().AsNoTracking()
             .Where(item => item.ProjectId == projectId
                 && item.GeneratedAtUtc >= DateTime.UtcNow.AddDays(-2)
                 && item.WindowStartUtc == fromUtc && item.WindowEndUtc == toUtc)
@@ -955,7 +954,7 @@ public sealed class SalesIntelligenceService(
 
     private static IReadOnlyList<GroupAppointmentBooking> BookingsForConversation(
         Conversation conversation,
-        IReadOnlyList<GroupAppointmentBooking> bookings) => bookings
+        IEnumerable<GroupAppointmentBooking> bookings) => bookings
         .Where(item => item.CustomerId == conversation.CustomerId
             && item.CreatedAt >= conversation.CreatedAt
             && item.CreatedAt <= conversation.CreatedAt.AddDays(AttributionWindowDays))
@@ -971,18 +970,6 @@ public sealed class SalesIntelligenceService(
         return analyzedStage > SalesConversationStage.BookingIntent
             ? SalesConversationStage.BookingIntent
             : analyzedStage;
-    }
-
-    private static bool HasResponse(IEnumerable<MessageTimingFact>? messages)
-    {
-        if (messages is null) return false;
-        var incomingSeen = false;
-        foreach (var message in messages)
-        {
-            if (string.Equals(message.Direction, "Incoming", StringComparison.OrdinalIgnoreCase)) incomingSeen = true;
-            if (incomingSeen && string.Equals(message.Direction, "Outgoing", StringComparison.OrdinalIgnoreCase)) return true;
-        }
-        return false;
     }
 
     private static decimal? FirstResponseMinutes(IEnumerable<MessageTimingFact>? messages)
@@ -1087,7 +1074,8 @@ public sealed class SalesIntelligenceService(
         SalesConversationStage Stage,
         bool Responded,
         bool Paid,
-        bool Attended);
+        bool Attended,
+        decimal? FirstResponseMinutes);
 
     private sealed record FunnelTransitionDefinition(
         string Key,
