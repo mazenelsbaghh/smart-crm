@@ -1,10 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import PageHeader from '../../../components/ui/PageHeader';
+import Tabs from '../../../components/ui/Tabs';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   CalendarCheck2, CalendarClock, CheckCheck, Download, MapPin, RefreshCw, Search, Send,
-  UsersRound, X,
+  UsersRound, X, SlidersHorizontal,
 } from 'lucide-react';
 import { useAuth } from '../../../context/auth-context';
 import { api } from '../../../services/api';
@@ -61,7 +64,18 @@ const attendanceLabels: Record<string, string> = {
 const attendanceLabel = (mode?: string) => attendanceLabels[mode ?? 'Unknown'] ?? attendanceLabels.Unknown;
 
 export default function ScheduleDemandPage() {
-  const { activeProject, user } = useAuth();
+  const { activeProject, user, loading } = useAuth();
+  if (loading) return <PageSkeleton />;
+  if (!activeProject) return <p role="alert">تعذّر تحديد المشروع النشط.</p>;
+  return <ScheduleDemandWorkspace key={activeProject.id} projectId={activeProject.id}
+    canManage={user?.role === 'Owner' || user?.role === 'Admin'}
+    timezone={activeProject.settings?.timezone || 'Africa/Cairo'} />;
+}
+
+function ScheduleDemandWorkspace({ projectId, canManage, timezone }: {
+  projectId: string; canManage: boolean; timezone: string;
+}) {
+  const [task, setTask] = useState<'requests' | 'appointments'>('requests');
   const [overview, setOverview] = useState<DemandOverview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
@@ -73,34 +87,33 @@ export default function ScheduleDemandPage() {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const canManage = user?.role === 'Owner' || user?.role === 'Admin';
-  const timezone = activeProject?.settings?.timezone || 'Africa/Cairo';
+  const loadController = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
-    if (!activeProject) {
-      setLoading(false);
-      setError('تعذّر تحديد المشروع النشط.');
-      return;
-    }
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
     setLoading(true);
     setError('');
     try {
       const response = await api.get<DemandOverview>(
-        `/api/projects/${activeProject.id}/reports/sales-intelligence/schedule-demand`,
-        { params: { all: true } },
+        `/api/projects/${projectId}/reports/sales-intelligence/schedule-demand`,
+        { params: { all: true }, signal: controller.signal },
       );
+      if (controller.signal.aborted) return;
       setOverview(response.data);
       setSelected((current) => new Set([...current].filter((id) => response.data.rows.some((row) => row.customerId === id))));
     } catch (requestError) {
+      if (controller.signal.aborted) return;
       setError(errorText(requestError, 'تعذّر تحميل طلبات المواعيد. حاول مرة أخرى.'));
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [activeProject]);
+  }, [projectId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(timer); loadController.current?.abort(); };
   }, [load]);
 
   const visibleRows = useMemo(() => {
@@ -145,13 +158,13 @@ export default function ScheduleDemandPage() {
   };
 
   const sendAvailable = async () => {
-    if (!activeProject || selected.size === 0 || sending) return;
+    if (selected.size === 0 || sending) return;
     setSending(true);
     setError('');
     setNotice('');
     try {
       const response = await api.post<SendResult>(
-        `/api/projects/${activeProject.id}/reports/sales-intelligence/schedule-demand/send-available`,
+        `/api/projects/${projectId}/reports/sales-intelligence/schedule-demand/send-available`,
         { customerIds: [...selected] },
       );
       const result = response.data;
@@ -170,32 +183,35 @@ export default function ScheduleDemandPage() {
 
   if (loading && !overview) return <PageSkeleton />;
 
-  return <main className={styles.page} dir="rtl">
-    <header className={styles.pageHeader}>
-      <div>
-        <span className={styles.eyebrow}>متابعة فرص الحجز</span>
-        <h1>طلبات المواعيد</h1>
-        <p>الطلاب اللي طلبوا موعدًا مناسبًا أو بيسألوا بس، مع نوع الحضور المطلوب والمجموعات المفتوحة.</p>
-      </div>
+  return <section className={styles.page} dir="rtl">
+    <div className={styles.pageHeader}>
+<PageHeader icon={<CalendarClock size={24} aria-hidden="true" />} title="طلبات المواعيد" />
       <button type="button" className={styles.refreshButton} disabled={loading} onClick={() => void load()}>
         <RefreshCw size={17} className={loading ? styles.spin : ''} /> تحديث
       </button>
-    </header>
+    </div>
 
-    {error && <div className={styles.errorBanner} role="alert">{error}</div>}
+    {error && <div className={styles.errorBanner} role="alert">{error}{overview && ' البيانات المعروضة من آخر تحميل ناجح.'}</div>}
     {notice && <div className={styles.noticeBanner} role="status">{notice}</div>}
 
+    {overview ? <>
+    <Tabs idPrefix="schedule-demand" label="عرض المواعيد" selected={task} onChange={setTask}
+      tabs={[
+        { key: 'requests', label: 'طلبات العملاء', icon: <UsersRound size={17} aria-hidden="true" /> },
+        { key: 'appointments', label: 'المواعيد المفتوحة', icon: <CalendarCheck2 size={17} aria-hidden="true" /> },
+      ]} />
+    <div id="schedule-demand-panel-appointments" role="tabpanel" aria-labelledby="schedule-demand-tab-appointments" hidden={task !== 'appointments'} className={styles.taskPanel}>
     <section className={styles.metrics} aria-label="ملخص طلبات المواعيد">
       <Metric icon={UsersRound} label="طلاب مهتمون بالمواعيد" value={overview?.totalPeople ?? 0} />
       <Metric icon={CalendarClock} label="مواعيد مطلوبة مختلفة" value={overview?.distinctSchedules ?? 0} />
       <Metric icon={CalendarCheck2} label="مجموعات مفتوحة الآن" value={overview?.openAppointments.length ?? 0} />
     </section>
-
-    <OpenAppointments appointments={overview?.openAppointments ?? []} timezone={timezone} />
-
+      <OpenAppointments appointments={overview?.openAppointments ?? []} timezone={timezone} />
+    </div>
+    <div id="schedule-demand-panel-requests" role="tabpanel" aria-labelledby="schedule-demand-tab-requests" hidden={task !== 'requests'} className={styles.taskPanel}>
     <section className={styles.demandPanel} aria-labelledby="people-title">
       <div className={styles.sectionHeader}>
-        <div><span className={styles.eyebrow}>كل الوقت</span><h2 id="people-title">العملاء والمواعيد المطلوبة</h2></div>
+        <div><h2 id="people-title">طلبات العملاء</h2><span className={styles.eyebrow}>كل الوقت</span></div>
         <span className={styles.countBadge}>{visibleRows.length.toLocaleString('ar-EG')}</span>
       </div>
 
@@ -204,6 +220,9 @@ export default function ScheduleDemandPage() {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ابحث بالاسم أو الرقم أو الموعد…" />
           {query && <button type="button" aria-label="مسح البحث" onClick={() => setQuery('')}><X size={14} /></button>}
         </label>
+        <details className={styles.filterDisclosure}>
+          <summary><SlidersHorizontal size={17} aria-hidden="true" />تصفية{(scheduleFilter !== 'all' || attendanceFilter !== 'all') && <span>مفعّلة</span>}</summary>
+          <div className={styles.advancedFilters}>
         <label className={styles.filterSelect}><span>الموعد المطلوب</span>
           <select value={scheduleFilter} onChange={(event) => setScheduleFilter(event.target.value)}>
             <option value="all">كل الطلاب</option>
@@ -217,6 +236,8 @@ export default function ScheduleDemandPage() {
             {Object.entries(attendanceLabels).map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}
           </select>
         </label>
+          </div>
+        </details>
         <button type="button" className={styles.selectAll} onClick={toggleAll} disabled={visibleRows.length === 0}>
           <CheckCheck size={16} />{allVisibleSelected ? 'إلغاء تحديد الظاهر' : 'تحديد كل الظاهر'}
         </button>
@@ -228,6 +249,7 @@ export default function ScheduleDemandPage() {
         />)}</div>}
     </section>
 
+    </div>
     {selected.size > 0 && <div className={styles.actionDock} role="region" aria-label="إجراءات العملاء المحددين">
       <div><strong>{selected.size.toLocaleString('ar-EG')} عميل محدد</strong><span>الشيت يشمل كل المحددين، حتى المخفيين بالفلتر.</span></div>
       <div className={styles.dockActions}>
@@ -250,7 +272,8 @@ export default function ScheduleDemandPage() {
         </button>
       </div>
     </section>}
-  </main>;
+    </> : <p role="status">لم تُحمّل بيانات طلبات المواعيد بعد. أعد المحاولة باستخدام تحديث.</p>}
+  </section>;
 }
 
 async function downloadDemandRows(rows: DemandRow[], timezone: string) {
@@ -280,7 +303,7 @@ function Metric({ icon: Icon, label, value }: { icon: typeof UsersRound; label: 
 
 function OpenAppointments({ appointments, timezone }: { appointments: OpenAppointment[]; timezone: string }) {
   return <section className={styles.openPanel} aria-labelledby="open-title">
-    <div className={styles.sectionHeader}><div><span className={styles.eyebrow}>جاهزة للإرسال</span><h2 id="open-title">المواعيد المفتوحة الآن</h2></div></div>
+    <div className={styles.sectionHeader}><div><span className={styles.eyebrow}>جاهزة للإرسال</span><h2 id="open-title"><CalendarCheck2 size={19} aria-hidden="true" />المواعيد المفتوحة الآن</h2></div></div>
     {!appointments.length ? <div className={styles.empty}>لا توجد مجموعات مفتوحة بها أماكن حاليًا؛ الإرسال متوقف لحماية العملاء.</div> :
       <div className={styles.appointmentGrid}>{appointments.map((appointment) => {
         const date = new Date(appointment.dateTimeUtc).toLocaleString('ar-EG', {
@@ -316,8 +339,8 @@ function DemandPerson({ row, timezone, checked, onToggle }: {
 }
 
 function PageSkeleton() {
-  return <main className={styles.page} dir="rtl" aria-busy="true">
+  return <section className={styles.page} dir="rtl" aria-busy="true">
     <div className={styles.skeletonHeader} /><div className={styles.skeletonMetrics} />
     <div className={styles.skeletonPanel} /><div className={styles.skeletonPanel} />
-  </main>;
+  </section>;
 }

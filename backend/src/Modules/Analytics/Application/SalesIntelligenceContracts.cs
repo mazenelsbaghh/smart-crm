@@ -117,7 +117,7 @@ public sealed record SalesIntelligenceDashboard(
     decimal AnalysisCoverage,
     decimal BookingConversionRate,
     decimal PaymentConversionRate,
-    decimal MedianFirstResponseMinutes,
+    decimal? MedianFirstResponseMinutes,
     IReadOnlyList<FunnelMetric> Funnel,
     IReadOnlyList<FunnelTransitionMetric> FunnelTransitions,
     IReadOnlyList<DailySalesMetric> Daily,

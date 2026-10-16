@@ -1,0 +1,19 @@
+.trigger { display: flex; align-items: center; gap: 10px; min-height: 44px; width: min(330px, 32vw); padding: 8px 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface); color: var(--text-soft); font: inherit; font-size: .8125rem; cursor: pointer; }
+.trigger:hover { border-color: var(--border-strong); color: var(--text-strong); }
+.trigger kbd { margin-inline-start: auto; padding: 1px 5px; border: 1px solid var(--border-subtle); border-radius: 4px; font: .625rem var(--font-mono); white-space: nowrap; }
+.searchField { display: flex; align-items: center; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid var(--border-subtle); }
+.searchField > svg { color: var(--accent); flex-shrink: 0; }
+.searchField input { flex: 1; min-width: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-strong); font: inherit; font-size: 1rem; min-height: 44px; padding: 8px 0; }
+.searchField input:focus { outline: none; box-shadow: none; }
+.searchField:focus-within { border-color: var(--accent); }
+.searchField button { padding: 6px; min-width: 44px; }
+.resultContext { margin: 14px 0 8px; color: var(--text-soft); font-size: .75rem; }
+.results { display: flex; flex-direction: column; gap: 4px; max-height: min(440px, 52dvh); overflow: auto; overscroll-behavior: contain; }
+.results a { display: flex; align-items: center; gap: 12px; min-height: 62px; padding: 10px 12px; color: var(--text-base); border: 1px solid transparent; border-radius: var(--radius-md); text-decoration: none; font-size: .875rem; }
+.results a[aria-selected='true'] { background: var(--accent-soft); border-color: var(--border-subtle); color: var(--accent); }
+.results a > span { flex: 1; }
+.results small { display: block; margin-top: 2px; color: var(--text-soft); font-size: .6875rem; }
+.empty { padding: 28px 12px; color: var(--text-soft); font-size: .875rem; }
+.keyboardHint { display: flex; gap: 14px; margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--border-subtle); color: var(--text-soft); font-size: .6875rem; }
+@media (max-width: 1000px) { .trigger { width: 44px; padding: 8px; justify-content: center; } .trigger span, .trigger kbd { display: none; } }
+@media (max-width: 767px) { .trigger { background: transparent; border-color: transparent; flex-shrink: 0; } .keyboardHint { display: none; } .results { max-height: 60dvh; } }

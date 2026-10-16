@@ -4,6 +4,7 @@ using Modules.Conversations.Hubs;
 using Modules.GroupAppointments.Domain;
 using Modules.GroupAppointments.Services;
 using Shared.Infrastructure;
+using Modules.WhatsApp.Services;
 
 namespace Modules.AI.Services;
 
@@ -14,6 +15,9 @@ public sealed class AiGroupBookingRequest
     public Guid? RequesterCustomerId { get; init; }
     public SuggestedGroupBookingPerson[]? SuggestedPeople { get; init; } = [];
     public string? Timezone { get; init; }
+    public bool RequesterAllowsTransfer { get; init; }
+    public string? RequesterCity { get; init; }
+    public string? AttendanceMode { get; init; }
 }
 
 public enum AiGroupBookingFailure
@@ -24,7 +28,12 @@ public enum AiGroupBookingFailure
     GroupExpired,
     GroupFull,
     TemporaryFailure,
-    BookingAlreadyExists
+    BookingAlreadyExists,
+    FriendNotOnWhatsApp,
+    WhatsAppVerificationUnavailable,
+    OnlineRequired,
+    CityRequired,
+    AttendanceModeMismatch
 }
 
 public sealed record AiGroupBookingResult(
@@ -44,10 +53,25 @@ public sealed record AiGroupBookingResult(
                 return null;
             }
 
+            var attendanceGuidance = Failure switch
+            {
+                AiGroupBookingFailure.OnlineRequired => "الحجز ده لازم يكون أونلاين. المجموعة دي في السنتر ومش متاحة للحضور أونلاين؛ اختار معاد من مجموعات الأونلاين علشان نأكد الحجز.",
+                AiGroupBookingFailure.CityRequired => "قبل تأكيد الحضور في السنتر، ممكن توضح مدينة الشخص المطلوب حجزه؟ الحضور في السنتر لسكان الإسكندرية، وخارجها الحجز أونلاين فقط.",
+                AiGroupBookingFailure.AttendanceModeMismatch => "المجموعة دي أونلاين ومش مطابقة لاختيار الحضور في السنتر. اختار مجموعة بنفس طريقة الحضور المطلوبة علشان نأكد الحجز.",
+                _ => null
+            };
+            if (attendanceGuidance is not null)
+                return BookedPeople.Length == 0 ? attendanceGuidance
+                    : $"تم تسجيل {string.Join("، ", BookedPeople)}، لكن باقي الأشخاص لم يتم حجزهم. {attendanceGuidance}";
+
             var guidance = Failure switch
             {
                 AiGroupBookingFailure.InvalidSuggestion =>
                     "ابعت الاسم ورقم الموبايل الصحيح علشان نكمل الحجز.",
+                AiGroupBookingFailure.FriendNotOnWhatsApp =>
+                    "في رقم مش مسجل على واتساب؛ ابعت رقم عليه واتساب علشان نكمل الحجز.",
+                AiGroupBookingFailure.WhatsAppVerificationUnavailable =>
+                    "مش قادر أتحقق من واتساب دلوقتي؛ هنكمل تأكيد باقي الحجز بعد ما نقدر نتحقق.",
                 AiGroupBookingFailure.GroupFull =>
                     "المجموعة اكتملت؛ اختار معاد تاني للباقي.",
                 AiGroupBookingFailure.BookingAlreadyExists =>
@@ -62,6 +86,10 @@ public sealed record AiGroupBookingResult(
                 {
                     AiGroupBookingFailure.InvalidSuggestion =>
                         "محتاج الاسم ورقم موبايل صحيح علشان أقدر أسجل الحجز. ابعتهُم لي من فضلك.",
+                    AiGroupBookingFailure.FriendNotOnWhatsApp =>
+                        "في رقم مش مسجل على واتساب، والحجز ما اتأكدش. ابعت رقم عليه واتساب علشان نكمل.",
+                    AiGroupBookingFailure.WhatsAppVerificationUnavailable =>
+                        "مش قادر أتحقق إن الرقم عليه واتساب دلوقتي، فالحجز لسه ما اتأكدش. نكمل لما التحقق يكون متاح.",
                     AiGroupBookingFailure.GroupFull =>
                         "للأسف المجموعة دي اكتملت دلوقتي. اختار معاد تاني وأنا أسجلك فيه.",
                     AiGroupBookingFailure.BookingAlreadyExists =>
@@ -85,7 +113,8 @@ public sealed class AiGroupBookingOrchestrator(
     AppDbContext context,
     GroupBookingCoordinator bookingCoordinator,
     IHubContext<NotificationHub> hubContext,
-    ILogger<AiGroupBookingOrchestrator> logger)
+    ILogger<AiGroupBookingOrchestrator> logger,
+    IWhatsAppBookingNumberVerifier? numberVerifier = null)
 {
     private readonly AppDbContext _context = context;
     private readonly GroupBookingCoordinator _bookingCoordinator = bookingCoordinator;
@@ -125,6 +154,19 @@ public sealed class AiGroupBookingOrchestrator(
         for (var index = 0; index < selection.Candidates.Count; index++)
         {
             var candidate = selection.Candidates[index];
+            if (!candidate.CustomerId.HasValue)
+            {
+                var verification = numberVerifier is null
+                    ? WhatsAppNumberVerification.Unavailable
+                    : await numberVerifier.VerifyAsync(request.ProjectId, candidate.Phone, cancellationToken);
+                if (verification != WhatsAppNumberVerification.Registered)
+                {
+                    unbookedPeople.Add(candidate.Name);
+                    failure = verification == WhatsAppNumberVerification.NotRegistered
+                        ? AiGroupBookingFailure.FriendNotOnWhatsApp : AiGroupBookingFailure.WhatsAppVerificationUnavailable;
+                    continue;
+                }
+            }
             var result = await BookCandidateAsync(request, candidate, cancellationToken);
             if (result.Succeeded)
             {
@@ -211,7 +253,10 @@ public sealed class AiGroupBookingOrchestrator(
                 name is { Length: > 0 and <= 120 } &&
                 uniquePhones.Add(phone))
             {
-                candidates.Add(new(name, phone, person.IsRequester ? requester?.CustomerId : null));
+                var city = person.IsRequester
+                    ? GroupBookingAttendancePolicy.EffectiveCity(request.RequesterCity, person.City)
+                    : person.City;
+                candidates.Add(new(name, phone, person.IsRequester ? requester?.CustomerId : null, city));
             }
             else
             {
@@ -236,7 +281,9 @@ public sealed class AiGroupBookingOrchestrator(
             CustomerName = candidate.Name,
             CustomerPhone = candidate.Phone,
             KnownCustomerId = candidate.CustomerId,
-            ExistingBookingPolicy = candidate.CustomerId.HasValue
+            CustomerCity = candidate.City,
+            AttendanceMode = request.AttendanceMode,
+            ExistingBookingPolicy = candidate.CustomerId.HasValue && request.RequesterAllowsTransfer
                 ? ExistingGroupBookingPolicy.Transfer
                 : ExistingGroupBookingPolicy.UpdateSameGroup,
             Origin = GroupBookingOrigin.Ai,
@@ -296,7 +343,7 @@ public sealed class AiGroupBookingOrchestrator(
         }
     }
 
-    private sealed record BookingCandidate(string Name, string Phone, Guid? CustomerId);
+    private sealed record BookingCandidate(string Name, string Phone, Guid? CustomerId, string? City);
 
     private sealed record BookingRequester(Guid CustomerId, string? Name, string? PhoneNumber);
 
@@ -315,6 +362,9 @@ public sealed class AiGroupBookingOrchestrator(
     private static AiGroupBookingFailure MapFailure(GroupBookingStatus status) => status switch
     {
         GroupBookingStatus.InvalidRequest => AiGroupBookingFailure.InvalidSuggestion,
+        GroupBookingStatus.OnlineRequired => AiGroupBookingFailure.OnlineRequired,
+        GroupBookingStatus.CityRequired => AiGroupBookingFailure.CityRequired,
+        GroupBookingStatus.AttendanceModeMismatch => AiGroupBookingFailure.AttendanceModeMismatch,
         GroupBookingStatus.BookingAlreadyExists => AiGroupBookingFailure.BookingAlreadyExists,
         GroupBookingStatus.GroupFull => AiGroupBookingFailure.GroupFull,
         GroupBookingStatus.GroupExpired => AiGroupBookingFailure.GroupExpired,

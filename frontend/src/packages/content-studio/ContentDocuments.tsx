@@ -2,12 +2,14 @@
 
 import Image from 'next/image';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronsUp, Download, FileText, LoaderCircle, MonitorPlay, Plus, RefreshCw, Save, Sparkles } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronsUp, Download, FileText, LoaderCircle, MonitorPlay, Plus, FolderOpen, RefreshCw, Save, Sparkles } from 'lucide-react';
+import PaperFrameDesigner from './PaperFrameDesigner';
 import { contentApi } from './content-api';
 import type { ContentDocumentCountSuggestion, ContentDocumentDetail, ContentDocumentKind, ContentDocumentPreview, ContentDocumentSummary } from './types';
 import styles from './ContentStudio.module.css';
 
-export default function ContentDocuments({ canManage, brandReady, aiReady, onDraftDirtyChange }: {
+export default function ContentDocuments({ canManage, brandReady, aiReady, onDraftDirtyChange, paperMode = false }: {
+  paperMode?: boolean;
   canManage: boolean;
   brandReady: boolean;
   aiReady: boolean;
@@ -16,7 +18,10 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
   const [documents, setDocuments] = useState<ContentDocumentSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ContentDocumentDetail | null>(null);
-  const [kind, setKind] = useState<ContentDocumentKind>('Presentation');
+  const [kind, setKind] = useState<ContentDocumentKind>(paperMode ? 'Paper' : 'Presentation');
+  const [paperFrameToken, setPaperFrameToken] = useState<string | undefined>();
+  const [appliedPaperFrames, setAppliedPaperFrames] = useState<Record<string, string>>({});
+  const [paperDraftDirty, setPaperDraftDirty] = useState(false);
   const [content, setContent] = useState('');
   const [suggestion, setSuggestion] = useState<(ContentDocumentCountSuggestion & { kind: ContentDocumentKind; content: string }) | null>(null);
   const [countOverride, setCountOverride] = useState<string | null>(null);
@@ -29,6 +34,9 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
   const [suggestionRetry, setSuggestionRetry] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<{ id: string; message: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pageDrafts, setPageDrafts] = useState<Record<string, { title: string; body: string }>>({});
   const [addingPage, setAddingPage] = useState(false);
@@ -37,9 +45,10 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
   const detailRequest = useRef(0);
   const dirtyPages = new Set(Object.keys(pageDrafts));
   const editableDetail = detail && { ...detail, pages: detail.pages.map(page => ({ ...page, ...pageDrafts[page.id] })) };
-  const activeGeneration = documents.some(document => ['Planning', 'GeneratingImages'].includes(document.status));
+  const generationPending = documents.some(document => ['Planning', 'GeneratingImages'].includes(document.status))
+    || Boolean(detail?.pages.some(page => ['Queued', 'GeneratingImage'].includes(page.status)));
   const pageDraftDirty = dirtyPages.size > 0 || Boolean(newPage.title.trim() || newPage.body.trim());
-  const draftDirty = content.trim().length > 0 || pageDraftDirty;
+  const draftDirty = content.trim().length > 0 || pageDraftDirty || paperDraftDirty;
   const validContent = content.trim().length >= 80 && content.length <= 60000;
   const currentSuggestion = suggestion?.kind === kind && suggestion.content === content ? suggestion : null;
   const sections = currentSuggestion?.fileSections ?? currentSuggestion?.sections ?? [];
@@ -51,7 +60,7 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
   const validCount = Boolean(currentSuggestion && Number.isInteger(selectedCount) && selectedCount >= minimumCount
     && selectedCount <= maximumCount && (!separateSessions || sections.length <= 50));
   const pageCount = separateSessions ? 0 : selectedCount;
-  const previewRequest = { kind, content, pageCount, coverTitle: separateSessions ? '' : coverTitle,
+  const previewRequest = { kind, content, pageCount, ...(paperMode ? { paperFrameToken } : {}), coverTitle: separateSessions ? '' : coverTitle,
     ...(separateSessions ? { pagesPerSession: selectedCount } : {}) };
   const draftKey = JSON.stringify(previewRequest);
   const currentPreview = preview?.key === draftKey ? preview.value : null;
@@ -83,38 +92,49 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
   useEffect(() => onDraftDirtyChange(draftDirty), [draftDirty, onDraftDirtyChange]);
 
   const loadDocuments = useCallback(async (signal?: AbortSignal) => {
+    setDocumentsLoading(true);
+    setDocumentsError(null);
     try {
-      const response = await contentApi.getDocuments(signal);
+      const response = await contentApi.getDocuments(signal, paperMode ? 'Paper' : undefined);
       if (signal?.aborted) return;
       setDocuments(response.documents);
       setSelectedId(current => current ?? response.documents[0]?.id ?? null);
     } catch (requestError) {
-      if (!signal?.aborted) setError(messageOf(requestError));
+      if (!signal?.aborted) setDocumentsError(messageOf(requestError));
+    } finally {
+      if (!signal?.aborted) setDocumentsLoading(false);
     }
-  }, []);
+  }, [paperMode]);
 
   const loadDetail = useCallback(async (id: string, signal?: AbortSignal) => {
     const request = ++detailRequest.current;
+    setDetailError(null);
     try {
       const response = await contentApi.getDocument(id, signal);
       if (!signal?.aborted && request === detailRequest.current) setDetail(response);
     } catch (requestError) {
-      if (!signal?.aborted && request === detailRequest.current) setError(messageOf(requestError));
+      if (!signal?.aborted && request === detailRequest.current) setDetailError({ id, message: messageOf(requestError) });
     }
   }, []);
+
+  const selectDocument = (id: string) => {
+    invalidatePreview();
+    if (id === selectedId && detailError?.id === id) void loadDetail(id);
+    else setSelectedId(id);
+    if (id !== selectedId) setAddingPage(false);
+  };
 
   useEffect(() => { const controller = new AbortController(); const timer = window.setTimeout(() => void loadDocuments(controller.signal), 0); return () => { window.clearTimeout(timer); controller.abort(); }; }, [loadDocuments]);
   useEffect(() => { if (!selectedId) return; const controller = new AbortController(); const timer = window.setTimeout(() => void loadDetail(selectedId, controller.signal), 0); return () => { window.clearTimeout(timer); controller.abort(); }; }, [loadDetail, selectedId]);
   useEffect(() => {
-    if (busy) return;
-    if (!activeGeneration && !detail?.pages.some(page => ['Queued', 'GeneratingImage'].includes(page.status))) return;
+    if (busy || !generationPending) return;
     const controller = new AbortController();
     const interval = window.setInterval(async () => {
       await loadDocuments(controller.signal);
       if (!controller.signal.aborted && selectedId) await loadDetail(selectedId, controller.signal);
     }, 4000);
     return () => { window.clearInterval(interval); controller.abort(); };
-  }, [activeGeneration, busy, detail?.pages, loadDetail, loadDocuments, selectedId]);
+  }, [generationPending, busy, loadDetail, loadDocuments, selectedId]);
 
   const showPreview = async () => {
     if (!validContent || !validCount || !aiReady || pageDraftDirty) return;
@@ -135,7 +155,10 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
     try {
       const response = await contentApi.createDocument({ ...previewRequest, previewFingerprint: currentPreview.fingerprint });
       setContent(''); setCoverTitle(''); setCountOverride(null); setPreview(null);
-      setSelectedId(response.id);
+      setSelectedId(response.id); setPaperDraftDirty(false);
+      if (paperFrameToken) setAppliedPaperFrames(current => ({ ...current, ...Object.fromEntries(
+        (response.ids?.length ? response.ids : [response.id]).map(id => [id, paperFrameToken]),
+      ) }));
       setNotice(response.message);
       await loadDocuments();
     } catch (requestError) { setError(messageOf(requestError)); }
@@ -223,6 +246,19 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
     finally { setBusy(null); }
   };
 
+  const applyPaperFrame = async () => {
+    if (!detail || !paperFrameToken) return;
+    setBusy('paper-frame'); setError(null);
+    try {
+      const response = await contentApi.applyDocumentPaperFrame(detail.document.id, paperFrameToken);
+      setAppliedPaperFrames(current => ({ ...current, [detail.document.id]: paperFrameToken }));
+      setPaperDraftDirty(false);
+      setNotice(response.message);
+      await loadDocuments(); await loadDetail(detail.document.id);
+    } catch (requestError) { setError(messageOf(requestError)); }
+    finally { setBusy(null); }
+  };
+
   const exportFile = async (format: 'pdf' | 'pptx' | 'docx') => {
     if (!detail || dirtyPages.size) return;
     setBusy(`export-${format}`); setError(null);
@@ -235,17 +271,34 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
     finally { setBusy(null); }
   };
 
-  const readinessMessage = !aiReady ? 'أضف مفتاح Gemini من إعدادات المشروع.' : !brandReady ? 'ارفع اللوجو من تبويب الصور والمنشورات أولاً.' : null;
-  return <div id="content-panel-documents" role="tabpanel" aria-labelledby="content-tab-documents" className={styles.documentStudio}>
-    {(error || notice) && <div className={error ? styles.alertError : styles.alertSuccess} role={error ? 'alert' : 'status'}>{error ?? notice}</div>}
+  const visibleError = error ?? (detailError?.id === selectedId ? detailError.message : null) ?? documentsError;
+  const readinessMessage = !aiReady ? 'أضف مفتاح Gemini من إعدادات المشروع.' : paperMode ? (!paperFrameToken ? 'ولّد الفريم واعتمده قبل تصميم الورق.' : null) : !brandReady ? 'ارفع اللوجو من تبويب الصور والمنشورات أولاً.' : null;
+  return <div id={paperMode ? "content-panel-paper" : "content-panel-documents"} role="tabpanel" aria-labelledby={paperMode ? "content-tab-paper" : "content-tab-documents"} className={styles.documentStudio}>
+    {(visibleError || notice) && <div className={visibleError ? styles.alertError : styles.alertSuccess} role={visibleError ? 'alert' : 'status'}>{visibleError ?? notice}</div>}
+    {paperMode && <PaperFrameDesigner canManage={canManage} aiReady={aiReady} locked={Boolean(busy)}
+      onFrameChange={setPaperFrameToken} onDirtyChange={setPaperDraftDirty} />}
+    {paperMode && paperFrameToken && detail?.document.kind === 'Paper'
+      && appliedPaperFrames[detail.document.id] !== paperFrameToken
+      && <div className={styles.documentApproval}>
+        <p>عندك ملف ورق مفتوح؟ تقدر تطبّق عليه الفريم اللي اعتمدته وتعيد تصميم صفحاته بنفس الكلام.</p>
+        <button type="button" className={styles.btnPrimary} disabled={!canManage || Boolean(busy) || ['Planning', 'GeneratingImages'].includes(detail.document.status)}
+          onClick={() => void applyPaperFrame()}>{busy === 'paper-frame' ? <LoaderCircle className={styles.spin} size={18} /> : <RefreshCw size={18} />} استخدم الفريم الجديد في الملف المفتوح</button>
+      </div>}
     <div className={styles.documentWorkspace}>
+      <aside className={styles.documentHistory} aria-label="الملفات السابقة">
+        <div className={styles.documentHistoryHeading}><h2><FolderOpen size={18} aria-hidden="true" /> الملفات المحفوظة</h2><span>{documents.length} في أحدث 50</span></div>
+        {pageDraftDirty && <p className={styles.documentRequirement}>احفظ تعديلات السلايد قبل فتح ملف تاني.</p>}
+        {documents.map(document => <button type="button" key={document.id} disabled={Boolean(busy) || (selectedId !== document.id && pageDraftDirty)} className={selectedId === document.id ? styles.documentHistoryActive : undefined} onClick={() => selectDocument(document.id)}><span>{document.kind === 'Presentation' ? <MonitorPlay size={16} /> : <FileText size={16} />}</span><div><strong>{document.title || 'جارٍ تجهيز العنوان…'}</strong><small>{document.requestedPageCount} {document.kind === 'Presentation' ? 'سلايد' : 'صفحة'} · {statusLabel(document.status)}</small></div></button>)}
+      </aside>
+      <details className={styles.mediaCreateDisclosure} open={documents.length === 0}>
+        <summary><Plus size={18} aria-hidden="true" /> إنشاء ملف جديد<span>المحتوى والتقسيم</span></summary>
       <aside className={styles.documentComposer} aria-label="إنشاء عرض أو مستند">
-        <div className={styles.panelHeading}><div><span>01</span><h2>ملف جديد</h2></div></div>
-        <div className={styles.kindSwitch} role="radiogroup" aria-label="نوع الملف">
+        <div className={styles.mediaTaskHeading}><FileText size={20} aria-hidden="true" /><h2>جهّز محتوى الملف</h2></div>
+        {!paperMode && <div className={styles.kindSwitch} role="radiogroup" aria-label="نوع الملف">
           <button type="button" role="radio" aria-checked={kind === 'Presentation'} className={kind === 'Presentation' ? styles.kindActive : undefined} disabled={busy === 'create'} onClick={() => changeKind('Presentation')}><MonitorPlay size={18} /><span><strong>عرض تقديمي</strong><small>16:9 · PPTX وPDF</small></span></button>
           <button type="button" role="radio" aria-checked={kind === 'A4'} className={kind === 'A4' ? styles.kindActive : undefined} disabled={busy === 'create'} onClick={() => changeKind('A4')}><FileText size={18} /><span><strong>مستند A4</strong><small>DOCX وPDF</small></span></button>
-        </div>
-        <label className={styles.field}><span>المحتوى الكامل</span><textarea rows={13} maxLength={60000} placeholder="الصق محتواك كاملًا. لأكثر من سيشن، اكتب Session 1 أو سيشن ١ في سطر مستقل، ثم محتواه، وبعده Session 2 ومحتواه." value={content} disabled={busy === 'create'} onChange={event => { invalidatePreview(); setContent(event.target.value); setCountOverride(null); setSuggestionError(null); }} /><small>{content.length.toLocaleString('ar-EG')} من 60,000 حرف</small></label>
+        </div>}
+        <label className={styles.field}><span>المحتوى الكامل</span><textarea rows={7} maxLength={60000} placeholder="الصق محتواك كاملًا. لأكثر من سيشن، اكتب Session 1 أو سيشن ١ في سطر مستقل، ثم محتواه، وبعده Session 2 ومحتواه." value={content} disabled={busy === 'create'} onChange={event => { invalidatePreview(); setContent(event.target.value); setCountOverride(null); setSuggestionError(null); }} /><small>{content.length.toLocaleString('ar-EG')} من 60,000 حرف</small></label>
         <div className={styles.field}>
           <span>{separateSessions ? 'ملفات السيشنات' : `العدد المقترح ${kind === 'Presentation' ? 'للسلايدز' : 'للصفحات'}`}</span>
           <output aria-live="polite" aria-label="العدد المقترح">{currentSuggestion ? separateSessions
@@ -266,11 +319,12 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
           </ul>
           {validCount && <p className={styles.documentPreviewHint}>الإجمالي {sections.length * selectedCount} صفحة في {sections.length} ملفات، بحد أقصى 200 صفحة في الدفعة.</p>}
         </> : <label className={styles.field}><span>عنوان الغلاف (اختياري)</span><input value={coverTitle} maxLength={300} dir="auto" placeholder="لو سيبته فاضي هنستخدم أول سطر من كلامك" disabled={busy === 'create'} onChange={event => { invalidatePreview(); setCoverTitle(event.target.value); }} /></label>}
-        <button type="button" className={styles.btnPrimary} disabled={!canManage || !aiReady || !validContent || !validCount || Boolean(busy) || pageDraftDirty} onClick={() => void showPreview()}>{busy === 'preview' ? <LoaderCircle className={styles.spin} size={18} /> : <FileText size={18} />} {busy === 'preview' ? 'جارٍ تنسيق المحتوى…' : 'اعرض التقسيم'}</button>
+        <button type="button" className={styles.btnPrimary} disabled={!canManage || !aiReady || (paperMode && !paperFrameToken) || !validContent || !validCount || Boolean(busy) || pageDraftDirty} onClick={() => void showPreview()}>{busy === 'preview' ? <LoaderCircle className={styles.spin} size={18} /> : <FileText size={18} />} {busy === 'preview' ? 'جارٍ تنسيق المحتوى…' : 'اعرض التقسيم'}</button>
         {pageDraftDirty && <p className={styles.documentRequirement}>احفظ تعديلات العرض الحالي قبل تجهيز ملف جديد.</p>}
-        <p className={styles.documentPreviewHint}>بنحافظ على كلماتك، مع إزالة الإيموجي وعلامات التنظيم زي Title وSlide 1. كل سيشن بيتحفظ في ملف مستقل بغلاف باسمه. توليد الصور يبدأ بعد اعتمادك للتقسيم.</p>
+        <details className={styles.mediaHelp}><summary>كيف يتم تقسيم المحتوى؟</summary><p>بنحافظ على كلماتك، مع إزالة الإيموجي وعلامات التنظيم زي Title وSlide 1. كل سيشن بيتحفظ في ملف مستقل بغلاف باسمه. توليد الصور يبدأ بعد اعتمادك للتقسيم.</p></details>
         {readinessMessage && <p className={styles.documentRequirement}>{readinessMessage}</p>}
       </aside>
+      </details>
 
       <main className={styles.documentCanvas} aria-busy={busy === 'preview'}>
         {busy === 'preview' && <div className={styles.documentProgress} role="status"><LoaderCircle className={styles.spin} size={20} /><span>{separateSessions ? `الـAI بينظم كل سيشن في ملف مستقل من ${selectedCount} صفحات شامل الغلاف…` : `الـAI بيرتب الأفكار ويوزع الفقرات والنقط على ${pageCount} ${kind === 'Presentation' ? 'سلايد' : 'صفحة'}…`}</span></div>}
@@ -285,16 +339,19 @@ export default function ContentDocuments({ canManage, brandReady, aiReady, onDra
             <p>نفس كلامك كاملًا، بترتيب وتنسيق مقترح من الـAI. التصميم هيستخدم التنظيم اللي بتعتمده هنا.</p>
             <button type="button" className={styles.btnPrimary} disabled={!canManage || Boolean(readinessMessage) || Boolean(busy)} onClick={() => void create()}>{busy === 'create' ? <LoaderCircle className={styles.spin} size={18} /> : <Sparkles size={18} />} اعتمد التقسيم وابدأ التصميم</button>
           </div>
-        </> : !editableDetail || editableDetail.document.id !== selectedId ? <div className={styles.documentEmpty}><Sparkles size={36} /><h2>{selectedId ? 'جارٍ تحميل العرض…' : 'المحتوى يتحول لملف جاهز'}</h2><p>الصق كل السيشنات، حدد العدد مرة واحدة، وراجع ملف كل سيشن قبل التصميم.</p></div> : <DocumentEditor canManage={canManage} aiReady={aiReady} detail={editableDetail} busy={busy} dirtyPages={dirtyPages} onUpdate={updatePage} onSave={savePage} onRegenerate={regenerate} onRegenerateAll={regenerateAll} onExport={exportFile} onMove={movePage} onAdd={() => { setBeforePageId(''); setAddingPage(true); }}>
+        </> : !editableDetail || editableDetail.document.id !== selectedId ? <div className={styles.documentEmpty}>
+          {detailError?.id === selectedId || (!selectedId && documentsError) ? <>
+            <FileText size={36} aria-hidden="true" /><h2>{selectedId ? 'تعذّر تحميل الملف المختار' : 'تعذّر تحميل الملفات المحفوظة'}</h2>
+            <button type="button" className={styles.btnSecondary} onClick={() => selectedId ? void loadDetail(selectedId) : void loadDocuments()}><RefreshCw size={17} aria-hidden="true" />{selectedId ? 'إعادة تحميل الملف' : 'إعادة تحميل الملفات'}</button>
+          </> : selectedId || documentsLoading ? <><LoaderCircle size={30} className={styles.spin} aria-hidden="true" /><h2 role="status">جارٍ تحميل الملفات…</h2></> : <>
+            <Sparkles size={36} aria-hidden="true" /><h2>المحتوى يتحول لملف جاهز</h2><p>الصق كل السيشنات، حدد العدد مرة واحدة، وراجع ملف كل سيشن قبل التصميم.</p>
+          </>}
+        </div> : <DocumentEditor canManage={canManage} aiReady={aiReady} detail={editableDetail} busy={busy} dirtyPages={dirtyPages} onUpdate={updatePage} onSave={savePage} onRegenerate={regenerate} onRegenerateAll={regenerateAll} onExport={exportFile} onMove={movePage} onAdd={() => { setBeforePageId(''); setAddingPage(true); }}>
           {addingPage && <NewPageForm page={newPage} pages={editableDetail.pages} beforePageId={beforePageId} onPositionChange={setBeforePageId} disabled={!canManage || !aiReady || Boolean(busy) || ['Planning', 'GeneratingImages'].includes(editableDetail.document.status)} onChange={setNewPage} onSubmit={addPage} onCancel={() => { setAddingPage(false); setNewPage({ title: '', body: '' }); setBeforePageId(''); }} />}
         </DocumentEditor>}
       </main>
 
-      <aside className={styles.documentHistory} aria-label="الملفات السابقة">
-        <div className={styles.documentHistoryHeading}><h2>الملفات</h2><span>{documents.length}</span></div>
-        {pageDraftDirty && <p className={styles.documentRequirement}>احفظ تعديلات السلايد قبل فتح ملف تاني.</p>}
-        {documents.map(document => <button type="button" key={document.id} disabled={Boolean(busy) || (selectedId !== document.id && pageDraftDirty)} className={selectedId === document.id ? styles.documentHistoryActive : undefined} onClick={() => { invalidatePreview(); setSelectedId(document.id); if (document.id !== selectedId) setAddingPage(false); }}><span>{document.kind === 'Presentation' ? <MonitorPlay size={16} /> : <FileText size={16} />}</span><div><strong>{document.title || 'جارٍ تجهيز العنوان…'}</strong><small>{document.requestedPageCount} {document.kind === 'Presentation' ? 'سلايد' : 'صفحة'} · {statusLabel(document.status)}</small></div></button>)}
-      </aside>
+
     </div>
   </div>;
 }

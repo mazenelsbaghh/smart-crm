@@ -32,6 +32,7 @@ public sealed class IntegrationProjectionValidationException(string failureCode)
 public abstract class IntegrationProjectionConsumer<TEvent>(AppDbContext db) where TEvent : AdvertisingIntegrationEvent
 {
     protected abstract string ConsumerName { get; }
+    protected virtual bool AcceptsCompleteSnapshots => false;
     protected AppDbContext Db => db;
 
     protected async Task ConsumeAsync(TEvent message, Func<CancellationToken, Task> apply, CancellationToken cancellationToken = default)
@@ -51,6 +52,8 @@ public abstract class IntegrationProjectionConsumer<TEvent>(AppDbContext db) whe
             cancellationToken);
         var currentVersion = watermark?.CurrentVersion ?? 0;
         var decision = ProjectionVersionGuard.Decide(currentVersion, message.SourceVersion, message.IsTombstone);
+        if (decision == ProjectionVersionDecision.Gap && AcceptsCompleteSnapshots)
+            decision = message.IsTombstone ? ProjectionVersionDecision.ApplyTombstone : ProjectionVersionDecision.Apply;
         var receipt = CreateReceipt(message, aggregateType, aggregateId);
 
         if (decision is ProjectionVersionDecision.Duplicate or ProjectionVersionDecision.Stale)

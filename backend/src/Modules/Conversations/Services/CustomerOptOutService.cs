@@ -2,10 +2,11 @@ using Microsoft.EntityFrameworkCore;
 using Modules.Conversations.Domain;
 using Shared.Infrastructure;
 using System.Text.RegularExpressions;
+using Modules.AI.Services;
 
 namespace Modules.Conversations.Services;
 
-public sealed class CustomerOptOutService(AppDbContext dbContext)
+public sealed class CustomerOptOutService(AppDbContext dbContext, IAIBehaviorSettingsService behaviorSettings)
 {
     private static readonly string[] NormalizedOptOutPhrases = new[]
     {
@@ -26,7 +27,14 @@ public sealed class CustomerOptOutService(AppDbContext dbContext)
     {
         if (!IsOptOutRequest(message)) return;
 
-        customer.IsBlacklisted = true;
+        var projectSettings = await dbContext.ProjectSettings.IgnoreQueryFilters()
+            .SingleOrDefaultAsync(settings => settings.ProjectId == customer.ProjectId, cancellationToken);
+        var onlySubscribers = behaviorSettings.Resolve(projectSettings).SubscribersOnlyAutoStop;
+        if (!onlySubscribers || customer.Label == "المحظورين للدفع"
+            || customer.Tags.Contains("المحظورين للدفع")
+            || await dbContext.GroupAppointmentBookings.IgnoreQueryFilters().AnyAsync(booking =>
+                booking.ProjectId == customer.ProjectId && booking.CustomerId == customer.Id && booking.IsPaid, cancellationToken))
+            customer.IsBlacklisted = true;
 
         var pendingFollowUps = await dbContext.FollowUps
             .IgnoreQueryFilters()

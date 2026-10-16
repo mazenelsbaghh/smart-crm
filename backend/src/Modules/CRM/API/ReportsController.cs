@@ -169,6 +169,7 @@ public sealed class ReportsController(
     }
 
     [HttpPost("sales-intelligence/ask")]
+    [ProjectPermission("read")]
     public async Task<IActionResult> AskSalesAnalyst(
         Guid projectId,
         [FromBody] AskSalesAnalystRequest? request,
@@ -197,14 +198,21 @@ public sealed class ReportsController(
     public async Task<IActionResult> GetDailyOperationsReport(Guid projectId, CancellationToken cancellationToken)
     {
         if (!authorization.CanRead(User, projectId)) return Forbid();
-        var today = DateTime.UtcNow.Date;
-        var tomorrow = today.AddDays(1);
+        var configuredTimezone = await db.ProjectSettings.IgnoreQueryFilters()
+            .Where(settings => settings.ProjectId == projectId).Select(settings => settings.Timezone)
+            .SingleOrDefaultAsync(cancellationToken);
+        var timezone = AnalyticsReportingDay.TimeZone(configuredTimezone);
+        var localDate = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, timezone).Date;
+        var (today, tomorrow) = AnalyticsReportingDay.Bounds(localDate, timezone.Id);
         var conversations = db.Conversations.IgnoreQueryFilters()
             .Where(item => item.ProjectId == projectId && item.CreatedAt >= today && item.CreatedAt < tomorrow);
         return Ok(new
         {
             projectId,
-            date = today.ToString("yyyy-MM-dd"),
+            date = localDate.ToString("yyyy-MM-dd"),
+            timezone = timezone.Id,
+            windowStartUtc = today,
+            windowEndUtc = tomorrow,
             totalConversations = await conversations.CountAsync(cancellationToken),
             activeConversations = await conversations.CountAsync(item => item.Status == "Open" || item.Status == "Pending", cancellationToken),
             completedConversations = await conversations.CountAsync(item => item.Status == "Resolved" || item.Status == "Closed", cancellationToken),
@@ -232,8 +240,9 @@ public sealed class ReportsController(
             pendingCount = await followUps.CountAsync(item => item.Status == "Pending", cancellationToken),
             missedCount = await followUps.CountAsync(item => item.Status == "Missed", cancellationToken),
             completedCount = await followUps.CountAsync(
-                item => item.Status == "Completed" || item.Status == "Resolved" || item.Status == "Bypassed",
-                cancellationToken)
+                item => item.Status == "Completed" || item.Status == "Resolved" || item.Status == "Done",
+                cancellationToken),
+            bypassedCount = await followUps.CountAsync(item => item.Status == "Bypassed", cancellationToken)
         });
     }
 

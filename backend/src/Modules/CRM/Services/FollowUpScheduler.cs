@@ -50,11 +50,14 @@ namespace Modules.CRM.Services
                 s => s.RecalculateLeadScoresJobAsync(),
                 Cron.Minutely);
 
+            RecurringJob.AddOrUpdate<Modules.GroupAppointments.Services.GroupStaffAutomation>(
+                "group-staff-automation", job => job.RunAsync(), Cron.Minutely);
+
             var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
             RecurringJob.AddOrUpdate<FollowUpScheduler>(
                 "whatsapp-group-automation-lifecycle",
                 s => s.RunWhatsAppGroupAutomationLifecycleJobAsync(null),
-                "0 23 * * *", // 11:00 PM every day Cairo time
+                "*/5 * * * *", // Reconcile new bookings promptly, including two-day preparation.
                 new RecurringJobOptions { TimeZone = cairoZone });
 
             return Task.CompletedTask;
@@ -315,6 +318,13 @@ namespace Modules.CRM.Services
                     }
 
                     bool isMessenger = dispatchChannel == "Messenger";
+                    if (isMessenger && !await HasMessengerReplyWindowAsync(
+                            dbContext, followUp, DateTime.UtcNow))
+                    {
+                        Console.WriteLine($"[Hangfire Job] Bypassed Messenger follow-up {followUp.Id} because its standard messaging window has closed.");
+                        followUp.Status = "Bypassed";
+                        continue;
+                    }
                     var projectSettings = await dbContext.ProjectSettings
                         .IgnoreQueryFilters()
                         .FirstOrDefaultAsync(s => s.ProjectId == followUp.ProjectId);
@@ -326,9 +336,9 @@ namespace Modules.CRM.Services
                         var session = await gatewaySessionClient.GetAsync(followUp.ProjectId, whatsAppAccountId);
                         if (!CanDispatchInCurrentConnection(followUp, session))
                         {
-                            BypassFollowUpFromPreviousConnection(followUp, DateTime.UtcNow);
+                            HandleUnavailableFollowUpConnection(followUp, DateTime.UtcNow);
                             await dbContext.SaveChangesAsync();
-                            Console.WriteLine($"[Hangfire Job] Bypassed WhatsApp follow-up {followUp.Id} because it became due outside the current connection.");
+                            Console.WriteLine($"[Hangfire Job] WhatsApp follow-up {followUp.Id} is {followUp.Status} because the connection is unavailable or changed.");
                             continue;
                         }
                     }
@@ -356,7 +366,7 @@ namespace Modules.CRM.Services
                     var hasPaid = await dbContext.GroupAppointmentBookings
                         .AnyAsync(b => b.CustomerId == customer.Id && b.IsPaid && b.ProjectId == followUp.ProjectId);
 
-                    if (hasPaid)
+                    if (hasPaid && !GroupSessionPreparationScheduler.IsPreparation(followUp))
                     {
                         Console.WriteLine($"[Hangfire Job] Customer {customer.PhoneNumber ?? customer.FacebookPSID} has already paid. Cancelling follow-up {followUp.Id}.");
                         followUp.Status = "Cancelled";
@@ -458,6 +468,13 @@ namespace Modules.CRM.Services
                     }
 
                     messageContent = Modules.WhatsApp.Services.OutgoingMessageText.Normalize(messageContent);
+                    if (Modules.AI.Services.CourseDiscoveryPricingPolicy.IsCourseContext(messageContent + " " + projectSettings?.SystemPrompt)
+                        || await dbContext.GroupAppointments.AnyAsync(group => group.ProjectId == followUp.ProjectId))
+                    {
+                        var deliveredMessages = await Modules.AI.Services.CourseDiscoveryPricingPolicy.DeliveredMessageCountAsync(
+                            dbContext, followUp.ProjectId, customer.Id, null);
+                        messageContent = Modules.AI.Services.CourseDiscoveryPricingPolicy.Apply(messageContent, string.Empty, deliveredMessages);
+                    }
 
                     if (isMessenger)
                     {
@@ -478,6 +495,12 @@ namespace Modules.CRM.Services
                         {
                             followUp.Status = "Cancelled";
                             await dbContext.SaveChangesAsync();
+                            continue;
+                        }
+                        if (!await HasMessengerReplyWindowAsync(dbContext, followUp, DateTime.UtcNow))
+                        {
+                            Console.WriteLine($"[Hangfire Job] Bypassed Messenger follow-up {followUp.Id} because its messaging window closed before delivery.");
+                            followUp.Status = "Bypassed";
                             continue;
                         }
                         try
@@ -567,9 +590,9 @@ namespace Modules.CRM.Services
                         var liveSession = await gatewaySessionClient.GetAsync(followUp.ProjectId, whatsAppAccountId);
                         if (!CanDispatchInCurrentConnection(followUp, liveSession))
                         {
-                            BypassFollowUpFromPreviousConnection(followUp, DateTime.UtcNow);
+                            HandleUnavailableFollowUpConnection(followUp, DateTime.UtcNow);
                             await dbContext.SaveChangesAsync();
-                            Console.WriteLine($"[Hangfire Job] Bypassed WhatsApp follow-up {followUp.Id} because the connection changed before delivery.");
+                            Console.WriteLine($"[Hangfire Job] WhatsApp follow-up {followUp.Id} is {followUp.Status} because the connection changed before delivery.");
                             continue;
                         }
 
@@ -683,13 +706,15 @@ namespace Modules.CRM.Services
                         {
                             if ((int)response.StatusCode == 412)
                             {
-                                BypassFollowUpFromPreviousConnection(followUp, DateTime.UtcNow);
+                                HandleUnavailableFollowUpConnection(followUp, DateTime.UtcNow);
                                 await dbContext.SaveChangesAsync();
-                                Console.WriteLine($"[Hangfire Job] Bypassed WhatsApp follow-up {followUp.Id} because the connection changed at the delivery boundary.");
+                                Console.WriteLine($"[Hangfire Job] WhatsApp follow-up {followUp.Id} is {followUp.Status} because the connection changed at the delivery boundary.");
                             }
                             else if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
                             {
-                                var deferred = TryDeferToNextDailySlot(followUp, DateTime.UtcNow, projectTimezone);
+                                var deferred = GroupSessionPreparationScheduler.IsPreparation(followUp);
+                                if (deferred) HandleUnavailableFollowUpConnection(followUp, DateTime.UtcNow);
+                                else deferred = TryDeferToNextDailySlot(followUp, DateTime.UtcNow, projectTimezone);
                                 await dbContext.SaveChangesAsync();
                                 Console.WriteLine(deferred
                                     ? $"[Hangfire Job] Deferred WhatsApp follow-up {followUp.Id} to {followUp.DueDate:O} because the gateway could not safely accept the delivery."
@@ -750,6 +775,28 @@ namespace Modules.CRM.Services
             await dbContext.SaveChangesAsync();
         }
 
+        internal static async Task<bool> HasMessengerReplyWindowAsync(
+            AppDbContext dbContext,
+            FollowUp followUp,
+            DateTime nowUtc)
+        {
+            var conversationId = followUp.ConversationId;
+            var latestIncomingAt = await dbContext.Conversations
+                .IgnoreQueryFilters()
+                .Where(conversation => conversation.ProjectId == followUp.ProjectId
+                    && conversation.CustomerId == followUp.CustomerId
+                    && conversation.Channel == "Messenger"
+                    && (!conversationId.HasValue || conversation.Id == conversationId.Value))
+                .Join(dbContext.Messages.Where(message => message.Direction == "Incoming"),
+                    conversation => conversation.Id,
+                    message => message.ConversationId,
+                    (_, message) => (DateTime?)message.Timestamp)
+                .MaxAsync();
+
+            // Leave an hour for generation, queueing and provider delivery before Meta's 24-hour limit.
+            return latestIncomingAt.HasValue && latestIncomingAt.Value > nowUtc.AddHours(-23);
+        }
+
         public async Task RecalculateLeadScoresJobAsync()
         {
             using var scope = _serviceProvider.CreateScope();
@@ -772,7 +819,7 @@ namespace Modules.CRM.Services
             var customerIds = missedCounts.Keys.ToList();
             var customers = await dbContext.Customers
                 .IgnoreQueryFilters()
-                .Where(c => customerIds.Contains(c.Id))
+                .Where(c => c.LeadScore != 0 && customerIds.Contains(c.Id))
                 .ToListAsync();
 
             foreach (var customer in customers)
@@ -800,31 +847,27 @@ namespace Modules.CRM.Services
                 .GetRequiredService<Modules.Advertising.Services.WhatsAppGatewaySessionClient>();
 
             var cairoZone = Shared.Infrastructure.TimezoneHelper.GetTimeZone("Africa/Cairo");
-            var cairoNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoZone);
-            var startOfWindowCairo = cairoNow.Date;
-            var endOfWindowCairo = cairoNow.Date.AddDays(2);
+            var startOfWindowUtc = DateTime.UtcNow;
 
-            var startOfWindowUtc = TimeZoneInfo.ConvertTimeToUtc(startOfWindowCairo, cairoZone);
-            var endOfWindowUtc = TimeZoneInfo.ConvertTimeToUtc(endOfWindowCairo, cairoZone);
-
-            Console.WriteLine($"[Hangfire Group Lifecycle] Checking for active waves/appointments from today through tomorrow in Cairo timezone (UTC range: {startOfWindowUtc:O} to {endOfWindowUtc:O})");
+            Console.WriteLine($"[Hangfire Group Lifecycle] Reconciling all booked upcoming sessions from {startOfWindowUtc:O}.");
 
             var appointments = await dbContext.GroupAppointments
                 .IgnoreQueryFilters()
                 .Where(a => (!projectId.HasValue || a.ProjectId == projectId.Value)
                     && a.IsActive
-                    && a.DateTime >= startOfWindowUtc
-                    && a.DateTime < endOfWindowUtc)
+                    && (a.FreeSessionDateTime ?? a.DateTime) >= startOfWindowUtc
+                    && a.Bookings.Any(booking => booking.ProjectId == a.ProjectId))
                 .ToListAsync();
 
             if (!appointments.Any())
             {
-                Console.WriteLine("[Hangfire Group Lifecycle] No active waves scheduled from today through tomorrow.");
+                Console.WriteLine("[Hangfire Group Lifecycle] No booked upcoming sessions.");
                 return;
             }
 
             var gatewayUrl = configuration["WhatsAppGateway:Url"] ?? "http://whatsapp-gateway:3000";
             using var httpClient = new HttpClient();
+            var inviteSequence = 0;
 
             foreach (var appointment in appointments)
             {
@@ -841,7 +884,7 @@ namespace Modules.CRM.Services
                         continue;
                     }
 
-                    var groupSubject = BuildWhatsAppGroupSubject(appointment.Name, appointment.Mode, appointment.DateTime, cairoZone);
+                    var groupSubject = BuildWhatsAppGroupSubject(appointment.Name, appointment.Mode, appointment.FreeSessionDateTime ?? appointment.DateTime, cairoZone);
                     var whatsAppAccountId = appointment.WhatsAppAccountId;
                     if (!whatsAppAccountId.HasValue)
                     {
@@ -853,6 +896,31 @@ namespace Modules.CRM.Services
                     var inviteLink = appointment.WhatsAppGroupInviteLink ?? string.Empty;
                     if (string.IsNullOrWhiteSpace(appointment.WhatsAppGroupJid))
                     {
+                        var ownership = scope.ServiceProvider.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase();
+                        var ownershipKey = $"group-create-owner:{appointment.ProjectId:N}:{appointment.Id:N}";
+                        var storedOwner = await ownership.StringGetAsync(ownershipKey);
+                        var hasOwner = Guid.TryParse(storedOwner.ToString(), out var ownerId);
+                        var candidates = (await whatsAppAccounts.ListAsync(appointment.ProjectId))
+                            .Where(account => !hasOwner || account.Id == ownerId)
+                            .OrderByDescending(account => account.Id == whatsAppAccountId);
+                        Modules.Advertising.Services.WhatsAppGatewaySessionStatus? connectedSession = null;
+                        foreach (var candidate in candidates)
+                        {
+                            var candidateSession = await gatewaySessionClient.GetAsync(appointment.ProjectId, candidate.Id);
+                            if (!candidateSession.Connected || !candidateSession.ConnectedAt.HasValue) continue;
+                            whatsAppAccountId = candidate.Id;
+                            connectedSession = candidateSession;
+                            break;
+                        }
+                        if (connectedSession is null)
+                        {
+                            Console.WriteLine($"[Hangfire Group Lifecycle] No connected WhatsApp account for appointment {appointment.Id}. Will retry.");
+                            continue;
+                        }
+                        if (!hasOwner && !await ownership.StringSetAsync(ownershipKey, whatsAppAccountId.Value.ToString(), when: StackExchange.Redis.When.NotExists))
+                            continue;
+                        appointment.WhatsAppAccountId = whatsAppAccountId;
+                        await dbContext.SaveChangesAsync();
                         Console.WriteLine($"[Hangfire Group Lifecycle] Creating group for appointment {appointment.Id}: '{groupSubject}'");
                         var managerPhone = NormalizeWhatsAppParticipantPhone(settings.GroupAutomationManagerPhone);
                         if (string.IsNullOrEmpty(managerPhone))
@@ -860,9 +928,7 @@ namespace Modules.CRM.Services
                             Console.WriteLine($"[Hangfire Group Lifecycle] Manager phone is not configured for project {appointment.ProjectId}. Skipping appointment {appointment.Id} without guessing a recipient.");
                             continue;
                         }
-                        var session = await gatewaySessionClient.GetAsync(
-                            appointment.ProjectId,
-                            whatsAppAccountId.Value);
+                        var session = connectedSession;
                         if (!session.Connected || !session.ConnectedAt.HasValue)
                         {
                             Console.WriteLine($"[Hangfire Group Lifecycle] WhatsApp account {whatsAppAccountId} is disconnected. Appointment {appointment.Id} will retry in the next daily run.");
@@ -873,7 +939,8 @@ namespace Modules.CRM.Services
                             projectId = appointment.ProjectId,
                             whatsappAccountId = whatsAppAccountId,
                             subject = groupSubject,
-                            participants = new[] { managerPhone },
+                            participants = Modules.GroupAppointments.Services.GroupStaffNotifications.ParticipantPhones(settings, appointment)
+                                .Where(phone => phone != NormalizeWhatsAppParticipantPhone(session.PhoneNumber)).ToArray(),
                             idempotencyKey = $"group:{appointment.Id:N}",
                             expectedConnectedAt = session.ConnectedAt
                         };
@@ -969,15 +1036,29 @@ namespace Modules.CRM.Services
                     }
 
                     var selectedTemplate = appointment.Mode == "online" ? reminderTemplateOnline : reminderTemplateOffline;
+                    var customerIds = bookings.Select(booking => booking.CustomerId).Distinct().ToArray();
+                    var customersById = await dbContext.Customers.IgnoreQueryFilters()
+                        .Where(customer => customer.ProjectId == appointment.ProjectId && customerIds.Contains(customer.Id))
+                        .ToDictionaryAsync(customer => customer.Id);
+                    var existingFollowUps = await dbContext.FollowUps.IgnoreQueryFilters()
+                        .Where(followUp => followUp.ProjectId == appointment.ProjectId
+                            && (followUp.GroupAppointmentId == appointment.Id
+                                || (followUp.WhatsAppAccountId == whatsAppAccountId
+                                    && followUp.AppointmentTime == appointment.DateTime
+                                    && (followUp.Type == "AppointmentReminder" || followUp.Type == "Nurturing"))))
+                        .ToListAsync();
+                    GroupBookingFollowUpLifecycle.RestoreScheduled(appointment, bookings, existingFollowUps);
+                    var knownIds = existingFollowUps.Select(followUp => followUp.Id).ToHashSet();
+                    var legacyFollowUps = existingFollowUps.Where(followUp =>
+                        followUp.Status != "Cancelled" && followUp.WhatsAppAccountId == whatsAppAccountId
+                        && followUp.AppointmentTime == appointment.DateTime)
+                        .ToLookup(followUp => (followUp.CustomerId, followUp.Type));
+                    var preparationScheduler = new GroupSessionPreparationScheduler(dbContext, knownIds);
 
                     foreach (var booking in bookings)
                     {
                         // Check if customer is blacklisted
-                        var customer = await dbContext.Customers
-                            .IgnoreQueryFilters()
-                            .FirstOrDefaultAsync(c => c.Id == booking.CustomerId && c.ProjectId == appointment.ProjectId);
-
-                        if (customer == null || customer.IsBlacklisted)
+                        if (!customersById.TryGetValue(booking.CustomerId, out var customer) || customer.IsBlacklisted)
                         {
                             Console.WriteLine($"[Hangfire Group Lifecycle] Customer {booking.CustomerId} is blacklisted or not found. Skipping follow-ups.");
                             continue;
@@ -991,13 +1072,9 @@ namespace Modules.CRM.Services
                             .Replace("{groupName}", appointment.Name);
 
                         var reminderId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, $"invite:{appointment.DateTime.Ticks}");
-                        var reminderExists = await dbContext.FollowUps.IgnoreQueryFilters()
-                            .AnyAsync(followUp => followUp.Id == reminderId
-                                || (followUp.ProjectId == appointment.ProjectId
-                                    && followUp.CustomerId == booking.CustomerId
-                                    && followUp.WhatsAppAccountId == whatsAppAccountId
-                                    && followUp.Type == "AppointmentReminder"
-                                    && followUp.AppointmentTime == appointment.DateTime));
+                        var legacyInviteId = legacyFollowUps[(booking.CustomerId, "AppointmentReminder")]
+                            .Select(followUp => (Guid?)followUp.Id).FirstOrDefault();
+                        var reminderExists = knownIds.Contains(reminderId) || legacyInviteId.HasValue;
                         if (!reminderExists) dbContext.FollowUps.Add(new CRM.Domain.FollowUp
                         {
                             Id = reminderId,
@@ -1007,23 +1084,24 @@ namespace Modules.CRM.Services
                             GroupAppointmentBookingId = booking.Id,
                             WhatsAppAccountId = whatsAppAccountId,
                             Channel = "WhatsApp",
-                            DueDate = DateTime.UtcNow,
+                            DueDate = DateTime.UtcNow.AddSeconds(10 * inviteSequence++),
                             Status = "Pending",
                             Type = "AppointmentReminder",
                             AppointmentTime = appointment.DateTime,
                             Notes = reminderNotes,
-                            Tone = "Default"
+                            Tone = "Exact"
                         });
+
+                        knownIds.Add(reminderId);
+                        await preparationScheduler.ScheduleAsync(
+                            appointment, booking, whatsAppAccountId.Value, aiBehavior.Fallbacks,
+                            legacyInviteId ?? reminderId,
+                            DateTime.UtcNow);
 
                         // Schedule Post-Session 2-day FollowUp
                         var postSessionId = DeterministicGroupFollowUpId(appointment.Id, booking.Id, $"post:{appointment.DateTime.Ticks}");
-                        var postSessionExists = await dbContext.FollowUps.IgnoreQueryFilters()
-                            .AnyAsync(followUp => followUp.Id == postSessionId
-                                || (followUp.ProjectId == appointment.ProjectId
-                                    && followUp.CustomerId == booking.CustomerId
-                                    && followUp.WhatsAppAccountId == whatsAppAccountId
-                                    && followUp.Type == "Nurturing"
-                                    && followUp.AppointmentTime == appointment.DateTime));
+                        var postSessionExists = knownIds.Contains(postSessionId)
+                            || legacyFollowUps[(booking.CustomerId, "Nurturing")].Any();
                         if (!postSessionExists) dbContext.FollowUps.Add(new CRM.Domain.FollowUp
                         {
                             Id = postSessionId,
@@ -1040,6 +1118,7 @@ namespace Modules.CRM.Services
                             Notes = "طمننا يا فندم، هل حضرت السيشن واشتركت معانا؟",
                             Tone = "Default"
                         });
+                        knownIds.Add(postSessionId);
                     }
 
                     await dbContext.SaveChangesAsync();
@@ -1086,17 +1165,18 @@ namespace Modules.CRM.Services
                     : (followUp.Channel == null || conversation.Channel == followUp.Channel)
                         && (!followUp.WhatsAppAccountId.HasValue || conversation.WhatsAppAccountId == followUp.WhatsAppAccountId)));
 
-        private static bool CanDispatchInCurrentConnection(
+        internal static bool CanDispatchInCurrentConnection(
             FollowUp followUp,
             Modules.Advertising.Services.WhatsAppGatewaySessionStatus session) =>
             session.Connected
             && session.ConnectedAt.HasValue
-            && followUp.CreatedAt >= session.ConnectedAt.Value.UtcDateTime
-            && followUp.DueDate >= session.ConnectedAt.Value.UtcDateTime;
+            && (GroupSessionPreparationScheduler.IsPreparation(followUp)
+                || (followUp.CreatedAt >= session.ConnectedAt.Value.UtcDateTime
+                    && followUp.DueDate >= session.ConnectedAt.Value.UtcDateTime));
 
-        private static void BypassFollowUpFromPreviousConnection(FollowUp followUp, DateTime nowUtc)
+        internal static void HandleUnavailableFollowUpConnection(FollowUp followUp, DateTime nowUtc)
         {
-            followUp.Status = "Bypassed";
+            followUp.Status = GroupSessionPreparationScheduler.IsPreparation(followUp) ? "Pending" : "Bypassed";
             followUp.UpdatedAt = nowUtc;
         }
 

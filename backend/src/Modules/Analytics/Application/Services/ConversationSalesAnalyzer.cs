@@ -163,7 +163,9 @@ public sealed class ConversationSalesAnalyzer(
             && booking.CustomerId == conversation.CustomerId
             && booking.CreatedAt >= conversation.CreatedAt
             && booking.CreatedAt <= conversation.CreatedAt.AddDays(30))
-        .OrderByDescending(booking => booking.CreatedAt)
+        .OrderByDescending(booking => booking.IsAttended)
+        .ThenByDescending(booking => booking.IsPaid)
+        .ThenByDescending(booking => booking.CreatedAt)
         .FirstOrDefaultAsync(cancellationToken);
 
     private static bool AnalysisIsCurrent(AnalysisSource source) =>

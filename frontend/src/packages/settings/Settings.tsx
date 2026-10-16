@@ -1,13 +1,25 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import PageHeader from '../../components/ui/PageHeader';
+import StatusMessage from '../../components/ui/StatusMessage';
+import FormSection from '../../components/ui/FormSection';
+import Tabs from '../../components/ui/Tabs';
 import type { AxiosError } from 'axios';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
-import { 
-  CheckCircle, 
-  AlertCircle, 
-  Settings as SettingsIcon,
+import {
+  CheckCircle,
+  ChevronDown,
+  Save,
+  AlertCircle,
+  Bot,
+  BrainCircuit,
+  Building2,
+  Link2,
+  MessageCircle,
+  MessageSquareText,
   RefreshCw,
   LogOut
 } from 'lucide-react';
@@ -18,6 +30,7 @@ const FacebookIcon = ({ size = 20 }: { size?: number }) => (
   </svg>
 );
 import styles from './settings.module.css';
+import workspace from './SettingsWorkspace.module.css';
 
 import Addons from './Addons';
 import GroupAppointmentsManager from './GroupAppointmentsManager';
@@ -196,6 +209,8 @@ const GEMINI_MODELS = [
   'gemini-flash-lite-latest',
 ] as const;
 const OPENAI_CUSTOMER_REPLY_MODELS = [
+  { value: 'gpt-6-luna', label: 'GPT-6 Luna' },
+  { value: 'gpt-6-sol', label: 'GPT-6 Sol' },
   { value: 'gpt-5.6', label: 'GPT-5.6: أعلى جودة (موصى به)' },
   { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra: متوازن' },
   { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna: أسرع وأوفر' },
@@ -228,6 +243,15 @@ const trustedOAuthOrigins = () => {
   return origins;
 };
 
+const SETTINGS_SECTIONS = [
+  { key: 'replies', label: 'تشغيل الرد الآلي', hint: 'التفعيل والتأخير وحدود الإرسال', icon: Bot, tone: 'intelligence' },
+  { key: 'behavior', label: 'طريقة الرد', hint: 'الهوية والنبرة والرسائل', icon: MessageSquareText, tone: 'intelligence' },
+  { key: 'connections', label: 'القنوات المتصلة', hint: 'واتساب وصفحات فيسبوك', icon: Link2, tone: 'info' },
+  { key: 'models', label: 'نماذج الذكاء الاصطناعي', hint: 'المزود والمفاتيح والنماذج', icon: BrainCircuit, tone: 'intelligence' },
+  { key: 'project', label: 'بيانات المشروع', hint: 'الاسم والمنطقة الزمنية', icon: Building2, tone: 'accent' },
+] as const;
+type SettingsSection = typeof SETTINGS_SECTIONS[number]['key'];
+
 export default function Settings() {
   const { activeProject } = useAuth();
   return <SettingsProjectView key={activeProject?.id ?? 'no-active-project'} />;
@@ -236,9 +260,9 @@ export default function Settings() {
 function SettingsProjectView() {
   const { user, activeProject, refreshProjects } = useAuth();
   const canManageSettings = user?.role === 'Owner' || user?.role === 'Admin';
-  
+
   const [pagesLoadError, setPagesLoadError] = useState<string | null>(null);
-  
+
   const [projectSettingsState, setProjectSettingsState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -280,6 +304,7 @@ function SettingsProjectView() {
   const [messengerReplyDelay, setMessengerReplyDelay] = useState(3);
   const [commentsAutoReplyEnabled, setCommentsAutoReplyEnabled] = useState(false);
   const [commentsReplyDelay, setCommentsReplyDelay] = useState(3);
+  const [expandedReplyChannels, setExpandedReplyChannels] = useState<string[]>([]);
 
   useEffect(() => {
     if (!temporaryGeminiModelExpiresAtUtc) return;
@@ -293,6 +318,18 @@ function SettingsProjectView() {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [aiBehavior, setAiBehavior] = useState<AIBehaviorSettings>(() => defaultAiBehavior());
 
+  const replyChannels = [
+    { id: 'whatsapp', name: 'واتساب', icon: MessageCircle, enabled: autoReplyEnabled, setEnabled: setAutoReplyEnabled,
+      delay: replyDelay, setDelay: setReplyDelay, delayId: 'settings-reply-delay', delayLabel: 'تأخير الرد (بالثواني)',
+      activationLabel: 'تفعيل الرد الآلي بالذكاء الاصطناعي (واتساب)' },
+    { id: 'messenger', name: 'ماسنجر', icon: MessageCircle, enabled: messengerAutoReplyEnabled, setEnabled: setMessengerAutoReplyEnabled,
+      delay: messengerReplyDelay, setDelay: setMessengerReplyDelay, delayId: 'settings-messenger-delay', delayLabel: 'تأخير الرد (ماسنجر)',
+      activationLabel: 'تفعيل الرد الآلي على الماسنجر' },
+    { id: 'comments', name: 'تعليقات فيسبوك', icon: MessageSquareText, enabled: commentsAutoReplyEnabled, setEnabled: setCommentsAutoReplyEnabled,
+      delay: commentsReplyDelay, setDelay: setCommentsReplyDelay, delayId: 'settings-comments-delay', delayLabel: 'تأخير الرد (تعليقات)',
+      activationLabel: 'تفعيل الرد الآلي على التعليقات' },
+  ];
+
   // Facebook Pages state
   const [connectedPages, setConnectedPages] = useState<Array<{ id: string; pageId: string; pageName: string; connectedAt: string }>>([]);
   const [fbLoading, setFbLoading] = useState(false);
@@ -305,14 +342,45 @@ function SettingsProjectView() {
   const modalCloseRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const generalFormRef = useRef<HTMLFormElement>(null);
+  const settingsTaskNavRef = useRef<HTMLElement>(null);
+  const pendingInvalidFieldRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>(null);
   const settingsMutationInFlightRef = useRef(false);
   const [generalDirty, setGeneralDirty] = useState(false);
   const [addonsDirty, setAddonsDirty] = useState(false);
   const navigationGuard = useUnsavedNavigationGuard(generalDirty || addonsDirty);
 
   // Tabs / Navigation state
-  const [activeTab, setActiveTab] = useState<'general' | 'addons'>('general');
-  const [viewMode, setViewMode] = useState<'list' | 'manage-groups'>('list');
+  const searchParams = useSearchParams();
+  const activeTab = searchParams.get('tab') === 'addons' ? 'addons' : 'general';
+  const settingsSection = SETTINGS_SECTIONS.find(section => section.key === searchParams.get('section')) ?? SETTINGS_SECTIONS[0];
+  const setSettingsSection = (section: SettingsSection) => {
+    const query = new URLSearchParams(window.location.search);
+    query.set('section', section);
+    window.history.replaceState(null, '', `/settings?${query}`);
+  };
+  // URL-backed section selection can commit after the validation message renders.
+  useEffect(() => {
+    const field = pendingInvalidFieldRef.current;
+    if (!field || field.closest('[hidden]')) return;
+    pendingInvalidFieldRef.current = null;
+    settingsTaskNavRef.current?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    field.focus();
+    field.reportValidity();
+  });
+  const requestedView = searchParams.get('view');
+  const viewMode = requestedView === 'manage-groups' || requestedView === 'manage-intensive-groups' ? requestedView : 'list';
+  const setActiveTab = (tab: 'general' | 'addons') => {
+    const query = new URLSearchParams(searchParams.toString());
+    query.set('tab', tab);
+    query.delete('view');
+    window.history.replaceState(null, '', `/settings?${query}`);
+  };
+  const setViewMode = (view: 'list' | 'manage-groups' | 'manage-intensive-groups') => {
+    const query = new URLSearchParams(window.location.search);
+    if (view === 'list') query.delete('view');
+    else query.set('view', view);
+    window.history.replaceState(null, '', `/settings?${query}`);
+  };
 
   const openAddonsTab = () => {
     if (generalDirty) {
@@ -326,7 +394,7 @@ function SettingsProjectView() {
 
   const openGeneralTab = () => {
     if (addonsDirty) {
-      setMessage({ type: 'error', text: 'احفظ أرقام الإضافات المعدّلة أولًا قبل الانتقال لإعدادات المشروع.' });
+      setMessage({ type: 'error', text: 'احفظ تغييرات التشغيل وفريق العمل أولًا قبل الانتقال لإعدادات المشروع.' });
       return false;
     }
     setActiveTab('general');
@@ -564,18 +632,11 @@ function SettingsProjectView() {
 
   }, [activeProject, fetchProjectSettings, fetchConnectedPages]);
 
-  const handleConnectFacebook = () => {
-    if (!activeProject) return;
+  const handleConnectFacebook = async () => {
+    if (!activeProject || fbLoading) return;
 
     setFbLoading(true);
     setMessage(null);
-
-    let baseUrl = api.defaults.baseURL || '';
-    if (!baseUrl.startsWith('http')) {
-      baseUrl = window.location.origin + baseUrl;
-    }
-    const cleanedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    const oauthUrl = `${cleanedBaseUrl}/api/facebook/oauth/login?projectId=${activeProject.id}`;
 
     const width = 600;
     const height = 700;
@@ -583,7 +644,7 @@ function SettingsProjectView() {
     const top = window.screen.height / 2 - height / 2;
 
     const popup = window.open(
-      oauthUrl,
+      'about:blank',
       'facebook-oauth-login',
       `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,status=yes`
     );
@@ -591,8 +652,19 @@ function SettingsProjectView() {
     if (!popup) {
       setFbLoading(false);
       setMessage({ type: 'error', text: 'تم حظر النافذة المنبثقة. يرجى تفعيل النوافذ المنبثقة في متصفحك والمحاولة مرة أخرى.' });
-    } else {
-      oauthPopupRef.current = popup;
+      return;
+    }
+    oauthPopupRef.current = popup;
+    try {
+      const response = await api.get<{ authorizationUrl: string }>('/api/facebook/oauth/login', {
+        params: { projectId: activeProject.id },
+      });
+      if (!popup.closed) popup.location.replace(response.data.authorizationUrl);
+    } catch (error) {
+      popup.close();
+      oauthPopupRef.current = null;
+      setFbLoading(false);
+      setMessage({ type: 'error', text: getApiErrorMessage(error, 'تعذر بدء ربط Facebook. حاول مرة أخرى.') });
     }
   };
 
@@ -734,19 +806,30 @@ function SettingsProjectView() {
   const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeProject) return;
-    if (!generalFormRef.current?.reportValidity()) {
+    const invalidField = generalFormRef.current?.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input:invalid, select:invalid, textarea:invalid');
+    if (invalidField) {
+      const section = invalidField.closest<HTMLElement>('[data-settings-section]')?.dataset.settingsSection as SettingsSection;
+      pendingInvalidFieldRef.current = invalidField;
+      const replyChannel = invalidField.closest<HTMLElement>('[data-reply-channel]')?.dataset.replyChannel;
+      if (replyChannel) setExpandedReplyChannels(channels => channels.includes(replyChannel) ? channels : [...channels, replyChannel]);
+      setSettingsSection(section);
+      const disclosure = invalidField.closest('details');
+      if (disclosure) disclosure.open = true;
       setMessage({ type: 'error', text: 'راجع الحقول المعلّمة قبل الحفظ.' });
       return;
     }
     if (!isSupportedGeminiModel(geminiModel)) {
+      setSettingsSection('models');
       setMessage({ type: 'error', text: 'اختر نموذج Gemini مدعومًا قبل الحفظ؛ لن نغيّر الإعداد القديم تلقائيًا.' });
       return;
     }
     if (customerReplyProvider === 'OpenAI' && !isSupportedOpenAiCustomerReplyModel(customerReplyModel)) {
+      setSettingsSection('models');
       setMessage({ type: 'error', text: 'اختر موديل OpenAI مدعومًا لردود العملاء.' });
       return;
     }
     if (customerReplyProvider === 'xAI' && !isSupportedXaiCustomerReplyModel(customerReplyModel)) {
+      setSettingsSection('models');
       setMessage({ type: 'error', text: 'اختر موديل Grok مدعومًا لردود العملاء.' });
       return;
     }
@@ -755,6 +838,7 @@ function SettingsProjectView() {
       !customerReplyOpenAiApiKey.trim() &&
       (!customerReplyOpenAiApiKeyConfigured || clearCustomerReplyOpenAiApiKey)
     ) {
+      setSettingsSection('models');
       setMessage({ type: 'error', text: 'أدخل مفتاح OpenAI API أو ألغِ طلب مسحه قبل تشغيل OpenAI لردود العملاء.' });
       return;
     }
@@ -763,10 +847,12 @@ function SettingsProjectView() {
       !customerReplyXaiApiKey.trim() &&
       (!customerReplyXaiApiKeyConfigured || clearCustomerReplyXaiApiKey)
     ) {
+      setSettingsSection('models');
       setMessage({ type: 'error', text: 'أدخل مفتاح xAI API أو ألغِ طلب مسحه قبل تشغيل Grok لردود العملاء.' });
       return;
     }
     if (!isValidTimezone(timezone)) {
+      setSettingsSection('project');
       setMessage({ type: 'error', text: 'اكتب اسم منطقة زمنية صالحًا من قاعدة IANA، مثل Africa/Cairo.' });
       return;
     }
@@ -924,60 +1010,32 @@ function SettingsProjectView() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <h1 className={styles.pageTitle}>إعدادات المشروع</h1>
-        <p className={styles.pageSubtitle}>إدارة اتصال واتساب ومفاتيح الذكاء الاصطناعي وتفضيلات الرد الآلي</p>
-      </div>
+      <PageHeader title="إعدادات المشروع" icon={<Building2 size={24} aria-hidden="true" />} description="القنوات المتصلة، مزود الذكاء الاصطناعي، وطريقة رد فريقك" />
 
-      {/* Tabs / التبويبات */}
-      <div role="tablist" aria-label="أقسام الإعدادات" style={{ display: 'flex', gap: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-sm)' }}>
-        <button 
-          type="button"
-          id="settings-tab-general"
-          role="tab"
-          aria-selected={activeTab === 'general'}
-          aria-controls="settings-panel-general"
-          tabIndex={activeTab === 'general' ? 0 : -1}
-          onClick={() => { openGeneralTab(); }}
-          onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); if (openAddonsTab()) document.getElementById('settings-tab-addons')?.focus(); } }}
-          className={`${styles.btn} ${activeTab === 'general' ? styles.btnPrimary : styles.btnSecondary}`}
-          style={{ padding: '6px 12px', fontSize: '0.85rem' }}
-        >
-          إعدادات المشروع
-        </button>
-        <button 
-          type="button"
-          id="settings-tab-addons"
-          role="tab"
-          aria-selected={activeTab === 'addons'}
-          aria-controls="settings-panel-addons"
-          tabIndex={activeTab === 'addons' ? 0 : -1}
-          onClick={() => { openAddonsTab(); }}
-          onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); if (openGeneralTab()) document.getElementById('settings-tab-general')?.focus(); } }}
-          className={`${styles.btn} ${activeTab === 'addons' ? styles.btnPrimary : styles.btnSecondary}`}
-          style={{ padding: '6px 12px', fontSize: '0.85rem' }}
-        >
-          الاضافات (Add-ons)
-        </button>
-      </div>
+      <Tabs idPrefix="settings" label="أقسام الإعدادات" selected={activeTab}
+        tabs={[{ key: 'general', label: 'إعدادات المشروع' }, { key: 'addons', label: 'الإضافات والتشغيل' }]}
+        onChange={tab => tab === 'general' ? openGeneralTab() : openAddonsTab()} />
 
-      {message && (
-        <div role={message.type === 'error' ? 'alert' : 'status'} aria-live="polite" style={{
-          padding: 'var(--space-md)', 
-          border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
-          backgroundColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.04)' : 'rgba(239, 68, 68, 0.04)',
-          borderRadius: 'var(--radius-md)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-sm)'
-        }}>
-          {message.type === 'success' ? <CheckCircle size={18} style={{ color: 'hsl(var(--accent-success))' }} /> : <AlertCircle size={18} style={{ color: 'hsl(var(--accent-danger))' }} />}
-          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{message.text}</span>
-        </div>
-      )}
+      {message && <StatusMessage tone={message.type === 'error' ? 'danger' : 'success'}>{message.text}</StatusMessage>}
 
       {activeTab === 'general' ? (
-        <div id="settings-panel-general" role="tabpanel" aria-labelledby="settings-tab-general" className={styles.grid}>
+        <div id="settings-panel-general" role="tabpanel" aria-labelledby="settings-tab-general" className={styles.settingsWorkspace}>
+          <label className={workspace.sectionPicker}>
+            <span>قسم الإعدادات</span>
+            <select value={settingsSection.key} aria-controls={`settings-task-${settingsSection.key}`}
+              onChange={event => setSettingsSection(event.target.value as SettingsSection)}>
+              {SETTINGS_SECTIONS.map(section => <option key={section.key} value={section.key}>{section.label}</option>)}
+            </select>
+          </label>
+          <nav ref={settingsTaskNavRef} className={`${styles.settingsTaskNav} ${workspace.sectionNav}`} aria-label="مهام إعدادات المشروع">
+            {SETTINGS_SECTIONS.map(section => <button key={section.key} type="button" aria-label={section.label}
+              data-tone={section.tone} aria-current={settingsSection.key === section.key ? 'true' : undefined}
+              aria-controls={`settings-task-${section.key}`} onClick={() => setSettingsSection(section.key)}>
+              <span className={styles.settingsTaskLabel}><section.icon size={19} aria-hidden="true" /><span>{section.label}</span></span><small>{section.hint}</small>
+            </button>)}
+          </nav>
+          <div className={styles.settingsContent}>
+          <div id="settings-task-connections" hidden={settingsSection.key !== 'connections'} className={styles.settingsTaskPanel}>
           <WhatsAppAccountsPanel projectId={activeProject.id} />
 
           {/* Facebook Page Connection Card */}
@@ -1040,7 +1098,7 @@ function SettingsProjectView() {
                   onClick={handleConnectFacebook}
                   disabled={fbLoading}
                   className={`${styles.btn} ${styles.btnPrimary}`}
-                  style={{ gap: '6px', backgroundColor: '#1877F2' }}
+                  style={{ gap: '6px' }}
                 >
                   <FacebookIcon size={18} />
                   {fbLoading ? 'جاري فتح نافذة فيسبوك...' : 'ربط صفحة فيسبوك'}
@@ -1049,31 +1107,402 @@ function SettingsProjectView() {
             )}
           </div>
 
-          {/* Right Side: General Preferences */}
-          <div className={styles.card}>
-            <h2 className={styles.cardTitle}>
-              <SettingsIcon size={20} style={{ color: 'hsl(var(--accent-secondary))' }} />
-              إعدادات الرد الآلي
-            </h2>
+          </div>
+          <div className={settingsSection.key === 'connections' ? styles.settingsConnectionSave : `${styles.card} ${styles.settingsEditor} ${workspace.editor}`} data-tone={settingsSection.tone} hidden={settingsSection.key === 'connections' && !generalDirty}>
+            {settingsSection.key !== 'connections' && <h2 className={styles.cardTitle}>
+              <settingsSection.icon size={21} aria-hidden="true" />{settingsSection.label}
+            </h2>}
 
-            <form ref={generalFormRef} onSubmit={handleSaveGeneralSettings} onChangeCapture={() => setGeneralDirty(true)} className={styles.form}>
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="settings-project-name">اسم المشروع</label>
-                <input
-                  id="settings-project-name"
-                  name="projectName"
-                  type="text"
-                  value={projectName}
-                  onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="اكتب اسم المشروع هنا"
-                  className={styles.input}
-                  required
-                />
+            <form ref={generalFormRef} noValidate onSubmit={handleSaveGeneralSettings} onChangeCapture={() => setGeneralDirty(true)} className={`${styles.form} ${workspace.form}`}>
+              <div className={workspace.saveBar} data-dirty={generalDirty}>
+                <span role="status" aria-live="polite">
+                  {generalDirty ? <AlertCircle size={17} aria-hidden="true" /> : <CheckCircle size={17} aria-hidden="true" />}
+                  {generalDirty ? 'توجد تغييرات غير محفوظة' : 'كل التغييرات محفوظة'}
+                </span>
+                <button type="submit" disabled={actionLoading || !generalDirty} className={`${styles.btn} ${styles.btnPrimary}`}>
+                  <Save size={17} aria-hidden="true" />{actionLoading ? 'جارٍ الحفظ…' : 'حفظ الإعدادات'}
+                </button>
               </div>
+              <div id="settings-task-replies" data-settings-section="replies" hidden={settingsSection.key !== 'replies'} className={styles.settingsTaskPanel}>
+                <p className={styles.replySettingsHint}>فعّل الرد وحدّد تأخيره لكل قناة. تُطبّق التغييرات عند الحفظ.</p>
+                <div className={styles.replyChannelList}>
+                  {replyChannels.map(channel => <section key={channel.id} className={workspace.channel} data-enabled={channel.enabled} aria-labelledby={`reply-channel-${channel.id}`}>
+                    <div className={workspace.channelHeader}>
+                      <div className={workspace.channelIdentity}>
+                        <channel.icon size={21} aria-hidden="true" />
+                        <h3 id={`reply-channel-${channel.id}`}>{channel.name}</h3>
+                        <span className={styles.replyChannelState} data-enabled={channel.enabled}>{channel.enabled ? 'مفعّل' : 'متوقف'}</span>
+                      </div>
+                      <label className={workspace.channelToggle}>
+                        <input type="checkbox" role="switch" className={styles.checkbox} checked={channel.enabled}
+                          aria-label={channel.activationLabel} onChange={event => {
+                            channel.setEnabled(event.target.checked);
+                            setExpandedReplyChannels(channels => channels.filter(id => id !== channel.id));
+                          }} />
+                        <span>الرد الآلي</span>
+                      </label>
+                    </div>
+                    {!channel.enabled && <button type="button" className={workspace.channelDisclosure}
+                      aria-expanded={expandedReplyChannels.includes(channel.id)} aria-controls={`reply-fields-${channel.id}`}
+                      onClick={() => setExpandedReplyChannels(channels => channels.includes(channel.id)
+                        ? channels.filter(id => id !== channel.id) : [...channels, channel.id])}>
+                      <ChevronDown size={16} aria-hidden="true" />إعدادات {channel.name}
+                    </button>}
+                    <div id={`reply-fields-${channel.id}`} data-reply-channel={channel.id} className={workspace.channelFields}
+                      hidden={!channel.enabled && !expandedReplyChannels.includes(channel.id)}>
+                      <div className={styles.formGroup}>
+                        <label className={styles.label} htmlFor={channel.delayId}>{channel.delayLabel}</label>
+                        <div className={styles.numberWithUnit}>
+                          <input id={channel.delayId} type="number" min={0} max={60} value={channel.delay}
+                            onChange={event => channel.setDelay(Number(event.target.value))} className={styles.input} />
+                          <span aria-hidden="true">ثانية</span>
+                        </div>
+                      </div>
+                      {channel.id === 'whatsapp' && <div className={styles.formGroup}>
+                        <label className={styles.label} htmlFor="settings-daily-message-limit">الحد اليومي للرسائل الصادرة</label>
+                        <div className={styles.numberWithUnit}>
+                          <input id="settings-daily-message-limit" type="number" min={10} value={maxDailyMessages}
+                            onChange={event => setMaxDailyMessages(Number(event.target.value))} className={styles.input} />
+                          <span aria-hidden="true">رسالة</span>
+                        </div>
+                      </div>}
+                    </div>
+                  </section>)}
+                </div>
+              </div>
+              <div id="settings-task-behavior" data-settings-section="behavior" hidden={settingsSection.key !== 'behavior'} className={styles.settingsTaskPanel}>
+              <FormSection id="settings-section-3" title="الهوية والتوقيع">
 
-              <div className={styles.settingsSection}>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-agent-names">أسماء الموظفين</label>
+                  <textarea
+                    id="settings-agent-names"
+                    value={arrayToLines(aiBehavior.identity.agentNames)}
+                    onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, agentNames: linesToArray(e.target.value) })}
+                    className={styles.input}
+                    rows={4}
+                    placeholder="اسم كل موظف في سطر"
+                  />
+                </div>
+                <div className={styles.inlineGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="settings-name-mode">طريقة اختيار الاسم</label>
+                    <select
+                      id="settings-name-mode"
+                      className={styles.select}
+                      value={aiBehavior.identity.nameSelectionMode}
+                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, nameSelectionMode: e.target.value })}
+                    >
+                      <option value="HourlyRotation">تدوير حسب الساعة</option>
+                      <option value="First">أول اسم دائماً</option>
+                    </select>
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.checkboxGroup}>
+                      <input
+                        type="checkbox"
+                        checked={aiBehavior.identity.signatureEnabled}
+                        onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, signatureEnabled: e.target.checked })}
+                        className={styles.checkbox}
+                      />
+                      <span className={styles.label} style={{ userSelect: 'none' }}>إضافة توقيع في الرد</span>
+                    </label>
+                  </div>
+                </div>
+                <div className={styles.inlineGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="settings-signature-template">قالب التوقيع</label>
+                    <input
+                      id="settings-signature-template"
+                      value={aiBehavior.identity.signatureTemplate}
+                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, signatureTemplate: e.target.value })}
+                      className={styles.input}
+                      placeholder="- {agentName}"
+                    />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="settings-complaint-signature">توقيع الشكاوى</label>
+                    <input
+                      id="settings-complaint-signature"
+                      value={aiBehavior.identity.complaintSignatureTemplate}
+                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, complaintSignatureTemplate: e.target.value })}
+                      className={styles.input}
+                      placeholder="- {agentName}"
+                    />
+                  </div>
+                </div>
+              </FormSection>
+
+              <FormSection id="settings-section-4" title="النبرة والجمهور">
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-tone-preset">لهجة وأسلوب الرد</label>
+                  <select
+                    id="settings-tone-preset"
+                    className={styles.select}
+                    value={aiBehavior.tone.tonePreset}
+                    onChange={(e) => {
+                      const preset = e.target.value;
+                      const presetTone = preset === 'custom' ? '' :
+                        preset === 'egyptian-polite' ? 'العامية المصرية المهذبة والمحترمة' :
+                        preset === 'msa-friendly' ? 'العربية الفصحى المبسطة والودودة' :
+                        preset === 'gulf-polite' ? 'اللهجة الخليجية المهذبة' :
+                        'العامية المصرية الروشة والصايعة';
+                      setAiTonePreference(presetTone);
+                      updateAiBehavior('tone', { ...aiBehavior.tone, tonePreset: preset, customTone: presetTone });
+                    }}
+                  >
+                    <option value="egyptian-slang-sales">عامية مصرية روشة وصايعة</option>
+                    <option value="egyptian-polite">عامية مصرية مهذبة</option>
+                    <option value="msa-friendly">عربية فصحى مبسطة</option>
+                    <option value="gulf-polite">لهجة خليجية مهذبة</option>
+                    <option value="custom">نبرة مخصصة</option>
+                  </select>
+                  <input
+                    id="settings-custom-tone"
+                    aria-label="وصف النبرة المخصصة"
+                    type="text"
+                    placeholder="اكتب النبرة المخصصة أو عدل وصف النبرة المختارة"
+                    value={aiBehavior.tone.customTone || ''}
+                    onChange={(e) => {
+                      setAiTonePreference(e.target.value);
+                      updateAiBehavior('tone', { ...aiBehavior.tone, customTone: e.target.value });
+                    }}
+                    className={styles.input}
+                  />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-target-audience">الجمهور المستهدف</label>
+                  <input
+                    id="settings-target-audience"
+                    type="text"
+                    placeholder="مثال: عملاء المتجر المهتمون بمنتجات العناية الشخصية"
+                    value={aiBehavior.tone.targetAudience}
+                    onChange={(e) => {
+                      setAiTargetAudience(e.target.value);
+                      updateAiBehavior('tone', { ...aiBehavior.tone, targetAudience: e.target.value });
+                    }}
+                    className={styles.input}
+                  />
+                </div>
+
+                <div className={styles.inlineGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="settings-allowed-phrases">عبارات مسموحة أو مفضلة</label>
+                    <textarea
+                      id="settings-allowed-phrases"
+                      value={arrayToLines(aiBehavior.tone.allowedPhrases)}
+                      onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, allowedPhrases: linesToArray(e.target.value) })}
+                      className={styles.input}
+                      rows={4}
+                      placeholder="عبارة في كل سطر"
+                    />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="settings-prohibited-phrases">عبارات ممنوعة</label>
+                    <textarea
+                      id="settings-prohibited-phrases"
+                      value={arrayToLines(aiBehavior.tone.prohibitedPhrases)}
+                      onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, prohibitedPhrases: linesToArray(e.target.value) })}
+                      className={styles.input}
+                      rows={4}
+                      placeholder="عبارة في كل سطر"
+                    />
+                  </div>
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-business-instructions">تعليمات عمل إضافية</label>
+                  <textarea
+                    id="settings-business-instructions"
+                    value={aiBehavior.tone.businessInstructions || ''}
+                    onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, businessInstructions: e.target.value })}
+                    className={styles.input}
+                    rows={4}
+                    placeholder="أي قواعد بيع أو خدمة عملاء عامة"
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection id="settings-section-5" title="القنوات">
+
+                {(['WhatsApp', 'Messenger', 'FacebookComment'] as ChannelName[]).map(channel => (
+                  <div className={styles.formGroup} key={channel}>
+                    <label className={styles.label} htmlFor={`settings-channel-${channel}`}>{channel === 'FacebookComment' ? 'تعليقات فيسبوك' : channel} — تعليمات إضافية للقناة</label>
+                    <textarea
+                      id={`settings-channel-${channel}`}
+                      value={aiBehavior.channels[channel]?.additionalInstructions || ''}
+                      onChange={(e) => updateChannelInstructions(channel, e.target.value)}
+                      className={styles.input}
+                      rows={3}
+                      placeholder="سيتم تطبيقها على هذه القناة فقط"
+                    />
+                  </div>
+                ))}
+              </FormSection>
+
+              <FormSection id="settings-section-6" title="CTA ذكي">
+
+                <p className={styles.sectionHint}>اختياري، يختار الذكاء الاصطناعي دعوة إجراء واحدة تناسب آخر اهتمام للعميل، بدلاً من تكرار عرض ثابت في كل رسالة.</p>
+                <label className={styles.checkboxGroup}>
+                  <input
+                    type="checkbox"
+                    checked={aiBehavior.cta.enabled}
+                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, enabled: e.target.checked })}
+                    className={styles.checkbox}
+                  />
+                  <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل CTA ديناميكي</span>
+                </label>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-cta-instructions">متى تظهر دعوة الإجراء؟</label>
+                  <textarea
+                    id="settings-cta-instructions"
+                    value={aiBehavior.cta.instructions || ''}
+                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, instructions: e.target.value })}
+                    className={styles.input}
+                    rows={3}
+                    placeholder="مثال: عند السؤال عن المنصة أو الباقات، اقترح الخطوة التالية المناسبة فقط"
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-cta-topics">موضوعات دعوة الإجراء المتاحة</label>
+                  <textarea
+                    id="settings-cta-topics"
+                    value={arrayToLines(aiBehavior.cta.topics)}
+                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, topics: linesToArray(e.target.value) })}
+                    className={styles.input}
+                    rows={4}
+                    placeholder={'ابدأ تجربة البحث المجانية\nاطلع على الباقات\nشاهد الفيديو التوضيحي'}
+                  />
+                  <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>اكتب موضوعاً واحداً في كل سطر.</span>
+                </div>
+              </FormSection>
+
+              <FormSection id="settings-section-7" title="الريأكشن">
+
+                <div className={styles.inlineGrid}>
+                  <label className={styles.checkboxGroup}>
+                    <input
+                      type="checkbox"
+                      checked={aiBehavior.reactions.enabled}
+                      onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, enabled: e.target.checked })}
+                      className={styles.checkbox}
+                    />
+                    <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل إرسال الريأكشن</span>
+                  </label>
+                  <label className={styles.checkboxGroup}>
+                    <input
+                      type="checkbox"
+                      checked={aiBehavior.reactions.useAiSuggestedReaction}
+                      onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, useAiSuggestedReaction: e.target.checked })}
+                      className={styles.checkbox}
+                    />
+                    <span className={styles.label} style={{ userSelect: 'none' }}>استخدام اقتراح الذكاء الاصطناعي</span>
+                  </label>
+                </div>
+                <div className={styles.reactionGrid}>
+                  {['👍', '❤️', '💖', '😢', '😂', '😮'].map(reaction => (
+                    <label className={styles.reactionOption} key={reaction}>
+                      <input
+                        type="checkbox"
+                        checked={aiBehavior.reactions.allowedReactions.includes(reaction)}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...aiBehavior.reactions.allowedReactions, reaction]
+                            : aiBehavior.reactions.allowedReactions.filter(item => item !== reaction);
+                          updateAiBehavior('reactions', { ...aiBehavior.reactions, allowedReactions: Array.from(new Set(next)) });
+                        }}
+                      />
+                      <span>{reaction}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-reaction-rules">قواعد اختيار التفاعل</label>
+                  <textarea
+                    id="settings-reaction-rules"
+                    value={aiBehavior.reactions.rules || ''}
+                    onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, rules: e.target.value })}
+                    className={styles.input}
+                    rows={3}
+                    placeholder="مثال: استخدم ❤️ عند الشكر أو الموافقة، و😮 عند الاستفسار المهم"
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection id="settings-section-8" title="رسائل fallback">
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-fallback-ai-error">خطأ الذكاء الاصطناعي</label>
+                  <textarea id="settings-fallback-ai-error" value={aiBehavior.fallbacks.aiError} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, aiError: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-fallback-invalid-ai">صيغة رد غير صحيحة</label>
+                  <textarea id="settings-fallback-invalid-ai" value={aiBehavior.fallbacks.invalidAiOutput} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, invalidAiOutput: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-fallback-customer-service">رسالة خدمة العملاء العامة</label>
+                  <textarea id="settings-fallback-customer-service" value={aiBehavior.fallbacks.genericCustomerService} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, genericCustomerService: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-fallback-facebook-comment">رد التعليق العام على فيسبوك</label>
+                  <textarea id="settings-fallback-facebook-comment" value={aiBehavior.fallbacks.facebookPublicComment} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, facebookPublicComment: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-fallback-whatsapp-message">رسالة الانتقال إلى واتساب</label>
+                  <textarea id="settings-fallback-whatsapp-message" value={aiBehavior.fallbacks.whatsAppTransitionMessage} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionMessage: e.target.value })} className={styles.input} rows={4} />
+                </div>
+                <div className={styles.inlineGrid}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="settings-fallback-whatsapp-success">نجاح الانتقال إلى واتساب</label>
+                    <textarea id="settings-fallback-whatsapp-success" value={aiBehavior.fallbacks.whatsAppTransitionSuccess} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionSuccess: e.target.value })} className={styles.input} rows={3} />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label} htmlFor="settings-fallback-whatsapp-failure">فشل الانتقال إلى واتساب</label>
+                    <textarea id="settings-fallback-whatsapp-failure" value={aiBehavior.fallbacks.whatsAppTransitionFailure} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionFailure: e.target.value })} className={styles.input} rows={3} />
+                  </div>
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-fallback-followup">رسالة المتابعة الافتراضية</label>
+                  <textarea id="settings-fallback-followup" value={aiBehavior.fallbacks.followUpDefault} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, followUpDefault: e.target.value })} className={styles.input} rows={3} />
+                </div>
+                <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
+                  المتغيرات المدعومة: {'{customerName}'}, {'{agentName}'}, {'{projectName}'}, {'{phoneNumber}'}, {'{channel}'}.
+                </span>
+              </FormSection>
+
+              <FormSection id="settings-section-9" title="إعدادات متقدمة">
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-advanced-instructions">تعليمات إضافية متقدمة</label>
+                  <textarea
+                    id="settings-advanced-instructions"
+                    placeholder="تعليمات إضافية فقط. القواعد المحمية والإعدادات المنظمة أعلى أولوية."
+                    value={aiBehavior.advancedInstructions || ''}
+                    onChange={(e) => updateAiBehavior('advancedInstructions', e.target.value)}
+                    className={styles.input}
+                    rows={6}
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.label} htmlFor="settings-legacy-prompt">تعليمات النظام القديمة للتوافق</label>
+                  <textarea
+                    id="settings-legacy-prompt"
+                    placeholder="تعليمات قديمة محفوظة للتوافق فقط"
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    className={styles.input}
+                    rows={4}
+                    style={{ direction: 'ltr', textAlign: 'left', fontFamily: 'monospace', fontSize: '0.85rem' }}
+                  />
+                </div>
+              </FormSection>
+
+              </div>
+              <div id="settings-task-models" data-settings-section="models" hidden={settingsSection.key !== 'models'} className={styles.settingsTaskPanel}>
+              <FormSection id="settings-section-1" title="موديل ردود العملاء">
                 <div>
-                  <h3 className={styles.sectionTitle}>موديل ردود العملاء</h3>
+
                   <p className={styles.sectionHint}>
                     خاص فقط بردود واتساب وماسنجر وتعليقات فيسبوك. المحتوى والصور والإعلانات تفضل على إعداد Gemini المنفصل بالأسفل.
                   </p>
@@ -1217,11 +1646,11 @@ function SettingsProjectView() {
                     </div>
                   </div>
                 )}
-              </div>
+              </FormSection>
 
-              <div className={styles.settingsSection}>
+              <FormSection id="settings-section-2" title="Gemini لباقي النظام">
                 <div>
-                  <h3 className={styles.sectionTitle}>Gemini لباقي النظام</h3>
+
                   <p className={styles.sectionHint}>مفتاح Gemini الأساسي يفهم قاعدة المعرفة ويقترح الأفكار والمحتوى والصور والإعلانات. توليد الفيديو عبر Agent Platform له مفتاح مستقل بالأسفل.</p>
                 </div>
 
@@ -1394,6 +1823,22 @@ function SettingsProjectView() {
                     مشروع Google Cloud المرتبط بمفتاح Agent Platform لتوليد الفيديو. اكتب Project ID وليس رقم المشروع.
                   </span>
                 </div>
+              </FormSection>
+
+              </div>
+              <div id="settings-task-project" data-settings-section="project" hidden={settingsSection.key !== 'project'} className={styles.settingsTaskPanel}>
+              <div className={styles.formGroup}>
+                <label className={styles.label} htmlFor="settings-project-name">اسم المشروع</label>
+                <input
+                  id="settings-project-name"
+                  name="projectName"
+                  type="text"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="اكتب اسم المشروع هنا"
+                  className={styles.input}
+                  required
+                />
               </div>
 
               <div className={styles.formGroup}>
@@ -1416,452 +1861,21 @@ function SettingsProjectView() {
                 <span id="settings-timezone-help" className={styles.sectionHint}>اكتب اسم IANA كاملًا أو اختاره من القائمة، مثل Africa/Cairo.</span>
               </div>
 
-              <div className={styles.settingsSection}>
-                <h3 className={styles.sectionTitle}>الهوية والتوقيع</h3>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-agent-names">أسماء الموظفين</label>
-                  <textarea
-                    id="settings-agent-names"
-                    value={arrayToLines(aiBehavior.identity.agentNames)}
-                    onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, agentNames: linesToArray(e.target.value) })}
-                    className={styles.input}
-                    rows={4}
-                    placeholder="اسم كل موظف في سطر"
-                  />
-                </div>
-                <div className={styles.inlineGrid}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label} htmlFor="settings-name-mode">طريقة اختيار الاسم</label>
-                    <select
-                      id="settings-name-mode"
-                      className={styles.select}
-                      value={aiBehavior.identity.nameSelectionMode}
-                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, nameSelectionMode: e.target.value })}
-                    >
-                      <option value="HourlyRotation">تدوير حسب الساعة</option>
-                      <option value="First">أول اسم دائماً</option>
-                    </select>
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.checkboxGroup}>
-                      <input
-                        type="checkbox"
-                        checked={aiBehavior.identity.signatureEnabled}
-                        onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, signatureEnabled: e.target.checked })}
-                        className={styles.checkbox}
-                      />
-                      <span className={styles.label} style={{ userSelect: 'none' }}>إضافة توقيع في الرد</span>
-                    </label>
-                  </div>
-                </div>
-                <div className={styles.inlineGrid}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label} htmlFor="settings-signature-template">قالب التوقيع</label>
-                    <input
-                      id="settings-signature-template"
-                      value={aiBehavior.identity.signatureTemplate}
-                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, signatureTemplate: e.target.value })}
-                      className={styles.input}
-                      placeholder="- {agentName}"
-                    />
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label} htmlFor="settings-complaint-signature">توقيع الشكاوى</label>
-                    <input
-                      id="settings-complaint-signature"
-                      value={aiBehavior.identity.complaintSignatureTemplate}
-                      onChange={(e) => updateAiBehavior('identity', { ...aiBehavior.identity, complaintSignatureTemplate: e.target.value })}
-                      className={styles.input}
-                      placeholder="- {agentName}"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className={styles.settingsSection}>
-                <h3 className={styles.sectionTitle}>النبرة والجمهور</h3>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-tone-preset">لهجة وأسلوب الرد</label>
-                  <select
-                    id="settings-tone-preset"
-                    className={styles.select}
-                    value={aiBehavior.tone.tonePreset}
-                    onChange={(e) => {
-                      const preset = e.target.value;
-                      const presetTone = preset === 'custom' ? '' :
-                        preset === 'egyptian-polite' ? 'العامية المصرية المهذبة والمحترمة' :
-                        preset === 'msa-friendly' ? 'العربية الفصحى المبسطة والودودة' :
-                        preset === 'gulf-polite' ? 'اللهجة الخليجية المهذبة' :
-                        'العامية المصرية الروشة والصايعة';
-                      setAiTonePreference(presetTone);
-                      updateAiBehavior('tone', { ...aiBehavior.tone, tonePreset: preset, customTone: presetTone });
-                    }}
-                  >
-                    <option value="egyptian-slang-sales">عامية مصرية روشة وصايعة</option>
-                    <option value="egyptian-polite">عامية مصرية مهذبة</option>
-                    <option value="msa-friendly">عربية فصحى مبسطة</option>
-                    <option value="gulf-polite">لهجة خليجية مهذبة</option>
-                    <option value="custom">نبرة مخصصة</option>
-                  </select>
-                  <input
-                    id="settings-custom-tone"
-                    aria-label="وصف النبرة المخصصة"
-                    type="text"
-                    placeholder="اكتب النبرة المخصصة أو عدل وصف النبرة المختارة"
-                    value={aiBehavior.tone.customTone || ''}
-                    onChange={(e) => {
-                      setAiTonePreference(e.target.value);
-                      updateAiBehavior('tone', { ...aiBehavior.tone, customTone: e.target.value });
-                    }}
-                    className={styles.input}
-                  />
-                </div>
-
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-target-audience">الجمهور المستهدف</label>
-                  <input
-                    id="settings-target-audience"
-                    type="text"
-                    placeholder="مثال: عملاء المتجر المهتمون بمنتجات العناية الشخصية"
-                    value={aiBehavior.tone.targetAudience}
-                    onChange={(e) => {
-                      setAiTargetAudience(e.target.value);
-                      updateAiBehavior('tone', { ...aiBehavior.tone, targetAudience: e.target.value });
-                    }}
-                    className={styles.input}
-                  />
-                </div>
-
-                <div className={styles.inlineGrid}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label} htmlFor="settings-allowed-phrases">عبارات مسموحة أو مفضلة</label>
-                    <textarea
-                      id="settings-allowed-phrases"
-                      value={arrayToLines(aiBehavior.tone.allowedPhrases)}
-                      onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, allowedPhrases: linesToArray(e.target.value) })}
-                      className={styles.input}
-                      rows={4}
-                      placeholder="عبارة في كل سطر"
-                    />
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label} htmlFor="settings-prohibited-phrases">عبارات ممنوعة</label>
-                    <textarea
-                      id="settings-prohibited-phrases"
-                      value={arrayToLines(aiBehavior.tone.prohibitedPhrases)}
-                      onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, prohibitedPhrases: linesToArray(e.target.value) })}
-                      className={styles.input}
-                      rows={4}
-                      placeholder="عبارة في كل سطر"
-                    />
-                  </div>
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-business-instructions">تعليمات عمل إضافية</label>
-                  <textarea
-                    id="settings-business-instructions"
-                    value={aiBehavior.tone.businessInstructions || ''}
-                    onChange={(e) => updateAiBehavior('tone', { ...aiBehavior.tone, businessInstructions: e.target.value })}
-                    className={styles.input}
-                    rows={4}
-                    placeholder="أي قواعد بيع أو خدمة عملاء عامة"
-                  />
-                </div>
-              </div>
-
-              <div className={styles.settingsSection}>
-                <h3 className={styles.sectionTitle}>القنوات</h3>
-                {(['WhatsApp', 'Messenger', 'FacebookComment'] as ChannelName[]).map(channel => (
-                  <div className={styles.formGroup} key={channel}>
-                    <label className={styles.label} htmlFor={`settings-channel-${channel}`}>{channel === 'FacebookComment' ? 'تعليقات فيسبوك' : channel} — تعليمات إضافية للقناة</label>
-                    <textarea
-                      id={`settings-channel-${channel}`}
-                      value={aiBehavior.channels[channel]?.additionalInstructions || ''}
-                      onChange={(e) => updateChannelInstructions(channel, e.target.value)}
-                      className={styles.input}
-                      rows={3}
-                      placeholder="سيتم تطبيقها على هذه القناة فقط"
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className={styles.settingsSection}>
-                <h3 className={styles.sectionTitle}>CTA ذكي</h3>
-                <p className={styles.sectionHint}>اختياري، يختار الذكاء الاصطناعي دعوة إجراء واحدة تناسب آخر اهتمام للعميل، بدلاً من تكرار عرض ثابت في كل رسالة.</p>
-                <label className={styles.checkboxGroup}>
-                  <input
-                    type="checkbox"
-                    checked={aiBehavior.cta.enabled}
-                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, enabled: e.target.checked })}
-                    className={styles.checkbox}
-                  />
-                  <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل CTA ديناميكي</span>
-                </label>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-cta-instructions">متى تظهر دعوة الإجراء؟</label>
-                  <textarea
-                    id="settings-cta-instructions"
-                    value={aiBehavior.cta.instructions || ''}
-                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, instructions: e.target.value })}
-                    className={styles.input}
-                    rows={3}
-                    placeholder="مثال: عند السؤال عن المنصة أو الباقات، اقترح الخطوة التالية المناسبة فقط"
-                  />
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-cta-topics">موضوعات دعوة الإجراء المتاحة</label>
-                  <textarea
-                    id="settings-cta-topics"
-                    value={arrayToLines(aiBehavior.cta.topics)}
-                    onChange={(e) => updateAiBehavior('cta', { ...aiBehavior.cta, topics: linesToArray(e.target.value) })}
-                    className={styles.input}
-                    rows={4}
-                    placeholder={'ابدأ تجربة البحث المجانية\nاطلع على الباقات\nشاهد الفيديو التوضيحي'}
-                  />
-                  <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>اكتب موضوعاً واحداً في كل سطر.</span>
-                </div>
-              </div>
-
-              <div className={styles.settingsSection}>
-                <h3 className={styles.sectionTitle}>الريأكشن</h3>
-                <div className={styles.inlineGrid}>
-                  <label className={styles.checkboxGroup}>
-                    <input
-                      type="checkbox"
-                      checked={aiBehavior.reactions.enabled}
-                      onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, enabled: e.target.checked })}
-                      className={styles.checkbox}
-                    />
-                    <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل إرسال الريأكشن</span>
-                  </label>
-                  <label className={styles.checkboxGroup}>
-                    <input
-                      type="checkbox"
-                      checked={aiBehavior.reactions.useAiSuggestedReaction}
-                      onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, useAiSuggestedReaction: e.target.checked })}
-                      className={styles.checkbox}
-                    />
-                    <span className={styles.label} style={{ userSelect: 'none' }}>استخدام اقتراح الذكاء الاصطناعي</span>
-                  </label>
-                </div>
-                <div className={styles.reactionGrid}>
-                  {['👍', '❤️', '💖', '😢', '😂', '😮'].map(reaction => (
-                    <label className={styles.reactionOption} key={reaction}>
-                      <input
-                        type="checkbox"
-                        checked={aiBehavior.reactions.allowedReactions.includes(reaction)}
-                        onChange={(e) => {
-                          const next = e.target.checked
-                            ? [...aiBehavior.reactions.allowedReactions, reaction]
-                            : aiBehavior.reactions.allowedReactions.filter(item => item !== reaction);
-                          updateAiBehavior('reactions', { ...aiBehavior.reactions, allowedReactions: Array.from(new Set(next)) });
-                        }}
-                      />
-                      <span>{reaction}</span>
-                    </label>
-                  ))}
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-reaction-rules">قواعد اختيار التفاعل</label>
-                  <textarea
-                    id="settings-reaction-rules"
-                    value={aiBehavior.reactions.rules || ''}
-                    onChange={(e) => updateAiBehavior('reactions', { ...aiBehavior.reactions, rules: e.target.value })}
-                    className={styles.input}
-                    rows={3}
-                    placeholder="مثال: استخدم ❤️ عند الشكر أو الموافقة، و😮 عند الاستفسار المهم"
-                  />
-                </div>
-              </div>
-
-              <div className={styles.settingsSection}>
-                <h3 className={styles.sectionTitle}>رسائل fallback</h3>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-fallback-ai-error">خطأ الذكاء الاصطناعي</label>
-                  <textarea id="settings-fallback-ai-error" value={aiBehavior.fallbacks.aiError} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, aiError: e.target.value })} className={styles.input} rows={3} />
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-fallback-invalid-ai">صيغة رد غير صحيحة</label>
-                  <textarea id="settings-fallback-invalid-ai" value={aiBehavior.fallbacks.invalidAiOutput} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, invalidAiOutput: e.target.value })} className={styles.input} rows={3} />
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-fallback-customer-service">رسالة خدمة العملاء العامة</label>
-                  <textarea id="settings-fallback-customer-service" value={aiBehavior.fallbacks.genericCustomerService} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, genericCustomerService: e.target.value })} className={styles.input} rows={3} />
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-fallback-facebook-comment">رد التعليق العام على فيسبوك</label>
-                  <textarea id="settings-fallback-facebook-comment" value={aiBehavior.fallbacks.facebookPublicComment} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, facebookPublicComment: e.target.value })} className={styles.input} rows={3} />
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-fallback-whatsapp-message">رسالة الانتقال إلى واتساب</label>
-                  <textarea id="settings-fallback-whatsapp-message" value={aiBehavior.fallbacks.whatsAppTransitionMessage} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionMessage: e.target.value })} className={styles.input} rows={4} />
-                </div>
-                <div className={styles.inlineGrid}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label} htmlFor="settings-fallback-whatsapp-success">نجاح الانتقال إلى واتساب</label>
-                    <textarea id="settings-fallback-whatsapp-success" value={aiBehavior.fallbacks.whatsAppTransitionSuccess} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionSuccess: e.target.value })} className={styles.input} rows={3} />
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label} htmlFor="settings-fallback-whatsapp-failure">فشل الانتقال إلى واتساب</label>
-                    <textarea id="settings-fallback-whatsapp-failure" value={aiBehavior.fallbacks.whatsAppTransitionFailure} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, whatsAppTransitionFailure: e.target.value })} className={styles.input} rows={3} />
-                  </div>
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-fallback-followup">رسالة المتابعة الافتراضية</label>
-                  <textarea id="settings-fallback-followup" value={aiBehavior.fallbacks.followUpDefault} onChange={(e) => updateAiBehavior('fallbacks', { ...aiBehavior.fallbacks, followUpDefault: e.target.value })} className={styles.input} rows={3} />
-                </div>
-                <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
-                  المتغيرات المدعومة: {'{customerName}'}, {'{agentName}'}, {'{projectName}'}, {'{phoneNumber}'}, {'{channel}'}.
-                </span>
-              </div>
-
-              <div className={styles.settingsSection}>
-                <h3 className={styles.sectionTitle}>إعدادات متقدمة</h3>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-advanced-instructions">تعليمات إضافية متقدمة</label>
-                  <textarea
-                    id="settings-advanced-instructions"
-                    placeholder="تعليمات إضافية فقط. القواعد المحمية والإعدادات المنظمة أعلى أولوية."
-                    value={aiBehavior.advancedInstructions || ''}
-                    onChange={(e) => updateAiBehavior('advancedInstructions', e.target.value)}
-                    className={styles.input}
-                    rows={6}
-                  />
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-legacy-prompt">تعليمات النظام القديمة للتوافق</label>
-                  <textarea
-                    id="settings-legacy-prompt"
-                    placeholder="تعليمات قديمة محفوظة للتوافق فقط"
-                    value={systemPrompt}
-                    onChange={(e) => setSystemPrompt(e.target.value)}
-                    className={styles.input}
-                    rows={4}
-                    style={{ direction: 'ltr', textAlign: 'left', fontFamily: 'monospace', fontSize: '0.85rem' }}
-                  />
-                </div>
-              </div>
-
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="settings-reply-delay">تأخير الرد (بالثواني)</label>
-                <input 
-                  id="settings-reply-delay"
-                  type="number" 
-                  min={0}
-                  max={60}
-                  value={replyDelay}
-                  onChange={(e) => setReplyDelay(Number(e.target.value))}
-                  className={styles.input} 
-                />
-                <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
-                  يساعد على جعل الرد طبيعي وتقليل مخاطر حظر الرقم.
-                </span>
-              </div>
-
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="settings-daily-message-limit">الحد اليومي للرسائل الصادرة</label>
-                <input 
-                  id="settings-daily-message-limit"
-                  type="number" 
-                  min={10}
-                  value={maxDailyMessages}
-                  onChange={(e) => setMaxDailyMessages(Number(e.target.value))}
-                  className={styles.input} 
-                />
-              </div>
-
-              <div className={styles.formGroup} style={{ marginTop: 'var(--space-xs)' }}>
-                <label className={styles.checkboxGroup}>
-                  <input 
-                    type="checkbox" 
-                    checked={autoReplyEnabled}
-                    onChange={(e) => setAutoReplyEnabled(e.target.checked)}
-                    className={styles.checkbox} 
-                  />
-                  <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل الرد الآلي بالذكاء الاصطناعي (واتساب)</span>
-                </label>
-              </div>
-
-              {/* Messenger AI Settings */}
-              <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)' }}>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 'var(--space-sm)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  إعدادات ماسنجر
-                </h3>
-                <div className={styles.formGroup}>
-                  <label className={styles.checkboxGroup}>
-                    <input 
-                      type="checkbox" 
-                      checked={messengerAutoReplyEnabled}
-                      onChange={(e) => setMessengerAutoReplyEnabled(e.target.checked)}
-                      className={styles.checkbox} 
-                    />
-                    <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل الرد الآلي على الماسنجر</span>
-                  </label>
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-messenger-delay">تأخير الرد (ماسنجر)</label>
-                  <input 
-                    id="settings-messenger-delay"
-                    type="number" 
-                    min={0}
-                    max={60}
-                    value={messengerReplyDelay}
-                    onChange={(e) => setMessengerReplyDelay(Number(e.target.value))}
-                    className={styles.input} 
-                  />
-                </div>
-              </div>
-
-              {/* Comments AI Settings */}
-              <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)' }}>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 'var(--space-sm)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  إعدادات التعليقات
-                </h3>
-                <div className={styles.formGroup}>
-                  <label className={styles.checkboxGroup}>
-                    <input 
-                      type="checkbox" 
-                      checked={commentsAutoReplyEnabled}
-                      onChange={(e) => setCommentsAutoReplyEnabled(e.target.checked)}
-                      className={styles.checkbox} 
-                    />
-                    <span className={styles.label} style={{ userSelect: 'none' }}>تفعيل الرد الآلي على التعليقات</span>
-                  </label>
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.label} htmlFor="settings-comments-delay">تأخير الرد (تعليقات)</label>
-                  <input 
-                    id="settings-comments-delay"
-                    type="number" 
-                    min={0}
-                    max={60}
-                    value={commentsReplyDelay}
-                    onChange={(e) => setCommentsReplyDelay(Number(e.target.value))}
-                    className={styles.input} 
-                  />
-                </div>
-              </div>
-
-              <div className={styles.stickySaveBar}>
-                <span role="status" aria-live="polite">{generalDirty ? 'توجد تغييرات غير محفوظة' : 'كل التغييرات محفوظة'}</span>
-                <button type="submit" disabled={actionLoading || !generalDirty} className={`${styles.btn} ${styles.btnPrimary}`}>
-                  {actionLoading ? 'جارٍ الحفظ…' : 'حفظ الإعدادات'}
-                </button>
               </div>
             </form>
+          </div>
           </div>
         </div>
       ) : (
         <div id="settings-panel-addons" role="tabpanel" aria-labelledby="settings-tab-addons" style={{ width: '100%' }}>
-          {viewMode === 'manage-groups' ? (
-            <GroupAppointmentsManager onBack={() => setViewMode('list')} timezone={timezone} />
+          {viewMode === 'manage-groups' || viewMode === 'manage-intensive-groups' ? (
+            <GroupAppointmentsManager key={viewMode} courseType={viewMode === 'manage-intensive-groups' ? 'intensive' : 'regular'} onBack={() => setViewMode('list')} timezone={timezone} onDirtyChange={setAddonsDirty} />
           ) : (
-            <Addons 
+            <Addons
               messengerWhatsAppTransitionEnabled={aiBehavior.messengerWhatsAppTransitionEnabled ?? true}
               onMessengerBookingRouteChange={handleMessengerBookingRouteChange}
-              isGroupAppointmentsEnabled={isGroupAppointmentsEnabled} 
-              onToggleGroupAppointments={handleToggleGroupAppointments} 
+              isGroupAppointmentsEnabled={isGroupAppointmentsEnabled}
+              onToggleGroupAppointments={handleToggleGroupAppointments}
               isWhatsAppGroupAutomationEnabled={isWhatsAppGroupAutomationEnabled}
               onToggleWhatsAppGroupAutomation={handleToggleWhatsAppGroupAutomation}
               groupAutomationManagerPhone={groupAutomationManagerPhone}
@@ -1874,7 +1888,7 @@ function SettingsProjectView() {
               onToggleTalkTipsTrialGate={handleToggleTalkTipsTrialGate}
               timezone={timezone}
               onDirtyChange={setAddonsDirty}
-              onManageGroups={() => setViewMode('manage-groups')} 
+              onManageGroups={(courseType) => setViewMode(courseType === 'intensive' ? 'manage-intensive-groups' : 'manage-groups')}
             />
           )}
         </div>

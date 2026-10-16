@@ -7,6 +7,19 @@ namespace Modules.AI.Services;
 
 internal static class AiRequesterBookingPhone
 {
+    private const string RequesterPhoneReference = @"(?:رقمك|رقم\s+(?:موبايلك|تليفونك|هاتفك|واتسابك)|رقم\s+(?:الموبايل|التليفون|الهاتف|الواتساب)\s+(?:بتاعك|الخاص\s+بك)|your\s+(?:phone|mobile|number|whatsapp))";
+
+    public static string? ForIdentityTransition(string content, string? precedingReply)
+    {
+        // An identity merge needs ownership of this number, not a phone remembered from a previous turn.
+        var asksForRequester = precedingReply != null
+            && IsPhoneQuestion(precedingReply, RequesterPhoneReference)
+            && !Regex.IsMatch(NormalizeQuestion(precedingReply),
+                @"(?:صاحبك|صاحبتك|صديقك|صديقتك|اختك|اخوك|زوجك|زوجتك|ابنك|بنتك)|\b(?:friend|sister|brother|wife|husband|son|daughter|colleague)\b",
+                RegexOptions.IgnoreCase);
+        return ExplicitRequesterPhone(content, asksForRequester ? precedingReply : null);
+    }
+
     public static string? FromConversation(IReadOnlyCollection<Message> history, string latestContent)
     {
         string? suppliedPhone = null;
@@ -66,15 +79,19 @@ internal static class AiRequesterBookingPhone
         return normalized != null && EgyptianPhoneNumber.Extract(phoneText) == normalized ? normalized : null;
     }
 
-    private static bool IsRequesterPhoneQuestion(string content)
+    private static bool IsRequesterPhoneQuestion(string content) =>
+        IsPhoneQuestion(content, RequesterPhoneReference + @"|(?:رقم\s+(?:الموبايل|الهاتف))");
+
+    private static bool IsPhoneQuestion(string content, string phoneReference)
     {
-        var normalized = Regex.Replace(content, @"[\u064B-\u065F\u0670\u0640]", "")
-            .Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا');
-        const string phoneReference = @"(?:رقمك|رقم\s+(?:موبايلك|تليفونك|هاتفك|واتسابك|الموبايل|الهاتف)|your\s+(?:phone|mobile|number))";
-        return Regex.IsMatch(normalized,
-            @"(?:ابعت|تبعت|ارسل|ترسل|محتاج|نحتاج|ممكن|ما هو|send|provide|need|what is)[^.؟?\n،]{0,80}" + phoneReference
-            + "|" + phoneReference + @"\s*(?:ايه|مش ظاهر|غير ظاهر)", RegexOptions.IgnoreCase);
+        return Regex.IsMatch(NormalizeQuestion(content),
+            @"(?:ابعت|تبعت|ارسل|ترسل|محتاج|نحتاج|ممكن|ما هو|send|provide|need|what is)[^.؟?\n،]{0,80}(?:" + phoneReference
+            + ")|(?:" + phoneReference + @")\s*(?:ايه|مش ظاهر|غير ظاهر)", RegexOptions.IgnoreCase);
     }
+
+    private static string NormalizeQuestion(string content) =>
+        Regex.Replace(content, @"[\u064B-\u065F\u0670\u0640]", "")
+            .Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا');
 
     private static string? SuppliedPhone(string? suggestedPhone, IReadOnlyCollection<string> customerMessages)
     {

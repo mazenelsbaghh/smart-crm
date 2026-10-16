@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { Check, Copy, Download, Pause, Play, RotateCcw, Sparkles, Volume2 } from 'lucide-react';
+import { Check, Copy, Download, Pause, Play, RotateCcw, Sparkles, Volume2, BookOpen, Eye } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import styles from './quran-challenge.module.css';
@@ -223,7 +223,7 @@ export default function QuranChallengePage() {
 
       <section className={styles.studio} id="studio" aria-label="معاينة قالب الفيديو">
         <div className={styles.previewColumn}>
-          <div className={styles.previewHeader}><span>المعاينة الحية</span><span className={styles.liveDot}>قالب 09:16</span></div>
+          <div className={styles.previewHeader}><span><Eye size={18} aria-hidden="true" />المعاينة الحية</span><span className={styles.liveDot}>قالب 09:16</span></div>
           <div className={styles.phoneFrame}>
             <div className={styles.reel}>
               <div className={styles.orbitOne} /><div className={styles.orbitTwo} />
@@ -254,11 +254,11 @@ export default function QuranChallengePage() {
         </div>
 
         <aside className={styles.controls}>
-          <div className={styles.controlHeading}><p className={styles.eyebrow}>إعداد التحدي</p><h2>جرّب آيتك</h2></div>
+          <div className={styles.controlHeading}><p className={styles.eyebrow}>إعداد التحدي</p><h2><BookOpen size={21} aria-hidden="true" />جرّب آيتك</h2></div>
           <form className={styles.verseForm} onSubmit={loadVerse}>
             <label>رقم السورة<input type="number" min="1" max="114" value={surahNumber} onChange={(event) => setSurahNumber(Number(event.target.value))} /></label>
             <label>رقم الآية<input type="number" min="1" value={ayahNumber} onChange={(event) => setAyahNumber(Number(event.target.value))} /></label>
-            <button className={styles.loadButton} disabled={loadingVerse}>{loadingVerse ? 'جارٍ تحميل الآية…' : 'عرض الآية'}</button>
+            <button className={styles.loadButton} disabled={loadingVerse}><BookOpen size={17} aria-hidden="true" />{loadingVerse ? 'جارٍ تحميل الآية…' : 'عرض الآية'}</button>
           </form>
           {verseError && <p className={styles.error} role="alert">{verseError}</p>}
           {loadConfirmation && <p className={styles.success} role="status">{loadConfirmation}</p>}

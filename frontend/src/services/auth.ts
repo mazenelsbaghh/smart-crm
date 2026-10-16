@@ -82,24 +82,30 @@ function resolveLoginUser(apiUser: Partial<User> | undefined, accessToken: strin
   };
 }
 
+function parseLoginSession({ accessToken, refreshToken, user }: LoginApiResponse): LoginResponse {
+  if (typeof accessToken !== 'string' || !accessToken.trim() || typeof refreshToken !== 'string' || !refreshToken.trim()) {
+    throw new Error('INVALID_LOGIN_RESPONSE');
+  }
+  const resolvedUser = resolveLoginUser(user, accessToken);
+  if (!resolvedUser) throw new Error('INVALID_LOGIN_RESPONSE');
+  return { accessToken, refreshToken, user: resolvedUser };
+}
+
 export const authService = {
   async login(email: string, password: string): Promise<LoginResponse> {
     const response = await api.post<LoginApiResponse>('/api/auth/login', {
       email,
       password,
     });
-    const { accessToken, refreshToken, user } = response.data;
-    if (typeof accessToken !== 'string' || !accessToken.trim() || typeof refreshToken !== 'string' || !refreshToken.trim()) {
-      throw new Error('INVALID_LOGIN_RESPONSE');
-    }
-    const resolvedUser = resolveLoginUser(user, accessToken);
-    if (!resolvedUser) throw new Error('INVALID_LOGIN_RESPONSE');
+    return parseLoginSession(response.data);
+  },
 
-    return {
-      accessToken,
-      refreshToken,
-      user: resolvedUser,
-    };
+  async switchProject(projectId: string): Promise<LoginResponse> {
+    const response = await api.post<LoginApiResponse>('/api/auth/projects/switch', {
+      projectId,
+      refreshToken: localStorage.getItem('refreshToken'),
+    });
+    return parseLoginSession(response.data);
   },
 
   saveSession(session: LoginResponse): void {

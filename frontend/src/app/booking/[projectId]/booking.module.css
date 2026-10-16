@@ -403,3 +403,16 @@
     animation: none;
   }
 }
+
+.card { width: min(720px, 100%); box-shadow: var(--shadow-panel); }
+.form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 18px; }
+.groupFieldset, .confirmationNote, .form > button { grid-column: 1 / -1; }
+.inputShell input { font-size: 16px; }
+.field > label, .groupFieldset legend { color: var(--text-strong); font-size: .875rem; }
+.field small, .timezoneNote { color: var(--text-base); font-size: .8rem; }
+.groupCopy > span { font-size: .82rem; }
+.capacity b, .capacity small { font-size: .78rem; }
+@media (max-width: 600px) {
+  .form { grid-template-columns: 1fr; gap: 18px; }
+  .header h1 { font-size: 1.4rem; }
+}

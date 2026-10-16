@@ -1,6 +1,7 @@
 import { test as base, expect, type Page } from '@playwright/test';
 import type { AdvertisingOverview, DailyAdvertisingReport } from '../../src/packages/ad-manager/types';
 import type { Project } from '../../src/services/auth';
+import type { Customer, CustomerPage } from '../../src/services/crm';
 
 const project: Project = { id: '11111111-1111-1111-1111-111111111111', name: 'مشروع الاختبار', settings: { aiAutoReplyEnabled: true } };
 const asOfUtc = new Date().toISOString();
@@ -47,6 +48,34 @@ export async function mockAdManager(page: Page, overrides: Record<string, unknow
 export async function mockAuthorizedProject(page: Page) {
   await page.route('**/api/projects', route => route.fulfill({ json: [{ id: project.id, name: project.name }] }));
   await page.route(`**/api/projects/${project.id}`, route => route.fulfill({ json: project }));
+}
+
+export async function mockCustomerPage(page: Page, customers: Customer[] = []) {
+  const counts = (values: string[]) => {
+    const entries = new Map<string, number>();
+    for (const value of values) entries.set(value, (entries.get(value) ?? 0) + 1);
+    return Array.from(entries, ([name, count]) => ({ name, count }));
+  };
+  await page.route('**/api/projects/*/customers/page?**', route => {
+    const params = new URL(route.request().url()).searchParams;
+    const search = (params.get('search') ?? '').toLowerCase();
+    const stage = params.get('stage'), city = params.get('city'), label = params.get('label');
+    const filtered = customers.filter(customer =>
+      (customer.name.toLowerCase().includes(search) || customer.phoneNumber.includes(search)) &&
+      (!stage || stage === 'All' || (customer.pipelineStage ?? 'New') === stage) &&
+      (!city || city === 'All' || customer.city === city) &&
+      (!label || label === 'All' || (customer.label || 'بدون تصنيف') === label));
+    const pageSize = Math.max(1, Math.min(100, Number(params.get('pageSize') || 10)));
+    const pageNumber = Math.max(1, Math.min(Number(params.get('page') || 1), Math.ceil(filtered.length / pageSize) || 1));
+    const response: CustomerPage = {
+      items: filtered.toSorted((left, right) => left.id.localeCompare(right.id)).slice((pageNumber - 1) * pageSize, pageNumber * pageSize),
+      page: pageNumber, pageSize, totalFiltered: filtered.length, totalCustomers: customers.length,
+      labels: counts(customers.map(customer => customer.label || 'بدون تصنيف')),
+      stages: counts(customers.map(customer => customer.pipelineStage ?? 'New')),
+      cities: [...new Set(customers.map(customer => customer.city).filter(Boolean))].sort(),
+    };
+    return route.fulfill({ json: response });
+  });
 }
 
 export const test = base.extend({

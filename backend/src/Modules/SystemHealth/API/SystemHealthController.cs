@@ -16,6 +16,7 @@ namespace Modules.SystemHealth.API
             _healthService = healthService;
         }
 
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpGet("health")]
         public async Task<IActionResult> GetHealth()
         {

@@ -65,13 +65,16 @@ namespace Modules.CRM.API
         {
             if (!_authorization.CanRead(User, projectId)) return Forbid();
             var customers = await _context.Customers
+                .AsNoTracking()
                 .Where(c => c.ProjectId == projectId)
                 .ToListAsync();
 
             // Find all deals for this project to map pipeline stages
             var allDeals = await _context.Deals
+                .AsNoTracking()
                 .Where(d => d.ProjectId == projectId)
                 .OrderByDescending(d => d.ClosedAt ?? d.CreatedAt)
+                .Select(d => new { d.CustomerId, d.PipelineStageId })
                 .ToListAsync();
 
             var stages = await _context.PipelineStages
@@ -157,7 +160,7 @@ namespace Modules.CRM.API
         {
             var customer = await _context.Customers.FindAsync(id);
             if (customer == null) return NotFound();
-            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, customer.ProjectId)) return Forbid();
 
             var oldTags = customer.Tags ?? Array.Empty<string>();
             var newTags = request.Tags ?? customer.Tags ?? Array.Empty<string>();
@@ -198,11 +201,10 @@ namespace Modules.CRM.API
 
                 if (stage == null)
                 {
-                    var orders = await _context.PipelineStages
+                    var maxOrder = await _context.PipelineStages
                         .Where(s => s.ProjectId == customer.ProjectId)
-                        .Select(s => s.Order)
-                        .ToListAsync();
-                    int maxOrder = orders.Any() ? orders.Max() : -1;
+                        .Select(s => (int?)s.Order)
+                        .MaxAsync() ?? -1;
 
                     stage = new PipelineStage
                     {
@@ -212,7 +214,6 @@ namespace Modules.CRM.API
                         Order = maxOrder + 1
                     };
                     _context.PipelineStages.Add(stage);
-                    await _context.SaveChangesAsync();
                 }
 
                 resolvedStageName = stage.Name;
@@ -292,7 +293,7 @@ namespace Modules.CRM.API
             foreach (var changedDeal in _context.ChangeTracker.Entries<Deal>()
                          .Where(x => x.State is EntityState.Added or EntityState.Modified)
                          .Select(x => x.Entity)
-                         .Where(x => x.Status is DealStatus.Won or DealStatus.Lost))
+                         .Where(x => x.Status is DealStatus.Won or DealStatus.Lost).ToList())
             {
                 IntegrationOutbox.Enqueue(_context, new AdvertisingDealOutcomeChanged
                 {
@@ -375,7 +376,7 @@ namespace Modules.CRM.API
         {
             var customer = await _context.Customers.FindAsync(customerId);
             if (customer == null) return NotFound("Customer not found");
-            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, customer.ProjectId)) return Forbid();
             var whatsAppAccounts = HttpContext.RequestServices
                 .GetRequiredService<Modules.WhatsApp.Services.WhatsAppAccountService>();
             Conversation? sourceConversation = null;
@@ -483,7 +484,7 @@ namespace Modules.CRM.API
         {
             var customer = await _context.Customers.FindAsync(customerId);
             if (customer == null) return NotFound("Customer not found");
-            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, customer.ProjectId)) return Forbid();
             if (!ScheduleAvailabilityWindows.IsValid(request.TimeWindow)
                 || !ScheduleAvailabilityHorizons.IsValid(request.AvailabilityHorizon))
                 return BadRequest(new { code = "INVALID_SCHEDULE_AVAILABILITY_PREFERENCE" });
@@ -634,7 +635,10 @@ namespace Modules.CRM.API
                 statusCounts.GetValueOrDefault("Pending"),
                 statusCounts.GetValueOrDefault("Completed"),
                 statusCounts.GetValueOrDefault("Missed"),
-                statusCounts.GetValueOrDefault("Bypassed")));
+                statusCounts.GetValueOrDefault("Bypassed"),
+                statusCounts.GetValueOrDefault("Cancelled"),
+                statusCounts.GetValueOrDefault("Processing"),
+                statusCounts.GetValueOrDefault("DeliveryUnknown")));
         }
 
         [HttpPost("follow-ups/{id}/complete")]
@@ -642,7 +646,7 @@ namespace Modules.CRM.API
         {
             var followUp = await _context.FollowUps.FindAsync(id);
             if (followUp == null) return NotFound();
-            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, followUp.ProjectId)) return Forbid();
 
             followUp.Status = "Completed";
             await _context.SaveChangesAsync();
@@ -654,7 +658,7 @@ namespace Modules.CRM.API
         {
             var followUp = await _context.FollowUps.FindAsync(id);
             if (followUp == null) return NotFound();
-            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
+            if (!_authorization.CanDelete(User, followUp.ProjectId)) return Forbid();
 
             _context.FollowUps.Remove(followUp);
             await _context.SaveChangesAsync();
@@ -669,7 +673,7 @@ namespace Modules.CRM.API
                 .FirstOrDefaultAsync(f => f.Id == id);
             
             if (followUp == null) return NotFound();
-            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, followUp.ProjectId)) return Forbid();
 
             if (!string.IsNullOrEmpty(request.Type))
             {
@@ -736,7 +740,7 @@ namespace Modules.CRM.API
                 .FirstOrDefaultAsync(f => f.Id == id);
             
             if (followUp == null) return NotFound();
-            if (!_authorization.CanRead(User, followUp.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, followUp.ProjectId)) return Forbid();
 
             var customer = await _context.Customers
                 .IgnoreQueryFilters()
@@ -1329,7 +1333,7 @@ JSON:";
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(item => item.Id == customerId);
             if (customer == null) return NotFound("Customer not found");
-            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, customer.ProjectId)) return Forbid();
             var memory = await _context.CustomerMemories
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(m => m.CustomerId == customerId);
@@ -1364,7 +1368,7 @@ JSON:";
         [HttpPost("projects/{projectId}/customers/{customerId}/memory/generate")]
         public async Task<IActionResult> GenerateCustomerProfile(Guid projectId, Guid customerId)
         {
-            if (!_authorization.CanRead(User, projectId)) return Forbid();
+            if (!_authorization.CanWrite(User, projectId)) return Forbid();
             var customerExists = await _context.Customers
                 .IgnoreQueryFilters()
                 .AnyAsync(customer => customer.Id == customerId && customer.ProjectId == projectId);
@@ -1405,7 +1409,7 @@ JSON:";
             if (string.IsNullOrWhiteSpace(request.Title)) return BadRequest("Title is required");
             var customer = await _context.Customers.FindAsync(customerId);
             if (customer == null) return NotFound("Customer not found");
-            if (!_authorization.CanRead(User, customer.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, customer.ProjectId)) return Forbid();
 
             var task = new Modules.CRM.Domain.CustomerTask
             {
@@ -1427,7 +1431,7 @@ JSON:";
         {
             var task = await _context.CustomerTasks.FindAsync(taskId);
             if (task == null) return NotFound("Task not found");
-            if (!_authorization.CanRead(User, task.ProjectId)) return Forbid();
+            if (!_authorization.CanWrite(User, task.ProjectId)) return Forbid();
 
             if (request.Title != null)
             {
@@ -1452,7 +1456,7 @@ JSON:";
         {
             var task = await _context.CustomerTasks.FindAsync(taskId);
             if (task == null) return NotFound("Task not found");
-            if (!_authorization.CanRead(User, task.ProjectId)) return Forbid();
+            if (!_authorization.CanDelete(User, task.ProjectId)) return Forbid();
 
             _context.CustomerTasks.Remove(task);
             await _context.SaveChangesAsync();
@@ -1752,6 +1756,9 @@ JSON:";
         int PendingCount,
         int CompletedCount,
         int MissedCount,
-        int BypassedCount);
+        int BypassedCount,
+        int CancelledCount,
+        int ProcessingCount,
+        int DeliveryUnknownCount);
 
 }

@@ -53,8 +53,12 @@ public sealed class ContentWeeklyPlanService
 
     public async Task<ContentWeekPlan> GenerateAsync(Guid projectId, CancellationToken cancellationToken)
     {
+        await ExpireDraftPlansAsync(projectId, cancellationToken);
         var draftPlan = await DraftPlanAsync(projectId, cancellationToken);
-        if (draftPlan is not null) return draftPlan;
+        if (draftPlan is not null && (draftPlan.Status == ContentWeekPlanStatus.GenerationFailed
+            || await _dbContext.ContentWeekPlanItems.IgnoreQueryFilters()
+                .AnyAsync(planItem => planItem.ProjectId == projectId && planItem.PlanId == draftPlan.Id, cancellationToken)))
+            return draftPlan;
 
         var settings = await _dbContext.ContentAutomationSettings.IgnoreQueryFilters()
             .SingleOrDefaultAsync(candidate => candidate.ProjectId == projectId, cancellationToken)
@@ -90,9 +94,14 @@ public sealed class ContentWeeklyPlanService
             scheduleAnchorUtc,
             settings.DailyPublishTimeLocal,
             settings.Timezone);
+        var postsPerDay = settings.PostsPerDay;
         var timezone = TimeZoneInfo.FindSystemTimeZoneById(settings.Timezone);
         var localStart = TimeZoneInfo.ConvertTimeFromUtc(schedule[0], timezone);
-        var plan = NewPlan(projectId, settings, knowledge.Count, DateOnly.FromDateTime(localStart));
+        var plan = draftPlan ?? NewPlan(projectId, settings, knowledge.Count, DateOnly.FromDateTime(localStart));
+        plan.Status = ContentWeekPlanStatus.Generating;
+        plan.StartDateLocal = DateOnly.FromDateTime(localStart);
+        plan.DailyPublishTimeLocal = settings.DailyPublishTimeLocal;
+        plan.Timezone = settings.Timezone;
         var hasApprovedPlan = await _dbContext.ContentWeekPlans.IgnoreQueryFilters()
             .AnyAsync(candidate => candidate.ProjectId == projectId
                 && candidate.Status == ContentWeekPlanStatus.Approved, cancellationToken);
@@ -102,17 +111,18 @@ public sealed class ContentWeeklyPlanService
             settings.NextPublishAtUtc = null;
         }
         settings.UpdatedAt = DateTime.UtcNow;
-        _dbContext.ContentWeekPlans.Add(plan);
+        if (draftPlan is null) _dbContext.ContentWeekPlans.Add(plan);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         try
         {
-            var plannedPosts = await GenerateValidPlanAsync(new ContentPlanGenerationInput(
+            var generationInput = new ContentPlanGenerationInput(
                 projectAi,
                 apiKey,
                 settings,
                 knowledge,
-                contentHistory));
+                contentHistory);
+            var batches = await GenerateBatchesAsync(generationInput, postsPerDay);
             if (!await BrandStillMatchesAsync(plan, cancellationToken))
             {
                 plan.Status = ContentWeekPlanStatus.Rejected;
@@ -122,8 +132,12 @@ public sealed class ContentWeeklyPlanService
                 return plan;
             }
 
-            _dbContext.ContentWeekPlanItems.AddRange(plannedPosts.Select((copy, dayIndex) =>
-                NewPlanItem(plan, copy, dayIndex, schedule[dayIndex])));
+            _dbContext.ContentWeekPlanItems.AddRange(Enumerable.Range(0, 7)
+                .SelectMany(day => Enumerable.Range(0, postsPerDay)
+                    .Select(slot => NewPlanItem(plan, batches[slot][day], day * postsPerDay + slot,
+                        ContentSchedule.DailySlotUtc(
+                            localStart.Date.AddDays(day),
+                            settings.DailyPublishTimeLocal, settings.Timezone, slot)))));
             plan.Error = null;
             plan.UpdatedAt = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(cancellationToken);
@@ -145,6 +159,57 @@ public sealed class ContentWeeklyPlanService
         }
     }
 
+    public async Task ExpireDraftPlansAsync(Guid? projectId, CancellationToken cancellationToken)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var expiredPlans = await ExpiredDraftPlansAsync(projectId, nowUtc, cancellationToken);
+        if (expiredPlans.Count == 0) return;
+        const string reason = "انتهى موعد اعتماد الخطة وتم إزالتها من الخطط الحالية تلقائيًا.";
+        foreach (var expiredPlan in expiredPlans)
+        {
+            expiredPlan.Status = ContentWeekPlanStatus.Expired;
+            expiredPlan.Error = reason;
+            expiredPlan.UpdatedAt = nowUtc;
+        }
+        await RejectExpiredPreviewsAsync(expiredPlans.Select(plan => plan.Id).ToArray(), reason, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private Task<List<ContentWeekPlan>> ExpiredDraftPlansAsync(
+        Guid? projectId, DateTime nowUtc, CancellationToken cancellationToken) =>
+        _dbContext.ContentWeekPlans.IgnoreQueryFilters()
+            .Where(plan => (projectId == null || plan.ProjectId == projectId)
+                && (plan.Status == ContentWeekPlanStatus.AwaitingApproval
+                    || plan.Status == ContentWeekPlanStatus.GenerationFailed)
+                && _dbContext.ContentWeekPlanItems.IgnoreQueryFilters().Any(planItem =>
+                    planItem.ProjectId == plan.ProjectId && planItem.PlanId == plan.Id
+                    && planItem.ScheduledForUtc <= nowUtc)
+                && !_dbContext.ContentWeekPlanItems.IgnoreQueryFilters().Any(planItem =>
+                    planItem.ProjectId == plan.ProjectId && planItem.PlanId == plan.Id
+                    && _dbContext.ContentPosts.IgnoreQueryFilters().Any(post =>
+                        post.ProjectId == plan.ProjectId && post.Id == planItem.ContentPostId
+                        && (post.Status == ContentPostStatus.Publishing
+                            || post.Status == ContentPostStatus.PublishUnknown))))
+            .ToListAsync(cancellationToken);
+
+    private async Task RejectExpiredPreviewsAsync(
+        Guid[] expiredPlanIds, string reason, CancellationToken cancellationToken)
+    {
+        var expiredPosts = await _dbContext.ContentPosts.IgnoreQueryFilters()
+            .Where(post => !post.IsStyleSample && post.Status != ContentPostStatus.Published
+                && post.Status != ContentPostStatus.Publishing && post.Status != ContentPostStatus.PublishUnknown
+                && _dbContext.ContentWeekPlanItems.IgnoreQueryFilters().Any(planItem =>
+                    planItem.ProjectId == post.ProjectId && expiredPlanIds.Contains(planItem.PlanId)
+                    && planItem.ContentPostId == post.Id))
+            .ToListAsync(cancellationToken);
+        foreach (var expiredPost in expiredPosts)
+        {
+            expiredPost.Status = ContentPostStatus.Rejected;
+            expiredPost.Error = reason;
+            expiredPost.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+
     public async Task MarkReadyForReviewAsync(
         Guid projectId,
         Guid planId,
@@ -152,7 +217,14 @@ public sealed class ContentWeeklyPlanService
     {
         var plan = await PlanAsync(projectId, planId, cancellationToken);
         if (plan.Status is not (ContentWeekPlanStatus.Generating or ContentWeekPlanStatus.AwaitingApproval)) return;
-        if (!await BrandStillMatchesAsync(plan, cancellationToken))
+        var itemCount = await _dbContext.ContentWeekPlanItems.IgnoreQueryFilters()
+            .CountAsync(planItem => planItem.ProjectId == projectId && planItem.PlanId == planId, cancellationToken);
+        if (itemCount is < 7 or > 21 || itemCount % 7 != 0)
+        {
+            plan.Status = ContentWeekPlanStatus.GenerationFailed;
+            plan.Error = "أفكار خطة الأسبوع غير مكتملة؛ جهّز الخطة مرة أخرى.";
+        }
+        else if (!await BrandStillMatchesAsync(plan, cancellationToken))
         {
             plan.Status = ContentWeekPlanStatus.Rejected;
             plan.Error = "تم تغيير هوية البراند أثناء تجهيز الصور؛ جهّز خطة جديدة.";
@@ -219,7 +291,7 @@ public sealed class ContentWeeklyPlanService
             .Where(item => item.ProjectId == projectId && item.PlanId == planId)
             .OrderBy(item => item.DayIndex)
             .ToListAsync(cancellationToken);
-        if (items.Count != 7 || items[0].ScheduledForUtc <= DateTime.UtcNow)
+        if (items.Count is < 7 or > 21 || items.Count % 7 != 0 || items[0].ScheduledForUtc <= DateTime.UtcNow)
             throw new InvalidOperationException("انتهى وقت بداية هذه الخطة؛ جهّز خطة أسبوع جديدة.");
         var postIds = items.Where(item => item.ContentPostId.HasValue)
             .Select(item => item.ContentPostId!.Value)
@@ -229,8 +301,10 @@ public sealed class ContentWeeklyPlanService
                 && postIds.Contains(post.Id)
                 && post.Status == ContentPostStatus.Approved
                 && post.ImageObjectKey != null, cancellationToken);
-        if (postIds.Length != 7 || approvedImageCount != 7)
-            throw new InvalidOperationException("وافق على صورة كل يوم قبل اعتماد خطة الأسبوع.");
+        if (postIds.Length != items.Count || approvedImageCount != items.Count)
+            throw new InvalidOperationException(items.Count == 7
+                ? "وافق على صورة كل يوم قبل اعتماد خطة الأسبوع."
+                : "وافق على كل صور الأسبوع قبل اعتماد الخطة.");
 
         var settings = await _dbContext.ContentAutomationSettings.IgnoreQueryFilters()
             .SingleAsync(candidate => candidate.ProjectId == projectId, cancellationToken);
@@ -344,7 +418,7 @@ public sealed class ContentWeeklyPlanService
             if (currentUnpublishedItems.Count == 0) continue;
 
             var firstPlanSlot = nextSlot;
-            ApplyRescheduledSlots(currentUnpublishedItems, linkedPosts, firstPlanSlot, scheduleChange);
+            ApplyRescheduledSlots(currentPlanItems, linkedPosts, firstPlanSlot, scheduleChange);
             UpdatePlanSchedule(
                 plan,
                 currentPlanItems.Length == currentUnpublishedItems.Count,
@@ -398,14 +472,19 @@ public sealed class ContentWeeklyPlanService
     }
 
     private static void ApplyRescheduledSlots(
-        IEnumerable<ContentWeekPlanItem> unpublishedItems,
+        IReadOnlyList<ContentWeekPlanItem> planItems,
         IReadOnlyDictionary<Guid, ContentPost> linkedPosts,
         DateTime firstSlot,
         ContentPlanScheduleChange scheduleChange)
     {
-        var scheduledSlot = firstSlot;
-        foreach (var planItem in unpublishedItems)
+        var timezone = TimeZoneInfo.FindSystemTimeZoneById(scheduleChange.Timezone);
+        var firstLocalDate = TimeZoneInfo.ConvertTimeFromUtc(firstSlot, timezone).Date;
+        var postsPerDay = Math.Max(1, planItems.Count / 7);
+        var index = 0;
+        foreach (var planItem in UnpublishedItems(planItems, linkedPosts))
         {
+            var scheduledSlot = ContentSchedule.DailySlotUtc(firstLocalDate.AddDays(index / postsPerDay),
+                scheduleChange.DailyPublishTimeLocal, scheduleChange.Timezone, index % postsPerDay);
             planItem.ScheduledForUtc = scheduledSlot;
             planItem.UpdatedAt = scheduleChange.NowUtc;
             if (planItem.ContentPostId is Guid postId && linkedPosts.TryGetValue(postId, out var linkedPost))
@@ -413,10 +492,7 @@ public sealed class ContentWeeklyPlanService
                 linkedPost.ScheduledForUtc = scheduledSlot;
                 linkedPost.UpdatedAt = scheduleChange.NowUtc;
             }
-            scheduledSlot = ContentSchedule.NextDayUtc(
-                scheduledSlot,
-                scheduleChange.DailyPublishTimeLocal,
-                scheduleChange.Timezone);
+            index++;
         }
     }
 
@@ -595,10 +671,11 @@ public sealed class ContentWeeklyPlanService
         var prompt = basePrompt;
         for (var attempt = 1; attempt <= MaximumPlanGenerationAttempts; attempt++)
         {
+            var response = await GeneratePlanCandidateAsync(prompt, input);
+            IReadOnlyList<GeneratedCopy> parsedCopies;
             try
             {
-                var response = await GeneratePlanCandidateAsync(prompt, input);
-                return await RepairInvalidCopiesAsync(ParsePlan(response), input);
+                parsedCopies = ParsePlan(response);
             }
             catch (InvalidOperationException exception) when (attempt < MaximumPlanGenerationAttempts)
             {
@@ -607,10 +684,28 @@ public sealed class ContentWeeklyPlanService
                     attempt,
                     exception.Message);
                 prompt = BuildRetryPrompt(basePrompt, exception.Message, attempt);
+                continue;
             }
+            // A failed individual repair must not restart and bill the whole week again.
+            return await RepairInvalidCopiesAsync(parsedCopies, input);
         }
 
         throw new InvalidOperationException("تعذر تجهيز خطة أسبوع أصلية بعد المحاولات التلقائية.");
+    }
+
+    private async Task<IReadOnlyList<IReadOnlyList<GeneratedCopy>>> GenerateBatchesAsync(
+        ContentPlanGenerationInput input,
+        int postsPerDay)
+    {
+        var batches = new List<IReadOnlyList<GeneratedCopy>>(postsPerDay);
+        var batchHistory = input.ContentHistory.ToList();
+        for (var slot = 0; slot < postsPerDay; slot++)
+        {
+            var batch = await GenerateValidPlanAsync(input with { ContentHistory = batchHistory.ToArray() });
+            batches.Add(batch);
+            batchHistory.InsertRange(0, batch.Select(copy => new HistoricalContent(copy.Topic, copy.VisualHeadline, copy.Caption)));
+        }
+        return batches;
     }
 
     private Task<string> GeneratePlanCandidateAsync(string prompt, ContentPlanGenerationInput input) =>
@@ -738,11 +833,11 @@ public sealed class ContentWeeklyPlanService
     private async Task<bool> BrandStillMatchesAsync(ContentWeekPlan plan, CancellationToken cancellationToken)
     {
         var currentBrand = await _dbContext.ContentAutomationSettings.IgnoreQueryFilters()
+            .AsNoTracking()
             .Where(settings => settings.ProjectId == plan.ProjectId)
-            .Select(settings => new { settings.LogoObjectKey, settings.StylePrompt })
             .SingleAsync(cancellationToken);
         return string.Equals(plan.BrandLogoObjectKey, currentBrand.LogoObjectKey, StringComparison.Ordinal)
-            && string.Equals(plan.BrandStylePrompt, currentBrand.StylePrompt, StringComparison.Ordinal);
+            && string.Equals(plan.BrandStylePrompt, ContentBrandReferences.Identity(currentBrand), StringComparison.Ordinal);
     }
 
     private static ContentWeekPlan NewPlan(
@@ -756,7 +851,7 @@ public sealed class ContentWeeklyPlanService
         DailyPublishTimeLocal = settings.DailyPublishTimeLocal,
         Timezone = settings.Timezone,
         BrandLogoObjectKey = settings.LogoObjectKey!,
-        BrandStylePrompt = settings.StylePrompt,
+        BrandStylePrompt = ContentBrandReferences.Identity(settings),
         KnowledgeDocumentCount = knowledgeDocumentCount
     };
 

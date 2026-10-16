@@ -28,7 +28,11 @@ public sealed class AdvertisingTrackingHealthService(AppDbContext db, IOptions<A
         var managedProviderIds = await db.ManagedAdvertisements.IgnoreQueryFilters().Where(item => item.ProjectId == projectId && item.AdExternalId != null)
             .Select(item => item.AdExternalId!).ToListAsync(cancellationToken);
         var exact = valid.Length == 0 ? null : (decimal?)valid.Count(item => item.ProviderAdExternalId != null && managedProviderIds.Contains(item.ProviderAdExternalId)) / valid.Length;
-        var deliveries = await db.AdvertisingConversionDeliveries.IgnoreQueryFilters().Where(item => item.ProjectId == projectId).ToListAsync(cancellationToken);
+        var deliveries = await db.AdvertisingConversionDeliveries.IgnoreQueryFilters()
+            .Where(item => item.ProjectId == projectId && item.CreatedAt >= start
+                && db.AdvertisingConversions.IgnoreQueryFilters().Any(conversion => conversion.Id == item.ConversionId
+                    && conversion.ProjectId == projectId && db.AdvertisingAttributionTouches.IgnoreQueryFilters().Any(touch =>
+                        touch.ProjectId == projectId && touch.Id == conversion.AttributionTouchId && touch.DestinationId == destinationId))).ToListAsync(cancellationToken);
         var conversions = await db.AdvertisingConversions.IgnoreQueryFilters().Where(item => item.ProjectId == projectId && item.OccurredAtUtc >= start).ToListAsync(cancellationToken);
         var delays = observations.Select(item => Math.Max(0, (item.CreatedAt - item.MessageOccurredAtUtc).TotalMinutes)).Order().ToArray();
         var metrics = new TrackingHealthMetrics(observations.Select(item => item.ConversationId).Distinct().Count(), observations.Count,
@@ -57,7 +61,8 @@ public sealed class AdvertisingTrackingHealthService(AppDbContext db, IOptions<A
             if (!connected) reasons.Add("ADS_GATEWAY_NOT_CONNECTED");
             if (stale) reasons.Add("ADS_GATEWAY_LEADS_STALE");
             if (metrics.Conversations < policy.MinimumDenominator) reasons.Add("ADS_GATEWAY_LEARNING_SAMPLE_SMALL");
-            decision = new(connected && !stale ? TrackingHealthState.Healthy : TrackingHealthState.Unsafe,
+            reasons.Add("ADS_TRACKING_OFFICIAL_SOURCE_REQUIRED");
+            decision = new(TrackingHealthState.Unsafe,
                 reasons, null, null);
         }
         else
@@ -90,8 +95,6 @@ public sealed class AdvertisingTrackingHealthService(AppDbContext db, IOptions<A
         if (metrics.Conversations < policy.MinimumDenominator) reasons.Add("ADS_TRACKING_SAMPLE_TOO_SMALL");
         if (coverage < policy.MinimumReferralCoverage) reasons.Add("ADS_TRACKING_REFERRAL_COVERAGE_LOW");
         if (metrics.ExactMatchRate is { } exact && exact < policy.MinimumExactMatchRate) reasons.Add("ADS_TRACKING_EXACT_MATCH_LOW");
-        if (metrics.DeliveryAcceptanceRate is not null && metrics.ProviderMatchQuality is null)
-            reasons.Add("ADS_TRACKING_PROVIDER_MATCH_UNKNOWN");
         if (metrics.DeliveryAcceptanceRate is { } acceptance && acceptance < policy.MinimumDeliveryAcceptanceRate) reasons.Add("ADS_TRACKING_DELIVERY_ACCEPTANCE_LOW");
         if (metrics.CorrectionRate is { } correction && correction > policy.MaximumCorrectionRate) reasons.Add("ADS_TRACKING_CORRECTION_RATE_HIGH");
         if (metrics.DelayP95Minutes is { } delay && delay > policy.MaximumEventDelayMinutes) reasons.Add("ADS_TRACKING_DELAY_HIGH");

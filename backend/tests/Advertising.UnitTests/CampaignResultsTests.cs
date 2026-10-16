@@ -28,7 +28,11 @@ public sealed class CampaignResultsTests
             SegmentId = Guid.NewGuid(),
             MessageTemplateA = "Template",
             MessageTemplateB = "Template",
-            Status = CampaignStatus.Running
+            Status = CampaignStatus.Running,
+            SentCount = 4,
+            DeliveredCount = 99,
+            ReadCount = 88,
+            ResponseCount = 77
         };
         var statuses = Enum.GetValues<RecipientStatus>();
         db.Campaigns.Add(campaign);
@@ -58,8 +62,64 @@ public sealed class CampaignResultsTests
         var variantA = body.GetProperty("variants").GetProperty("A");
 
         Assert.Equal(4, variantA.GetProperty("sent").GetInt32());
-        Assert.Equal(3, variantA.GetProperty("delivered").GetInt32());
-        Assert.Equal(1, variantA.GetProperty("responded").GetInt32());
+        Assert.Equal(4, body.GetProperty("sentCount").GetInt32());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("deliveredCount").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("readCount").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("responseCount").ValueKind);
+        foreach (var variant in body.GetProperty("variants").EnumerateObject())
+        {
+            Assert.Equal(JsonValueKind.Null, variant.Value.GetProperty("delivered").ValueKind);
+            Assert.Equal(JsonValueKind.Null, variant.Value.GetProperty("responded").ValueKind);
+        }
+    }
+
+    [Theory]
+    [InlineData("list")]
+    [InlineData("detail")]
+    public async Task Campaign_reads_do_not_present_legacy_send_acceptance_as_delivery_receipts(string view)
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = Context(projectId);
+        var campaign = new Campaign
+        {
+            ProjectId = projectId,
+            Name = "Historical campaign",
+            SegmentId = Guid.NewGuid(),
+            MessageTemplateA = "Template",
+            MessageTemplateB = "Template B",
+            Status = CampaignStatus.Completed,
+            SentCount = 12,
+            DeliveredCount = 12,
+            ReadCount = 8,
+            ResponseCount = 4
+        };
+        db.Campaigns.Add(campaign);
+        await db.SaveChangesAsync();
+        var controller = new CampaignsController(
+            db,
+            new StubCampaignAiService(),
+            new WhatsAppAccountService(db),
+            new ProjectAuthorizationService())
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = User(projectId) }
+            }
+        };
+
+        var response = Assert.IsType<OkObjectResult>(view == "list"
+            ? await controller.GetCampaigns(projectId)
+            : await controller.GetCampaign(campaign.Id));
+        var body = JsonSerializer.SerializeToElement(response.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var displayedCampaign = view == "list" ? body[0] : body;
+
+        Assert.Equal(campaign.Id, displayedCampaign.GetProperty("id").GetGuid());
+        Assert.Equal("Historical campaign", displayedCampaign.GetProperty("name").GetString());
+        Assert.Equal(12, displayedCampaign.GetProperty("sentCount").GetInt32());
+        Assert.Equal(JsonValueKind.Null, displayedCampaign.GetProperty("deliveredCount").ValueKind);
+        Assert.Equal(JsonValueKind.Null, displayedCampaign.GetProperty("readCount").ValueKind);
+        Assert.Equal(JsonValueKind.Null, displayedCampaign.GetProperty("responseCount").ValueKind);
+        Assert.Equal(12, campaign.DeliveredCount);
     }
 
     private static AppDbContext Context(Guid projectId)

@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import * as XLSX from 'xlsx';
-import { expect, test } from './fixtures';
+import { expect, mockCustomerPage, test } from './fixtures';
+
+test.beforeEach(async ({ page }) => { await mockCustomerPage(page); });
 
 test('downloads selected CRM audience as Excel preserving phone numbers and names as text', async ({ page }) => {
   let requestedAudience: string | null = null;
@@ -9,6 +11,8 @@ test('downloads selected CRM audience as Excel preserving phone numbers and name
     return route.fulfill({ json: [{ phoneNumber: '201012345678', name: '=1+1', city: 'القاهرة', label: null }] });
   });
   await page.goto('/crm');
+  await page.getByRole('button', { name: 'الاستيراد والتصدير', exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'تصدير العملاء' }).click();
   await expect(page.getByLabel('بيانات التنزيل')).toHaveValue('inactive30');
   await page.setViewportSize({ width: 375, height: 812 });
   await expect(page.getByRole('button', { name: 'تنزيل Excel' })).toBeInViewport();
@@ -32,6 +36,8 @@ test('downloads selected CRM audience as Excel preserving phone numbers and name
 test('empty export explains that no matching numbers are available', async ({ page }) => {
   await page.route('**/customers/export?**', route => route.fulfill({ json: [] }));
   await page.goto('/crm');
+  await page.getByRole('button', { name: 'الاستيراد والتصدير', exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'تصدير العملاء' }).click();
   await page.getByRole('button', { name: 'تنزيل Excel' }).click();
   await expect(page.getByText('لا توجد أرقام مطابقة لشروط التنزيل.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'تنزيل Excel' })).toBeEnabled();

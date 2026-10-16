@@ -5,6 +5,13 @@ on:
     branches:
       - main
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Deploy Application
@@ -19,30 +26,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sshpass
 
-      - name: Deploy files to Server
+      - name: Stage and deploy release
         env:
-          SSH_PASS: ${{ secrets.SSH_PASSWORD }}
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
-          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@$SSH_HOST "mkdir -p /root/smart-crm"
-          sshpass -p "$SSH_PASS" rsync -avz -e "ssh -o StrictHostKeyChecking=no" \
-            --exclude='.git' \
-            --exclude='.venv' \
-            --exclude='.env' \
-            --exclude='node_modules' \
-            --exclude='bin' \
-            --exclude='obj' \
-            --exclude='.next' \
-            --exclude='sessions' \
-            --exclude='.pytest_cache' \
-            --exclude='.vscode' \
-            --exclude='.DS_Store' \
-            --exclude='*.log' \
-            ./ root@$SSH_HOST:/root/smart-crm/
-
-      - name: Initialize Environment and Restart Application
-        env:
-          SSH_PASS: ${{ secrets.SSH_PASSWORD }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-        run: |
-          sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no root@$SSH_HOST "cd /root/smart-crm && if [ ! -f .env ]; then cp .env.example .env; fi && make deploy && docker image prune -af && echo '🧹 Old images cleaned up.'"
+          set -euo pipefail
+          STAGED_DIR="/root/smart-crm-releases/${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$SSH_HOST" "mkdir -p '$STAGED_DIR'"
+          sshpass -e rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
+            --exclude-from=ops/deploy-excludes.txt ./ "root@$SSH_HOST:$STAGED_DIR/"
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$SSH_HOST" \
+            "bash '$STAGED_DIR/ops/deploy-remote.sh' '$GITHUB_SHA' '$STAGED_DIR' /root/smart-crm && rm -rf -- '$STAGED_DIR'"

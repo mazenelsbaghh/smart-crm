@@ -1,6 +1,4 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using Shared.Imaging;
 
 namespace Modules.Content.Services;
 
@@ -13,31 +11,23 @@ public sealed class LogoBrandingService
         Stream logoStream,
         CancellationToken cancellationToken)
     {
-        using var logo = await Image.LoadAsync<Rgba32>(logoStream, cancellationToken);
-        logo.Mutate(context => context.Resize(new ResizeOptions
-        {
-            Mode = ResizeMode.Max,
-            Size = new Size(PaletteSampleSize, PaletteSampleSize)
-        }));
+        using var logo = await RasterImage.LoadAsync(logoStream, cancellationToken);
+        if (logo.Width > PaletteSampleSize || logo.Height > PaletteSampleSize)
+            logo.ResizeToFit(PaletteSampleSize, PaletteSampleSize);
 
         var buckets = new Dictionary<int, ColorBucket>();
-        logo.ProcessPixelRows(accessor =>
+        var pixels = logo.PixelsRgba();
+        for (var index = 0; index < pixels.Length; index += 4)
         {
-            for (var y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                foreach (var pixel in row)
-                {
-                    if (pixel.A < 128) continue;
-                    var key = ((pixel.R >> 4) << 8) | ((pixel.G >> 4) << 4) | (pixel.B >> 4);
-                    if (!buckets.TryGetValue(key, out var bucket)) bucket = new ColorBucket();
-                    bucket.Add(pixel);
-                    buckets[key] = bucket;
-                }
-            }
-        });
+            var pixel = new PalettePixel(pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]);
+            if (pixel.A < 128) continue;
+            var key = ((pixel.R >> 4) << 8) | ((pixel.G >> 4) << 4) | (pixel.B >> 4);
+            if (!buckets.TryGetValue(key, out var bucket)) bucket = new ColorBucket();
+            bucket.Add(pixel);
+            buckets[key] = bucket;
+        }
 
-        var palette = new List<Rgba32>();
+        var palette = new List<PalettePixel>();
         foreach (var bucket in buckets.Values.OrderByDescending(bucket => bucket.Count))
         {
             var color = bucket.Average();
@@ -51,7 +41,7 @@ public sealed class LogoBrandingService
             : new[] { "#111827" };
     }
 
-    private static double ColorDistance(Rgba32 left, Rgba32 right)
+    private static double ColorDistance(PalettePixel left, PalettePixel right)
     {
         var red = left.R - right.R;
         var green = left.G - right.G;
@@ -59,7 +49,9 @@ public sealed class LogoBrandingService
         return Math.Sqrt(red * red + green * green + blue * blue);
     }
 
-    private static string ToHex(Rgba32 color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+    private static string ToHex(PalettePixel color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    private readonly record struct PalettePixel(byte R, byte G, byte B, byte A);
 
     private struct ColorBucket
     {
@@ -69,7 +61,7 @@ public sealed class LogoBrandingService
 
         public int Count { get; private set; }
 
-        public void Add(Rgba32 pixel)
+        public void Add(PalettePixel pixel)
         {
             _red += pixel.R;
             _green += pixel.G;
@@ -77,8 +69,8 @@ public sealed class LogoBrandingService
             Count++;
         }
 
-        public readonly Rgba32 Average() => Count == 0
-            ? new Rgba32(17, 24, 39)
-            : new Rgba32((byte)(_red / Count), (byte)(_green / Count), (byte)(_blue / Count));
+        public readonly PalettePixel Average() => Count == 0
+            ? new PalettePixel(17, 24, 39, 255)
+            : new PalettePixel((byte)(_red / Count), (byte)(_green / Count), (byte)(_blue / Count), 255);
     }
 }

@@ -17,7 +17,8 @@ public sealed class ContentDocumentGenerationService(
     GeminiImageClient imageClient,
     IProjectSecretVault secretVault,
     IObjectStorage objectStorage,
-    ILogger<ContentDocumentGenerationService> logger)
+    ILogger<ContentDocumentGenerationService> logger,
+    ContentImageClient paperImageClient)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -286,6 +287,14 @@ public sealed class ContentDocumentGenerationService(
         string apiKey,
         CancellationToken cancellationToken)
     {
+        if (document.Kind == ContentDocumentKind.Paper)
+        {
+            var imageSettings = await dbContext.ContentAutomationSettings.IgnoreQueryFilters()
+                .SingleOrDefaultAsync(settings => settings.ProjectId == document.ProjectId, cancellationToken)
+                ?? new ContentAutomationSettings { ProjectId = document.ProjectId };
+            return await ContentPaperRendering.GeneratePageAsync(
+                new(document, page, apiKey, imageSettings), objectStorage, paperImageClient, cancellationToken);
+        }
         await using var logoStream = await objectStorage.DownloadAsync(document.BrandLogoObjectKey, cancellationToken);
         using var logoBuffer = new MemoryStream();
         await logoStream.CopyToAsync(logoBuffer, cancellationToken);

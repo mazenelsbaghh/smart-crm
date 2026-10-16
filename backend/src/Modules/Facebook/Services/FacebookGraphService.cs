@@ -45,7 +45,7 @@ namespace Modules.Facebook.Services
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("[FacebookGraph] SendMessage failed: {StatusCode} {Body}", response.StatusCode, responseBody);
-                throw new Exception($"Facebook SendMessage failed: {response.StatusCode} - {responseBody}");
+                throw new HttpRequestException($"Facebook SendMessage failed: {response.StatusCode}", null, response.StatusCode);
             }
 
             _logger.LogInformation("[FacebookGraph] Message sent to PSID {PSID} via Page {PageId}", recipientPSID, pageId);

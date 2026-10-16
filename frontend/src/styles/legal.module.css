@@ -95,3 +95,10 @@
     font-size: 1.05rem;
   }
 }
+
+.navigation { width: min(800px, 100%); margin: 0 auto 18px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.navigation a { display: inline-flex; gap: 8px; align-items: center; min-height: 44px; color: var(--text-base); font-size: .875rem; font-weight: 600; text-decoration: none; }
+.navigation a:hover { color: var(--accent); }
+.icon { display: inline-grid; place-items: center; width: 54px; height: 54px; color: var(--accent); background: var(--accent-soft); border-radius: 14px; margin-bottom: 20px; }
+.article { box-shadow: var(--shadow-panel); }
+.section p, .section li { overflow-wrap: anywhere; }

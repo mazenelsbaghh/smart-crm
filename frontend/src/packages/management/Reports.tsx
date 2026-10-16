@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { AlertCircle, CalendarDays, RefreshCw } from 'lucide-react';
+import { AlertCircle, CalendarDays, RefreshCw, ChartNoAxesCombined, ListChecks, MessagesSquare } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { AiBrief } from './reports/AiBrief';
 import { AnalysisTable } from './reports/AnalysisTable';
@@ -13,8 +13,11 @@ import { MetricStrip } from './reports/MetricStrip';
 import { OpportunityQueue } from './reports/OpportunityQueue';
 import { ReasonBreakdown } from './reports/ReasonBreakdown';
 import { reportsApi, type ReportWindow } from './reports/reports-api';
-import { reportDateWindow } from './reports/report-window';
+import { reportDateWindow, reportInputDate, reportTimezone } from './reports/report-window';
+import type { Project } from '../../services/auth';
 import type { FollowUpDispatchOptions, FollowUpPlanAction, OpportunityItem, ReportPreset, SalesIntelligenceDashboard } from './reports/types';
+import PageHeader from '../../components/ui/PageHeader';
+import Tabs from '../../components/ui/Tabs';
 import styles from './reports/reports.module.css';
 
 const presets: { value: ReportPreset; label: string; days: number }[] = [
@@ -29,33 +32,31 @@ const createWindow = (preset: ReportPreset): ReportWindow => {
   return { fromUtc: new Date(to.getTime() - days * 86_400_000).toISOString(), toUtc: to.toISOString() };
 };
 
-const inputDate = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
 const reportRequestError = (error: unknown, fallback: string) => {
   if (!axios.isAxiosError<{ error?: string }>(error)) return fallback;
   return error.response?.data?.error?.trim() || fallback;
 };
 
 export default function Reports() {
-  const { activeProject, user } = useAuth();
+  const { activeProject, user, loading } = useAuth();
+  if (!activeProject) return loading ? <ReportsSkeleton /> : <div className={styles.failure} role="alert">تعذر تحديد المشروع النشط.</div>;
+  return <ReportWorkspace key={`${activeProject.id}:${activeProject.settings?.timezone}`} activeProject={activeProject} canManage={user?.role === 'Owner' || user?.role === 'Admin'} />;
+}
+
+function ReportWorkspace({ activeProject, canManage }: { activeProject: Project; canManage: boolean }) {
+  const timezone = reportTimezone(activeProject.settings?.timezone);
   const [preset, setPreset] = useState<ReportPreset>('7d');
   const [windowRange, setWindowRange] = useState<ReportWindow>(() => createWindow('7d'));
-  const [customFromDate, setCustomFromDate] = useState(() => inputDate(new Date(Date.now() - 6 * 86_400_000)));
-  const [customToDate, setCustomToDate] = useState(() => inputDate(new Date()));
+  const [customFromDate, setCustomFromDate] = useState(() => reportInputDate(new Date(Date.now() - 6 * 86_400_000), timezone));
+  const [customToDate, setCustomToDate] = useState(() => reportInputDate(new Date(), timezone));
   const [dashboard, setDashboard] = useState<SalesIntelligenceDashboard | null>(null);
   const [loadedReportKey, setLoadedReportKey] = useState<string | null>(null);
+  const [reportTask, setReportTask] = useState<'overview' | 'opportunities' | 'conversations'>('overview');
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const requestId = useRef(0);
-  const canManage = user?.role === 'Owner' || user?.role === 'Admin';
-  const reportRequestKey = `${activeProject?.id ?? 'none'}:${windowRange.fromUtc}:${windowRange.toUtc}`;
+  const reportRequestKey = `${activeProject.id}:${windowRange.fromUtc}:${windowRange.toUtc}`;
   const reportIntentKeyRef = useRef(reportRequestKey);
 
   useLayoutEffect(() => {
@@ -63,16 +64,9 @@ export default function Reports() {
   }, [reportRequestKey]);
 
   const load = useCallback(async () => {
-    const nextReportKey = `${activeProject?.id ?? 'none'}:${windowRange.fromUtc}:${windowRange.toUtc}`;
+    const nextReportKey = `${activeProject.id}:${windowRange.fromUtc}:${windowRange.toUtc}`;
     if (reportIntentKeyRef.current !== nextReportKey) return;
     const currentRequest = ++requestId.current;
-    if (!activeProject) {
-      setLoading(false);
-      setDashboard(null);
-      setLoadedReportKey(null);
-      setError('تعذر تحديد المشروع النشط.');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
@@ -104,7 +98,7 @@ export default function Reports() {
   };
 
   const applyCustomRange = (fromDate = customFromDate, toDate = customToDate) => {
-    const nextWindow = reportDateWindow(fromDate, toDate);
+    const nextWindow = reportDateWindow(fromDate, toDate, dashboard?.timezone ?? timezone);
     if (!nextWindow) {
       setError('اختر تاريخ بداية ونهاية صحيحين؛ تاريخ النهاية لا يسبق البداية.');
       return;
@@ -122,39 +116,16 @@ export default function Reports() {
     applyCustomRange(date, date);
   };
 
-  const refresh = useCallback(async () => {
-    if (!activeProject || !canManage || refreshing) return;
-    const refreshReportKey = `${activeProject.id}:${windowRange.fromUtc}:${windowRange.toUtc}`;
-    setRefreshing(true);
-    setError('');
-    setNotice('');
-    try {
-      const refreshResult = await reportsApi.refresh(activeProject.id, windowRange);
-      if (reportIntentKeyRef.current === refreshReportKey) {
-        setNotice(refreshResult.pending > 0
-          ? `بدأ تحليل كل الشاتات في الخلفية: ${refreshResult.pending.toLocaleString('ar-EG')} شات منتظر.`
-          : 'كل شاتات الفترة محللة بالفعل.');
-        await load();
-      }
-    } catch (requestError) {
-      if (reportIntentKeyRef.current === refreshReportKey) {
-        setError(reportRequestError(requestError, 'تعذر تشغيل التحليل الآن. حاول مرة أخرى.'));
-      }
-    } finally {
-      setRefreshing(false);
-    }
-  }, [activeProject, canManage, load, refreshing, windowRange]);
-
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (event.altKey && event.key.toLowerCase() === 'r' && canManage) {
+      if (event.altKey && event.key.toLowerCase() === 'r' && !loading) {
         event.preventDefault();
-        void refresh();
+        void load();
       }
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
-  }, [canManage, refresh]);
+  }, [load, loading]);
 
   if (loading && !dashboard) return <ReportsSkeleton />;
 
@@ -167,14 +138,13 @@ export default function Reports() {
   );
 
   const updateAnalysis = async (conversationId: string, reason?: string) => {
-    if (!activeProject) return;
     if (reason) await reportsApi.correctReason(activeProject.id, conversationId, reason);
     else await reportsApi.analyze(activeProject.id, conversationId);
     await load();
   };
 
   const scheduleOpportunity = async (opportunity: OpportunityItem) => {
-    if (!activeProject || opportunity.channel !== 'WhatsApp') {
+    if (opportunity.channel !== 'WhatsApp') {
       throw new Error('Automated follow-ups are currently limited to WhatsApp opportunities.');
     }
     const mutationReportKey = reportRequestKey;
@@ -200,7 +170,7 @@ export default function Reports() {
   };
 
   const sendOpportunity = async (opportunity: OpportunityItem) => {
-    if (!activeProject || opportunity.channel !== 'WhatsApp') {
+    if (opportunity.channel !== 'WhatsApp') {
       throw new Error('Immediate automated follow-ups are currently limited to WhatsApp opportunities.');
     }
     const mutationReportKey = reportRequestKey;
@@ -226,7 +196,6 @@ export default function Reports() {
   };
 
   const queueFollowUpPlan = async (action: FollowUpPlanAction, dispatchOptions: FollowUpDispatchOptions) => {
-    if (!activeProject) return false;
     const mutationReportKey = reportRequestKey;
     const planToken = action === 'SendNow'
       ? dashboard.followUpPlan.sendNowToken
@@ -254,35 +223,46 @@ export default function Reports() {
   };
 
   return (
-    <main className={styles.page}>
-      <header className={styles.header}>
-        <div>
-          <h1>مدير المبيعات بالذكاء الاصطناعي</h1>
-          <p>يفهم كل شات، يربطه بالحجز والدفع، ويحوّل أسباب التسرب إلى خطوات قابلة للتنفيذ.</p>
-        </div>
+    <section className={styles.page}>
+      <div className={styles.header}>
+        <PageHeader icon={<ChartNoAxesCombined size={24} aria-hidden="true" />} title="تقارير المبيعات" description="المحادثات والحجوزات ونتائج المتابعة في فترة واحدة" />
         <div className={styles.headerActions}>
           <div className={styles.segmented} aria-label="فترة التقرير">{presets.map((presetOption) => <button type="button" aria-pressed={preset === presetOption.value} key={presetOption.value} onClick={() => changePreset(presetOption.value)}>{presetOption.label}</button>)}</div>
-          {canManage && <button className={styles.refreshButton} type="button" disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={16} className={refreshing ? styles.spinning : ''} aria-hidden="true" />{refreshing ? 'يجهّز التحليل…' : 'حلّل الكل'}<kbd>Alt R</kbd></button>}
+          <button className={styles.refreshButton} type="button" disabled={loading} onClick={() => void load()}><RefreshCw size={16} className={loading ? styles.spinning : ''} aria-hidden="true" />{loading ? 'يحدّث البيانات…' : 'تحديث البيانات'}<kbd>Alt R</kbd></button>
         </div>
-      </header>
+      </div>
 
+      <details className={styles.customRangeDisclosure}>
+        <summary><CalendarDays size={17} aria-hidden="true" />يوم محدد أو فترة مخصصة{preset === 'custom' && <span>مفعّلة</span>}</summary>
       <div className={styles.customRangeBar}>
-        <div className={styles.customRangeTitle}><CalendarDays size={17} aria-hidden="true" /><span>يوم محدد أو فترة مخصصة</span>{preset === 'custom' && <b>مفعّلة</b>}</div>
         <label>من<input type="date" value={customFromDate} max={customToDate} onChange={(event) => setCustomFromDate(event.target.value)} /></label>
         <label>إلى<input type="date" value={customToDate} min={customFromDate} onChange={(event) => setCustomToDate(event.target.value)} /></label>
         <button type="button" onClick={() => applyCustomRange()}>عرض الفترة</button>
       </div>
+      </details>
 
       {(error || notice) && <div className={error ? styles.errorBanner : styles.noticeBanner} role={error ? 'alert' : 'status'}>{error || notice}</div>}
-      <div className={styles.reportContext}>مجموعة العملاء الذين بدأوا الشات بين {new Date(dashboard.windowStartUtc).toLocaleDateString('ar-EG')} و{new Date(dashboard.windowEndUtc).toLocaleDateString('ar-EG')}، النتائج تُتبع حتى 30 يومًا من بداية كل شات. آخر تحديث {new Date(dashboard.generatedAtUtc).toLocaleTimeString('ar-EG', { timeZone: 'Africa/Cairo', hour: 'numeric', minute: '2-digit' })} بتوقيت القاهرة.</div>
+      {loadedReportKey !== reportRequestKey && <p role="status">المعروض هو آخر تقرير تم تحميله؛ أرقام الفترة المطلوبة لم تصل بعد.</p>}
+      <div className={styles.reportContext}>مجموعة العملاء الذين بدأوا الشات بين {new Date(dashboard.windowStartUtc).toLocaleDateString('ar-EG', { timeZone: dashboard.timezone })} و{new Date(new Date(dashboard.windowEndUtc).getTime() - 1).toLocaleDateString('ar-EG', { timeZone: dashboard.timezone })}، الحجوزات تُنسب للشات إذا سُجلت خلال 30 يومًا من بدايته، والدفع والحضور حسب حالتها المسجلة الآن. آخر تحديث {new Date(dashboard.generatedAtUtc).toLocaleTimeString('ar-EG', { timeZone: dashboard.timezone, hour: 'numeric', minute: '2-digit' })} بتوقيت {dashboard.timezone}.</div>
 
+      <Tabs idPrefix="sales-report" label="عرض التقرير" selected={reportTask} onChange={setReportTask} compactOnMobile
+        tabs={[
+          { key: 'overview', label: 'نظرة عامة', icon: <ChartNoAxesCombined size={17} aria-hidden="true" /> },
+          { key: 'opportunities', label: 'فرص المتابعة', icon: <ListChecks size={17} aria-hidden="true" /> },
+          { key: 'conversations', label: 'تفاصيل المحادثات', icon: <MessagesSquare size={17} aria-hidden="true" /> },
+        ]} />
+      <div id="sales-report-panel-overview" role="tabpanel" aria-labelledby="sales-report-tab-overview" hidden={reportTask !== 'overview'} className={styles.taskPanel}>
       <MetricStrip dashboard={dashboard} />
-      <AiBrief digest={dashboard.aiDigest} coverage={dashboard.analysisCoverage} />
+      <AiBrief digest={dashboard.aiDigest} coverage={dashboard.analysisCoverage} timezone={dashboard.timezone} />
       <div className={styles.twoColumn}><FunnelView funnel={dashboard.funnel} daily={dashboard.daily} onSelectDay={selectReportDay} /><ReasonBreakdown reasons={dashboard.reasons} /></div>
       <FunnelTransitions transitions={dashboard.funnelTransitions} />
+      <AskAnalyst key={reportRequestKey} disabled={loading || loadedReportKey !== reportRequestKey} onAsk={(question) => reportsApi.ask(activeProject.id, windowRange, question)} />
+      </div>
+      <div id="sales-report-panel-opportunities" role="tabpanel" aria-labelledby="sales-report-tab-opportunities" hidden={reportTask !== 'opportunities'} className={styles.taskPanel}>
       <OpportunityQueue
         key={reportRequestKey}
         opportunities={dashboard.opportunities}
+        timezone={dashboard.timezone}
         plan={dashboard.followUpPlan}
         canManage={canManage}
         actionsDisabled={loading || loadedReportKey !== reportRequestKey || dashboard.projectId !== activeProject?.id}
@@ -290,17 +270,20 @@ export default function Reports() {
         onSend={sendOpportunity}
         onQueuePlan={queueFollowUpPlan}
       />
-      <AskAnalyst onAsk={(question) => {
-        if (!activeProject) return Promise.reject(new Error('No project'));
-        return reportsApi.ask(activeProject.id, windowRange, question);
-      }} />
+      </div>
+      <div id="sales-report-panel-conversations" role="tabpanel" aria-labelledby="sales-report-tab-conversations" hidden={reportTask !== 'conversations'} className={styles.taskPanel}>
       <AnalysisTable
+        key={reportRequestKey}
         rows={dashboard.analyses}
+        totalCount={dashboard.analyzedConversations}
+        timezone={dashboard.timezone}
+        actionsDisabled={loading || loadedReportKey !== reportRequestKey}
         canManage={canManage}
         onReanalyze={(id) => updateAnalysis(id)}
         onCorrect={(id, reason) => updateAnalysis(id, reason)}
       />
-    </main>
+      </div>
+    </section>
   );
 }
 

@@ -27,15 +27,17 @@ test('renders the AI sales funnel and remains usable on a mobile viewport', asyn
   await page.route('**/api/**/reports/sales-intelligence**', route => route.fulfill({ json: dashboard }));
   await page.goto('/management/reports');
 
-  await expect(page.getByRole('heading', { name: 'مدير المبيعات بالذكاء الاصطناعي' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'تقارير المبيعات' })).toBeVisible();
   await expect(page.getByText('أكبر تسرب بعد عرض المواعيد.')).toBeVisible();
+  await page.getByRole('tab', { name: 'فرص المتابعة' }).click();
   await expect(page.getByRole('heading', { name: 'فرص تحتاج متابعة' })).toBeVisible();
+  await page.getByRole('tab', { name: 'نظرة عامة' }).click();
   const dailyTable = page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'حجز في اليوم', exact: true }) });
   await expect(dailyTable.getByRole('columnheader')).toHaveText(['يوم الدخول', 'شات', 'مؤهل', 'نية حجز', 'حجز', 'حجز في اليوم', 'دفع', 'حضور', 'إجراء']);
   await expect(dailyTable.getByRole('row').nth(1).getByRole('cell')).toHaveText(['٢٨ أغسطس', '40', '25', '18', '9', '14', '6', '4', 'تفاصيل اليوم']);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole('button', { name: /حلّل الكل/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /تحديث البيانات/ })).toBeVisible();
   const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(horizontalOverflow).toBe(false);
   await dailyTable.getByRole('columnheader', { name: 'حجز في اليوم', exact: true }).scrollIntoViewIfNeeded();
@@ -62,6 +64,7 @@ test('previews custom spacing and priority distribution before confirming a boun
     return route.fulfill({ json: report });
   });
   await page.goto('/management/reports');
+  await page.getByRole('tab', { name: 'فرص المتابعة' }).click();
   await page.getByRole('button', { name: /يتبعت الآن.*٤١٨/ }).click();
   const editor = page.getByRole('form', { name: 'إعداد خطة الإرسال' });
   await editor.getByLabel('عدد الرسائل').fill('5');

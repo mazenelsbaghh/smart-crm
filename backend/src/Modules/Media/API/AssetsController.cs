@@ -39,7 +39,7 @@ namespace Modules.Media.API
                 return BadRequest(new { error = "ProjectId is required." });
             }
 
-            _tenantContext.SetProjectId(projectId);
+            if (!new ProjectAuthorizationService().CanRead(User, projectId) || !JwtService.HasPermission(User, "write")) return Forbid();
 
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier) ?? User.FindFirst("sub");
             var uploadedBy = userIdClaim != null ? Guid.Parse(userIdClaim.Value) : Guid.Empty;
@@ -101,6 +101,7 @@ namespace Modules.Media.API
         [Authorize]
         public async Task<IActionResult> GetPresignedUrl(Guid projectId, Guid id)
         {
+            if (!new ProjectAuthorizationService().CanRead(User, projectId)) return Forbid();
             try
             {
                 var downloadUrl = await _assetService.GetSignedUrlAsync(id);
@@ -195,6 +196,7 @@ namespace Modules.Media.API
         [Authorize]
         public async Task<IActionResult> DeleteAsset(Guid id)
         {
+            if (!new ProjectAuthorizationService().CanRead(User, _tenantContext.ProjectId) || !JwtService.HasPermission(User, "delete")) return Forbid();
             try
             {
                 var remainingAsset = await _assetService.DeleteAssetAsync(id);

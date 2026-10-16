@@ -2,7 +2,7 @@ using Shared.Domain;
 
 namespace Modules.Content.Domain;
 
-public enum ContentDocumentKind { Presentation = 0, A4 = 1 }
+public enum ContentDocumentKind { Presentation = 0, A4 = 1, Paper = 2 }
 public enum ContentDocumentStatus { Planning = 0, GeneratingImages = 1, Ready = 2, Failed = 3, AwaitingDesign = 4 }
 public enum ContentDocumentPageStatus { Planned = 0, GeneratingImage = 1, Ready = 2, ImageFailed = 3, Queued = 4 }
 
@@ -17,6 +17,7 @@ public sealed class ContentDocument : AuditableEntity, ITenantEntity
     public string BrandLogoObjectKey { get; set; } = string.Empty;
     public string BrandColorsJson { get; set; } = "[]";
     public string BrandStylePrompt { get; set; } = string.Empty;
+    public string? PaperDesignJson { get; set; }
     public string PlannerModel { get; set; } = string.Empty;
     public string? Error { get; set; }
     public DateTime? CompletedAtUtc { get; set; }

@@ -240,6 +240,7 @@ public sealed class SalesIntelligenceTests
         Assert.Equal(4m, dashboard.MedianFirstResponseMinutes);
         Assert.Equal(1, dashboard.Funnel.Single(item => item.Key == "booked").Count);
         Assert.Equal(6, dashboard.FunnelTransitions.Count);
+        Assert.Equal(100m, dashboard.Funnel.Single(stage => stage.Key == "qualified").RateFromPrevious);
         var responseTransition = dashboard.FunnelTransitions.Single(item => item.Key == "new-to-responded");
         Assert.Equal(2, responseTransition.FromCount);
         Assert.Equal(1, responseTransition.ToCount);
@@ -255,6 +256,123 @@ public sealed class SalesIntelligenceTests
         Assert.Equal("Scheduled", Assert.Single(dashboard.Opportunities).RecommendedAction);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Dashboard_without_response_samples_has_no_response_median(bool hasConversation)
+    {
+        var setup = CreateDatabase();
+        await using var db = setup.Db;
+        if (hasConversation) SeedConversation(db, setup.ProjectId);
+        await db.SaveChangesAsync();
+        var service = new SalesIntelligenceService(db, new FakeGemini(), new PassthroughVault());
+
+        var report = await service.GetDashboardAsync(setup.ProjectId,
+            DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(1), CancellationToken.None);
+
+        Assert.Equal(hasConversation ? 1 : 0, report.TotalConversations);
+        Assert.Null(report.MedianFirstResponseMinutes);
+    }
+
+    [Fact]
+    public async Task Dashboard_counts_actual_payment_and_attendance_across_all_eligible_bookings()
+    {
+        var setup = CreateDatabase();
+        await using var db = setup.Db;
+        var attended = SeedConversation(db, setup.ProjectId);
+        var paid = SeedConversation(db, setup.ProjectId);
+        await db.SaveChangesAsync();
+        GroupAppointmentBooking Booking(Conversation conversation, bool isPaid, bool isAttended) => new()
+        {
+            ProjectId = setup.ProjectId, CustomerId = conversation.CustomerId,
+            GroupAppointmentId = Guid.NewGuid(), CustomerName = "عميل", CustomerPhone = "01000000000",
+            IsPaid = isPaid, IsAttended = isAttended
+        };
+        var unpaidAttendance = Booking(attended, false, true);
+        var firstUnpaid = Booking(paid, false, false);
+        var laterPaid = Booking(paid, true, false);
+        var latestUnpaid = Booking(paid, false, false);
+        var outsideWindow = Booking(attended, true, false);
+        db.AddRange(unpaidAttendance, firstUnpaid, laterPaid, latestUnpaid, outsideWindow);
+        await db.SaveChangesAsync();
+        unpaidAttendance.CreatedAt = attended.CreatedAt.AddHours(1);
+        firstUnpaid.CreatedAt = paid.CreatedAt.AddHours(1);
+        laterPaid.CreatedAt = paid.CreatedAt.AddHours(2);
+        latestUnpaid.CreatedAt = paid.CreatedAt.AddHours(3);
+        outsideWindow.CreatedAt = attended.CreatedAt.AddDays(31);
+        await db.SaveChangesAsync();
+        var analyzer = new ConversationSalesAnalyzer(db, new FakeGemini(), new PassthroughVault());
+        var paidAnalysis = await analyzer.ReanalyzeAsync(setup.ProjectId, paid.Id, CancellationToken.None);
+        var service = new SalesIntelligenceService(db, new FakeGemini(), new PassthroughVault());
+
+        var report = await service.GetDashboardAsync(setup.ProjectId,
+            DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(1), CancellationToken.None);
+
+        Assert.Equal(SalesConversationStage.Paid, paidAnalysis.VerifiedStage);
+        Assert.Equal(100m, report.BookingConversionRate);
+        Assert.Equal(50m, report.PaymentConversionRate);
+        Assert.Equal(1, report.Funnel.Single(stage => stage.Key == "paid").Count);
+        Assert.Equal(1, report.Funnel.Single(stage => stage.Key == "attended").Count);
+        Assert.Equal(1, report.Daily.Sum(day => day.Paid));
+        Assert.Equal(1, report.Daily.Sum(day => day.Attended));
+        var attendanceTransition = report.FunnelTransitions.Single(stage => stage.Key == "paid-to-attended");
+        Assert.Equal(1, attendanceTransition.FromCount);
+        Assert.Equal(0, attendanceTransition.ToCount);
+    }
+
+    [Fact]
+    public async Task Dashboard_projects_live_booking_stage_without_reanalyzing_or_mutating_stored_analysis()
+    {
+        var setup = CreateDatabase();
+        await using var db = setup.Db;
+        var conversation = SeedConversation(db, setup.ProjectId);
+        await db.SaveChangesAsync();
+        var analyzer = new ConversationSalesAnalyzer(db, new FakeGemini(), new PassthroughVault());
+        var stored = await analyzer.AnalyzeAsync(setup.ProjectId, conversation.Id, CancellationToken.None);
+        Assert.Equal(SalesConversationStage.BookingIntent, stored.VerifiedStage);
+        db.GroupAppointmentBookings.Add(new GroupAppointmentBooking
+        {
+            ProjectId = setup.ProjectId, CustomerId = conversation.CustomerId,
+            GroupAppointmentId = Guid.NewGuid(), CustomerName = "عميل", CustomerPhone = "01000000000", IsPaid = true
+        });
+        await db.SaveChangesAsync();
+        var service = new SalesIntelligenceService(db, new FakeGemini(), new PassthroughVault());
+
+        var report = await service.GetDashboardAsync(setup.ProjectId,
+            DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(1), CancellationToken.None);
+
+        Assert.Equal(100m, report.PaymentConversionRate);
+        Assert.Equal("Paid", Assert.Single(report.Analyses).Stage);
+        Assert.Equal(stored.Summary, Assert.Single(report.Analyses).Summary);
+        Assert.Equal(SalesConversationStage.BookingIntent, (await analyzer.GetAsync(setup.ProjectId, conversation.Id, CancellationToken.None))!.VerifiedStage);
+    }
+
+    [Theory]
+    [InlineData(-1, false)]
+    [InlineData(0, true)]
+    public async Task Dashboard_only_labels_a_digest_for_its_exact_cohort_window(int dayOffset, bool matches)
+    {
+        var setup = CreateDatabase();
+        await using var db = setup.Db;
+        var conversation = SeedConversation(db, setup.ProjectId);
+        await db.SaveChangesAsync();
+        var from = conversation.CreatedAt.AddMinutes(-1);
+        var to = from.AddDays(1);
+        db.SalesIntelligenceDigests.Add(new SalesIntelligenceDigest
+        {
+            ProjectId = setup.ProjectId, WindowStartUtc = from.AddDays(dayOffset),
+            WindowEndUtc = to.AddDays(dayOffset), GeneratedAtUtc = DateTime.UtcNow,
+            ExecutiveSummary = "ملخص محفوظ"
+        });
+        await db.SaveChangesAsync();
+        var service = new SalesIntelligenceService(db, new FakeGemini(), new PassthroughVault());
+
+        var report = await service.GetDashboardAsync(setup.ProjectId, from, to, CancellationToken.None);
+
+        Assert.Equal(matches, report.AiDigest is not null);
+        if (matches) Assert.Equal("ملخص محفوظ", report.AiDigest!.ExecutiveSummary);
+    }
+
     [Fact]
     public async Task Analyst_answer_reports_the_exact_analysis_scope()
     {
@@ -264,6 +382,13 @@ public sealed class SalesIntelligenceTests
         await db.SaveChangesAsync();
         var analyzer = new ConversationSalesAnalyzer(db, new FakeGemini(), new PassthroughVault());
         await analyzer.ReanalyzeAsync(setup.ProjectId, conversation.Id, CancellationToken.None);
+        db.GroupAppointmentBookings.Add(new GroupAppointmentBooking
+        {
+            ProjectId = setup.ProjectId, CustomerId = conversation.CustomerId,
+            GroupAppointmentId = Guid.NewGuid(), IsPaid = true,
+            CustomerName = "عميل", CustomerPhone = "01000000000"
+        });
+        await db.SaveChangesAsync();
         var answerGemini = new FakeGemini($$"""
             {"answer":"الاعتراض على السعر هو السبب الظاهر.","conversationIds":["{{conversation.Id}}"]}
             """);
@@ -278,6 +403,7 @@ public sealed class SalesIntelligenceTests
         Assert.Equal(1, answer.DetailedAnalysesReviewed);
         Assert.Equal(100m, answer.AnalysisCoverage);
         Assert.Equal(conversation.Id, Assert.Single(answer.ConversationIds));
+        Assert.Contains(answerGemini.Prompts, prompt => prompt.Contains("\"PaymentConversionRate\":100", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -726,8 +852,10 @@ public sealed class SalesIntelligenceTests
 
     private sealed class FakeGemini(string? response = null) : IGeminiClient
     {
+        public List<string> Prompts { get; } = [];
         public Task<string> GenerateReplyAsync(string messageContent, string? apiKeyOverride = null, string? modelOverride = null, string? cachedContentId = null)
         {
+            Prompts.Add(messageContent);
             return Task.FromResult(response ?? """
                 {"stage":"BookingIntent","outcome":"Lost","primaryReason":"PriceObjection","secondaryReasons":[],
                 "summary":"العميل اعترض على السعر.","recommendation":"وضّح القيمة.","evidence":[],

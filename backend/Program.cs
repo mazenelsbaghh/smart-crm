@@ -66,7 +66,7 @@ else
 }
 
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services.AddProjectSecurity(builder.Configuration);
 builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
 builder.Services.AddMemoryCache();
@@ -108,25 +108,6 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Configure JWT Authentication
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    var secret = builder.Configuration["JWT:Secret"] ?? "a_very_long_and_secure_secret_key_that_is_at_least_32_characters_long";
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = false,
-        ValidateAudience = false,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret))
-    };
-});
-
 // Configure EF Core with PostgreSQL
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(
@@ -156,6 +137,8 @@ builder.Services.AddScoped<ITenantContext, TenantContext>();
 builder.Services.AddScoped<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IProjectAuthorizationService, ProjectAuthorizationService>();
+builder.Services.AddScoped(services => new Modules.Projects.Services.ProjectPushSubscriptions(
+    services.GetRequiredService<AppDbContext>(), services.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>().GetDatabase()));
 builder.Services.AddScoped<IProjectSecretVault, ProjectSecretVault>();
 
 builder.Services.Configure<Modules.Advertising.Services.AdvertisingOptions>(advertisingSection);
@@ -324,6 +307,8 @@ builder.Services.AddHttpClient<Modules.AI.Services.XaiResponsesClient>(client =>
 builder.Services.AddScoped<Modules.AI.Services.IAIMarketingBrain, Modules.AI.Services.AIMarketingBrain>();
 builder.Services.AddScoped<Modules.AI.Services.IAIBehaviorSettingsService, Modules.AI.Services.AIBehaviorSettingsService>();
 builder.Services.AddScoped<Modules.GroupAppointments.Services.GroupBookingCoordinator>();
+builder.Services.AddScoped<Modules.GroupAppointments.Services.GroupParticipationService>();
+builder.Services.AddScoped<Modules.GroupAppointments.Services.GroupStaffAutomation>();
 builder.Services.AddScoped<Modules.AI.Services.AiGroupBookingOrchestrator>();
 
 // Register AI Company Brain
@@ -331,11 +316,13 @@ builder.Services.AddScoped<Modules.Brain.Services.IAICompanyBrain, Modules.Brain
 builder.Services.AddScoped<Modules.Brain.Services.IKnowledgeBaseService, Modules.Brain.Services.KnowledgeBaseService>();
 
 builder.Services.AddScoped<Modules.Content.Services.LogoBrandingService>();
+builder.Services.AddScoped<Modules.Content.Services.ContentBrandPaletteExtractor>();
 builder.Services.AddSingleton<Modules.Content.Services.ContentImagePreviewService>();
 builder.Services.AddScoped<Modules.Content.Services.ContentGenerationService>();
 builder.Services.AddScoped<Modules.Content.Services.ContentPublishingService>();
 builder.Services.AddScoped<Modules.Content.Services.ContentWeeklyPlanService>();
 builder.Services.AddScoped<Modules.Content.Jobs.ContentAutomationJob>();
+builder.Services.AddScoped<Modules.Content.Jobs.ContentGenerationRecoveryJob>();
 builder.Services.AddScoped<Modules.Content.Services.ContentVideoReadinessService>();
 builder.Services.AddScoped<Modules.Content.Services.ContentVideoPlanningService>();
 builder.Services.AddScoped<Modules.Content.Services.ContentVideoMediaService>();
@@ -351,6 +338,13 @@ builder.Services.AddHttpClient<Modules.Content.Services.GeminiImageClient>(clien
 {
     client.BaseAddress = new Uri("https://generativelanguage.googleapis.com/");
     client.Timeout = TimeSpan.FromMinutes(5);
+});
+builder.Services.AddScoped<Modules.Content.Services.ContentImageClient>();
+builder.Services.AddScoped<Modules.Content.Services.ContentImageTrialService>();
+builder.Services.AddHttpClient<Modules.Content.Services.OpenAiImageClient>(client =>
+{
+    client.BaseAddress = new Uri("https://api.openai.com/");
+    client.Timeout = TimeSpan.FromMinutes(10);
 });
 builder.Services.AddHttpClient<Modules.Content.Services.GeminiOmniVideoClient>(client =>
 {
@@ -398,6 +392,7 @@ builder.Services.AddScoped<Modules.Customers.Workers.CustomerMemoryWorker>();
 // Register Human Messaging Engine
 builder.Services.AddSingleton<Modules.WhatsApp.Services.IHumanMessagingEngine, Modules.WhatsApp.Services.HumanMessagingEngine>();
 builder.Services.AddScoped<Modules.WhatsApp.Services.WhatsAppAccountService>();
+builder.Services.AddScoped<Modules.WhatsApp.Services.IWhatsAppBookingNumberVerifier, Modules.WhatsApp.Services.WhatsAppBookingNumberVerifier>();
 builder.Services.AddScoped<Modules.WhatsApp.Services.WhatsAppCustomerMergeService>();
 builder.Services.AddScoped<Modules.WhatsApp.Services.WhatsAppConversationService>();
 
@@ -452,17 +447,18 @@ if (app.Environment.IsDevelopment())
 
 // Enable tenancy middleware early in the pipeline
 app.UseRouting();
+app.UseCors("FrontendDev");
+app.UseAuthentication();
 app.UseMiddleware<WhatsAppGatewayWebhookAuthenticationMiddleware>();
 app.UseMiddleware<TenantMiddleware>();
 app.UseMiddleware<Modules.Advertising.API.AdvertisingExceptionMiddleware>();
-app.UseCors("FrontendDev");
-app.UseAuthentication();
 app.UseAuthorization();
 
 app.UseHangfireDashboard("/hangfire");
 
 app.MapControllers();
-app.MapHub<Modules.Conversations.Hubs.NotificationHub>("/hubs/notifications");
+app.MapHub<Modules.Conversations.Hubs.NotificationHub>("/hubs/notifications",
+    options => options.CloseOnAuthenticationExpiration = true);
 
 // Apply migrations automatically on startup
 using (var scope = app.Services.CreateScope())
@@ -612,6 +608,7 @@ using (var scope = app.Services.CreateScope())
     manager.AddOrUpdate<Modules.Advertising.Jobs.AdvertisingProjectionBackfillJob>("ads-projection-backfill", job => job.RunAsync(CancellationToken.None), Cron.Hourly);
     manager.AddOrUpdate<Shared.Audit.ElasticsearchAuditIndexer>("ads-audit-index-retry", job => job.RunPendingAsync(CancellationToken.None), Cron.Minutely);
     manager.AddOrUpdate<Modules.Content.Jobs.ContentAutomationJob>("content-daily-publishing", job => job.PublishDueAsync(), Cron.Minutely);
+    manager.AddOrUpdate<Modules.Content.Jobs.ContentGenerationRecoveryJob>("content-generation-recovery", job => job.RecoverAsync(), Cron.Minutely);
     manager.AddOrUpdate<Modules.Content.Jobs.ContentVideoJob>("content-video-recovery", job => job.RecoverAsync(), Cron.Minutely);
 
     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();

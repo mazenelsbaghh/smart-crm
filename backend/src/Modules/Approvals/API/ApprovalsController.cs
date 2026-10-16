@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Modules.Approvals.Domain;
 using Modules.Approvals.Services;
 using Shared.Infrastructure;
+using Shared.Security;
+using System.Security.Claims;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -43,6 +45,8 @@ namespace Modules.Approvals.API
             {
                 return BadRequest("ActionType and PayloadJson are required.");
             }
+            if (!IsSupportedAction(request.ActionType)) return UnsupportedAction();
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var requesterId)) return Unauthorized();
 
             var riskLevel = _riskAnalyzer.Analyze(request.ActionType, request.PayloadJson);
             if (riskLevel == "High" || riskLevel == "Critical")
@@ -54,7 +58,7 @@ namespace Modules.Approvals.API
                     PayloadJson = request.PayloadJson,
                     RiskLevel = riskLevel,
                     Status = "Pending",
-                    RequestedBy = request.RequestedBy ?? "AI_Worker"
+                    RequestedBy = requesterId.ToString()
                 };
 
                 _context.ApprovalRequests.Add(approval);
@@ -70,15 +74,17 @@ namespace Modules.Approvals.API
                 await _context.SaveChangesAsync();
                 return Ok(new { status = "Executed", riskLevel });
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsInvalidActionPayload(ex))
             {
                 return BadRequest($"Action execution failed: {ex.Message}");
             }
         }
 
         [HttpPost("approvals/{id}/approve")]
+        [ProjectPermission("approve_actions")]
         public async Task<IActionResult> ApproveRequest(Guid id)
         {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var approverId)) return Unauthorized();
             var approval = await _context.ApprovalRequests.FindAsync(id);
             if (approval == null) return NotFound();
 
@@ -87,23 +93,25 @@ namespace Modules.Approvals.API
                 return BadRequest($"Approval request is already in '{approval.Status}' status.");
             }
 
-            approval.Status = "Approved";
-            approval.ExecutedAt = DateTime.UtcNow;
-            approval.ApprovedBy = "Supervisor"; // Mock/Default
+            if (!IsSupportedAction(approval.ActionType)) return UnsupportedAction();
 
             try
             {
                 await ExecuteActionInternalAsync(approval.ActionType, approval.PayloadJson);
+                approval.Status = "Approved";
+                approval.ExecutedAt = DateTime.UtcNow;
+                approval.ApprovedBy = approverId.ToString();
                 await _context.SaveChangesAsync();
                 return Ok(new { id = approval.Id, status = "Approved", executedAt = approval.ExecutedAt });
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsInvalidActionPayload(ex))
             {
                 return BadRequest($"Action execution failed: {ex.Message}");
             }
         }
 
         [HttpPost("approvals/{id}/reject")]
+        [ProjectPermission("approve_actions")]
         public async Task<IActionResult> RejectRequest(Guid id, [FromBody] RejectRequestPayload? payload = null)
         {
             var approval = await _context.ApprovalRequests.FindAsync(id);
@@ -174,10 +182,21 @@ namespace Modules.Approvals.API
             }
             else
             {
-                // Unsupported action types for execution can just succeed as a no-op / logged
-                Console.WriteLine($"[Approvals] Executed action: {actionType} with payload: {payloadJson}");
+                throw new NotSupportedException("This action has no executor.");
             }
         }
+
+        private static bool IsSupportedAction(string actionType) =>
+            string.Equals(actionType, "CRMUpdate", StringComparison.OrdinalIgnoreCase);
+
+        private IActionResult UnsupportedAction() => UnprocessableEntity(new
+        {
+            code = "ACTION_NOT_SUPPORTED",
+            message = "This action has no executor and cannot be approved or executed."
+        });
+
+        private static bool IsInvalidActionPayload(Exception exception) => exception is
+            JsonException or ArgumentException or FormatException or InvalidOperationException or KeyNotFoundException or OverflowException;
     }
 
     public class ExecuteActionRequest

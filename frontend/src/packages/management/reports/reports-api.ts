@@ -1,6 +1,5 @@
 import { api } from '../../../services/api';
 import type {
-  AnalysisQueueResult,
   AnalystAnswer,
   ConversationAnalysisItem,
   SalesIntelligenceDashboard,
@@ -20,11 +19,6 @@ export const reportsApi = {
     const response = await api.get<SalesIntelligenceDashboard>(`${base(projectId)}/sales-intelligence`, {
       params: window,
     });
-    return response.data;
-  },
-
-  async refresh(projectId: string, window: ReportWindow) {
-    const response = await api.post<AnalysisQueueResult>(`${base(projectId)}/sales-intelligence/analyze-all`, window);
     return response.data;
   },
 

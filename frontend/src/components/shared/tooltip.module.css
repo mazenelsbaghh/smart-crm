@@ -4,6 +4,7 @@
 }
 
 .tooltipTip {
+  display: none;
   position: absolute;
   background-color: var(--surface-raised);
   border: 1px solid var(--border-subtle);
@@ -47,6 +48,7 @@
 
 .tooltipWrapper:hover .tooltipTip.top,
 .tooltipWrapper:focus-within .tooltipTip.top {
+  display: block;
   visibility: visible;
   opacity: 1;
   transform: translateX(-50%) translateY(0) scale(1);
@@ -68,6 +70,7 @@
 
 .tooltipWrapper:hover .tooltipTip.bottom,
 .tooltipWrapper:focus-within .tooltipTip.bottom {
+  display: block;
   visibility: visible;
   opacity: 1;
   transform: translateX(-50%) translateY(0) scale(1);
@@ -89,6 +92,7 @@
 
 .tooltipWrapper:hover .tooltipTip.left,
 .tooltipWrapper:focus-within .tooltipTip.left {
+  display: block;
   visibility: visible;
   opacity: 1;
   transform: translateY(-50%) translateX(0) scale(1);
@@ -110,6 +114,7 @@
 
 .tooltipWrapper:hover .tooltipTip.right,
 .tooltipWrapper:focus-within .tooltipTip.right {
+  display: block;
   visibility: visible;
   opacity: 1;
   transform: translateY(-50%) translateX(0) scale(1);

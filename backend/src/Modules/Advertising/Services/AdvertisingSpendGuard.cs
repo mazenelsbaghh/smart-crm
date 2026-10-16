@@ -9,9 +9,11 @@ public static class AdvertisingSpendGuard
     public static decimal Exposure(BudgetPeriodLedger ledger)
     {
         var outstanding = Math.Max(0m, ledger.CommittedAmount - ledger.ReleasedAmount - ledger.ObservedSpend);
-        var delayed = Math.Max(ledger.DelayedSpendEstimate, Math.Max(0m, ledger.ForecastSpend - ledger.ObservedSpend));
-        return ledger.ObservedSpend + outstanding + delayed;
+        return ObservedExposure(ledger) + outstanding;
     }
+
+    public static decimal ObservedExposure(BudgetPeriodLedger ledger) =>
+        ledger.ObservedSpend + Math.Max(ledger.DelayedSpendEstimate, Math.Max(0m, ledger.ForecastSpend - ledger.ObservedSpend));
 
     public static decimal RemainingAuthority(BudgetPeriodLedger ledger) => Math.Max(0m, ledger.UsableCap - Exposure(ledger));
 

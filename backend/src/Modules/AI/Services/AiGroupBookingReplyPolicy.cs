@@ -7,11 +7,24 @@ internal static class AiGroupBookingReplyPolicy
     public static string Apply(
         string generatedReply,
         bool shouldOfferTrial,
-        AiGroupBookingResult? bookingResult)
+        AiGroupBookingResult? bookingResult,
+        bool shouldPrepareBeforeSession = false)
     {
         if (bookingResult?.CustomerReplyOverride is { } bookingReplyOverride)
         {
+            if (shouldPrepareBeforeSession && bookingResult.Succeeded)
+                return TalkTipsTrialCtaInstructions.BookingTrialLast(
+                    $"{bookingReplyOverride}\n\n{Modules.CRM.Services.GroupSessionPreparationScheduler.Confirmation}");
             return bookingReplyOverride;
+        }
+
+        if (shouldPrepareBeforeSession && bookingResult is { Succeeded: true, Failure: AiGroupBookingFailure.None })
+        {
+            var confirmation = generatedReply;
+            if (shouldOfferTrial)
+                confirmation = TalkTipsTrialCtaInstructions.AfterSuccessfulBooking(confirmation, bookingResult.DisplayedRemainingPlaces, includeTrial: false);
+            return TalkTipsTrialCtaInstructions.BookingTrialLast(
+                $"{confirmation}\n\n{Modules.CRM.Services.GroupSessionPreparationScheduler.Confirmation}");
         }
 
         if (shouldOfferTrial &&

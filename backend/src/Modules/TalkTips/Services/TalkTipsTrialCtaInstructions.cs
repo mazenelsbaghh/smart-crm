@@ -7,6 +7,14 @@ public static class TalkTipsTrialCtaInstructions
 
     public const string TrialUrl = "https://talktips-academy.com/ar/try";
 
+    public static string BookingTrialLast(string message)
+    {
+        var withoutLink = message.Replace(TrialUrl, string.Empty, StringComparison.OrdinalIgnoreCase);
+        var withoutOldInvitations = System.Text.RegularExpressions.Regex.Replace(withoutLink,
+            @"(?m)^\s*جرّ?ب[^\r\n]*$", string.Empty);
+        return $"{withoutOldInvitations.Trim()}\n\nجرب الويبسايت من هنا:\n{TrialUrl}";
+    }
+
     public static string ForCustomerWhoHasNotTried() => """
         TALKTIPS TRIAL ACCESS — BOOKING-GATED:
         - Never send or mention the trial URL before a booking has been completed by the system.
@@ -25,11 +33,11 @@ public static class TalkTipsTrialCtaInstructions
         return $"{message.Trim()}\n\nجرّب بنفسك من هنا وقولي رأيك 👋\n{TrialUrl}";
     }
 
-    public static string AfterSuccessfulBooking(string message, int actualRemainingPlaces)
+    public static string AfterSuccessfulBooking(string message, int actualRemainingPlaces, bool includeTrial = true)
     {
         if (actualRemainingPlaces <= 0)
         {
-            return EnsureCta(message);
+            return includeTrial ? EnsureCta(message) : message;
         }
 
         var displayedRemainingPlaces = Math.Clamp(
@@ -37,7 +45,8 @@ public static class TalkTipsTrialCtaInstructions
             MinimumDisplayedRemainingPlaces,
             MaximumDisplayedRemainingPlaces);
 
-        return EnsureCta($"{message.Trim()}\n\nفاضل {ToArabicIndicDigits(displayedRemainingPlaces)} أماكن. لو حابب تجيب حد من أصحابك أو قرايبك، ابعتلي اسمه ورقم موبايله وأنا أحجزله معاك.");
+        var confirmation = $"{message.Trim()}\n\nفاضل {ToArabicIndicDigits(displayedRemainingPlaces)} أماكن. لو حابب تجيب حد من أصحابك أو قرايبك، ابعتلي اسمه ورقم واتسابه عشان أتحقق منه وأحجزله معاك.";
+        return includeTrial ? EnsureCta(confirmation) : confirmation;
     }
 
     private static string ToArabicIndicDigits(int value) => value.ToString()

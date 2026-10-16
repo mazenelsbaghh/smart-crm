@@ -24,6 +24,7 @@ public sealed class ContentDocumentBatchTests(PostgresFixture postgres)
     [Theory]
     [InlineData("Presentation", false)]
     [InlineData("A4", true)]
+    [InlineData("Paper", false)]
     public async Task One_count_creates_separate_reviewed_files_with_named_covers_and_retryable_queue_failures(string kind, bool failFirstJob)
     {
         var tenant = new TenantContext();
@@ -31,15 +32,17 @@ public sealed class ContentDocumentBatchTests(PostgresFixture postgres)
         await using var db = postgres.CreateContext(tenant);
         await db.Database.MigrateAsync();
         db.AddRange(new Project { Id = tenant.ProjectId, Name = "Session files" },
-            new ProjectSettings { ProjectId = tenant.ProjectId, GeminiApiKey = "test-key" },
-            new ContentAutomationSettings { ProjectId = tenant.ProjectId, LogoObjectKey = "logo.png", StylePrompt = "Saved brand" });
+            new ProjectSettings { ProjectId = tenant.ProjectId, GeminiApiKey = "test-key" });
+        if (kind != "Paper") db.Add(new ContentAutomationSettings { ProjectId = tenant.ProjectId, LogoObjectKey = "logo.png", StylePrompt = "Saved brand" });
         await db.SaveChangesAsync();
         const string source = "مقدمة الدورة كاملة\nSession 11: البداية\nشرح السيشن الأول كاملًا\nمثال السيشن الأول كاملًا\nسيشن ١٢: التطبيق\nشرح السيشن الثاني كاملًا\nمثال السيشن الثاني كاملًا";
         var gemini = new OutlineResponses(
             """{"pages":[{"blocks":[{"type":"paragraph","ids":[0,1]}]},{"blocks":[{"type":"paragraph","ids":[2]}]},{"blocks":[{"type":"paragraph","ids":[3]}]},{"blocks":[{"type":"paragraph","ids":[4,5,6]}]}]}""",
             """{"pages":[{"blocks":[{"type":"heading","ids":[0]},{"type":"paragraph","ids":[1,2]}]},{"blocks":[{"type":"paragraph","ids":[3]}]},{"blocks":[{"type":"heading","ids":[4]},{"type":"paragraph","ids":[5]}]},{"blocks":[{"type":"paragraph","ids":[6]}]}]}""");
+        var protection = new EphemeralDataProtectionProvider();
+        var paperDesign = new ContentPaperDesign(tenant.ProjectId, "frame.png", "teacher.jpg", "مدرّس", "طوابع", ["#285582"]);
         var planning = new ContentDocumentPlanningService(db, gemini, new PlainSecrets(),
-            new EphemeralDataProtectionProvider(), NullLogger<ContentDocumentPlanningService>.Instance);
+            protection, NullLogger<ContentDocumentPlanningService>.Instance);
         var jobs = new BatchJobs(failFirstJob);
         var controller = new ContentDocumentsController(db, tenant, new ProjectAuthorizationService(), jobs, null!, planning)
         {
@@ -47,7 +50,7 @@ public sealed class ContentDocumentBatchTests(PostgresFixture postgres)
             { User = new ClaimsPrincipal(new ClaimsIdentity([
                 new Claim("ProjectId", tenant.ProjectId.ToString()), new Claim(ClaimTypes.Role, "Owner")], "test")) } }
         };
-        var request = new CreateContentDocumentRequest(kind, source, PagesPerSession: 3);
+        var request = new CreateContentDocumentRequest(kind, source, PagesPerSession: 3, PaperFrameToken: kind == "Paper" ? paperDesign.Protect(protection) : null);
         var suggestion = Assert.IsType<ContentDocumentSessions.Suggestion>(Assert.IsType<OkObjectResult>(controller.SuggestPageCount(request)).Value);
         Assert.Equal(["Session 11: البداية", "سيشن ١٢: التطبيق"], suggestion.FileSections!.Select(section => section.Title));
         var preview = Assert.IsType<ContentDocumentPreview.Preview>(Assert.IsType<OkObjectResult>(
@@ -70,6 +73,13 @@ public sealed class ContentDocumentBatchTests(PostgresFixture postgres)
             Assert.IsType<BadRequestObjectResult>(await controller.Create(stale, CancellationToken.None));
         Assert.Empty(await db.ContentDocuments.ToListAsync());
 
+        if (kind == "Paper")
+        {
+            Assert.IsType<BadRequestObjectResult>(await controller.Create(approved with { PaperFrameToken = null }, CancellationToken.None));
+            var foreign = paperDesign with { ProjectId = Guid.NewGuid() };
+            Assert.IsType<BadRequestObjectResult>(await controller.Create(approved with { PaperFrameToken = foreign.Protect(protection) }, CancellationToken.None));
+            Assert.Empty(await db.ContentDocuments.ToListAsync());
+        }
         var created = Assert.IsType<AcceptedResult>(await controller.Create(approved, CancellationToken.None));
         var ids = JsonSerializer.SerializeToElement(created.Value).GetProperty("ids").EnumerateArray().Select(id => id.GetGuid()).ToArray();
         db.ChangeTracker.Clear();
@@ -81,8 +91,9 @@ public sealed class ContentDocumentBatchTests(PostgresFixture postgres)
             var pages = await db.ContentDocumentPages.Where(page => page.DocumentId == document.Id).OrderBy(page => page.PageIndex).ToListAsync();
             Assert.Equal(Enum.Parse<ContentDocumentKind>(kind), document.Kind);
             Assert.Equal(3, document.RequestedPageCount);
-            Assert.Equal("Saved brand", document.BrandStylePrompt);
-            Assert.Equal("logo.png", document.BrandLogoObjectKey);
+            Assert.Equal(kind == "Paper" ? "طوابع" : "Saved brand", document.BrandStylePrompt);
+            Assert.Equal(kind == "Paper" ? "" : "logo.png", document.BrandLogoObjectKey);
+            if (kind == "Paper") Assert.Equal(JsonSerializer.Serialize(paperDesign), document.PaperDesignJson);
             Assert.Equal(file.Pages.Select(page => (page.Title, page.Body)), pages.Select(page => (page.Title, page.Body)));
             Assert.Equal(string.Join("\n\n", file.Pages.Skip(1).Select(page => page.Body)), document.SourceContent);
         }

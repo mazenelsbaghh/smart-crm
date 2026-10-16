@@ -52,3 +52,14 @@ Thumbs.db
 out/
 frontend/test-results/
 frontend/playwright-report/
+/output/
+/test-results/
+
+# Deployment credentials and local encryption keys
+.env.deploy
+.env.deploy.*
+backend/data-protection-keys/
+nginx/certs/*key*.pem
+
+!.env.deploy.example
+!.env.deploy.sales.example

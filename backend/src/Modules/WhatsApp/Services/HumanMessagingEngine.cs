@@ -51,7 +51,7 @@ namespace Modules.WhatsApp.Services
                 .Select(block => block.Trim()).Where(block => block.Length > 0).ToArray();
             // Respect an intentional three-message answer. Splitting its explanation again
             // at 250 characters can turn details + price + next step into extra bubbles.
-            if (initialBlocks.Length == 3 && Array.TrueForAll(initialBlocks, block => block.Length <= 600 && !IsSignature(block)))
+            if (initialBlocks.Length == 3 && Array.TrueForAll(initialBlocks, block => block.Length <= 600 && !ReplyMessageParts.IsStandaloneSignature(block)))
             {
                 foreach (var block in initialBlocks) yield return block;
                 yield break;
@@ -64,7 +64,7 @@ namespace Modules.WhatsApp.Services
                 if (string.IsNullOrEmpty(trimmed)) continue;
 
                 // Handle signature grouping
-                bool isSignature = IsSignature(trimmed);
+                bool isSignature = ReplyMessageParts.IsStandaloneSignature(trimmed);
                 if (isSignature && rawChunks.Count > 0)
                 {
                     rawChunks[rawChunks.Count - 1] += "\n" + trimmed;
@@ -147,9 +147,6 @@ namespace Modules.WhatsApp.Services
                 yield return chunk;
             }
         }
-
-        private static bool IsSignature(string text) => text.Length <= 40 &&
-            (text.StartsWith("-") || text.StartsWith("–") || text.StartsWith("—"));
 
         public int CalculateTypingDelay(string chunk, Guid projectId)
         {

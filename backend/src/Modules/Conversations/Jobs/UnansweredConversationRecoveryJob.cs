@@ -374,6 +374,7 @@ public sealed class UnansweredConversationRecoveryJob(
 
     private static MessageAggregatedEvent? CreateRecoveryEvent(Message message, RecoveryContext recoveryContext)
     {
+        if (CustomerOptOutService.IsOptOutRequest(message.Transcription ?? message.Content)) return null;
         var conversation = recoveryContext.Conversations[message.ConversationId];
         if (!recoveryContext.Customers.TryGetValue(conversation.CustomerId, out var customer)
             || customer.IsBlacklisted

@@ -2,6 +2,24 @@ namespace Modules.Content.Services;
 
 public static class ContentSchedule
 {
+    public static DateTime DailySlotUtc(DateTime localDate, TimeSpan firstPublishTime, string timezoneId, int slotIndex)
+    {
+        var timezone = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
+        return ConvertToUtc(LocalCandidate(localDate.Date, firstPublishTime.Add(TimeSpan.FromHours(4 * slotIndex))), timezone);
+    }
+
+    public static DateTime NextSlotUtc(DateTime afterUtc, TimeSpan firstPublishTime, string timezoneId, int postsPerDay)
+    {
+        var timezone = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
+        var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(afterUtc, DateTimeKind.Utc), timezone);
+        for (var slot = 0; slot < postsPerDay; slot++)
+        {
+            var candidate = DailySlotUtc(localNow.Date, firstPublishTime, timezoneId, slot);
+            if (candidate > afterUtc) return candidate;
+        }
+        return DailySlotUtc(localNow.Date.AddDays(1), firstPublishTime, timezoneId, 0);
+    }
+
     internal static IReadOnlyList<DateTime> NextWeekUtc(
         DateTime afterUtc,
         TimeSpan localPublishTime,

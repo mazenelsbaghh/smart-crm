@@ -42,11 +42,13 @@ export default function ScheduleDemandAddon({ timezone, onMessage }: ScheduleDem
   const { activeProject } = useAuth();
   const [overview, setOverview] = useState<ScheduleDemandOverview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [extracting, setExtracting] = useState(false);
 
   const loadOverview = useCallback(async () => {
     if (!activeProject) return;
     setLoading(true);
+    setLoadFailed(false);
     try {
       const response = await api.get<ScheduleDemandOverview>(
         `/api/projects/${activeProject.id}/reports/sales-intelligence/schedule-demand`,
@@ -54,11 +56,11 @@ export default function ScheduleDemandAddon({ timezone, onMessage }: ScheduleDem
       );
       setOverview(response.data);
     } catch {
-      onMessage({ type: 'error', text: 'تعذّر تحميل شيت المواعيد المطلوبة.' });
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
-  }, [activeProject, onMessage]);
+  }, [activeProject]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadOverview(), 0);
@@ -95,6 +97,9 @@ export default function ScheduleDemandAddon({ timezone, onMessage }: ScheduleDem
         <h3 id="schedule-demand-title" className={styles.title}>شيت المواعيد المطلوبة</h3>
         <p className={styles.description}>يجمع العملاء الذين رفضوا المواعيد الحالية وذكروا موعدًا بديلًا صريحًا خلال آخر 90 يومًا.</p>
       </div>
+      {loadFailed && <p className={styles.empty} role="alert">
+        {overview ? 'تعذّر تحديث الشيت. البيانات المعروضة من آخر تحميل ناجح.' : 'بيانات المواعيد غير متاحة. استخدم «تحديث الشيت» للمحاولة مجددًا.'}
+      </p>}
       <DemandMetrics overview={overview} />
       <DemandContent overview={overview} loading={loading} timezone={timezone} />
       <footer className={styles.actions}>
@@ -131,12 +136,13 @@ function DemandContent({ overview, loading, timezone }: {
   timezone: string;
 }) {
   if (loading) return <p className={styles.empty}>جاري تحميل الشيت...</p>;
-  if (!overview?.rows.length) return <p className={styles.empty}>لا توجد مواعيد بديلة صريحة مسجلة حتى الآن.</p>;
+  if (!overview) return null;
+  if (!overview.rows.length) return <p className={styles.empty}>لا توجد مواعيد بديلة صريحة مسجلة حتى الآن.</p>;
   return <div className={styles.sheet}>
     <div className={styles.groups} aria-label="تجميع المواعيد المطلوبة">
       {overview.groups.map((group) => <span key={group.label}>{group.label}: <strong>{group.peopleCount}</strong></span>)}
     </div>
-    <div className={styles.rows}>{overview.rows.map((row) => (
+    <div className={styles.rows} role="region" aria-label="طلبات المواعيد المسجلة" tabIndex={0}>{overview.rows.map((row) => (
       <DemandRow key={row.customerId} row={row} timezone={timezone} />
     ))}</div>
   </div>;

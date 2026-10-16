@@ -1,0 +1,28 @@
+.panel { padding: 24px; border: 1px solid var(--border-subtle); border-radius: 12px; background: hsl(var(--bg-secondary)); color: hsl(var(--text-primary)); scroll-margin-top: 24px; }
+.header, .actions, .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.header { align-items: flex-start; }
+.header h3 { margin: 0 0 8px; font-size: 1.1rem; }
+.header p, .note { color: hsl(var(--text-secondary)); font-size: .85rem; line-height: 1.8; }
+.panel button, .panel input { color: inherit; background: transparent; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 10px 12px; font: inherit; }
+.panel button, .panel a { display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
+.panel button:hover:not(:disabled) { background: var(--accent-soft); }
+.panel button:disabled { opacity: .5; cursor: not-allowed; }
+.panel :is(button, input, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0; }
+.filters button { flex-direction: column; min-width: 110px; flex: 1; font-size: .82rem; }
+.filters strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.filters button[aria-pressed=true] { border-color: var(--accent); background: var(--accent-soft); }
+.toolbar { margin-bottom: 16px; }
+.toolbar input { min-width: 0; flex: 1; max-width: 360px; }
+.tableScroll { overflow-x: auto; }
+.panel table { width: 100%; border-collapse: collapse; text-align: right; font-size: .85rem; }
+.panel caption { text-align: right; color: hsl(var(--text-secondary)); padding-bottom: 12px; }
+.panel th, .panel td { padding: 14px 10px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
+.panel th { color: hsl(var(--text-secondary)); font-weight: 500; }
+.panel a { color: var(--accent); text-decoration: none; }
+.badge { padding: 5px 8px; border-radius: 5px; background: hsl(var(--bg-tertiary)); }
+.badge[data-membership=joined] { color: hsl(var(--accent-success)); }
+.notice { border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px; line-height: 1.8; }
+.empty { text-align: center; padding: 24px 12px; color: hsl(var(--text-secondary)); }
+.note { margin: 16px 0 0; }
+@media (max-width: 640px) { .panel { padding: 16px; } .toolbar input { flex-basis: 100%; max-width: none; } .filters button { min-width: 95px; } }

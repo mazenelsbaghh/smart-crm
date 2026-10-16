@@ -35,7 +35,7 @@ public static class AdvertisingAiWorkResultGuard
         if (work.OwnerId != completion.OwnerId || work.ProjectId != completion.ProjectId) return AiWorkCompletionDecision.RejectOwner;
         if (work.OwnerVersion != completion.OwnerVersion) return AiWorkCompletionDecision.RejectVersion;
         if (!string.Equals(work.InputHash, completion.InputHash, StringComparison.Ordinal)) return AiWorkCompletionDecision.RejectHash;
-        return nowUtc > work.DeadlineUtc ? AiWorkCompletionDecision.RejectExpired : AiWorkCompletionDecision.Accept;
+        return nowUtc >= work.DeadlineUtc ? AiWorkCompletionDecision.RejectExpired : AiWorkCompletionDecision.Accept;
     }
 }
 
@@ -71,6 +71,12 @@ public sealed class AdvertisingDecisionAi(AppDbContext db)
             var existing = await db.AdvertisingAiWorkItems.IgnoreQueryFilters()
                 .Where(x => x.ProjectId == projectId && x.OwnerId == ownerId && x.Purpose == role && x.InputHash == inputHash)
                 .OrderByDescending(x => x.CreatedAt).FirstOrDefaultAsync(cancellationToken);
+            if (existing?.State == AiWorkState.Pending && existing.DeadlineUtc <= DateTime.UtcNow)
+            {
+                existing.State = AiWorkState.Expired;
+                existing.FailureCode = "ADS_AI_REVIEW_EXPIRED";
+                existing.CompletedAtUtc = DateTime.UtcNow;
+            }
             if (existing?.State == AiWorkState.Completed && TryRoleReview(existing.ResultJson, out var verdict, out var reason))
             {
                 results[role] = (verdict, existing.ResultJson!, reason);
@@ -149,6 +155,10 @@ public static class AdvertisingDecisionPolicy
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     public static bool IsSupported(string action) => Supported.Contains(action);
+
+    public static bool IsProtectivePause(string action) =>
+        action.Equals("PauseAd", StringComparison.OrdinalIgnoreCase)
+        || action.Equals("PauseDelivery", StringComparison.OrdinalIgnoreCase);
 
     public static bool RequiresJudge(string action, string evidenceJson) => action is "ActivateCanary" or "ActivatePlan"
         or "ChangeOptimizationOutcome" or "ResumeAd" or "ResumeDelivery" or "IncreaseBudget" or "ScaleWinner"

@@ -3,8 +3,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { Conversation, Message } from '../../types/chat';
-import ThinSidebar from './shared/ThinSidebar';
-import InboxMobileToolbar from './shared/InboxMobileToolbar';
+import Dialog from '../../components/shared/Dialog';
+import Button from '../../components/ui/Button';
+import AppShell from '../../components/layout/AppShell';
 import ConversationList from './shared/ConversationList';
 import ChatWorkspace from './shared/ChatWorkspace';
 import ContextSidebar from './shared/ContextSidebar';
@@ -101,16 +102,8 @@ export default function InboxLayout({
   setReaction
 }: InboxLayoutProps) {
   
-  const containerRef = useRef<HTMLDivElement>(null);
-  const detailsReturnFocusRef = useRef<HTMLButtonElement | null>(null);
-  const detailsCloseButtonRef = useRef<HTMLButtonElement | null>(null);
   const previousConversationIdRef = useRef<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-
-  const closeDetails = () => {
-    setDetailsOpen(false);
-    window.setTimeout(() => detailsReturnFocusRef.current?.focus(), 0);
-  };
 
   useEffect(() => {
     if (previousConversationIdRef.current === activeConv?.id) return;
@@ -119,46 +112,14 @@ export default function InboxLayout({
     return () => window.clearTimeout(closeTimer);
   }, [activeConv?.id]);
 
-  useEffect(() => {
-    if (!detailsOpen) return;
-    const focusTimer = window.setTimeout(() => detailsCloseButtonRef.current?.focus(), 0);
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setDetailsOpen(false);
-      window.setTimeout(() => detailsReturnFocusRef.current?.focus(), 0);
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => {
-      window.clearTimeout(focusTimer);
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [detailsOpen]);
-
-  const keepDetailsFocusInside = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Tab') return;
-    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [href]'));
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
-
+  const customerDetails = activeConv && <ContextSidebar
+    key={customer?.id || 'empty-context'} activeConv={activeConv} customer={customer}
+    onUpdateCustomer={onUpdateCustomer} updating={updating} />;
 
   return (
-    <div ref={containerRef} className={`${styles.inboxContainer} ${activeConv ? styles.hasActiveConv : ''}`}>
-      <InboxMobileToolbar />
+    <AppShell workspace mobileConversation={Boolean(activeConv)}>
+    <div className={`${styles.inboxContainer} ${activeConv ? styles.hasActiveConv : ''}`}>
 
-      {/* 1. Thin vertical Sidebar navigation */}
-      <ThinSidebar />
-
-      {/* 2. Scrollable list of metrics and customers */}
       <ConversationList
         conversations={conversations}
         activeConv={activeConv}
@@ -178,9 +139,8 @@ export default function InboxLayout({
         onLoadMore={onLoadMoreConversations}
       />
 
-      {/* 3. Central chat workspace view */}
       <ChatWorkspace
-        key={customer?.id || 'empty-chat'}
+        key={activeConv?.id || 'empty-chat'}
         activeConv={activeConv}
         customer={customer}
         messages={messages}
@@ -209,39 +169,16 @@ export default function InboxLayout({
         messageLoadError={messageLoadError}
         onRetryMessages={onRetryMessages}
         messagesLoading={messagesLoading}
-        onOpenDetails={(trigger) => {
-          detailsReturnFocusRef.current = trigger;
-          setDetailsOpen(true);
-        }}
+        onOpenDetails={() => setDetailsOpen(true)}
       />
 
-      {/* 4. Right CRM details and metrics side-panel */}
-      {activeConv && (
-        <div
-          className={`${styles.contextPane} ${detailsOpen ? styles.contextPaneOpen : ''}`}
-          role={detailsOpen ? 'dialog' : undefined}
-          aria-modal={detailsOpen ? 'true' : undefined}
-          aria-labelledby={detailsOpen ? 'responsive-customer-details-title' : undefined}
-          onClick={detailsOpen ? closeDetails : undefined}
-          onKeyDown={detailsOpen ? keepDetailsFocusInside : undefined}
-        >
-          <div className={styles.contextPaneSurface} onClick={(event) => event.stopPropagation()}>
-            <div className={styles.contextPaneHeader}>
-              <h2 id="responsive-customer-details-title">بيانات العميل</h2>
-              <button ref={detailsCloseButtonRef} type="button" onClick={closeDetails} aria-label="إغلاق بيانات العميل">
-                <X size={20} aria-hidden="true" />
-              </button>
-            </div>
-            <ContextSidebar
-              key={customer?.id || 'empty-context'}
-              activeConv={activeConv}
-              customer={customer}
-              onUpdateCustomer={onUpdateCustomer}
-              updating={updating}
-            />
-          </div>
+      {activeConv && <Dialog label="بيانات العميل" placement="drawer" open={detailsOpen} onClose={() => setDetailsOpen(false)}>
+        <div className={styles.customerDetailsHeading}><h2>بيانات العميل</h2>
+          <Button variant="ghost" onClick={() => setDetailsOpen(false)} aria-label="إغلاق بيانات العميل"><X size={20} /></Button>
         </div>
-      )}
+        {customerDetails}
+      </Dialog>}
     </div>
+    </AppShell>
   );
 }

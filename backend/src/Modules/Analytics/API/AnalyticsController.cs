@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Shared.Infrastructure;
+using Shared.Security;
 using Modules.Analytics.Domain;
 using Modules.Analytics.Application.Services;
 using Modules.Analytics.Jobs;
@@ -8,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text.Json;
 
 namespace Modules.Analytics.API
 {
@@ -36,10 +38,22 @@ namespace Modules.Analytics.API
                 .Take(30) // last 30 snapshots
                 .ToListAsync();
 
-            return Ok(snapshots);
+            return Ok(snapshots.Select(snapshot =>
+            {
+                var value = ReportedValue(snapshot);
+                return new
+                {
+                    snapshot.Id, snapshot.ProjectId, snapshot.SnapshotDate, snapshot.MetricType,
+                    metricValue = value,
+                    metricAvailable = value.HasValue,
+                    unavailableReason = value.HasValue ? null : "This snapshot needs a supported measurement or recalculation with the current reporting rules.",
+                    snapshot.MetadataJson, snapshot.CreatedAt, snapshot.UpdatedAt
+                };
+            }));
         }
 
         [HttpPost("projects/{projectId}/reports/generate")]
+        [ProjectPermission("read")]
         public async Task<IActionResult> GenerateReport(Guid projectId, [FromBody] GenerateReportRequest request)
         {
             if (request == null || string.IsNullOrEmpty(request.ReportType))
@@ -49,6 +63,7 @@ namespace Modules.Analytics.API
 
             var startDate = request.StartDate ?? DateTime.UtcNow.AddDays(-7);
             var endDate = request.EndDate ?? DateTime.UtcNow;
+            if (endDate <= startDate) return BadRequest("EndDate must be after StartDate.");
 
             // Generate report content on the fly by computing current metrics or fetching historical snapshots
             var snapshots = await _context.AnalyticsSnapshots
@@ -56,7 +71,7 @@ namespace Modules.Analytics.API
                 .Where(s => s.ProjectId == projectId && s.SnapshotDate >= startDate && s.SnapshotDate <= endDate)
                 .ToListAsync();
 
-            // Return simulated PDF/JSON output containing report details
+            var measuredSnapshots = snapshots.Select(snapshot => new { snapshot.MetricType, Value = ReportedValue(snapshot) }).ToList();
             var reportSummary = new
             {
                 reportId = Guid.NewGuid(),
@@ -65,14 +80,16 @@ namespace Modules.Analytics.API
                 startDate = startDate,
                 endDate = endDate,
                 generatedAt = DateTime.UtcNow,
-                totalSnapshotsUsed = snapshots.Count,
-                summaryMetrics = snapshots.GroupBy(s => s.MetricType)
+                totalSnapshotsUsed = measuredSnapshots.Count(snapshot => snapshot.Value.HasValue),
+                unavailableSnapshots = measuredSnapshots.Count(snapshot => !snapshot.Value.HasValue),
+                summaryMetrics = measuredSnapshots.GroupBy(s => s.MetricType)
                     .Select(g => new
                     {
                         metricType = g.Key,
-                        averageValue = g.Average(s => s.MetricValue),
-                        maxValue = g.Max(s => s.MetricValue),
-                        minValue = g.Min(s => s.MetricValue)
+                        measuredSnapshots = g.Count(s => s.Value.HasValue),
+                        averageValue = g.Average(s => s.Value),
+                        maxValue = g.Max(s => s.Value),
+                        minValue = g.Min(s => s.Value)
                     }).ToList()
             };
 
@@ -85,13 +102,39 @@ namespace Modules.Analytics.API
         {
             try
             {
-                await _dailyAnalyticsJob.ExecuteAsync();
-                return Ok(new { message = "Analytics snapshots calculated successfully for all projects." });
+                if (!await _context.Projects.AnyAsync(project => project.Id == projectId)) return NotFound();
+                await _dailyAnalyticsJob.ExecuteProjectAsync(projectId);
+                return Ok(new { message = "Analytics snapshots updated for the selected project." });
             }
             catch (Exception ex)
             {
                 return BadRequest($"Recalculation failed: {ex.Message}");
             }
+        }
+
+        private static decimal? ReportedValue(AnalyticsSnapshot snapshot)
+        {
+            var type = snapshot.MetricType.ToLowerInvariant();
+            var availability = type switch
+            {
+                "ai_accuracy" => "accuracyAvailable",
+                "team_performance" => "responseTimeAvailable",
+                _ => null
+            };
+            var requiresCurrentCalculation = type is "sales" or "customer_acquisition";
+            if (availability is null && !requiresCurrentCalculation) return snapshot.MetricValue;
+            try
+            {
+                using var metadata = JsonDocument.Parse(snapshot.MetadataJson ?? "{}");
+                if (metadata.RootElement.ValueKind != JsonValueKind.Object) return null;
+                if (requiresCurrentCalculation)
+                    return metadata.RootElement.TryGetProperty("calculationVersion", out var version)
+                        && version.ValueKind == JsonValueKind.Number && version.TryGetInt32(out var value) && value == 2
+                        ? snapshot.MetricValue : null;
+                return metadata.RootElement.TryGetProperty(availability!, out var known) && known.ValueKind == JsonValueKind.True
+                    ? snapshot.MetricValue : null;
+            }
+            catch (JsonException) { return null; }
         }
     }
 

@@ -123,6 +123,14 @@ namespace Modules.AI.Services
                 return null;
             }
 
+            // The legacy monthly/cash extraction has no offer identity or conversation context.
+            // Keep the knowledge-grounded reply when both course offers exist.
+            if (knowledgeText.Contains("الكورس المكثف", StringComparison.Ordinal)
+                && knowledgeText.Contains("الكورس العادي", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             var monthlyMatch = Regex.Match(
                 knowledgeText,
                 @"الاشتراك\s+الشهري\s*:\s*([^\n\r.]+)",

@@ -24,15 +24,19 @@ using Xunit;
 namespace Advertising.IntegrationTests;
 
 [Collection(PostgresCollection.Name)]
-public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
+public sealed class ReplyReviewProcessingTests(PostgresFixture postgres) : IAsyncLifetime
 {
+    private IsolatedPostgresDatabase isolated = null!;
+    public async Task InitializeAsync() => isolated = await postgres.CreateIsolatedDatabaseAsync();
+    public Task DisposeAsync() => isolated.DisposeAsync().AsTask();
+
     private readonly ProjectSecretVault _vault = new(new EphemeralDataProtectionProvider());
 
     [Fact]
     public async Task Scheduler_creates_durable_work_once_and_includes_old_chats_with_due_followups()
     {
         var seeded = await SeedAsync();
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         var conversation = await db.Conversations.IgnoreQueryFilters().SingleAsync(c => c.Id == seeded.ConversationId);
         conversation.LastMessageTimestamp = DateTime.UtcNow.AddDays(-5);
         db.FollowUps.Add(new() { ProjectId = seeded.ProjectId, CustomerId = conversation.CustomerId, ConversationId = conversation.Id,
@@ -64,7 +68,7 @@ public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
         var gemini = new ReviewGemini(() => Analysis(seeded.MessageId, true));
         await RunAsync(caseId, gemini);
         await RunAsync(caseId, gemini);
-        await using var verification = postgres.CreateContext();
+        await using var verification = isolated.CreateContext();
         var draft = await verification.ReplyReviewCases.IgnoreQueryFilters().SingleAsync(r => r.Id == caseId);
         Assert.Equal(ReplyReviewState.DraftReady, draft.State);
         Assert.Equal("الموعد يحتاج مراجعة من الموظف.", draft.DraftContent);
@@ -106,7 +110,7 @@ public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
         var first = RunAsync(caseId, gemini);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await RunAsync(caseId, new ReviewGemini(() => throw new InvalidOperationException("Duplicate worker must not reach AI.")));
-        await using var incoming = postgres.CreateContext();
+        await using var incoming = isolated.CreateContext();
         var newMessage = new Message { ConversationId = seeded.ConversationId, ExternalMessageId = Guid.NewGuid().ToString(), Direction = "Incoming", MessageType = "Text", Content = "رديت خلاص", Timestamp = DateTime.UtcNow };
         incoming.Messages.Add(newMessage);
         await incoming.SaveChangesAsync();
@@ -127,7 +131,7 @@ public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
     {
         var seeded = await SeedAsync();
         var caseId = await EnqueueAsync(seeded);
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         await db.ReplyReviewSchedules.IgnoreQueryFilters().Where(s => s.ProjectId == seeded.ProjectId)
             .ExecuteUpdateAsync(set => set.SetProperty(s => s.Enabled, false));
         await RunAsync(caseId, new ReviewGemini(() => throw new InvalidOperationException("Paused work must not reach AI.")));
@@ -151,7 +155,7 @@ public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
     {
         var seeded = await SeedAsync();
         var caseId = await EnqueueAsync(seeded);
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         db.ReplyReviewRuns.AddRange(Enumerable.Range(0, 100).Select(attempt => new ReplyReviewRun
         {
             ProjectId = seeded.ProjectId,
@@ -174,7 +178,7 @@ public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
     public async Task Followup_delivery_problems_prevent_a_false_resolved_result_and_changes_are_requeued()
     {
         var seeded = await SeedAsync();
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         var original = await db.Messages.SingleAsync(m => m.Id == seeded.MessageId);
         original.Direction = "Outgoing";
         original.Content = "موعد السيشن الاثنين الساعة ٨ مساءً.";
@@ -201,7 +205,7 @@ public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
     public async Task Processing_endpoints_require_the_project_and_manager_role()
     {
         var seeded = await SeedAsync();
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         var controller = new ReplyReviewProcessingController(db, new ReplyReviewQueue(db), new ProjectAuthorizationService())
         { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = User(seeded.ProjectId, "Agent") } } };
         Assert.IsType<ForbidResult>(await controller.Enqueue(seeded.ProjectId, seeded.ConversationId, "review", default));
@@ -215,7 +219,7 @@ public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
 
     private async Task<Seeded> SeedAsync()
     {
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         await db.Database.MigrateAsync();
         var projectId = Guid.NewGuid();
         var conversation = DailyReplyReviewTests.SeedConversation(db, projectId);
@@ -229,20 +233,20 @@ public sealed class ReplyReviewProcessingTests(PostgresFixture postgres)
 
     private async Task<Guid> EnqueueAsync(Seeded seeded)
     {
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         return (await new ReplyReviewQueue(db).EnqueueAsync(seeded.ProjectId, seeded.ConversationId, "Automatic", default)).Id;
     }
 
     private async Task DueNowAsync(Guid caseId)
     {
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         await db.ReplyReviewCases.IgnoreQueryFilters().Where(r => r.Id == caseId)
             .ExecuteUpdateAsync(set => set.SetProperty(r => r.NextRunAtUtc, DateTime.UtcNow.AddMinutes(-1)));
     }
 
     private async Task RunAsync(Guid caseId, IGeminiClient gemini)
     {
-        await using var db = postgres.CreateContext();
+        await using var db = isolated.CreateContext();
         var analyzer = new ConversationSalesAnalyzer(db, gemini, _vault);
         var drafts = new CorrectiveReplyDraftService(db, new AIMarketingBrain(gemini, null!, null!, new AIBehaviorSettingsService()),
             _vault, new AIBehaviorSettingsService(), new AICompanyBrain(db, gemini));

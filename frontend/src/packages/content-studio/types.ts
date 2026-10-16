@@ -1,3 +1,13 @@
+export type OpenAiImageModel = 'gpt-image-2.5-sunburst' | 'gpt-image-2.5-flare';
+
+export interface ContentImageTrial { image: string; model: string; size: string }
+export interface CreateContentImageTrial {
+  prompt: string;
+  imageProvider: 'Gemini' | 'OpenAI';
+  openAiImageModel: OpenAiImageModel;
+  openAiImageApiKey?: string;
+}
+
 export type ContentPostStatus =
   | 'Generating'
   | 'AwaitingApproval'
@@ -79,14 +89,22 @@ export interface ContentStudioData {
     isEnabled: boolean;
     hasApprovedStyle: boolean;
     dailyPublishTimeLocal: string;
+    postsPerDay: number;
     timezone: string;
     nextPublishAtUtc?: string;
     lastPublishedAtUtc?: string;
     lastError?: string;
     stylePrompt: string;
+    imageProvider?: 'Gemini' | 'OpenAI';
+    openAiImageModel?: OpenAiImageModel;
+    openAiImageApiKeyConfigured?: boolean;
     logoFileName?: string;
     logoUrl?: string;
     brandColors: string[];
+    designSource: 'logo' | 'references';
+    matchReferenceTone: boolean;
+    referenceColors: string[];
+    referenceImages: Array<{ id: string; kind: 'palette' | 'post'; fileName: string; url: string }>;
     approvedSamplePostId?: string;
   };
   weeklyPlan?: ContentWeekPlan;
@@ -95,10 +113,18 @@ export interface ContentStudioData {
 }
 
 export interface UpdateContentSettings {
+  imageProvider?: 'Gemini' | 'OpenAI';
+  openAiImageModel?: OpenAiImageModel;
+  openAiImageApiKey?: string;
+  clearOpenAiImageApiKey?: boolean;
   facebookPageId?: string;
   dailyPublishTimeLocal: string;
+  postsPerDay: number;
   stylePrompt: string;
   isEnabled: boolean;
+  designSource: 'logo' | 'references';
+  matchReferenceTone: boolean;
+  referenceColors: string[];
 }
 
 export type ContentVideoAspectRatio = '9:16' | '16:9';
@@ -198,7 +224,7 @@ export interface ContentVideoPlanAccepted {
   message: string;
 }
 
-export type ContentDocumentKind = 'Presentation' | 'A4';
+export type ContentDocumentKind = 'Presentation' | 'A4' | 'Paper';
 export type ContentDocumentStatus = 'Planning' | 'GeneratingImages' | 'Ready' | 'Failed' | 'AwaitingDesign';
 export type ContentDocumentPageStatus = 'Planned' | 'GeneratingImage' | 'Ready' | 'ImageFailed' | 'Queued';
 
@@ -224,6 +250,7 @@ export interface ContentDocumentPreviewRequest {
   coverTitle: string;
   sessionRanges?: ContentDocumentSessionRange[];
   pagesPerSession?: number;
+  paperFrameToken?: string;
 }
 
 export interface ContentDocumentPreview {
@@ -309,3 +336,10 @@ export interface CreateContentCardGame {
   mechanic?: string;
   cardCount: number;
 }
+
+export interface PaperDesignOptions {
+  openAiImageApiKeyConfigured?: boolean;
+  styles: { id: string; name: string; description: string }[];
+  palettes: { id: string; name: string; colors: string[] }[];
+}
+export interface PaperFrame { token: string; image: string; imageProvider?: 'Gemini' | 'OpenAI'; openAiImageApiKeyConfigured?: boolean }

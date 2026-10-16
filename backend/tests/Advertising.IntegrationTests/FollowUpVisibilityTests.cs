@@ -17,6 +17,47 @@ namespace Advertising.IntegrationTests;
 [Collection(PostgresCollection.Name)]
 public sealed class FollowUpVisibilityTests(PostgresFixture postgres)
 {
+    [Fact]
+    public async Task Follow_up_counts_include_cancelled_processing_and_unknown_delivery_across_all_pages()
+    {
+        var tenant = new TenantContext();
+        await using var db = postgres.CreateContext(tenant);
+        await db.Database.MigrateAsync();
+        var project = new Project { Name = "Follow-up status totals" };
+        var customer = new Customer { ProjectId = project.Id, Name = "عميل", City = "", PhoneNumber = "201012345678" };
+        var otherProject = new Project { Name = "Unrelated project" };
+        var otherCustomer = new Customer { ProjectId = otherProject.Id, Name = "عميل آخر", City = "", PhoneNumber = "201011112222" };
+        db.AddRange(project, customer, otherProject, otherCustomer,
+            new FollowUp { ProjectId = otherProject.Id, CustomerId = otherCustomer.Id, Status = "Cancelled", Notes = "خارج المشروع" });
+        var statuses = new[] { "Pending", "Completed", "Bypassed", "Cancelled", "Processing", "DeliveryUnknown", "Missed" };
+        for (var index = 0; index < statuses.Length; index++)
+            db.AddRange(Enumerable.Range(0, index + 1).Select(_ => new FollowUp {
+                ProjectId = project.Id, CustomerId = customer.Id, Status = statuses[index], Notes = "متابعة", DueDate = DateTime.UtcNow }));
+        await db.SaveChangesAsync();
+        tenant.SetProjectId(project.Id);
+        var controller = new CRMController(db, null!, null!, null!, null!, tenant, null!, new ProjectAuthorizationService())
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("ProjectId", project.Id.ToString())], "test")) } }
+        };
+
+        var all = Assert.IsType<FollowUpPage>(Assert.IsType<OkObjectResult>(
+            await controller.GetFollowUpsPage(project.Id, status: "All", pageSize: 5)).Value);
+        Assert.Equal(5, all.Items.Count);
+        Assert.Equal(28, all.TotalCount);
+        Assert.Equal(4, all.CancelledCount);
+        Assert.Equal(5, all.ProcessingCount);
+        Assert.Equal(6, all.DeliveryUnknownCount);
+        Assert.Equal(all.TotalCount, all.PendingCount + all.CompletedCount + all.BypassedCount + all.CancelledCount
+            + all.ProcessingCount + all.DeliveryUnknownCount + all.MissedCount);
+
+        var cancelled = Assert.IsType<FollowUpPage>(Assert.IsType<OkObjectResult>(
+            await controller.GetFollowUpsPage(project.Id, status: "Cancelled")).Value);
+        Assert.Equal(4, cancelled.FilteredCount);
+        Assert.Equal(28, cancelled.TotalCount);
+        Assert.All(cancelled.Items, row => Assert.Equal("Cancelled", row.Status));
+    }
+
     [Theory]
     [InlineData("expired", "Nurturing", true)]
     [InlineData("expired", "AppointmentReminder", false)]

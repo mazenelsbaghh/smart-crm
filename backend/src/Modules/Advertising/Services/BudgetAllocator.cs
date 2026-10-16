@@ -14,11 +14,14 @@ public sealed record BudgetBatchReservationResult(bool Reserved, IReadOnlyList<G
 
 public sealed class BudgetAllocator
 {
+    public Task<List<BudgetPeriodLedger>> EnsureCurrentLedgersAsync(AppDbContext db, AutonomyEnvelope envelope,
+        CancellationToken cancellationToken = default) => EnsureCurrentLedgersAsync(db, envelope, DateTime.UtcNow, cancellationToken);
+
     public async Task<List<BudgetPeriodLedger>> EnsureCurrentLedgersAsync(AppDbContext db, AutonomyEnvelope envelope,
-        CancellationToken cancellationToken = default)
+        DateTime nowUtc, CancellationToken cancellationToken = default)
     {
         var ledgers = new List<BudgetPeriodLedger>();
-        foreach (var period in BudgetPeriodPolicy.Resolve(envelope, DateTime.UtcNow))
+        foreach (var period in BudgetPeriodPolicy.Resolve(envelope, nowUtc))
         {
             var ledger = await db.AdvertisingBudgetLedgers.IgnoreQueryFilters().SingleOrDefaultAsync(item =>
                 item.ProjectId == envelope.ProjectId && item.EnvelopeId == envelope.Id

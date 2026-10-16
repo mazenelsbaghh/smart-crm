@@ -15,11 +15,16 @@ public sealed class ContentCardGameDesignService(
 {
     public async Task GenerateAsync(Guid projectId, Guid gameId, CancellationToken cancellationToken)
     {
+        await using var generationLock = await ContentGenerationLock.TryAcquireAsync(
+            dbContext, ContentGenerationLock.Cards(projectId, gameId), cancellationToken);
+        if (generationLock is null) return;
         var game = await dbContext.ContentCardGames.IgnoreQueryFilters()
             .SingleOrDefaultAsync(item => item.ProjectId == projectId && item.Id == gameId, cancellationToken)
             ?? throw new InvalidOperationException("اللعبة غير موجودة.");
+        if (await StopRequestedAsync(game, cancellationToken)) return;
         var claimed = await dbContext.ContentCardGames.IgnoreQueryFilters()
-            .Where(item => item.ProjectId == projectId && item.Id == gameId && item.DesignStatus == ContentCardGameDesignStatus.Queued)
+            .Where(item => item.ProjectId == projectId && item.Id == gameId
+                && (item.DesignStatus == ContentCardGameDesignStatus.Queued || item.DesignStatus == ContentCardGameDesignStatus.Generating))
             .ExecuteUpdateAsync(update => update.SetProperty(item => item.DesignStatus, ContentCardGameDesignStatus.Generating), cancellationToken);
         if (claimed == 0) return;
         try

@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
+import { ListChecks, RefreshCw, CalendarClock, FileText } from 'lucide-react';
 import { api } from '@/services/api';
 import ReviewScheduleControls from './ReviewScheduleControls';
 import ProcessingCaseDetail from './ProcessingCaseDetail';
@@ -39,15 +40,15 @@ export default function ReviewProcessingPanel({ projectId, timezone, canManage, 
     finally { setBusy(false); }
   }
   return <section className={styles.processing} aria-label="جدولة المراجعة والمعالجة">
-    <div className={styles.sectionHeading}><div><h2>المراجعة والمعالجة المجدولة</h2>
+    <div className={styles.sectionHeading}><div><h2><ListChecks size={20} aria-hidden="true" />المراجعة والمعالجة المجدولة</h2>
       <p className={styles.note}>مراجعة ← مسودة معالجة ← رد فعلي ← تحقق بالدليل</p></div>
-      <div className={styles.controls}><button onClick={refresh}>تحديث الطابور</button>
-        {canManage && <button disabled={busy || !report?.schedule.enabled} onClick={() => void scan()}>جدولة فحص الآن</button>}</div></div>
+      <div className={styles.controls}><button onClick={refresh}><RefreshCw size={16} aria-hidden="true" />تحديث الطابور</button>
+        {canManage && <button disabled={busy || !report?.schedule.enabled} onClick={() => void scan()}><CalendarClock size={16} aria-hidden="true" />جدولة فحص الآن</button>}</div></div>
     {error && <p role="alert" className={styles.error}>{error}</p>}
     {notice && <p role="status" className={styles.note}>{notice}</p>}
     {report ? <>
       <div className={styles.processingStatus}>
-        <strong>{report.schedule.enabled ? 'الجدولة مفعّلة' : 'الجدولة متوقفة'}</strong>
+        <strong data-enabled={report.schedule.enabled}>{report.schedule.enabled ? 'الجدولة مفعّلة' : 'الجدولة متوقفة'}</strong>
         <span>الفحص كل {numberLabel(report.schedule.intervalMinutes)} دقيقة</span>
         {report.schedule.enabled && <span>الموعد التالي: {timeLabel(report.schedule.nextScanAtUtc, timezone, true)}</span>}
         <span>{report.schedule.lastScanAtUtc ? `آخر فحص: ${timeLabel(report.schedule.lastScanAtUtc, timezone, true)}` : 'بانتظار أول فحص'}</span>
@@ -63,12 +64,12 @@ export default function ReviewProcessingPanel({ projectId, timezone, canManage, 
       {report.cases.length ? <div className={styles.tableScroll}><table><thead><tr>
         <th>المحادثة</th><th>الحالة والخطوة التالية</th><th>آخر مراجعة</th><th>المعالجة</th>
       </tr></thead><tbody>{report.cases.map(row => <Fragment key={row.id}><tr>
-        <td><strong>{row.customerName}</strong><span>{row.channel}</span></td>
-        <td>{processingLabels[row.state] ?? row.state}{['Queued', 'RetryScheduled', 'VerifyScheduled', 'DraftReady'].includes(row.state) &&
+        <td data-label="المحادثة"><strong>{row.customerName}</strong><span>{row.channel}</span></td>
+        <td data-label="الحالة والخطوة التالية">{processingLabels[row.state] ?? row.state}{['Queued', 'RetryScheduled', 'VerifyScheduled', 'DraftReady'].includes(row.state) &&
           <span>{row.state === 'DraftReady' ? 'فحص تنفيذ المعالجة' : 'التنفيذ'}: {timeLabel(row.nextRunAtUtc, timezone, true)}</span>}</td>
-        <td>{row.lastReviewedAtUtc ? timeLabel(row.lastReviewedAtUtc, timezone, true) : 'لم تُراجع بعد'}<span>المحاولات: {numberLabel(row.attempts)}</span></td>
-        <td><button aria-expanded={selected === row.id} onClick={() => setSelected(selected === row.id ? null : row.id)}>
-          {row.hasDraft ? 'المسودة وسجل المعالجة' : 'عرض نتيجة المعالجة'}</button></td>
+        <td data-label="آخر مراجعة">{row.lastReviewedAtUtc ? timeLabel(row.lastReviewedAtUtc, timezone, true) : 'لم تُراجع بعد'}<span>المحاولات: {numberLabel(row.attempts)}</span></td>
+        <td data-label="المعالجة"><button aria-expanded={selected === row.id} onClick={() => setSelected(selected === row.id ? null : row.id)}>
+          <FileText size={16} aria-hidden="true" />{row.hasDraft ? 'المسودة وسجل المعالجة' : 'عرض نتيجة المعالجة'}</button></td>
       </tr>{selected === row.id && <tr><td colSpan={4}><ProcessingCaseDetail row={row} url={url} timezone={timezone}
         canManage={canManage} revision={revision} onChanged={refresh} /></td></tr>}</Fragment>)}</tbody></table></div>
         : <p className={styles.note}>لا توجد مهام في هذا الفلتر. الفحص المجدول يضيف المحادثات التي تحتاج مراجعة.</p>}

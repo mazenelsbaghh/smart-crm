@@ -13,7 +13,7 @@ These credentials are saved locally in the project's root [.env.deploy](file://.
 
 - **Host (IP)**: `147.93.86.206`
 - **Username**: `root`
-- **Password**: `MazenElsbagh.12`
+- **Authentication**: SSH key authentication, or `SSH_PASS` from the ignored project-root `.env.deploy` file. The helpers have no embedded password.
 - **Remote Project Directory**: `/root/smart-crm`
 
 ---

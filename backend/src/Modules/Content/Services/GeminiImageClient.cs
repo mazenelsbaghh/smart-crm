@@ -5,12 +5,14 @@ namespace Modules.Content.Services;
 
 public sealed record GeneratedImage(byte[] Bytes, string MimeType, string Model, string Size);
 public sealed record GeminiReferenceImage(byte[] Bytes, string MimeType);
-public sealed record GeminiImageRequest(string Prompt, string ApiKey, GeminiReferenceImage Logo, string AspectRatio);
+public sealed record GeminiImageRequest(string Prompt, string ApiKey, GeminiReferenceImage? Logo, string AspectRatio,
+    IReadOnlyList<GeminiReferenceImage>? References = null, string? ImageSize = null);
 
 public sealed class GeminiImageClient
 {
     public const string HighestQualityModel = "gemini-3-pro-image";
     public const string OutputSize = "4K";
+    public const string PreviewImageSize = "IMAGE_SIZE_TWO_K";
     public const string AspectRatio = "1:1";
     public const string SquareAspectRatio = "ASPECT_RATIO_ONE_BY_ONE";
     public const string PresentationAspectRatio = "ASPECT_RATIO_SIXTEEN_BY_NINE";
@@ -29,18 +31,14 @@ public sealed class GeminiImageClient
         GeminiImageRequest imageRequest,
         CancellationToken cancellationToken)
     {
-        object[] parts =
-        [
-            new { text = imageRequest.Prompt },
-            new
-            {
-                inlineData = new
-                {
-                    mimeType = imageRequest.Logo.MimeType,
-                    data = Convert.ToBase64String(imageRequest.Logo.Bytes)
-                }
-            }
-        ];
+        var parts = new List<object> { new { text = imageRequest.Prompt } };
+        var references = new List<GeminiReferenceImage>();
+        if (imageRequest.Logo is not null) references.Add(imageRequest.Logo);
+        if (imageRequest.References is not null) references.AddRange(imageRequest.References);
+        parts.AddRange(references.Select(reference => (object)new
+        {
+            inlineData = new { mimeType = reference.MimeType, data = Convert.ToBase64String(reference.Bytes) }
+        }));
         if (string.IsNullOrWhiteSpace(imageRequest.ApiKey))
             throw new InvalidOperationException("مفتاح Gemini غير موجود في إعدادات المشروع.");
 
@@ -65,7 +63,7 @@ public sealed class GeminiImageClient
                     image = new
                     {
                         aspectRatio = imageRequest.AspectRatio,
-                        imageSize = ApiOutputSize
+                        imageSize = imageRequest.ImageSize ?? ApiOutputSize
                     }
                 }
             }
@@ -92,7 +90,8 @@ public sealed class GeminiImageClient
             var mimeType = inlineData.TryGetProperty("mimeType", out var mime)
                 ? mime.GetString() ?? "image/png"
                 : "image/png";
-            return new GeneratedImage(Convert.FromBase64String(base64Image), mimeType, HighestQualityModel, OutputSize);
+            return new GeneratedImage(Convert.FromBase64String(base64Image), mimeType, HighestQualityModel,
+                imageRequest.ImageSize == PreviewImageSize ? "2K" : OutputSize);
         }
 
         throw new InvalidOperationException("Gemini لم يُرجع صورة صالحة.");

@@ -12,9 +12,9 @@ The UI becomes a high-density Arabic command center with coherent reporting wind
 
 ## Technical Context
 
-**Language/Version**: C# 13 on .NET 9; JavaScript ES modules on Node 22-compatible runtime; TypeScript 5, React 19.2 and Next.js 16.2
+**Language/Version**: C# 13 on .NET 9; JavaScript ES modules on Node 22-compatible runtime; TypeScript 5, React 19.2 and Next.js 16.4.2
 
-**Primary Dependencies**: ASP.NET Core, EF Core 9/Npgsql, Hangfire PostgreSQL, StackExchange.Redis, RabbitMQ.Client, ASP.NET Data Protection, ImageSharp, shared MinIO/S3 abstraction, existing Gemini client, WhatsApp Cloud API/coexistence webhooks, Baileys 7 release candidate for the existing gateway, Next.js App Router, axios, SignalR and CSS Modules
+**Primary Dependencies**: ASP.NET Core, EF Core 9/Npgsql, Hangfire PostgreSQL, StackExchange.Redis, RabbitMQ.Client, ASP.NET Data Protection, Magick.NET 15.0.0 for raster processing, shared MinIO/S3 abstraction, existing Gemini client, WhatsApp Cloud API/coexistence webhooks, Baileys 7 release candidate for the existing gateway, Next.js App Router, axios, SignalR and CSS Modules
 
 **Storage**: PostgreSQL for tenant configuration, plans, provider operations, ledgers, attribution, experiments and audit; Redis for leases and OAuth state; RabbitMQ plus transactional outbox/inbox for cross-module facts; MinIO/S3 for derived creative assets
 

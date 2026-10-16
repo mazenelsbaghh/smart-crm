@@ -15,6 +15,7 @@ using Modules.Analytics.Application.Services;
 using Modules.Analytics.Jobs;
 using Modules.Conversations.Domain;
 using Modules.CRM.API;
+using Modules.CRM.Domain;
 using Modules.Projects.Domain;
 using Shared.Infrastructure;
 using Shared.Security;
@@ -131,6 +132,65 @@ public sealed class SalesIntelligenceRecencyTests
 
         AssertHistoricalAnalysisDisabled(response);
         Assert.Empty(db.ConversationSalesAnalyses);
+    }
+
+    [Theory]
+    [InlineData("Africa/Cairo")]
+    [InlineData("America/Los_Angeles")]
+    public async Task Daily_operations_uses_project_calendar_boundaries_and_isolates_other_projects(string timezone)
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDatabase(projectId);
+        db.ProjectSettings.Local.Single().Timezone = timezone;
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(timezone);
+        var localDate = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, zone).Date;
+        var (start, end) = AnalyticsReportingDay.Bounds(localDate, timezone);
+        var instants = new[] { start.AddTicks(-1), start, end.AddTicks(-1), end };
+        var conversations = instants.Select(instant => AddConversation(db, projectId, instant, instant)).ToArray();
+        conversations[0].Status = "Closed";
+        conversations[3].Status = "Closed";
+        AddConversation(db, Guid.NewGuid(), start, start);
+        db.Messages.AddRange(conversations.Select((conversation, index) => new Message
+        {
+            ConversationId = conversation.Id, ExternalMessageId = Guid.NewGuid().ToString("N"),
+            Direction = "Outgoing", MessageType = "Text", Content = "رد", Timestamp = instants[index]
+        }));
+        await db.SaveChangesAsync();
+        for (var index = 0; index < conversations.Length; index++) conversations[index].CreatedAt = instants[index];
+        await db.SaveChangesAsync();
+        var controller = CreateController(db, projectId, new RejectingGeminiClient());
+
+        var response = Assert.IsType<OkObjectResult>(await controller.GetDailyOperationsReport(projectId, CancellationToken.None));
+        var report = JsonSerializer.SerializeToElement(response.Value);
+
+        Assert.Equal(localDate.ToString("yyyy-MM-dd"), report.GetProperty("date").GetString());
+        Assert.Equal(timezone, report.GetProperty("timezone").GetString());
+        Assert.Equal(start, report.GetProperty("windowStartUtc").GetDateTime());
+        Assert.Equal(end, report.GetProperty("windowEndUtc").GetDateTime());
+        Assert.Equal(2, report.GetProperty("totalConversations").GetInt32());
+        Assert.Equal(2, report.GetProperty("activeConversations").GetInt32());
+        Assert.Equal(0, report.GetProperty("completedConversations").GetInt32());
+        Assert.Equal(2, report.GetProperty("outgoingMessages").GetInt32());
+    }
+
+    [Fact]
+    public async Task Follow_up_report_separates_bypassed_from_completed_and_retains_completed_aliases()
+    {
+        var projectId = Guid.NewGuid();
+        await using var db = CreateDatabase(projectId);
+        foreach (var status in new[] { "Completed", "Resolved", "Done", "Bypassed", "Pending", "Missed" })
+            db.FollowUps.Add(new FollowUp { ProjectId = projectId, CustomerId = Guid.NewGuid(), Status = status, Notes = "متابعة" });
+        db.FollowUps.Add(new FollowUp { ProjectId = Guid.NewGuid(), CustomerId = Guid.NewGuid(), Status = "Completed", Notes = "مشروع آخر" });
+        await db.SaveChangesAsync();
+        var controller = CreateController(db, projectId, new RejectingGeminiClient());
+
+        var response = Assert.IsType<OkObjectResult>(await controller.GetFollowUpsReport(projectId, CancellationToken.None));
+        var report = JsonSerializer.SerializeToElement(response.Value);
+
+        Assert.Equal(3, report.GetProperty("completedCount").GetInt32());
+        Assert.Equal(1, report.GetProperty("bypassedCount").GetInt32());
+        Assert.Equal(1, report.GetProperty("pendingCount").GetInt32());
+        Assert.Equal(1, report.GetProperty("missedCount").GetInt32());
     }
 
     private static ReportsController CreateController(

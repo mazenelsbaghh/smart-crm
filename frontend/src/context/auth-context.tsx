@@ -7,6 +7,7 @@ import { api } from '../services/api';
 interface AuthContextType {
   user: User | null;
   activeProject: Project | null;
+  switchProject: (projectId: string) => Promise<void>;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -89,10 +90,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Listen for storage events from other tabs/pages
     const handleStorageChange = (event: StorageEvent) => {
       if (event.key === 'activeProject') {
+        if (event.oldValue && !event.newValue) {
+          window.location.assign('/dashboard');
+          return;
+        }
         if (authService.getCurrentUser()) void refreshProjects();
         return;
       }
       if (event.key !== 'user') return;
+      if (event.newValue !== event.oldValue) {
+        window.location.assign('/dashboard');
+        return;
+      }
       authRevisionRef.current += 1;
       const nextUser = authService.getCurrentUser();
       setUser(nextUser);
@@ -123,6 +132,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const switchProject = async (projectId: string) => {
+    if (projectId === activeProject?.id) return;
+    const revision = ++authRevisionRef.current;
+    const session = await authService.switchProject(projectId);
+    if (revision !== authRevisionRef.current) return;
+    authService.saveSession(session);
+    authService.clearActiveProject();
+    // Reload clears project-specific forms, caches and live connections together.
+    window.location.assign('/dashboard');
+  };
+
   const logout = async () => {
     const revision = ++authRevisionRef.current;
     setLoading(true);
@@ -143,6 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         user,
         activeProject,
+        switchProject,
         loading,
         login,
         logout,

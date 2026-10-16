@@ -68,10 +68,68 @@ public sealed class GeminiCostControlsTests
         else Assert.Equal(cache, request.RootElement.GetProperty("cachedContent").GetString());
     }
 
+    [Theory]
+    [InlineData(2, false)]
+    [InlineData(3, true)]
+    public async Task Production_2026_09_28_Gemini_503_recovers_or_defers_without_a_customer_fallback(
+        int unavailableResponses,
+        bool shouldDefer)
+    {
+        using var handler = new TransientGenerationHandler(unavailableResponses);
+        using var http = new HttpClient(handler);
+        var brain = new AIMarketingBrain(CreateClient(http), null!, null!, new AIBehaviorSettingsService());
+
+        var analysis = await brain.AnalyzeAndGenerateReplyAsync(
+            "ممكن تفاصيل؟",
+            "test-key",
+            customerReply: new CustomerReplyRuntime("Gemini", "gemini-flash-lite-latest"));
+
+        Assert.Equal(shouldDefer, analysis.ShouldDeferReply);
+        if (!shouldDefer) Assert.Equal("أهلاً بحضرتك", analysis.ReplyContent);
+    }
+
+    [Fact]
+    public async Task Production_2026_09_28_follow_up_rewrite_never_exposes_a_provider_error_marker()
+    {
+        using var handler = new TransientGenerationHandler(3);
+        using var http = new HttpClient(handler);
+        var brain = new AIMarketingBrain(CreateClient(http), null!, null!, new AIBehaviorSettingsService());
+
+        var message = await brain.RewriteFollowUpNotesAsync(
+            "عميل", "متابعة بعد الحجز", false, apiKeyOverride: "test-key");
+
+        Assert.DoesNotContain("[AI_ERROR]", message);
+    }
+
     private static GeminiClient CreateClient(HttpClient http) => new(
         new ConfigurationBuilder().Build(),
         new GeminiMockHandler(new HostingEnvironment { EnvironmentName = "Production" }),
         NullLogger<GeminiClient>.Instance, http);
+
+    private sealed class TransientGenerationHandler(int unavailableResponses) : HttpMessageHandler
+    {
+        private int _requests;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var status = ++_requests <= unavailableResponses
+                ? HttpStatusCode.ServiceUnavailable
+                : HttpStatusCode.OK;
+            var response = new HttpResponseMessage(status);
+            if (status == HttpStatusCode.OK)
+                response.Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    candidates = new[] { new
+                    {
+                        finishReason = "STOP",
+                        content = new { parts = new[] { new { text = "{\"replyContent\":\"أهلاً بحضرتك\"}" } } }
+                    } }
+                }), Encoding.UTF8, "application/json");
+            return Task.FromResult(response);
+        }
+    }
 
     private sealed class ResponseHandler(string finishReason, string responseText = "{\"reply\":\"ok\"}") : HttpMessageHandler
     {

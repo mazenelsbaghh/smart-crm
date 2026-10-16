@@ -4,17 +4,22 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
-import { handleDialogKeyDown } from './dialog-accessibility';
-import { 
-  ShieldCheck, 
-  Check, 
-  X, 
-  AlertTriangle, 
-  User, 
+import Dialog from '../../components/shared/Dialog';
+import {
+  ShieldCheck,
+  Check,
+  X,
+  AlertTriangle,
+  User,
+  Clock,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
+import PageHeader from '../../components/ui/PageHeader';
+import StatusMessage from '../../components/ui/StatusMessage';
+import FilterTabs from '../../components/ui/FilterTabs';
 import styles from './management.module.css';
+import { useListFilters } from './hooks/use-list-filters';
 
 interface ApprovalRequest {
   id: string;
@@ -68,24 +73,30 @@ function formatCairoDate(value?: string): string {
   return `${date.toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', dateStyle: 'medium', timeStyle: 'short' })} بتوقيت القاهرة`;
 }
 
+const listFilterConfig = { statuses: ['Pending', 'Approved', 'Rejected'] as const, defaultStatus: 'Pending' as const, search: false };
+
 export default function Approvals() {
+  return <React.Suspense fallback={<p role="status">جاري تحميل القائمة…</p>}><ApprovalsList /></React.Suspense>;
+}
+
+function ApprovalsList() {
   const { activeProject } = useAuth();
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadedFilterKey, setLoadedFilterKey] = useState<string | null>(null);
 
-  // Pagination State
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const { status: activeTab, setStatus: setActiveTab, page: currentPage, setPage: setCurrentPage,
+    pageSize, setPageSize, clearFilters, hasFilters } = useListFilters(listFilterConfig);
 
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<'Pending' | 'Approved' | 'Rejected'>('Pending');
   const [approvalToConfirm, setApprovalToConfirm] = useState<ApprovalRequest | null>(null);
   const [rejectionToConfirm, setRejectionToConfirm] = useState<ApprovalRequest | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const rejectionReturnFocusRef = React.useRef<HTMLButtonElement | null>(null);
   const loadRequestIdRef = React.useRef(0);
+  const filterKey = JSON.stringify([activeProject?.id, activeTab]);
 
   const fetchApprovals = useCallback(async () => {
     const requestId = ++loadRequestIdRef.current;
@@ -104,6 +115,7 @@ export default function Approvals() {
       });
       if (requestId !== loadRequestIdRef.current) return;
       setRequests(response.data);
+      setLoadedFilterKey(filterKey);
     } catch (e) {
       if (requestId !== loadRequestIdRef.current) return;
       console.error('Failed to load approval queue', e);
@@ -111,11 +123,10 @@ export default function Approvals() {
     } finally {
       if (requestId === loadRequestIdRef.current) setLoading(false);
     }
-  }, [activeProject, activeTab]);
+  }, [activeProject, activeTab, filterKey]);
 
   useEffect(() => {
     const loadTimer = window.setTimeout(() => {
-      setCurrentPage(1);
       void fetchApprovals();
     }, 0);
     return () => window.clearTimeout(loadTimer);
@@ -166,18 +177,9 @@ export default function Approvals() {
       const safePayload = sanitizePayloadValue(parsed) as Record<string, unknown>;
       const safeEntries = Object.entries(safePayload);
       return (
-        <dl style={{
-          fontSize: '0.8rem', 
-          background: 'rgba(0, 0, 0, 0.2)', 
-          padding: 'var(--space-sm)', 
-          borderRadius: 'var(--radius-sm)',
-          border: '1px solid rgba(255, 255, 255, 0.05)',
-          fontFamily: 'monospace',
-          color: 'hsl(var(--text-secondary))',
-          wordBreak: 'break-word'
-        }}>
+        <dl className={styles.payloadDetails}>
           {safeEntries.length === 0 ? <span>لا توجد تفاصيل آمنة للعرض.</span> : safeEntries.map(([key, value]) => (
-            <div key={key} style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 0.4fr) 1fr', gap: '8px' }}>
+            <div key={key}>
               <dt>{key}</dt>
               <dd>{formatPayloadValue(value)}</dd>
             </div>
@@ -190,6 +192,9 @@ export default function Approvals() {
   };
 
   const totalPages = Math.ceil(requests.length / pageSize) || 1;
+  useEffect(() => {
+    if (!loading && !loadError && loadedFilterKey === filterKey && currentPage > totalPages) setCurrentPage(totalPages, 'replace');
+  }, [loading, loadError, loadedFilterKey, filterKey, currentPage, totalPages, setCurrentPage]);
   const paginatedRequests = requests.slice(
     (currentPage - 1) * pageSize,
     currentPage * pageSize
@@ -198,51 +203,18 @@ export default function Approvals() {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <div>
-          <h1 className={styles.pageTitle}>إدارة الموافقات</h1>
-          <p className={styles.pageSubtitle}>مراجعة وإدارة الإجراءات والرسائل المقترحة من قبل الذكاء الاصطناعي والتي تتطلب موافقة بشرية</p>
-        </div>
+        <PageHeader icon={<ShieldCheck size={22} aria-hidden="true" />} title="الموافقات" description="راجع الإجراء المقترح قبل الموافقة على تنفيذه." />
       </div>
 
-      {message && (
-        <div className={`glass-panel`} role={message.type === 'error' ? 'alert' : 'status'} style={{
-          padding: 'var(--space-md)', 
-          borderRight: `4px solid ${message.type === 'success' ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))'}`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-sm)'
-        }}>
-          <ShieldCheck size={18} style={{ color: message.type === 'success' ? 'hsl(var(--accent-success))' : 'hsl(var(--accent-danger))' }} />
-          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{message.text}</span>
-        </div>
-      )}
+      {message && <StatusMessage tone={message.type === 'error' ? 'danger' : 'success'}>{message.text}</StatusMessage>}
 
-      {/* Tabs */}
-      <div role="group" aria-label="تصفية طلبات الاعتماد حسب الحالة" style={{ display: 'flex', gap: 'var(--space-sm)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '2px' }}>
-        {(['Pending', 'Approved', 'Rejected'] as const).map(tab => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setActiveTab(tab)}
-            aria-pressed={activeTab === tab}
-            style={{
-              padding: '0.5rem 1rem',
-              background: activeTab === tab ? 'var(--accent-soft)' : 'transparent',
-              border: 'none',
-              borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-              color: activeTab === tab ? 'var(--accent)' : 'var(--text-soft)',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '0.85rem',
-              transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease'
-            }}
-          >
-            طلب {statusMapAr[tab]}
-          </button>
-        ))}
+      <div className={styles.listSearchTools}>
+        <FilterTabs compactOnMobile label="تصفية طلبات الاعتماد حسب الحالة" selected={activeTab} onChange={setActiveTab}
+          options={[{ key: 'Pending', label: 'طلبات معلقة', icon: <Clock size={16} aria-hidden="true" />, tone: 'warning' }, { key: 'Approved', label: 'طلبات معتمدة', icon: <Check size={16} aria-hidden="true" />, tone: 'success' }, { key: 'Rejected', label: 'طلبات مرفوضة', icon: <X size={16} aria-hidden="true" />, tone: 'danger' }]} />
+        {hasFilters && <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={clearFilters}>إعادة ضبط التصفية</button>}
       </div>
 
-      <div className={`glass-panel ${styles.panel}`}>
+      <div className={`${styles.panel} ${styles.operationsPanel}`}>
         {loading ? (
           <div className={styles.emptyState}>
             <div className={styles.spinner}></div>
@@ -262,87 +234,36 @@ export default function Approvals() {
           </div>
         ) : (
           <div className={styles.tableWrapper}>
-            <table className={styles.table}>
-              <caption className="sr-only">طلبات الاعتماد وحالة المخاطر</caption>
-              <thead>
-                <tr>
-                  <th className={styles.th}>التفاصيل</th>
-                  <th className={styles.th}>مستوى الخطورة</th>
-                  <th className={styles.th}>بطلب من</th>
-                  <th className={styles.th}>محتوى الإجراء المقترح</th>
-                  {activeTab === 'Pending' && <th className={styles.th} style={{ textAlign: 'center' }}>التحقق والاعتماد</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedRequests.map(req => (
-                  <tr key={req.id} className={styles.tr}>
-                    <td className={styles.td}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <span style={{ fontWeight: 600, color: 'var(--text-strong)' }}>{req.actionType}</span>
-                        <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>معرّف: {req.id.substring(0, 8)}</span>
-                        <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>{formatCairoDate(req.createdAt)}</span>
-                      </div>
-                    </td>
-                    <td className={styles.td}>
-                      <span className={`${styles.statusBadge} ${
-                        req.riskLevel === 'Critical' ? styles.statusFailed :
-                        req.riskLevel === 'High' ? styles.statusPending :
-                        styles.statusActive
-                      }`} style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
-                        <AlertTriangle size={12} />
-                        {riskMapAr[req.riskLevel] || req.riskLevel}
-                      </span>
-                    </td>
-                    <td className={styles.td}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <User size={14} style={{ color: 'hsl(var(--accent-secondary))' }} />
-                        {req.requestedBy}
-                      </span>
-                    </td>
-                    <td className={styles.td} style={{ maxWidth: '400px' }}>
-                      {renderPayload(req.payloadJson)}
-                      {req.notes && (
-                        <div style={{ fontSize: '0.8rem', color: 'hsl(var(--accent-warning))', marginTop: '4px' }}>
-                          <strong>ملاحظات: </strong>{req.notes}
-                        </div>
-                      )}
-                    </td>
-                    {activeTab === 'Pending' && (
-                      <td className={styles.td} style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'center' }}>
-                          <button
-                            type="button"
-                            onClick={() => setApprovalToConfirm(req)}
-                            disabled={actionLoadingId !== null}
-                            className={`${styles.btnIcon} ${styles.btnSuccess}`}
-                            title="موافقة وتنفيذ"
-                            aria-label={`مراجعة اعتماد وتنفيذ الإجراء ${req.actionType}`}
-                            style={{ padding: '6px' }}
-                          >
-                            <Check size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              rejectionReturnFocusRef.current = event.currentTarget;
-                              setRejectionReason('');
-                              setRejectionToConfirm(req);
-                            }}
-                            disabled={actionLoadingId !== null}
-                            className={`${styles.btnIcon} ${styles.btnDanger}`}
-                            title="رفض واستبعاد"
-                            aria-label={`رفض الإجراء ${req.actionType}`}
-                            style={{ padding: '6px' }}
-                          >
-                            <X size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className={styles.approvalList} aria-label="طلبات الاعتماد وحالة المخاطر">
+              {paginatedRequests.map(req => (
+                <article key={req.id} className={styles.approvalRecord}>
+                  <div className={styles.approvalContext}>
+                    <span className={`${styles.statusBadge} ${req.riskLevel === 'Critical' ? styles.statusFailed : req.riskLevel === 'High' ? styles.statusPending : styles.statusInfo}`}>
+                      <AlertTriangle size={14} aria-hidden="true" />خطورة {riskMapAr[req.riskLevel] || req.riskLevel}
+                    </span>
+                    <h2>{req.actionType}</h2>
+                    <span className={styles.recordMeta}><User size={15} aria-hidden="true" />{req.requestedBy}</span>
+                    <span className={styles.recordMeta}><Clock size={15} aria-hidden="true" />{formatCairoDate(req.createdAt)}</span>
+                    <small className={styles.recordMeta}>طلب {req.id.substring(0, 8)}</small>
+                  </div>
+                  <div className={styles.approvalContent}>
+                    <h3 className={styles.recordLabel}>الإجراء المقترح</h3>
+                    {renderPayload(req.payloadJson)}
+                    {req.notes && <p className={styles.recordNote}><strong>ملاحظات: </strong>{req.notes}</p>}
+                    {activeTab === 'Pending' && <div className={styles.recordActions}>
+                      <button type="button" onClick={() => setApprovalToConfirm(req)} disabled={actionLoadingId !== null}
+                        className={`${styles.btn} ${styles.btnPrimary}`} aria-label={`مراجعة اعتماد وتنفيذ الإجراء ${req.actionType}`}>
+                        <Check size={16} aria-hidden="true" /> مراجعة وموافقة
+                      </button>
+                      <button type="button" onClick={event => { rejectionReturnFocusRef.current = event.currentTarget; setRejectionReason(''); setRejectionToConfirm(req); }}
+                        disabled={actionLoadingId !== null} className={`${styles.btn} ${styles.btnDanger}`} aria-label={`رفض الإجراء ${req.actionType}`}>
+                        <X size={16} aria-hidden="true" /> رفض
+                      </button>
+                    </div>}
+                  </div>
+                </article>
+              ))}
+            </div>
 
             {/* Pagination Controls */}
             {requests.length > 0 && (
@@ -354,7 +275,6 @@ export default function Approvals() {
                     value={pageSize}
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
-                      setCurrentPage(1);
                     }}
                     className={styles.paginationSelect}
                   >
@@ -371,7 +291,7 @@ export default function Approvals() {
 
                 <div className={styles.paginationControls}>
                   <button
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    onClick={() => setCurrentPage(Math.min(currentPage + 1, totalPages))}
                     disabled={currentPage === totalPages}
                     className={styles.paginationBtn}
                     title="الصفحة التالية"
@@ -402,7 +322,7 @@ export default function Approvals() {
                     })}
 
                   <button
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    onClick={() => setCurrentPage(Math.max(currentPage - 1, 1))}
                     disabled={currentPage === 1}
                     className={styles.paginationBtn}
                     title="الصفحة السابقة"
@@ -429,8 +349,8 @@ export default function Approvals() {
         onCancel={() => setApprovalToConfirm(null)}
       />
       {rejectionToConfirm && (
-        <div className={styles.overlay}>
-          <div className={`glass-panel ${styles.modal}`} role="dialog" aria-modal="true" aria-labelledby="reject-approval-title" aria-describedby="reject-approval-description" onKeyDown={(event) => handleDialogKeyDown(event, closeRejectionDialog)}>
+        <Dialog label="رفض طلب الموافقة" onClose={closeRejectionDialog}>
+          <div className={styles.dialogContent}>
             <div className={styles.modalHeader}>
               <h2 id="reject-approval-title" className={styles.modalTitle}>رفض الطلب</h2>
               <button type="button" className={styles.closeBtn} onClick={closeRejectionDialog} aria-label="إغلاق">×</button>
@@ -459,7 +379,7 @@ export default function Approvals() {
               </div>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
     </div>
   );

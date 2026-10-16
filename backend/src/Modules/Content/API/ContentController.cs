@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Hangfire;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -19,6 +20,7 @@ namespace Modules.Content.API;
 public sealed class ContentController : ControllerBase
 {
     private const long MaxLogoBytes = 10 * 1024 * 1024;
+    private const long MaxReferenceBytes = 5 * 1024 * 1024;
     private static readonly HashSet<string> AllowedLogoTypes =
         new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/webp" };
 
@@ -27,9 +29,11 @@ public sealed class ContentController : ControllerBase
     private readonly IProjectAuthorizationService _authorization;
     private readonly IObjectStorage _objectStorage;
     private readonly LogoBrandingService _logoBranding;
+    private readonly ContentBrandPaletteExtractor _paletteExtractor;
     private readonly ContentImagePreviewService _imagePreviews;
     private readonly ContentWeeklyPlanService _weeklyPlans;
     private readonly IBackgroundJobClient _backgroundJobs;
+    private readonly IProjectSecretVault _secretVault;
 
     public ContentController(
         AppDbContext dbContext,
@@ -37,18 +41,22 @@ public sealed class ContentController : ControllerBase
         IProjectAuthorizationService authorization,
         IObjectStorage objectStorage,
         LogoBrandingService logoBranding,
+        ContentBrandPaletteExtractor paletteExtractor,
         ContentImagePreviewService imagePreviews,
         ContentWeeklyPlanService weeklyPlans,
-        IBackgroundJobClient backgroundJobs)
+        IBackgroundJobClient backgroundJobs,
+        IProjectSecretVault secretVault)
     {
         _dbContext = dbContext;
         _tenantContext = tenantContext;
         _authorization = authorization;
         _objectStorage = objectStorage;
         _logoBranding = logoBranding;
+        _paletteExtractor = paletteExtractor;
         _imagePreviews = imagePreviews;
         _weeklyPlans = weeklyPlans;
         _backgroundJobs = backgroundJobs;
+        _secretVault = secretVault;
     }
 
     [HttpGet]
@@ -56,6 +64,7 @@ public sealed class ContentController : ControllerBase
     {
         var projectId = ActiveProjectId();
         if (!_authorization.CanRead(User, projectId)) return Forbid();
+        await _weeklyPlans.ExpireDraftPlansAsync(projectId, cancellationToken);
         var settings = await SettingsAsync(projectId, cancellationToken);
         var projectSettings = await _dbContext.ProjectSettings.IgnoreQueryFilters()
             .SingleOrDefaultAsync(candidate => candidate.ProjectId == projectId, cancellationToken);
@@ -85,8 +94,8 @@ public sealed class ContentController : ControllerBase
 
         return Ok(new
         {
-            imageModel = GeminiImageClient.HighestQualityModel,
-            imageSize = GeminiImageClient.OutputSize,
+            imageModel = settings?.ImageProvider == "OpenAI" ? settings.OpenAiImageModel : GeminiImageClient.HighestQualityModel,
+            imageSize = settings?.ImageProvider == "OpenAI" ? OpenAiImageClient.OutputDimensions : GeminiImageClient.OutputSize,
             aspectRatio = GeminiImageClient.AspectRatio,
             aiConfigured = !string.IsNullOrWhiteSpace(projectSettings?.GeminiApiKey),
             knowledgeDocumentCount = await _dbContext.KnowledgeDocuments.IgnoreQueryFilters()
@@ -100,14 +109,28 @@ public sealed class ContentController : ControllerBase
                 isEnabled = settings?.IsEnabled ?? false,
                 hasApprovedStyle = settings?.HasApprovedStyle ?? false,
                 dailyPublishTimeLocal = FormatTime(settings?.DailyPublishTimeLocal ?? new TimeSpan(10, 0, 0)),
+                postsPerDay = settings?.PostsPerDay ?? 1,
                 timezone = settings?.Timezone ?? projectSettings?.Timezone ?? "Africa/Cairo",
                 nextPublishAtUtc = settings?.NextPublishAtUtc,
                 lastPublishedAtUtc = settings?.LastPublishedAtUtc,
                 lastError = settings?.LastError,
                 stylePrompt = settings?.StylePrompt ?? ContentAutomationSettings.DefaultStylePrompt,
+                imageProvider = settings?.ImageProvider ?? "Gemini",
+                openAiImageModel = settings?.OpenAiImageModel ?? OpenAiImageClient.HighestQualityModel,
+                openAiImageApiKeyConfigured = !string.IsNullOrWhiteSpace(settings?.OpenAiImageApiKey),
                 logoFileName = settings?.LogoFileName,
                 logoUrl,
                 brandColors = colors,
+                designSource = settings?.DesignSource ?? "logo",
+                matchReferenceTone = settings?.MatchReferenceTone ?? false,
+                referenceColors = settings is null ? [] : ContentBrandReferences.Colors(settings),
+                referenceImages = settings is null ? [] : ContentBrandReferences.Images(settings).Select(image => new
+                {
+                    image.Id,
+                    image.Kind,
+                    image.FileName,
+                    url = $"/api/content/brand-references/{image.Id}"
+                }).ToArray(),
                 approvedSamplePostId = settings?.ApprovedSamplePostId
             },
             weeklyPlan = weeklyPlans.FirstOrDefault(),
@@ -129,6 +152,19 @@ public sealed class ContentController : ControllerBase
 
         var stream = await _objectStorage.DownloadAsync(logo.LogoObjectKey, cancellationToken);
         return File(stream, logo.LogoMimeType ?? "application/octet-stream", enableRangeProcessing: true);
+    }
+
+    [HttpGet("brand-references/{id}")]
+    public async Task<IActionResult> GetBrandReference(string id, CancellationToken cancellationToken)
+    {
+        var projectId = ActiveProjectId();
+        if (!_authorization.CanRead(User, projectId)) return Forbid();
+        var settings = await SettingsAsync(projectId, cancellationToken);
+        var reference = settings is null ? null : ContentBrandReferences.Images(settings)
+            .FirstOrDefault(image => image.Id == id);
+        if (reference is null) return NotFound();
+        var stream = await _objectStorage.DownloadAsync(reference.ObjectKey, cancellationToken);
+        return File(stream, reference.MimeType, enableRangeProcessing: true);
     }
 
     [HttpGet("posts/{postId:guid}/image")]
@@ -160,6 +196,8 @@ public sealed class ContentController : ControllerBase
         {
             return BadRequest(new { error = "اكتب وقت النشر بصيغة HH:mm." });
         }
+        if (request.PostsPerDay is < 1 or > 3)
+            return BadRequest(new { error = "اختر من 1 إلى 3 بوستات في اليوم." });
         if (string.IsNullOrWhiteSpace(request.StylePrompt) || request.StylePrompt.Length > 1500)
             return BadRequest(new { error = "وصف الهوية البصرية مطلوب وبحد أقصى 1500 حرف." });
 
@@ -178,16 +216,61 @@ public sealed class ContentController : ControllerBase
             .SingleOrDefaultAsync(cancellationToken);
         var timezone = ValidTimezone(projectTimezone) ? projectTimezone! : "Africa/Cairo";
         var settings = await GetOrCreateSettingsAsync(projectId, cancellationToken);
+        var imageProvider = request.ImageProvider ?? settings.ImageProvider;
+        var imageModel = request.OpenAiImageModel ?? settings.OpenAiImageModel;
+        if (!OpenAiImageClient.SupportsModel(imageModel))
+            return BadRequest(new { error = "اختر Sunburst أو Flare لتوليد صور ChatGPT." });
+        if (imageProvider is not ("Gemini" or "OpenAI"))
+            return BadRequest(new { error = "اختر Gemini أو OpenAI لتوليد صور البوستات." });
+        if (request.ClearOpenAiImageApiKey && !string.IsNullOrWhiteSpace(request.OpenAiImageApiKey))
+            return BadRequest(new { error = "اختر استبدال مفتاح OpenAI أو مسحه." });
+        var openAiKeyConfigured = !request.ClearOpenAiImageApiKey
+            && (!string.IsNullOrWhiteSpace(request.OpenAiImageApiKey) || !string.IsNullOrWhiteSpace(settings.OpenAiImageApiKey));
+        if (imageProvider == "OpenAI" && !openAiKeyConfigured)
+            return BadRequest(new { error = "أضف مفتاح OpenAI قبل اختيار موديل صور ChatGPT." });
+        if ((imageProvider != settings.ImageProvider || imageModel != settings.OpenAiImageModel || request.ClearOpenAiImageApiKey
+                || !string.IsNullOrWhiteSpace(request.OpenAiImageApiKey))
+            && await GenerationInProgressAsync(projectId, cancellationToken))
+            return Conflict(new { error = "استنى اكتمال توليد الصور الحالية قبل تغيير الموديل أو المفتاح." });
+        var postsPerDay = request.PostsPerDay ?? settings.PostsPerDay;
+        var activePlanIds = await _dbContext.ContentWeekPlans.IgnoreQueryFilters()
+            .Where(plan => plan.ProjectId == projectId
+                && (plan.Status == ContentWeekPlanStatus.AwaitingApproval || plan.Status == ContentWeekPlanStatus.Approved))
+            .Select(plan => plan.Id)
+            .ToArrayAsync(cancellationToken);
+        int[] activePlanItemCounts = activePlanIds.Length == 0 ? [] : await _dbContext.ContentWeekPlanItems.IgnoreQueryFilters()
+            .Where(item => item.ProjectId == projectId && activePlanIds.Contains(item.PlanId))
+            .GroupBy(item => item.PlanId)
+            .Select(group => group.Count())
+            .ToArrayAsync(cancellationToken);
+        var largestActivePlanPostsPerDay = activePlanItemCounts.DefaultIfEmpty(0).Max() / 7;
+        if (publishTime.Add(TimeSpan.FromHours(4 * (Math.Max(postsPerDay, largestActivePlanPostsPerDay) - 1))) >= TimeSpan.FromDays(1))
+            return BadRequest(new { error = "قدّم موعد أول بوست حتى تتسع باقي بوستات اليوم بفاصل 4 ساعات." });
         var normalizedStylePrompt = request.StylePrompt.Trim();
-        var styleChanged = !string.Equals(
+        var designSource = request.DesignSource ?? settings.DesignSource;
+        if (designSource is not ("logo" or "references"))
+            return BadRequest(new { error = "اختر طريقة تصميم صالحة." });
+        var referenceColors = request.ReferenceColors ?? ContentBrandReferences.Colors(settings);
+        if (referenceColors.Count > 8 || referenceColors.Any(color => string.IsNullOrWhiteSpace(color) || !Regex.IsMatch(color, "^#[0-9a-fA-F]{6}$")))
+            return BadRequest(new { error = "أدخل حتى 8 ألوان بصيغة #RRGGBB." });
+        if (designSource == "references" && referenceColors.Count == 0)
+            return BadRequest(new { error = "أضف لونًا واحدًا على الأقل من لوحة ألوان الهوية." });
+        var normalizedColorsJson = JsonSerializer.Serialize(referenceColors.Select(color => color.ToUpperInvariant()));
+        var matchReferenceTone = request.MatchReferenceTone ?? settings.MatchReferenceTone;
+        var normalizedStyleChanged = !string.Equals(
             settings.StylePrompt,
             normalizedStylePrompt,
             StringComparison.Ordinal);
+        var styleChanged = normalizedStyleChanged
+            || settings.DesignSource != designSource
+            || settings.MatchReferenceTone != matchReferenceTone
+            || settings.ReferenceColorsJson != normalizedColorsJson;
         var scheduleChanged = settings.DailyPublishTimeLocal != publishTime || settings.Timezone != timezone;
-        if ((styleChanged || scheduleChanged)
+        var cadenceChanged = settings.PostsPerDay != postsPerDay;
+        if ((styleChanged || scheduleChanged || cadenceChanged)
             && await GenerationInProgressAsync(projectId, cancellationToken))
         {
-            return Conflict(new { error = "استنى اكتمال التوليد الحالي قبل تغيير الشكل أو الموعد." });
+            return Conflict(new { error = "استنى اكتمال التوليد الحالي قبل تغيير الشكل أو جدول النشر." });
         }
         if (request.IsEnabled && (styleChanged || !settings.HasApprovedStyle))
             return BadRequest(new { error = "اعتمد أول تصميم قبل تشغيل النشر اليومي." });
@@ -210,8 +293,17 @@ public sealed class ContentController : ControllerBase
         settings.FacebookPageId = page?.FacebookPageId;
         settings.FacebookPageName = page?.PageName;
         settings.DailyPublishTimeLocal = publishTime;
+        settings.PostsPerDay = postsPerDay;
         settings.Timezone = timezone;
         settings.StylePrompt = normalizedStylePrompt;
+        settings.ImageProvider = imageProvider;
+        settings.OpenAiImageModel = imageModel;
+        if (request.ClearOpenAiImageApiKey) settings.OpenAiImageApiKey = string.Empty;
+        else if (!string.IsNullOrWhiteSpace(request.OpenAiImageApiKey))
+            settings.OpenAiImageApiKey = _secretVault.Protect(projectId, request.OpenAiImageApiKey);
+        settings.DesignSource = designSource;
+        settings.MatchReferenceTone = matchReferenceTone;
+        settings.ReferenceColorsJson = normalizedColorsJson;
         settings.IsEnabled = request.IsEnabled;
         settings.NextPublishAtUtc = approvedPlanNext;
         if (styleChanged && settings.HasApprovedStyle)
@@ -264,8 +356,7 @@ public sealed class ContentController : ControllerBase
         {
             palette = await _logoBranding.ExtractPaletteAsync(buffer, cancellationToken);
         }
-        catch (Exception exception) when (exception is SixLabors.ImageSharp.UnknownImageFormatException
-            or SixLabors.ImageSharp.InvalidImageContentException)
+        catch (Exception exception) when (exception is InvalidDataException)
         {
             return BadRequest(new { error = "ملف اللوجو ليس صورة صالحة." });
         }
@@ -304,6 +395,88 @@ public sealed class ContentController : ControllerBase
         return await Get(cancellationToken);
     }
 
+    [HttpPost("brand-references")]
+    [RequestSizeLimit(MaxReferenceBytes + 1024 * 1024)]
+    public async Task<IActionResult> UploadBrandReference(
+        [FromForm] IFormFile image,
+        [FromForm] string kind,
+        CancellationToken cancellationToken)
+    {
+        var projectId = ActiveProjectId();
+        if (!_authorization.CanManageProject(User, projectId)) return Forbid();
+        if (kind is not ("palette" or "post"))
+            return BadRequest(new { error = "نوع الريفرنس غير صحيح." });
+        if (image is null || image.Length == 0 || image.Length > MaxReferenceBytes || !AllowedLogoTypes.Contains(image.ContentType))
+            return BadRequest(new { error = "ارفع صورة PNG أو JPG أو WebP بحجم لا يزيد عن 5MB." });
+        if (await GenerationInProgressAsync(projectId, cancellationToken))
+            return Conflict(new { error = "استنى اكتمال التوليد الحالي قبل تغيير الريفرنسات." });
+
+        var settings = await GetOrCreateSettingsAsync(projectId, cancellationToken);
+        var references = ContentBrandReferences.Images(settings).ToList();
+        if (kind == "post" && references.Count(reference => reference.Kind == "post") >= 4)
+            return BadRequest(new { error = "الحد الأقصى 4 ريفرنسات للبوستات." });
+        await using var buffer = new MemoryStream();
+        await image.CopyToAsync(buffer, cancellationToken);
+        try
+        {
+            buffer.Position = 0;
+            using var decoded = await Shared.Imaging.RasterImage.LoadAsync(buffer, cancellationToken);
+        }
+        catch (Exception exception) when (exception is InvalidDataException)
+        {
+            return BadRequest(new { error = "ملف الريفرنس ليس صورة صالحة." });
+        }
+
+        var extractedColors = kind == "palette"
+            ? await _paletteExtractor.ExtractAsync(projectId, buffer.ToArray(), image.ContentType, cancellationToken)
+            : null;
+
+        var id = Guid.NewGuid().ToString("N");
+        var extension = image.ContentType.ToLowerInvariant() switch
+        {
+            "image/png" => "png",
+            "image/webp" => "webp",
+            _ => "jpg"
+        };
+        var objectKey = $"content/{projectId:N}/brand/references/{id}.{extension}";
+        buffer.Position = 0;
+        await _objectStorage.UploadAsync(objectKey, buffer, image.ContentType, cancellationToken);
+        var replaced = kind == "palette" ? references.FirstOrDefault(reference => reference.Kind == "palette") : null;
+        if (replaced is not null) references.Remove(replaced);
+        references.Add(new ContentBrandReference(id, kind, Path.GetFileName(image.FileName), objectKey, image.ContentType));
+        settings.ReferenceImagesJson = JsonSerializer.Serialize(references);
+        if (extractedColors is not null)
+            settings.ReferenceColorsJson = JsonSerializer.Serialize(extractedColors);
+        if (settings.DesignSource == "references")
+            await InvalidateBrandAsync(settings, projectId, cancellationToken);
+        settings.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        if (replaced is not null) await _objectStorage.DeleteAsync(replaced.ObjectKey, cancellationToken);
+        return await Get(cancellationToken);
+    }
+
+    [HttpDelete("brand-references/{id}")]
+    public async Task<IActionResult> DeleteBrandReference(string id, CancellationToken cancellationToken)
+    {
+        var projectId = ActiveProjectId();
+        if (!_authorization.CanManageProject(User, projectId)) return Forbid();
+        if (await GenerationInProgressAsync(projectId, cancellationToken))
+            return Conflict(new { error = "استنى اكتمال التوليد الحالي قبل تغيير الريفرنسات." });
+        var settings = await SettingsAsync(projectId, cancellationToken);
+        if (settings is null) return NotFound();
+        var references = ContentBrandReferences.Images(settings).ToList();
+        var removed = references.FirstOrDefault(reference => reference.Id == id);
+        if (removed is null) return NotFound();
+        references.Remove(removed);
+        settings.ReferenceImagesJson = JsonSerializer.Serialize(references);
+        if (settings.DesignSource == "references")
+            await InvalidateBrandAsync(settings, projectId, cancellationToken);
+        settings.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _objectStorage.DeleteAsync(removed.ObjectKey, cancellationToken);
+        return await Get(cancellationToken);
+    }
+
     [HttpPost("sample")]
     public async Task<IActionResult> GenerateSample(CancellationToken cancellationToken)
     {
@@ -312,6 +485,8 @@ public sealed class ContentController : ControllerBase
         var settings = await SettingsAsync(projectId, cancellationToken);
         if (string.IsNullOrWhiteSpace(settings?.LogoObjectKey))
             return BadRequest(new { error = "ارفع اللوجو أولاً حتى نستخدم ألوانه وندمجه من غير خلفية." });
+        if (settings.DesignSource == "references" && !ContentBrandReferences.Images(settings).Any(image => image.Kind == "post"))
+            return BadRequest(new { error = "ارفع ريفرنس بوست واحدًا على الأقل قبل التوليد." });
         var pending = await _dbContext.ContentPosts.IgnoreQueryFilters()
             .AnyAsync(post => post.ProjectId == projectId
                 && post.IsStyleSample
@@ -321,7 +496,7 @@ public sealed class ContentController : ControllerBase
         if (pending) return Conflict(new { error = "يوجد تصميم أول قيد التوليد أو بانتظار رأيك." });
 
         _backgroundJobs.Enqueue<ContentAutomationJob>(job => job.GenerateSampleAsync(projectId));
-        return Accepted(new { message = "بدأ توليد أول تصميم بألوان اللوجو. سيظهر هنا بعد اكتماله." });
+        return Accepted(new { message = settings.DesignSource == "references" ? "بدأ توليد أول تصميم بألوان وريفرنسات الهوية." : "بدأ توليد أول تصميم بألوان اللوجو. سيظهر هنا بعد اكتماله." });
     }
 
     [HttpPost("posts/{postId:guid}/regenerate")]
@@ -337,7 +512,7 @@ public sealed class ContentController : ControllerBase
                     || post.Status == ContentPostStatus.GenerationFailed), cancellationToken);
         if (!exists) return BadRequest(new { error = "العينة غير جاهزة لإعادة التوليد." });
         _backgroundJobs.Enqueue<ContentAutomationJob>(job => job.RegenerateSampleAsync(projectId, postId));
-        return Accepted(new { message = "سيتم إنشاء اقتراح جديد بنفس اللوجو والألوان." });
+        return Accepted(new { message = "سيتم إنشاء اقتراح جديد بنفس الهوية المحفوظة." });
     }
 
     [HttpPost("weekly-plan")]
@@ -345,13 +520,14 @@ public sealed class ContentController : ControllerBase
     {
         var projectId = ActiveProjectId();
         if (!_authorization.CanManageProject(User, projectId)) return Forbid();
+        await _weeklyPlans.ExpireDraftPlansAsync(projectId, cancellationToken);
         var settings = await SettingsAsync(projectId, cancellationToken);
         if (settings is null || !await ApprovedSampleWasPublishedAsync(settings, cancellationToken))
             return BadRequest(new { error = "اعتمد وانشر أول تصميم قبل تجهيز خطة الأسبوع." });
         var unresolvedPlan = await HasUnresolvedWeekPlanAsync(projectId, cancellationToken);
         if (unresolvedPlan) return Conflict(new { error = "راجع أو استبدل الأسبوع الجاري قبل إضافة أسبوع جديد." });
         _backgroundJobs.Enqueue<ContentAutomationJob>(job => job.GenerateWeeklyPlanAsync(projectId));
-        return Accepted(new { message = "بدأ تجهيز أسبوع إضافي من 7 أفكار جديدة من غير تكرار المحتوى القديم." });
+        return Accepted(new { message = $"بدأ تجهيز أسبوع إضافي من {7 * settings.PostsPerDay} أفكار جديدة من غير تكرار المحتوى القديم." });
     }
 
     [HttpPost("weekly-plans/{planId:guid}/approve")]
@@ -439,12 +615,13 @@ public sealed class ContentController : ControllerBase
         var settings = await SettingsAsync(projectId, cancellationToken);
         if (string.IsNullOrWhiteSpace(settings?.FacebookPageId))
             return BadRequest(new { error = "اختر صفحة Facebook واحفظ الإعدادات قبل الاعتماد." });
+        var brandIdentity = ContentBrandReferences.Identity(settings);
         var exists = await _dbContext.ContentPosts.IgnoreQueryFilters()
             .AnyAsync(post => post.ProjectId == projectId
                 && post.Id == postId
                 && post.IsStyleSample
                 && post.BrandLogoObjectKey == settings.LogoObjectKey
-                && post.BrandStylePrompt == settings.StylePrompt
+                && post.BrandStylePrompt == brandIdentity
                 && post.Status == ContentPostStatus.AwaitingApproval, cancellationToken);
         if (!exists) return BadRequest(new { error = "العينة غير جاهزة للاعتماد." });
         _backgroundJobs.Enqueue<ContentAutomationJob>(job => job.ApproveSampleAndStartAsync(projectId, postId));
@@ -484,6 +661,21 @@ public sealed class ContentController : ControllerBase
         settings = new ContentAutomationSettings { ProjectId = projectId };
         _dbContext.ContentAutomationSettings.Add(settings);
         return settings;
+    }
+
+    private async Task InvalidateBrandAsync(
+        ContentAutomationSettings settings,
+        Guid projectId,
+        CancellationToken cancellationToken)
+    {
+        settings.HasApprovedStyle = false;
+        settings.ApprovedSamplePostId = null;
+        settings.IsEnabled = false;
+        settings.NextPublishAtUtc = null;
+        await RejectObsoleteSamplesAsync(projectId,
+            "تم تغيير ريفرنسات الهوية؛ ولّد معاينة جديدة.", cancellationToken);
+        await _weeklyPlans.MarkActivePlansRejectedAsync(projectId,
+            "تم تغيير ريفرنسات الهوية؛ جهّز خطة أسبوع جديدة.", cancellationToken);
     }
 
     private async Task<bool> ApprovedSampleWasPublishedAsync(
@@ -594,7 +786,7 @@ public sealed class ContentController : ControllerBase
         ICollection<ContentWeekPlan> visiblePlans,
         ContentWeekPlan? latestPlan)
     {
-        if (latestPlan is null) return;
+        if (latestPlan is null || latestPlan.Status == ContentWeekPlanStatus.Expired) return;
         if (visiblePlans.Count == 0
             || (latestPlan.Status == ContentWeekPlanStatus.GenerationFailed
                 && visiblePlans.All(plan => plan.Id != latestPlan.Id)))
@@ -688,7 +880,15 @@ public sealed record UpdateContentSettingsRequest(
     string? FacebookPageId,
     string DailyPublishTimeLocal,
     string StylePrompt,
-    bool IsEnabled);
+    bool IsEnabled,
+    string? DesignSource = null,
+    IReadOnlyList<string>? ReferenceColors = null,
+    bool? MatchReferenceTone = null,
+    int? PostsPerDay = null,
+    string? ImageProvider = null,
+    string? OpenAiImageApiKey = null,
+    bool ClearOpenAiImageApiKey = false,
+    string? OpenAiImageModel = null);
 
 internal static class ContentAssetRoutes
 {

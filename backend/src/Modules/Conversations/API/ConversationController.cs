@@ -164,30 +164,9 @@ namespace Modules.Conversations.API
                         && whatsAppAccountIds.Contains(account.Id))
                     .ToDictionaryAsync(account => account.Id, account => account.Name);
 
-            var mapped = conversations.Select(c => {
-                var redisKey = $"ai_typing:{c.Id}";
-                var remainingSec = 0;
-                var isTyping = false;
-                var stage = "generating";
-                try
-                {
-                    var ttl = _redis.KeyTimeToLive(redisKey);
-                    if (ttl.HasValue && ttl.Value.TotalSeconds > 0)
-                    {
-                        isTyping = true;
-                        remainingSec = (int)Math.Ceiling(ttl.Value.TotalSeconds);
-                        var val = _redis.StringGet(redisKey);
-                        if (!val.IsNullOrEmpty)
-                        {
-                            stage = val.ToString();
-                        }
-                    }
-                }
-                catch
-                {
-                    // Fallback if Redis fails
-                }
-
+            var typingStates = await Task.WhenAll(conversations.Select(c => AiTypingStateAsync(c.Id)));
+            var mapped = conversations.Select((c, index) => {
+                var typing = typingStates[index];
                 return new
                 {
                     id = c.Id,
@@ -201,17 +180,37 @@ namespace Modules.Conversations.API
                             : null,
                     lastMessageAt = c.LastMessageTimestamp.ToString("o"),
                     createdAt = c.CreatedAt.ToString("o"),
-                    unreadCount = 0,
+                    unreadCount = (int?)null,
                     assignedAgentId = c.AssignedUserId,
                     assignedAgentName = (string)null,
                     customer = c.customer,
-                    isAiTyping = isTyping,
-                    aiTypingCountdown = remainingSec,
-                    aiTypingStage = stage
+                    isAiTyping = typing.IsTyping,
+                    aiTypingCountdown = typing.RemainingSeconds,
+                    aiTypingStage = typing.Stage
                 };
             }).ToList();
 
             return Ok(mapped);
+        }
+
+        private async Task<(bool IsTyping, int RemainingSeconds, string Stage)> AiTypingStateAsync(Guid conversationId)
+        {
+            try
+            {
+                var key = $"ai_typing:{conversationId}";
+                var expiryTask = _redis.KeyTimeToLiveAsync(key);
+                var stageTask = _redis.StringGetAsync(key);
+                await Task.WhenAll(expiryTask, stageTask);
+                var expiry = await expiryTask;
+                var stage = await stageTask;
+                if (expiry.HasValue && expiry.Value.TotalSeconds > 0)
+                    return (true, (int)Math.Ceiling(expiry.Value.TotalSeconds), stage.IsNullOrEmpty ? "generating" : stage.ToString());
+            }
+            catch (StackExchange.Redis.RedisException)
+            {
+                // Typing is transient; a cache outage must not hide persisted conversations.
+            }
+            return (false, 0, "generating");
         }
 
         [HttpPost("projects/{projectId}/conversations/whatsapp")]

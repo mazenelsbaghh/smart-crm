@@ -30,8 +30,10 @@ describe('Daily reply review', () => {
     fireEvent.click(await screen.findByRole('button', { name: /عميلة اختبار — سهيلة/ }));
     expect(await screen.findByText('بعد ١٧ دقيقة')).toBeInTheDocument();
     expect(screen.getByText('تفريغ الصوت: ممكن حد يرد عليا ويفيدني؟')).toBeInTheDocument();
-    expect(screen.getByText('مكتملة بلا دليل إرسال')).toBeInTheDocument();
-    expect(screen.getByText('متأخر ٧ دقيقة')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'فحص المتابعات' }));
+    expect(screen.getByText('مكتملة بلا دليل إرسال')).toBeVisible();
+    expect(screen.getByText('متأخر ٧ دقيقة')).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: 'المحادثات' }));
     expect(screen.getByText(/العميل ينتظر موظفًا/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'فتح المحادثة ↗' })).toHaveAttribute('href', '/inbox?conversationId=conversation-1');
   });
@@ -44,6 +46,10 @@ describe('Daily reply review', () => {
     fireEvent.click(screen.getByRole('button', { name: 'تجهيز مسودة رد مصحح' }));
     const field = await screen.findByRole('textbox', { name: 'مسودة للمراجعة' });
     fireEvent.change(field, { target: { value: 'رد راجعه الموظف' } });
+    fireEvent.click(screen.getByRole('tab', { name: 'معالجة المشكلات' }));
+    expect(screen.getByRole('heading', { name: 'المراجعة والمعالجة المجدولة' })).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: 'المحادثات' }));
+    expect(field).toBeVisible();
     expect(field).toHaveValue('رد راجعه الموظف');
     expect(screen.queryByRole('button', { name: /^إرسال/ })).not.toBeInTheDocument();
     expect(post.mock.calls.map(call => call[0])).toEqual(['/api/projects/project-1/reports/daily-review/conversations/conversation-1/draft-reply']);

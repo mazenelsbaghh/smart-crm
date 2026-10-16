@@ -1,7 +1,10 @@
 'use client';
 
+import PageHeader from '../../../components/ui/PageHeader';
+import Tabs from '../../../components/ui/Tabs';
+
 import { useEffect, useState } from 'react';
-import { RefreshCw, MessagesSquare, CalendarDays } from 'lucide-react';
+import { RefreshCw, MessagesSquare, CalendarDays, ListChecks, History, ChartNoAxesCombined } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { api } from '@/services/api';
 import ConversationReview from './ConversationReview';
@@ -19,6 +22,7 @@ export default function DailyReplyReviewPage() {
 }
 
 function ReviewWorkspace({ projectId, canManage }: { projectId: string; canManage: boolean }) {
+  const [task, setTask] = useState<'conversations' | 'processing' | 'followups'>('conversations');
   const [date, setDate] = useState('');
   const [view, setView] = useState('attention');
   const [page, setPage] = useState(1);
@@ -56,21 +60,22 @@ function ReviewWorkspace({ projectId, canManage }: { projectId: string; canManag
   }, []);
 
   const refresh = () => setRevision(v => v + 1);
-  return <main className={styles.page} dir="rtl">
-    <header className={styles.header}>
-      <div><p className={styles.eyebrow}>جودة خدمة العملاء</p><h1>مراجعة الردود اليومية</h1>
-        <p className={styles.muted}>اعرف مين محتاج تدخل، راجع الكلام بتوقيته، وتابع الإرسال الفعلي.</p></div>
+  return <section className={styles.page} dir="rtl">
+    <div className={styles.header}>
+<PageHeader icon={<MessagesSquare size={24} aria-hidden="true" />} title="مراجعة الردود" />
       <div className={styles.controls}>
         <label className={styles.date}><CalendarDays size={17} aria-hidden="true" /><span className={styles.srOnly}>يوم المراجعة</span>
           <input aria-label="يوم المراجعة" type="date" value={date || data?.date || ''} onChange={e => { setDate(e.target.value); setPage(1); setSelected(null); }} /></label>
         <button onClick={() => { setDate(''); setPage(1); setSelected(null); refresh(); }}>اليوم</button>
         <button onClick={refresh} disabled={busy} aria-label="تحديث المراجعة"><RefreshCw size={17} aria-hidden="true" /> تحديث</button>
       </div>
-    </header>
+    </div>
     <div className={styles.meta}><span>{data ? `توقيت المشروع: ${data.timezone}` : 'جاري تحديد توقيت المشروع…'}</span>
       {data && <span>آخر تحديث {timeLabel(data.generatedAtUtc, data.timezone)} · تحديث تلقائي كل دقيقة</span>}</div>
     {error && <p role="alert" className={styles.error}>{error}</p>}
     {data ? <>
+      <details className={styles.daySummary}>
+        <summary><ChartNoAxesCombined size={17} aria-hidden="true" /><strong>ملخص اليوم</strong><span>{numberLabel(data.summary.needsAttention)} تحتاج مراجعة · {numberLabel(data.summary.followUpsOverdue)} متابعات متأخرة</span></summary>
       <section className={styles.metrics} aria-label="ملخص اليوم">
         <div><strong>{numberLabel(data.summary.conversations)}</strong><span>محادثات اليوم</span></div>
         <div><strong className={styles.warning}>{numberLabel(data.summary.needsAttention)}</strong><span>تحتاج مراجعة</span></div>
@@ -78,9 +83,16 @@ function ReviewWorkspace({ projectId, canManage }: { projectId: string; canManag
         <div><strong>{numberLabel(data.summary.waitingForHuman)}</strong><span>تنتظر موظفًا حاليًا</span></div>
         <div><strong className={styles.warning}>{numberLabel(data.summary.followUpsOverdue)}</strong><span>متابعات متأخرة</span></div>
       </section>
-      <ReviewProcessingPanel projectId={projectId} timezone={data.timezone} canManage={canManage} refreshSignal={revision} />
+      </details>
+      <Tabs idPrefix="reply-review" label="مهمة المراجعة" selected={task} onChange={setTask} compactOnMobile
+        tabs={[
+          { key: 'conversations', label: 'المحادثات', icon: <MessagesSquare size={17} aria-hidden="true" /> },
+          { key: 'processing', label: 'معالجة المشكلات', icon: <ListChecks size={17} aria-hidden="true" /> },
+          { key: 'followups', label: 'فحص المتابعات', icon: <History size={17} aria-hidden="true" /> },
+        ]} />
+      <div id="reply-review-panel-conversations" role="tabpanel" aria-labelledby="reply-review-tab-conversations" hidden={task !== 'conversations'} className={styles.taskPanel}>
       <section aria-label="مراجعة المحادثات" className={styles.reviewSection}>
-        <div className={styles.sectionHeading}><h2><MessagesSquare size={20} aria-hidden="true" /> المحادثات</h2>
+        <div className={styles.sectionHeading}><h2 className={styles.srOnly}>المحادثات</h2>
           <div className={styles.tabs} role="group" aria-label="فلتر المحادثات">
             {([['attention', 'تحتاج مراجعة'], ['all', 'الكل'], ['unanalyzed', 'بانتظار التحليل']] as const).map(([key, label]) =>
               <button key={key} aria-pressed={view === key} onClick={() => { setView(key); setPage(1); setSelected(null); }}>{label}</button>)}
@@ -94,8 +106,14 @@ function ReviewWorkspace({ projectId, canManage }: { projectId: string; canManag
             <div className={styles.empty}><MessagesSquare size={32} aria-hidden="true" /><h3>اختار محادثة للمراجعة</h3><p>شوف الرسائل كاملة، الفواصل الزمنية، واقتراح معالجة المشكلة.</p></div>}</div>
         </div>
       </section>
-      <FollowUpReview rows={data.followUps} timezone={data.timezone} generatedAtUtc={data.generatedAtUtc} />
-      <p className={styles.note}>أوقات الاستجابة محسوبة لرسائل اليوم المختار؛ حالة المعالجة والموظف والمتابعة هي الحالة الحالية. الجدولة تعمل وفق الإعدادات أعلاه.</p>
+      </div>
+      <div id="reply-review-panel-processing" role="tabpanel" aria-labelledby="reply-review-tab-processing" hidden={task !== 'processing'} className={styles.taskPanel}>
+        <ReviewProcessingPanel projectId={projectId} timezone={data.timezone} canManage={canManage} refreshSignal={revision} />
+      </div>
+      <div id="reply-review-panel-followups" role="tabpanel" aria-labelledby="reply-review-tab-followups" hidden={task !== 'followups'} className={styles.taskPanel}>
+        <FollowUpReview rows={data.followUps} timezone={data.timezone} generatedAtUtc={data.generatedAtUtc} />
+      </div>
+      <p className={styles.note}>أوقات الاستجابة محسوبة لرسائل اليوم المختار؛ حالة المعالجة والموظف والمتابعة هي الحالة الحالية. إعدادات الجدولة متاحة في «معالجة المشكلات».</p>
     </> : <div className={styles.empty} role="status">{busy ? 'جاري تحميل مراجعة اليوم…' : 'لم تُحمّل بيانات المراجعة.'}</div>}
-  </main>;
+  </section>;
 }

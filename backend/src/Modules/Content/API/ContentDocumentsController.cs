@@ -23,12 +23,13 @@ public sealed class ContentDocumentsController(
     ContentDocumentPlanningService planning) : ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken cancellationToken)
+    public async Task<IActionResult> List(CancellationToken cancellationToken, [FromQuery] string? kind = null)
     {
         var projectId = ActiveProjectId();
         if (!authorization.CanRead(User, projectId)) return Forbid();
         var documents = await dbContext.ContentDocuments.IgnoreQueryFilters()
-            .Where(item => item.ProjectId == projectId)
+            .Where(item => item.ProjectId == projectId
+                && (kind == "Paper" ? item.Kind == ContentDocumentKind.Paper : item.Kind != ContentDocumentKind.Paper))
             .OrderByDescending(item => item.CreatedAt)
             .ThenBy(item => item.Title)
             .Take(50)
@@ -51,7 +52,7 @@ public sealed class ContentDocumentsController(
         {
             document = DocumentSummary(
                 document,
-                ContentDocumentAssetRoutes.Logo(document.Id, document.UpdatedAt)),
+                string.IsNullOrWhiteSpace(document.BrandLogoObjectKey) ? null : ContentDocumentAssetRoutes.Logo(document.Id, document.UpdatedAt)),
             pages = pages.Select(PageResponse)
         });
     }
@@ -134,9 +135,15 @@ public sealed class ContentDocumentsController(
         try { preview = planning.Restore(projectId, PreviewInput(request), request.PreviewFingerprint); }
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
 
+        ContentPaperDesign? paperDesign = null;
+        if (kind == ContentDocumentKind.Paper)
+        {
+            try { paperDesign = planning.RestorePaperDesign(projectId, request.PaperFrameToken); }
+            catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
+        }
         var brand = await dbContext.ContentAutomationSettings.IgnoreQueryFilters()
             .SingleOrDefaultAsync(item => item.ProjectId == projectId, cancellationToken);
-        if (brand is null || string.IsNullOrWhiteSpace(brand.LogoObjectKey))
+        if (paperDesign is null && (brand is null || string.IsNullOrWhiteSpace(brand.LogoObjectKey)))
             return BadRequest(new { error = "ارفع اللوجو في الصور والمنشورات أولاً حتى نستخدم نفس الهوية." });
         var projectAi = await dbContext.ProjectSettings.IgnoreQueryFilters()
             .Where(item => item.ProjectId == projectId)
@@ -153,9 +160,10 @@ public sealed class ContentDocumentsController(
             Title = file.Title,
             SourceContent = preview.Documents is null ? content : string.Join("\n\n", file.Pages.Skip(1).Select(page => page.Body)),
             RequestedPageCount = file.PageCount,
-            BrandLogoObjectKey = brand.LogoObjectKey,
-            BrandColorsJson = brand.BrandColorsJson,
-            BrandStylePrompt = brand.StylePrompt
+            BrandLogoObjectKey = paperDesign is null ? brand!.LogoObjectKey : string.Empty,
+            BrandColorsJson = paperDesign is null ? brand!.BrandColorsJson : System.Text.Json.JsonSerializer.Serialize(paperDesign.Colors),
+            BrandStylePrompt = paperDesign?.Style ?? brand!.StylePrompt,
+            PaperDesignJson = paperDesign is null ? null : System.Text.Json.JsonSerializer.Serialize(paperDesign)
         }).ToList();
         dbContext.ContentDocuments.AddRange(documents);
         foreach (var (document, file) in documents.Zip(files))
@@ -313,6 +321,46 @@ public sealed class ContentDocumentsController(
         return Accepted(new { message = "بدأ إعادة تصميم كل الخلفيات من دون تغيير النص." });
     }
 
+    [HttpPost("{id:guid}/paper-frame")]
+    public async Task<IActionResult> ApplyPaperFrame(Guid id, ApplyContentPaperFrameRequest request, CancellationToken cancellationToken)
+    {
+        var projectId = ActiveProjectId();
+        if (!authorization.CanManageProject(User, projectId)) return Forbid();
+        var document = await FindDocument(projectId, id, cancellationToken);
+        if (document is null || document.Kind != ContentDocumentKind.Paper) return NotFound(new { error = "ملف الورق غير موجود." });
+        ContentPaperDesign design;
+        try { design = planning.RestorePaperDesign(projectId, request.PaperFrameToken); }
+        catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
+        var designJson = System.Text.Json.JsonSerializer.Serialize(design);
+        var colorsJson = System.Text.Json.JsonSerializer.Serialize(design.Colors);
+        var claimed = await dbContext.ContentDocuments.IgnoreQueryFilters()
+            .Where(candidate => candidate.ProjectId == projectId && candidate.Id == id
+                && (candidate.Status == ContentDocumentStatus.Ready || candidate.Status == ContentDocumentStatus.AwaitingDesign
+                    || candidate.Status == ContentDocumentStatus.Failed))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(candidate => candidate.PaperDesignJson, designJson)
+                .SetProperty(candidate => candidate.BrandColorsJson, colorsJson)
+                .SetProperty(candidate => candidate.BrandStylePrompt, design.Style)
+                .SetProperty(candidate => candidate.Status, ContentDocumentStatus.GeneratingImages)
+                .SetProperty(candidate => candidate.Error, (string?)null)
+                .SetProperty(candidate => candidate.CompletedAtUtc, (DateTime?)null)
+                .SetProperty(candidate => candidate.UpdatedAt, DateTime.UtcNow), cancellationToken);
+        if (claimed != 1) return Conflict(new { error = "انتظر اكتمال التصميم الجاري أولاً." });
+        await dbContext.ContentDocumentPages.IgnoreQueryFilters()
+            .Where(page => page.ProjectId == projectId && page.DocumentId == id)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(page => page.Status, ContentDocumentPageStatus.Queued)
+                .SetProperty(page => page.Error, (string?)null)
+                .SetProperty(page => page.UpdatedAt, DateTime.UtcNow), cancellationToken);
+        try { jobs.Enqueue<ContentDocumentJob>(job => job.RegenerateImagesAsync(projectId, id, CancellationToken.None)); }
+        catch
+        {
+            await ReleaseFailedQueueAsync(projectId, id, CancellationToken.None);
+            throw;
+        }
+        return Accepted(new { message = "بدأ تصميم الملف بالفريم الجديد، من غير تغيير النص." });
+    }
+
     private IQueryable<ContentDocumentPage> DocumentPages(Guid projectId, Guid id) =>
         dbContext.ContentDocumentPages.IgnoreQueryFilters().Where(page => page.ProjectId == projectId && page.DocumentId == id);
 
@@ -410,10 +458,11 @@ public sealed class ContentDocumentsController(
 }
 
 public sealed record CreateContentDocumentRequest(string? Kind, string? Content, int PageCount = 0,
-    string? CoverTitle = null, string? PreviewFingerprint = null, List<ContentDocumentSessionRange>? SessionRanges = null, int? PagesPerSession = null);
+    string? CoverTitle = null, string? PreviewFingerprint = null, List<ContentDocumentSessionRange>? SessionRanges = null, int? PagesPerSession = null, string? PaperFrameToken = null);
 public sealed record UpdateContentDocumentPageRequest(string? Title, string? Body);
 public sealed record AddContentDocumentPageRequest(string? Title, string? Body, Guid? BeforePageId = null);
 public sealed record ReorderContentDocumentPagesRequest(List<Guid>? PageIds);
+public sealed record ApplyContentPaperFrameRequest(string? PaperFrameToken);
 
 internal static class ContentDocumentAssetRoutes
 {

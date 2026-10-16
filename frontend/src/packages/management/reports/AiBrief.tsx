@@ -2,7 +2,7 @@ import { AlertTriangle, BrainCircuit, CheckCircle2, Lightbulb } from 'lucide-rea
 import type { AiDigest } from './types';
 import styles from './reports.module.css';
 
-export function AiBrief({ digest, coverage }: { digest?: AiDigest | null; coverage: number }) {
+export function AiBrief({ digest, coverage, timezone }: { digest?: AiDigest | null; coverage: number; timezone: string }) {
   return (
     <section className={styles.aiBrief} aria-labelledby="ai-brief-title">
       <div className={styles.aiBriefTitle}>
@@ -13,7 +13,7 @@ export function AiBrief({ digest, coverage }: { digest?: AiDigest | null; covera
       {!digest ? (
         <div className={styles.emptyInline}>
           <p>الأرقام جاهزة، لكن الملخص الإداري لم يُنشأ لهذه الفترة بعد.</p>
-          <span>اضغط «حلّل الآن» لإنشاء القراءة والتوصيات.</span>
+          <span>يمكنك سؤال محلل المبيعات عن التحليلات المحفوظة لهذه الفترة.</span>
         </div>
       ) : (
         <>
@@ -23,7 +23,7 @@ export function AiBrief({ digest, coverage }: { digest?: AiDigest | null; covera
             <BriefList icon={Lightbulb} title="ماذا نفعل" items={digest.recommendations} />
             {digest.risks.length > 0 && <BriefList icon={AlertTriangle} title="حدود القراءة" items={digest.risks} />}
           </div>
-          <div className={styles.modelNote}>تم التوليد {new Date(digest.generatedAtUtc).toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', dateStyle: 'medium', timeStyle: 'short' })}، {digest.model}</div>
+          <div className={styles.modelNote}>تم التوليد {new Date(digest.generatedAtUtc).toLocaleString('ar-EG', { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' })}، {digest.model}</div>
         </>
       )}
     </section>

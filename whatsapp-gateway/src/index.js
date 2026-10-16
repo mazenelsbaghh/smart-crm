@@ -17,6 +17,9 @@ import {
 } from './session-identity.js';
 import { restorableSessionIdentities } from './session-lifecycle.js';
 import { replaceWithMockSession } from './mock-session.js';
+import { verifyWhatsAppNumber } from './number-verification.js';
+import { readGroupMembership } from './group-membership.js';
+import { ensureGroupMembers } from './group-admins.js';
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -130,6 +133,23 @@ app.get('/api/whatsapp/session/status', (req, res) => {
         parsed.identity.projectId,
         parsed.identity.whatsappAccountId);
     res.json(status);
+});
+
+app.post('/api/whatsapp/number/check', async (req, res) => {
+    const { projectId, whatsappAccountId, phone, expectedConnectedAt } = req.body;
+    const parsed = parseSessionIdentity(projectId, whatsappAccountId);
+    if (parsed.error || typeof phone !== 'string' || !/^[1-9]\d{7,14}$/.test(phone))
+        return res.status(400).json({ error: 'A valid project/account and canonical phone are required' });
+    if (validateSessionConnection(parsed.identity, expectedConnectedAt) !== 'current')
+        return res.status(412).json({ error: 'WhatsApp connection is unavailable or changed' });
+    try {
+        const exists = await verifyWhatsAppNumber(sessions.get(sessionMapKey(parsed.identity)), phone);
+        if (validateSessionConnection(parsed.identity, expectedConnectedAt) !== 'current')
+            return res.status(412).json({ error: 'WhatsApp connection changed during verification' });
+        return res.json({ exists });
+    } catch {
+        return res.status(503).json({ error: 'Unable to verify WhatsApp registration right now' });
+    }
 });
 
 app.post('/api/whatsapp/send', async (req, res) => {
@@ -276,6 +296,24 @@ app.post('/api/whatsapp/react', async (req, res) => {
     return res.json(commandOutcome.providerResponse);
 });
 
+app.post(['/api/whatsapp/group/members', '/api/whatsapp/group/admins'], async (req, res) => {
+    const { projectId, whatsappAccountId, groupJid, phones, memberPhones = [], expectedConnectedAt } = req.body;
+    const parsed = parseSessionIdentity(projectId, whatsappAccountId);
+    if (parsed.error || typeof groupJid !== 'string' || !/^\d+(?:-\d+)?@g\.us$/.test(groupJid)
+        || !Array.isArray(phones) || !Array.isArray(memberPhones)
+        || phones.length + memberPhones.length === 0 || phones.length + memberPhones.length > 20
+        || [...phones, ...memberPhones].some(phone => typeof phone !== 'string' || !/^[1-9]\d{6,14}$/.test(phone)))
+        return res.status(400).json({ error: 'Valid group, account and canonical phones are required' });
+    if (validateSessionConnection(parsed.identity, expectedConnectedAt) !== 'current')
+        return res.status(412).json({ error: 'WhatsApp connection changed or is unavailable' });
+    try {
+        const result = await ensureGroupMembers(sessions.get(sessionMapKey(parsed.identity)), groupJid, [...phones, ...memberPhones]);
+        return res.json(result);
+    } catch {
+        return res.status(503).json({ error: 'Unable to synchronize group participants' });
+    }
+});
+
 app.post('/api/whatsapp/group/create', async (req, res) => {
     const {
         projectId, whatsappAccountId, subject, participants,
@@ -386,6 +424,27 @@ app.post('/api/whatsapp/group/create', async (req, res) => {
             return res.status(503).json({ code: err.code, error: err.message });
         }
         res.status(500).json({ code: err.code, error: err.message });
+    }
+});
+
+app.post('/api/whatsapp/group/membership', async (req, res) => {
+    const { projectId, whatsappAccountId, groupJid, phones } = req.body;
+    const parsed = parseSessionIdentity(projectId, whatsappAccountId);
+    if (parsed.error || typeof groupJid !== 'string' || !/^\d+(?:-\d+)?@g\.us$/.test(groupJid)
+        || !Array.isArray(phones) || phones.length > 2000
+        || phones.some(phone => typeof phone !== 'string' || !/^[1-9]\d{6,14}$/.test(phone)))
+        return res.status(400).json({ error: 'Invalid membership request' });
+    const key = sessionMapKey(parsed.identity);
+    const socket = sessions.get(key);
+    if (statuses.get(key) !== 'Connected')
+        return res.status(503).json({ error: 'Group membership unavailable' });
+    try {
+        const result = await readGroupMembership(socket, groupJid, phones);
+        if (sessions.get(key) !== socket || statuses.get(key) !== 'Connected')
+            return res.status(503).json({ error: 'WhatsApp connection changed' });
+        return res.json(result);
+    } catch {
+        return res.status(503).json({ error: 'Group membership unavailable' });
     }
 });
 

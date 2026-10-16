@@ -6,6 +6,7 @@ import { Customer } from '../../../services/crm';
 import { api } from '../../../services/api';
 import { useToast } from '../../../context/toast-context';
 import { AiReplyIndicator, ActionButton } from '../../../components/shared/InboxSharedElements';
+import EmptyState from '../../../components/ui/EmptyState';
 import ConfirmDialog from '../../../components/shared/ConfirmDialog';
 import { 
   Send, 
@@ -15,10 +16,15 @@ import {
   Plus,
   Check,
   Trash2,
-  ShieldBan
+  ShieldBan,
+  MessageSquare,
+  CalendarClock,
+  StickyNote,
+  SlidersHorizontal
 } from 'lucide-react';
 import styles from '../inbox.module.css';
 import MessageAttachment from './MessageAttachment';
+import ConversationStatusBadge from './ConversationStatusBadge';
 
 interface FollowUp {
   id: string;
@@ -104,7 +110,8 @@ export default function ChatWorkspace({
 }: ChatWorkspaceProps) {
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'Timeline' | 'Conversation' | 'Notes'>('Conversation');
-  const [notesText, setNotesText] = useState(customer?.notes || '');
+  const [notesDraft, setNotesText] = useState<string | null>(null);
+  const notesText = notesDraft ?? customer?.notes ?? '';
   const [now] = useState(() => Date.now());
 
   // Real Follow-Up states
@@ -212,7 +219,7 @@ export default function ChatWorkspace({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
@@ -240,16 +247,7 @@ export default function ChatWorkspace({
   if (!activeConv) {
     return (
       <div className={styles.noActiveChat}>
-        <div className={styles.noActiveChatIconContainer}>
-          <svg viewBox="0 0 100 100" className={styles.noActiveLogo}>
-            <path
-              fill="#E8E8E8"
-              d="M50 0 L60 30 L90 20 L70 50 L90 80 L60 70 L50 100 L40 70 L10 80 L30 50 L10 20 L40 30 Z"
-            />
-          </svg>
-        </div>
-        <h3>نظام إدارة المحادثات والعملاء</h3>
-        <p>الرجاء تحديد محادثة عميل من قائمة العمل للبدء في الرد وعرض تفاصيل CRM.</p>
+        <EmptyState title="اختر محادثة للرد" description="افتح اسم العميل من القائمة، وابدأ بالرسائل غير المقروءة أو المحادثات قيد المتابعة." />
       </div>
     );
   }
@@ -259,7 +257,6 @@ export default function ChatWorkspace({
 
   return (
     <div className={styles.chatPanel}>
-      {/* Workspace Header */}
       <div className={styles.workspaceHeader}>
         <div className={styles.headerTopRow}>
           <div className={styles.headerProfile}>
@@ -273,38 +270,19 @@ export default function ChatWorkspace({
                 <ChevronRight size={24} />
               </button>
             )}
-            <div className={styles.headerAvatar}>
-              <User size={36} />
+            <div className={styles.headerAvatar} aria-hidden="true">
+              {customerName[0]}
             </div>
             <div className={styles.customerInfoBlock}>
               <h2 className={styles.workspaceCustomerName}>{customerName}</h2>
               <p className={styles.customerSubDetails}>
-                <span>{customer?.phoneNumber || activeConv.customer.phone || 'بيانات الاتصال غير متاحة'}</span>
+                <bdi dir="ltr">{customer?.phoneNumber || activeConv.customer.phone || 'بيانات الاتصال غير متاحة'}</bdi>
                 {customer?.city && <><span className={styles.dividerDot}>•</span><span>{customer.city}</span></>}
                 {activeConv.whatsAppAccountName && <><span className={styles.dividerDot}>•</span><span>عبر {activeConv.whatsAppAccountName}</span></>}
               </p>
             </div>
           </div>
 
-          <div className={styles.headerManagerAssignee}>
-            <div className={styles.managerProfile}>
-              <div className={styles.managerAvatar}>
-                <User size={18} />
-              </div>
-              <div className={styles.managerNameBlock}>
-                <span className={styles.managerLabel}>المكلّف بالمحادثة</span>
-                <span className={styles.managerName}>{activeConv.assignedAgentName || 'غير مُعيّن'}</span>
-              </div>
-            </div>
-
-            <div className={styles.stagePillsRow}>
-              <span className={`${styles.statusPill} ${styles.statusPillWarm}`}>{conversationStatusAr[activeConv.status]}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Quick action buttons row + tabs */}
-        <div className={styles.headerActionsRow}>
           {onOpenDetails && (
             <button
               type="button"
@@ -316,18 +294,41 @@ export default function ChatWorkspace({
               بيانات العميل
             </button>
           )}
-          <button
-            type="button"
-            className={`${styles.aiBlockToggle} ${customer?.isBlacklisted ? styles.aiBlockToggleActive : ''}`}
-            onClick={() => setPendingBlacklistState(!customer?.isBlacklisted)}
-            disabled={updating || !customer}
-            aria-pressed={customer?.isBlacklisted ?? false}
-          >
-            <ShieldBan size={16} />
-            {customer?.isBlacklisted ? 'الرد الآلي محظور' : 'حظر الرد الآلي'}
-          </button>
+        </div>
 
-          {/* Workspace Tabs navigation */}
+        <div className={styles.conversationContextRow}>
+          <div className={styles.headerManagerAssignee}>
+            <ConversationStatusBadge status={activeConv.status} label={conversationStatusAr[activeConv.status]} />
+            <span className={styles.conversationAssignee}>
+              المسؤول: <strong>{activeConv.assignedAgentName || 'غير مُعيّن'}</strong>
+            </span>
+            {customer?.isBlacklisted && <span className={styles.automationBlockedState}>الرد الآلي محظور</span>}
+          </div>
+
+          <details className={styles.conversationActions} onKeyDown={event => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.open = false;
+            event.currentTarget.querySelector('summary')?.focus();
+          }}>
+            <summary><SlidersHorizontal size={14} aria-hidden="true" />إجراءات المحادثة</summary>
+            <div className={styles.conversationActionsPanel}>
+              <button
+                type="button"
+                className={`${styles.aiBlockToggle} ${customer?.isBlacklisted ? styles.aiBlockToggleActive : ''}`}
+                onClick={() => setPendingBlacklistState(!customer?.isBlacklisted)}
+                disabled={updating || !customer}
+                aria-pressed={customer?.isBlacklisted ?? false}
+              >
+                <ShieldBan size={16} aria-hidden="true" />
+                {customer?.isBlacklisted ? 'إلغاء حظر الرد الآلي' : 'حظر الرد الآلي'}
+              </button>
+            </div>
+          </details>
+        </div>
+
+        <div className={styles.headerActionsRow}>
           <div className={styles.workspaceTabs} role="tablist" aria-label="أقسام المحادثة">
             {(['Conversation', 'Timeline', 'Notes'] as const).map(tab => (
               <button
@@ -340,9 +341,9 @@ export default function ChatWorkspace({
                 aria-controls={`chat-panel-${tab}`}
                 id={`chat-tab-${tab}`}
               >
-                {tab === 'Timeline' && 'الملخص'}
-                {tab === 'Conversation' && 'المحادثة'}
-                {tab === 'Notes' && 'الملاحظات'}
+                {tab === 'Timeline' && <><CalendarClock size={16} aria-hidden="true" />المتابعات</>}
+                {tab === 'Conversation' && <><MessageSquare size={16} aria-hidden="true" />المحادثة</>}
+                {tab === 'Notes' && <><StickyNote size={16} aria-hidden="true" />الملاحظات</>}
               </button>
             ))}
           </div>
@@ -394,6 +395,7 @@ export default function ChatWorkspace({
                     <div
                       key={msg.id}
                       className={`${styles.msgRow} ${isIncoming ? styles.msgRowIncoming : styles.msgRowOutgoing}`}
+                      data-sender={msg.senderType}
                       aria-label={`${isIncoming ? customerName : msg.senderType === 'AI' ? 'المساعد الذكي' : msg.senderType === 'Agent' ? 'الموظف' : msg.senderType === 'System' ? 'النظام' : 'رسالة صادرة، المصدر غير مسجل'}، ${formatEgyptTime(msg.createdAt)}`}
                     >
                       <div className={`${styles.msgBubble} ${
@@ -405,10 +407,11 @@ export default function ChatWorkspace({
                       }`}>
                         {msg.senderType === 'AI' && (
                           <div className={styles.aiBadgeRow}>
-                            <Sparkles size={11} className={styles.typingSparkle} />
-                            <span>مساعد ذكي</span>
+                            <Sparkles size={13} aria-hidden="true" />
+                            <span>رد المساعد الذكي</span>
                           </div>
                         )}
+                        {msg.senderType === 'Agent' && <div className={styles.agentBadgeRow}><User size={13} aria-hidden="true" /><span>رد الموظف</span></div>}
                         {msg.senderType === 'Unknown' && <span className={styles.messageTime}>رسالة صادرة، المصدر غير مسجل</span>}
                         {msg.senderType === 'System' && <span className={styles.messageTime}>النظام</span>}
                         <p className={styles.messageTextContent}>{msg.content}</p>
@@ -529,7 +532,8 @@ export default function ChatWorkspace({
                   disabled={sending || !inputMessage.trim() || !isMsgWindowOpen}
                   aria-label={sending ? 'جاري إرسال الرسالة' : 'إرسال الرسالة'}
                 >
-                  <Send size={16} />
+                  <Send size={17} aria-hidden="true" />
+                  <span>{sending ? 'جارٍ الإرسال' : 'إرسال'}</span>
                 </button>
               </div>
             )}

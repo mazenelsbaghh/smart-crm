@@ -2,12 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Customer, crmService } from '../../services/crm';
 import { api } from '../../services/api';
-import { X, Plus, Calendar, Tag, Sparkles, ArrowRight } from 'lucide-react';
+import { X, Plus, Calendar, Tag, Sparkles, ArrowRight, UserRound, CalendarClock, MapPin, Phone } from 'lucide-react';
 import { useToast } from '../../context/toast-context';
 import Tooltip from './Tooltip';
 import PhantomLoader from './PhantomLoader';
 import { isolateModal } from './modal-accessibility';
 import styles from './customer-detail.module.css';
+import Tabs from '../ui/Tabs';
 
 interface CustomerDetailProps {
   customerId: string;
@@ -15,6 +16,7 @@ interface CustomerDetailProps {
   onClose: () => void;
   onUpdate: () => void;
   isInline?: boolean;
+  initialSection?: 'profile' | 'followups';
 }
 
 interface FollowUp {
@@ -36,8 +38,9 @@ interface ScheduleAvailabilityPreference {
   availabilityHorizon: ScheduleHorizon;
 }
 
-export default function CustomerDetail({ customerId, projectId, onClose, onUpdate, isInline = false }: CustomerDetailProps) {
+export default function CustomerDetail({ customerId, projectId, onClose, onUpdate, isInline = false, initialSection = 'profile' }: CustomerDetailProps) {
   const { showToast } = useToast();
+  const [section, setSection] = useState<'profile' | 'followups' | 'memory'>(initialSection);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -172,7 +175,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
       if (event.key !== 'Tab') return;
       const focusable = Array.from(
         modalRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])') ?? [],
-      );
+      ).filter(control => control.tabIndex >= 0 && control.getClientRects().length > 0);
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -402,14 +405,18 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
     >
       {/* Header */}
       <div className={styles.header}>
-        <div>
+        <div className={styles.customerIdentity}>
+          <span className={styles.customerAvatar} aria-hidden="true">{(customer?.name || 'ع')[0]}</span>
+          <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <h2 id="customer-detail-title" className={styles.title}>{customer?.name || 'تفاصيل العميل'}</h2>
             {customer?.label && (
               <span className={styles.smartLabelBadge}>{customer.label}</span>
             )}
           </div>
-          <p className={styles.subtitle}>{customer?.phoneNumber}</p>
+          <p className={styles.subtitle}><Phone size={13} aria-hidden="true" /><bdi>{customer?.phoneNumber}</bdi>
+            {customer?.city && <><MapPin size={13} aria-hidden="true" /><span>{customer.city}</span></>}</p>
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {isInline && (
@@ -422,17 +429,22 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               الرجوع للقائمة
             </button>
           )}
-          <button ref={closeButtonRef} type="button" onClick={onClose} className={styles.closeBtn} aria-label="إغلاق ملف العميل">
+          {!isInline && <button ref={closeButtonRef} type="button" onClick={onClose} className={styles.closeBtn} aria-label="إغلاق ملف العميل">
             <X size={20} aria-hidden="true" />
-          </button>
+          </button>}
         </div>
       </div>
 
-        {/* Content Tabs / Split view */}
-        <div className={styles.bodyGrid}>
-          {/* Left Column: Profile Info Form */}
-          <form onSubmit={handleSave} className={styles.formColumn}>
-            <h3 className={styles.sectionTitle}>سياق الملف الشخصي</h3>
+        <div className={styles.taskNavigation}>
+          <Tabs idPrefix="customer-detail" label="أقسام ملف العميل" selected={section} onChange={setSection}
+            tabs={[{ key: 'profile', label: 'بيانات العميل', icon: <UserRound size={17} aria-hidden="true" /> },
+              { key: 'followups', label: 'المتابعات', icon: <CalendarClock size={17} aria-hidden="true" /> },
+              { key: 'memory', label: 'ملخص الذكاء الاصطناعي', icon: <Sparkles size={17} aria-hidden="true" /> }]} />
+        </div>
+        <div className={styles.bodySections}>
+          <form onSubmit={handleSave} className={styles.formColumn} hidden={section !== 'profile'}
+            role="tabpanel" id="customer-detail-panel-profile" aria-labelledby="customer-detail-tab-profile">
+            <h3 className={styles.sectionTitle}><UserRound size={19} aria-hidden="true" />بيانات العميل وتصنيفه</h3>
             
             <div className={styles.formGroup}>
               <label htmlFor="customer-detail-name" className={styles.label}>الاسم الكامل</label>
@@ -553,17 +565,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
             </Tooltip>
           </form>
 
-          {/* Right Column: Followups & History */}
-          <div className={styles.interactionsColumn}>
-            {/* AI intelligence warning score indicators */}
-            <div className={styles.scoreIndicatorPanel}>
-              <h3 className={styles.sectionTitle}>ملخص العميل ودرجة الاهتمام</h3>
-              <div className={styles.scoreCards} style={{ marginBottom: '12px' }}>
-                <div className={styles.scoreCard} style={{ border: '1px solid var(--accent)', backgroundColor: 'var(--accent-soft)', width: '100%' }}>
-                  <span className={styles.scoreLabel}>درجة الاهتمام</span>
-                  <span className={styles.scoreVal}>{clampedDisplayScore}/100</span>
-                </div>
-              </div>
+            <div className={styles.memorySection} hidden={section !== 'memory'} role="tabpanel"
+              id="customer-detail-panel-memory" aria-labelledby="customer-detail-tab-memory">
+              <h3 className={styles.sectionTitle}><Sparkles size={19} aria-hidden="true" />ملخص العميل ودرجة الاهتمام</h3>
+              <p className={styles.scoreSummary}>درجة الاهتمام <strong>{clampedDisplayScore}/100</strong></p>
 
               {/* Editable Customer Memory */}
               <form onSubmit={handleSaveMemory} style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
@@ -622,7 +627,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                     </button>
                   </Tooltip>
                   <Tooltip content="تحليل المحادثات عبر الذكاء الاصطناعي وتحديث الملخص والسمات تلقائياً" position="top" style={{ flex: 1 }}>
-                    <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(203, 184, 255, 0.12)', borderColor: 'rgba(203, 184, 255, 0.25)', color: '#CBB8FF' }}>
+                    <button type="button" onClick={handleGenerateMemory} disabled={generatingMemory || savingMemory} className={styles.scheduleBtn} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'var(--accent-soft)', borderColor: 'var(--border-strong)', color: 'var(--accent)' }}>
                       <Sparkles size={14} />
                       <PhantomLoader loading={generatingMemory} label="تحديث ملف العميل بالذكاء الاصطناعي">
                         <span>تحديث بالذكاء الاصطناعي</span>
@@ -633,9 +638,10 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
               </form>
             </div>
 
-            {/* Schedule Followup Form */}
+            <section className={styles.followupsSection} hidden={section !== 'followups'} role="tabpanel"
+              id="customer-detail-panel-followups" aria-labelledby="customer-detail-tab-followups">
             <div className={styles.followUpFormBox}>
-              <h3 className={styles.sectionTitle}>جدولة متابعة / تذكير</h3>
+              <h3 className={styles.sectionTitle}><CalendarClock size={19} aria-hidden="true" />جدولة متابعة / تذكير</h3>
               <form onSubmit={handleAddFollowUp} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
                 <div className={styles.formGroup}>
                   <label htmlFor="customer-follow-up-type" className={styles.label}>نوع الإجراء</label>
@@ -746,9 +752,9 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
 
             {/* Followup History List */}
             <div style={{ flexGrow: 1, overflowY: 'auto' }}>
-              <h3 className={styles.sectionTitle}>جدول المتابعات المجدولة ({followUps.length})</h3>
+              <h3 className={styles.sectionTitle}><Calendar size={19} aria-hidden="true" />جدول المتابعات المجدولة ({followUps.length})</h3>
               {followUps.length === 0 ? (
-                <div className={styles.emptyFollowUps}>لا توجد متابعات مجدولة</div>
+                <div className={styles.emptyFollowUps}><CalendarClock size={28} aria-hidden="true" /><strong>لا توجد متابعات مجدولة</strong><span>حدد الموعد وأضف المتابعة لتظهر هنا.</span></div>
               ) : (
                 <div className={styles.followUpList}>
                   {followUps.map(f => (
@@ -767,7 +773,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                         {f.type === 'AppointmentReminder' ? (
                           <span className={styles.statusBadge} style={{
                             backgroundColor: 'rgba(16, 185, 129, 0.12)',
-                            color: 'hsl(140, 100%, 65%)',
+                            color: 'var(--success)',
                             padding: '2px 6px',
                             fontSize: '0.7rem'
                           }}>
@@ -785,8 +791,8 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                         )}
                         {f.tone && f.tone !== 'Default' && (
                           <span className={styles.statusBadge} style={{
-                            backgroundColor: 'rgba(203, 184, 255, 0.12)',
-                            color: '#CBB8FF',
+                            backgroundColor: 'var(--accent-soft)',
+                            color: 'var(--accent)',
                             padding: '2px 6px',
                             fontSize: '0.7rem'
                           }}>
@@ -805,7 +811,7 @@ export default function CustomerDetail({ customerId, projectId, onClose, onUpdat
                 </div>
               )}
             </div>
-          </div>
+          </section>
         </div>
     </div>
   );

@@ -352,8 +352,6 @@ namespace Modules.Campaigns.Jobs
                 return;
             }
 
-            var message = await PersonalizedMessageAsync(campaign, customer, recipient.Variant);
-
             await ExecuteClaimedWorkAsync(
                 recipientId,
                 expectedStatus,
@@ -374,6 +372,9 @@ namespace Modules.Campaigns.Jobs
                         return;
                     }
 
+                    var message = await PersonalizedMessageAsync(claimedCampaign, currentCustomer, claimedRecipient.Variant);
+                    currentCustomer = await RevalidateDeliveryAsync(claimedRecipient, claimedCampaign, expectedStatus);
+                    if (currentCustomer is null) return;
                     await SendClaimedMessageAsync(
                         claimedRecipient,
                         claimedCampaign,
@@ -383,6 +384,24 @@ namespace Modules.Campaigns.Jobs
                         gatewaySession.ConnectedAt.Value,
                         expectedStatus);
                 });
+        }
+
+        private async Task<Customer?> RevalidateDeliveryAsync(CampaignRecipient recipient, Campaign campaign, RecipientStatus expectedStatus)
+        {
+            var latestCampaign = await _dbContext.Campaigns.IgnoreQueryFilters().AsNoTracking()
+                .SingleAsync(candidate => candidate.Id == campaign.Id);
+            if (latestCampaign.Status != CampaignStatus.Running
+                || (latestCampaign.WhatsAppAccountId ?? recipient.ProjectId) != (campaign.WhatsAppAccountId ?? recipient.ProjectId))
+            {
+                await ReleaseRecipientAsync(recipient, expectedStatus);
+                return null;
+            }
+            var customer = await _dbContext.Customers.IgnoreQueryFilters().AsNoTracking()
+                .SingleOrDefaultAsync(candidate => candidate.Id == recipient.CustomerId);
+            if (customer is not null && !customer.IsBlacklisted) return customer;
+            await RecordTerminalOutcomeAsync(recipient, campaign.Id, RecipientStatus.Failed,
+                customer is null ? "Customer not found." : "Customer opted out.");
+            return null;
         }
 
         private async Task ExecuteClaimedWorkAsync(
@@ -471,7 +490,7 @@ namespace Modules.Campaigns.Jobs
                             "Gateway reported success without a provider message id.");
                         return;
                     }
-                    await RecordSuccessfulDeliveryAsync(
+                    await RecordAcceptedSendAsync(
                         recipient,
                         campaign,
                         customer,
@@ -582,7 +601,7 @@ namespace Modules.Campaigns.Jobs
             await _dbContext.SaveChangesAsync();
         }
 
-        private async Task RecordSuccessfulDeliveryAsync(
+        private async Task RecordAcceptedSendAsync(
             CampaignRecipient recipient,
             Campaign campaign,
             Customer customer,
@@ -590,13 +609,13 @@ namespace Modules.Campaigns.Jobs
             Guid whatsAppAccountId,
             string providerMessageId)
         {
-            var deliveredAt = DateTime.UtcNow;
+            var sentAt = DateTime.UtcNow;
             var conversation = await new WhatsAppConversationService(_dbContext)
                 .ResolveOrCreateAsync(
                     recipient.ProjectId,
                     customer.Id,
                     whatsAppAccountId,
-                    deliveredAt);
+                    sentAt);
             if (string.Equals(
                     conversation.WhatsAppDeliveryUnknownKey,
                     recipient.Id.ToString("N"),
@@ -620,12 +639,11 @@ namespace Modules.Campaigns.Jobs
                     Direction = "Outgoing",
                     Content = content,
                     MessageType = "Text",
-                    Timestamp = deliveredAt
+                    Timestamp = sentAt
                 });
             }
             recipient.Status = RecipientStatus.Sent;
-            recipient.SentAt = deliveredAt;
-            recipient.DeliveredAt = deliveredAt;
+            recipient.SentAt = sentAt;
             recipient.ErrorMessage = string.Empty;
             await _dbContext.SaveChangesAsync();
 
@@ -636,13 +654,11 @@ namespace Modules.Campaigns.Jobs
                     .Where(candidate => candidate.Id == campaign.Id)
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(candidate => candidate.SentCount, candidate => candidate.SentCount + 1)
-                        .SetProperty(candidate => candidate.DeliveredCount, candidate => candidate.DeliveredCount + 1)
                         .SetProperty(candidate => candidate.UpdatedAt, DateTime.UtcNow));
             }
             else
             {
                 campaign.SentCount++;
-                campaign.DeliveredCount++;
                 await _dbContext.SaveChangesAsync();
             }
 
@@ -898,6 +914,10 @@ namespace Modules.Campaigns.Jobs
 
         private async Task<string> PersonalizedMessageAsync(Campaign campaign, Customer customer, string variant)
         {
+            var baseTemplate = variant == "B" ? campaign.MessageTemplateB ?? campaign.MessageTemplateA : campaign.MessageTemplateA;
+            var personalizedTemplate = baseTemplate.Replace("{{CustomerName}}", customer.Name);
+            if (!baseTemplate.Contains("{{InterestTopic}}", StringComparison.Ordinal)) return personalizedTemplate;
+
             var conversationIds = await _dbContext.Conversations
                 .IgnoreQueryFilters()
                 .Where(conversation => conversation.ProjectId == campaign.ProjectId && conversation.CustomerId == customer.Id)
@@ -914,9 +934,10 @@ namespace Modules.Campaigns.Jobs
                 .ToListAsync();
 
             var chatContext = string.Join("\n", recentMessages);
+            if (string.IsNullOrWhiteSpace(chatContext))
+                return personalizedTemplate.Replace("{{InterestTopic}}", "تفاصيل الكورس");
             var prompt = "استخرج موضوع اهتمام العميل في كلمتين إلى ست كلمات بالمصري. "
                 + "اكتب الموضوع فقط بدون اسم العميل أو علامات ترقيم. لو السياق غير واضح اكتب: تفاصيل الكورس";
-            var baseTemplate = variant == "B" ? campaign.MessageTemplateB ?? campaign.MessageTemplateA : campaign.MessageTemplateA;
             var generatedTopic = await _campaignAIService.GenerateProjectCampaignCopyAsync(
                 campaign.ProjectId,
                 prompt,
@@ -924,9 +945,7 @@ namespace Modules.Campaigns.Jobs
                 chatContext);
 
             var topic = SafeInterestTopic(generatedTopic);
-            return baseTemplate
-                .Replace("{{CustomerName}}", customer.Name)
-                .Replace("{{InterestTopic}}", topic);
+            return personalizedTemplate.Replace("{{InterestTopic}}", topic);
         }
 
         private static string SafeInterestTopic(string generatedTopic)

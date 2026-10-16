@@ -20,7 +20,7 @@ export interface Conversation {
   whatsAppAccountId?: string | null;
   whatsAppAccountName?: string | null;
   lastMessageAt: string;
-  unreadCount: number;
+  unreadCount: number | null;
   assignedAgentId: string | null;
   assignedAgentName: string | null;
   isAiTyping?: boolean;

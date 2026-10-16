@@ -1,8 +1,77 @@
-/* Smart Customer Core design tokens. Dark navy is the product default. */
+/* Palette values live here; components consume the semantic tokens. */
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+  --bg-primary: 220 27% 96%;
+  --bg-secondary: 210 25% 99%;
+  --bg-tertiary: 220 24% 93%;
+  --text-primary: 202 31% 20%;
+  --text-secondary: 203 20% 32%;
+  --text-muted: 202 16% 40%;
+  --accent-primary: 176 78% 25%;
+  --accent-secondary: 261 49% 44%;
+  --accent-success: 158 71% 27%;
+  --accent-warning: 32 85% 33%;
+  --accent-danger: 2 65% 43%;
 
-  /* HSL compatibility bridge for legacy modules. */
+  --canvas: oklch(0.962 0.009 255);
+  --canvas-soft: oklch(0.943 0.014 255);
+  --surface: oklch(0.995 0.002 230);
+  --surface-raised: oklch(0.953 0.013 255);
+  --surface-muted: oklch(0.977 0.007 255);
+  --sidebar-surface: oklch(0.255 0.043 245);
+  --navigation-ink: oklch(0.972 0.008 220);
+  --navigation-muted: oklch(0.77 0.028 230);
+  --navigation-hover: oklch(0.33 0.045 245);
+  --navigation-selected: oklch(0.88 0.103 174);
+  --navigation-selected-ink: oklch(0.27 0.05 190);
+  --border-subtle: oklch(0.88 0.009 220 / .7);
+  --border-strong: oklch(0.76 0.025 215 / .65);
+  --text-strong: oklch(0.28 0.034 245);
+  --text-base: oklch(0.425 0.03 230);
+  --text-soft: oklch(0.49 0.026 230);
+  --accent: oklch(0.46 0.089 180);
+  --accent-hover: oklch(0.395 0.078 180);
+  --accent-ink: oklch(0.99 0.003 210);
+  --accent-soft: oklch(0.942 0.042 174);
+  --accent-soft-strong: oklch(0.895 0.068 174);
+  --info: oklch(0.46 0.15 257);
+  --info-soft: oklch(0.945 0.029 257);
+  --intelligence: oklch(0.46 0.17 295);
+  --intelligence-soft: oklch(0.941 0.035 295);
+  --accent-secondary-soft: var(--intelligence-soft);
+  --danger: hsl(var(--accent-danger));
+  --success: hsl(var(--accent-success));
+  --warning: hsl(var(--accent-warning));
+  --danger-soft: oklch(0.95 0.027 25);
+  --success-soft: oklch(0.938 0.055 155);
+  --warning-soft: oklch(0.948 0.065 80);
+  --overlay: oklch(0.27 0.027 230 / .42);
+  --shadow-soft: 0 8px 28px oklch(0.3 0.025 230 / .08);
+  --shadow-panel: 0 2px 8px oklch(0.3 0.025 230 / .035);
+  --focus-ring: 0 0 0 3px oklch(0.46 0.089 180 / .2);
+  --border-glow: var(--border-subtle);
+  --border-glow-active: var(--border-strong);
+  --shadow-neon: none;
+  --shadow-neon-pink: none;
+  --font-family: var(--font-arabic), Tahoma, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  --space-xs: .25rem;
+  --space-sm: .5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-xxl: 3rem;
+  --radius-sm: .375rem;
+  --radius-md: .625rem;
+  --radius-lg: .875rem;
+  --radius-full: 9999px;
+  --control-height: 44px;
+  --transition-fast: .15s cubic-bezier(.16, 1, .3, 1);
+  --transition-normal: .2s cubic-bezier(.16, 1, .3, 1);
+  --transition-spring: var(--transition-normal);
+}
+
+:root[data-theme='dark'] {
   --bg-primary: 220 39% 6%;
   --bg-secondary: 218 33% 10%;
   --bg-tertiary: 217 27% 16%;
@@ -10,7 +79,7 @@
   --text-secondary: 215 24% 78%;
   --text-muted: 215 16% 65%;
   --accent-primary: 183 100% 50%;
-  --accent-secondary: 330 100% 55%;
+  --accent-secondary: 205 78% 70%;
   --accent-success: 158 64% 52%;
   --accent-warning: 38 92% 58%;
   --accent-danger: 0 84% 66%;
@@ -31,6 +100,10 @@
   --accent-soft: oklch(0.87 0.145 194 / 0.1);
   --accent-soft-strong: oklch(0.87 0.145 194 / 0.18);
   --accent-secondary-soft: oklch(0.7 0.2 350 / 0.12);
+  --info: oklch(0.79 0.104 255);
+  --info-soft: oklch(0.79 0.104 255 / .15);
+  --intelligence: oklch(0.81 0.10 295);
+  --intelligence-soft: oklch(0.81 0.10 295 / .15);
   --danger-soft: oklch(0.67 0.19 25 / 0.14);
   --success-soft: oklch(0.72 0.14 158 / 0.14);
   --warning-soft: oklch(0.78 0.14 75 / 0.15);
@@ -44,66 +117,7 @@
   --shadow-neon: 0 0 0 1px oklch(0.87 0.145 194 / 0.18);
   --shadow-neon-pink: 0 0 0 1px oklch(0.7 0.2 350 / 0.2);
 
-  --font-family: 'Cairo', 'Noto Sans Arabic', Tahoma, Arial, system-ui, sans-serif;
-  --font-mono: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-
-  --space-xs: 0.25rem;
-  --space-sm: 0.5rem;
-  --space-md: 1rem;
-  --space-lg: 1.5rem;
-  --space-xl: 2rem;
-  --space-xxl: 3rem;
-
-  --radius-sm: 0.375rem;
-  --radius-md: 0.625rem;
-  --radius-lg: 0.875rem;
-  --radius-full: 9999px;
-
-  --transition-fast: 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-  --transition-normal: 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-  --transition-spring: 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* Light is an explicit preference, never the first-paint default. */
-body.light-theme {
-  color-scheme: light;
-  --bg-primary: 220 25% 97%;
-  --bg-secondary: 220 30% 99%;
-  --bg-tertiary: 218 22% 92%;
-  --text-primary: 222 38% 13%;
-  --text-secondary: 220 18% 31%;
-  --text-muted: 218 14% 39%;
-  --accent-primary: 191 100% 26%;
-  --accent-secondary: 330 72% 38%;
-  --accent-success: 158 70% 27%;
-  --accent-warning: 31 90% 31%;
-  --accent-danger: 0 72% 43%;
-
-  --canvas: oklch(0.975 0.008 245);
-  --canvas-soft: oklch(0.95 0.012 245);
-  --surface: oklch(0.992 0.004 245);
-  --surface-raised: oklch(0.925 0.014 245);
-  --surface-muted: oklch(0.958 0.01 245);
-  --border-subtle: oklch(0.25 0.025 245 / 0.12);
-  --border-strong: oklch(0.25 0.025 245 / 0.24);
-  --text-strong: oklch(0.22 0.026 245);
-  --text-base: oklch(0.38 0.025 245);
-  --text-soft: oklch(0.47 0.025 245);
-  --accent: oklch(0.49 0.105 205);
-  --accent-hover: oklch(0.43 0.1 205);
-  --accent-ink: oklch(0.985 0.006 245);
-  --accent-soft: oklch(0.49 0.105 205 / 0.1);
-  --accent-soft-strong: oklch(0.49 0.105 205 / 0.17);
-  --overlay: oklch(0.12 0.02 245 / 0.5);
-  --shadow-soft: 0 10px 28px oklch(0.2 0.025 245 / 0.12);
-  --focus-ring: 0 0 0 3px oklch(0.49 0.105 205 / 0.24);
-  --border-glow: oklch(0.49 0.105 205 / 0.14);
-  --border-glow-active: oklch(0.49 0.105 205 / 0.3);
-  --shadow-neon: 0 0 0 1px oklch(0.49 0.105 205 / 0.2);
-}
-
-/* Compatibility hook for existing saved sessions. */
-body.dark-theme {
+  --sidebar-surface: oklch(0.18 0.025 250);
   color-scheme: dark;
 }
 
@@ -123,6 +137,8 @@ body {
   background: var(--canvas);
   color: var(--text-strong);
   font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.6;
   direction: rtl;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;

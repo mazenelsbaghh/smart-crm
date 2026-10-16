@@ -99,12 +99,10 @@ public sealed class AdvertisingConversionsController(IProjectAuthorizationServic
             .Where(item => item.ProjectId == projectId)
             .Select(item => new { item.AccountTimezoneIana, item.AccountCurrency })
             .SingleOrDefaultAsync(cancellationToken);
-        var timezoneId = !string.IsNullOrWhiteSpace(reportingContext?.ReportingTimezoneIana)
-            ? reportingContext.ReportingTimezoneIana
-            : accountContext?.AccountTimezoneIana;
-        var currency = !string.IsNullOrWhiteSpace(reportingContext?.Currency)
-            ? reportingContext.Currency
-            : accountContext?.AccountCurrency;
+        var timezoneId = !string.IsNullOrWhiteSpace(accountContext?.AccountTimezoneIana)
+            ? accountContext.AccountTimezoneIana : reportingContext?.ReportingTimezoneIana;
+        var currency = !string.IsNullOrWhiteSpace(accountContext?.AccountCurrency)
+            ? accountContext.AccountCurrency : reportingContext?.Currency;
         if (string.IsNullOrWhiteSpace(timezoneId))
             return Conflict(new { code = "ADS_REPORTING_TIMEZONE_UNKNOWN", message = "A validated reporting timezone is required." });
         if (string.IsNullOrWhiteSpace(currency))
@@ -122,10 +120,8 @@ public sealed class AdvertisingConversionsController(IProjectAuthorizationServic
         var reportDate = date ?? DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, timezone));
         var localStart = DateTime.SpecifyKind(reportDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
         var localEnd = localStart.AddDays(1);
-        if (timezone.IsInvalidTime(localStart) || timezone.IsInvalidTime(localEnd))
-            return Conflict(new { code = "ADS_REPORTING_WINDOW_INVALID", message = "The requested local reporting boundary does not exist in the configured timezone." });
-        var startUtc = TimeZoneInfo.ConvertTimeToUtc(localStart, timezone);
-        var endUtc = TimeZoneInfo.ConvertTimeToUtc(localEnd, timezone);
+        var startUtc = AdvertisingInsightWindow.DayBoundaryUtc(localStart, timezone);
+        var endUtc = AdvertisingInsightWindow.DayBoundaryUtc(localEnd, timezone);
 
         var advertisements = await db.ManagedAdvertisements.AsNoTracking().Where(item => item.ProjectId == projectId)
             .Select(item => new { item.Id, item.Name, item.AdExternalId, item.CreativeId }).ToListAsync(cancellationToken);
@@ -138,23 +134,35 @@ public sealed class AdvertisingConversionsController(IProjectAuthorizationServic
         var conversationIds = observations.Select(item => item.ConversationId).Distinct().ToArray();
         var touches = await db.AdvertisingAttributionTouches.AsNoTracking().Where(item => item.ProjectId == projectId
             && item.ConversationId != null && conversationIds.Contains(item.ConversationId.Value) && item.TouchedAtUtc < endUtc)
-            .OrderByDescending(item => item.TouchedAtUtc).Select(item => new { item.ConversationId, item.AdvertisementId, item.ProviderAdExternalId }).ToListAsync(cancellationToken);
+            .OrderByDescending(item => item.TouchedAtUtc).ThenByDescending(item => item.Id)
+            .Select(item => new { item.ConversationId, item.AdvertisementId, item.ProviderAdExternalId }).ToListAsync(cancellationToken);
         var outcomes = await db.AdvertisingConversions.AsNoTracking().Where(item => item.ProjectId == projectId
-            && item.OccurredAtUtc >= startUtc && item.OccurredAtUtc < endUtc)
+            && item.OccurredAtUtc >= startUtc && item.OccurredAtUtc < endUtc
+            && (item.TruthState == "Verified" || item.TruthState == "Corrected")
+            && item.State != ConversionState.Suppressed
+            && item.CorrectionState != CorrectionState.PendingBase)
             .Select(item => new { item.Id, item.AdvertisementId, item.EventType, item.AttributionTouchId, item.CustomerReference }).ToListAsync(cancellationToken);
         var outcomeIds = outcomes.Select(item => item.Id).ToArray();
         var outcomeTouchIds = outcomes.Where(item => item.AttributionTouchId != null).Select(item => item.AttributionTouchId!.Value).ToArray();
         var outcomeTouches = await db.AdvertisingAttributionTouches.AsNoTracking().Where(item => item.ProjectId == projectId
             && (outcomeIds.Contains(item.ConversionId ?? Guid.Empty) || outcomeTouchIds.Contains(item.Id)))
             .Select(item => new { item.Id, item.ConversionId, item.ConversationId, item.AdvertisementId }).ToListAsync(cancellationToken);
-        var insights = await db.AdvertisingInsights.AsNoTracking().Where(item => item.ProjectId == projectId && item.IsCurrent
-            && item.IntervalEndUtc > startUtc && item.IntervalStartUtc < endUtc)
-            .GroupBy(item => item.TargetId).Select(group => new { AdvertisementId = group.Key, Spend = group.Sum(item => item.Spend) })
-            .ToDictionaryAsync(item => item.AdvertisementId, item => item.Spend, cancellationToken);
+        var earliestInsight = startUtc.AddDays(-1);
+        var latestInsight = endUtc.AddDays(1);
+        var insightCandidates = await db.AdvertisingInsights.AsNoTracking().Where(item => item.ProjectId == projectId && item.IsCurrent
+            && item.TargetType == "Ad" && (item.BreakdownHash == "none" || item.BreakdownHash == "")
+            && item.IntervalStartUtc >= earliestInsight && item.IntervalStartUtc < latestInsight).ToListAsync(cancellationToken);
+        var dailyInsights = insightCandidates.Where(item => AdvertisingInsightWindow.StartUtc(item) >= startUtc
+            && AdvertisingInsightWindow.StartUtc(item) < endUtc).ToArray();
+        var excludedSpendCurrencies = dailyInsights.Count(item => item.Currency != currency);
+        var spendAvailable = dailyInsights.Length > 0 && excludedSpendCurrencies == 0;
+        var insights = dailyInsights.Where(item => item.Currency == currency).GroupBy(item => item.TargetId)
+            .ToDictionary(group => group.Key, group => group.Sum(item => item.Spend));
 
         var conversationAd = observations.GroupBy(item => item.ConversationId).ToDictionary(group => group.Key, group =>
             touches.FirstOrDefault(touch => touch.ConversationId == group.Key)?.AdvertisementId
-            ?? advertisements.FirstOrDefault(ad => group.Select(item => item.ProviderAdExternalId).Contains(ad.AdExternalId))?.Id);
+            ?? advertisements.FirstOrDefault(ad => !string.IsNullOrWhiteSpace(ad.AdExternalId)
+                && group.Any(item => item.ProviderAdExternalId == ad.AdExternalId))?.Id);
         var cohortConversationIds = conversationIds.ToHashSet();
         var linkedOutcomes = outcomes.Select(outcome =>
         {
@@ -165,7 +173,7 @@ public sealed class AdvertisingConversionsController(IProjectAuthorizationServic
                     .OrderByDescending(item => item.MessageOccurredAtUtc).Select(item => (Guid?)item.ConversationId).FirstOrDefault()
                 : null;
             var conversationId = touch?.ConversationId ?? customerConversationId;
-            return new { outcome.EventType, ConversationId = conversationId };
+            return new { outcome.Id, outcome.CustomerReference, outcome.EventType, ConversationId = conversationId };
         }).ToArray();
         var cohortOutcomes = linkedOutcomes.Where(item => item.ConversationId != null
             && cohortConversationIds.Contains(item.ConversationId.Value)).ToArray();
@@ -183,26 +191,39 @@ public sealed class AdvertisingConversionsController(IProjectAuthorizationServic
             var bookings = bookingConversationIds.Count;
             sources.TryGetValue(advertisement.CreativeId, out var source);
             var spend = insights.GetValueOrDefault(advertisement.Id);
+            var adSpendAvailable = insights.ContainsKey(advertisement.Id)
+                && !dailyInsights.Any(item => item.TargetId == advertisement.Id && item.Currency != currency);
             return new { advertisement.Id, advertisement.Name, advertisement.AdExternalId, source, entrants, qualified, bookings, spend,
-                costPerEntrant = entrants == 0 ? (decimal?)null : spend / entrants,
-                costPerQualified = qualified == 0 ? (decimal?)null : spend / qualified,
+                spendAvailable = adSpendAvailable,
+                costPerEntrant = entrants == 0 || !adSpendAvailable ? (decimal?)null : spend / entrants,
+                costPerQualified = qualified == 0 || !adSpendAvailable ? (decimal?)null : spend / qualified,
                 qualificationRate = entrants == 0 ? (decimal?)null : decimal.Round((decimal)qualified / entrants, 4),
                 bookingRate = qualified == 0 ? (decimal?)null : decimal.Round((decimal)bookings / qualified, 4) };
         }).Where(row => row.entrants > 0 || row.qualified > 0 || row.bookings > 0 || row.spend > 0).ToArray();
-        var attributedConversationIds = conversationAd.Where(item => item.Value != null).Select(item => item.Key).ToHashSet();
+        spendAvailable = spendAvailable && rows.All(row => row.spendAvailable);
+        var advertisementIds = advertisements.Select(item => item.Id).ToHashSet();
+        var attributedConversationIds = conversationAd.Where(item => item.Value != null && advertisementIds.Contains(item.Value.Value))
+            .Select(item => item.Key).ToHashSet();
         var unattributedEntrants = conversationIds.Count(id => !attributedConversationIds.Contains(id));
-        var unattributedOutcomes = linkedOutcomes.Where(item => item.ConversationId == null
+        var unlinkedOutcomes = linkedOutcomes.Where(item => item.ConversationId == null
             || !cohortConversationIds.Contains(item.ConversationId.Value)).ToArray();
+        var unlinkedCustomers = unlinkedOutcomes.GroupBy(item => item.CustomerReference ?? item.Id.ToString()).ToArray();
+        var unattributedOutcomes = cohortOutcomes.Where(item => !attributedConversationIds.Contains(item.ConversationId!.Value))
+            .GroupBy(item => item.ConversationId).ToArray();
         var totalBookingConversationIds = cohortOutcomes.Where(item => IsBooking(item.EventType))
             .Select(item => item.ConversationId!.Value).Distinct().ToHashSet();
         var totalQualifiedConversationIds = cohortOutcomes.Where(item => item.EventType == "QualifiedLead")
             .Select(item => item.ConversationId!.Value).Concat(totalBookingConversationIds).Distinct().ToHashSet();
         return Ok(new { date = reportDate.ToString("yyyy-MM-dd"), timezone = timezoneId, currency, startUtc, endUtc,
+            spendAvailable, excludedSpendCurrencies,
             totals = new { entrants = conversationIds.Length, qualified = totalQualifiedConversationIds.Count,
                 bookings = totalBookingConversationIds.Count, spend = insights.Values.Sum() },
             rows, unattributed = new { entrants = unattributedEntrants,
-                qualified = unattributedOutcomes.Count(item => item.EventType == "QualifiedLead"),
-                bookings = unattributedOutcomes.Count(item => IsBooking(item.EventType)) } });
+                qualified = unattributedOutcomes.Count(group => group.Any(item => item.EventType == "QualifiedLead" || IsBooking(item.EventType))),
+                bookings = unattributedOutcomes.Count(group => group.Any(item => IsBooking(item.EventType))) },
+            unlinkedOutcomes = new {
+                qualified = unlinkedCustomers.Count(group => group.Any(item => item.EventType == "QualifiedLead" || IsBooking(item.EventType))),
+                bookings = unlinkedCustomers.Count(group => group.Any(item => IsBooking(item.EventType))) } });
     }
 
     [HttpGet]

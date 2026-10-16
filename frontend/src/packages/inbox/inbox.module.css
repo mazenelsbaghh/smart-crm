@@ -2,133 +2,24 @@
 
 .inboxContainer {
   display: flex;
-  height: 100vh;
-  width: 100vw;
   background-color: var(--canvas);
   color: var(--text-strong);
-  font-family: 'Cairo', 'Inter', -apple-system, sans-serif;
   overflow: hidden;
   margin: 0;
   padding: 0;
-  direction: rtl; /* RTL for Arabic CRM workspace */
-}
-
-.inboxMobileToolbar,
-.inboxMobileMenuOverlay {
-  display: none;
+  direction: rtl; /* RTL for Arabic CRM workspace */ width: 100%; height: 100%; min-width: 0; min-height: 0; font-family: var(--font-family);
 }
 
 /* ==========================================
    1. Ultra Thin Sidebar (80px)
    ========================================== */
-.thinSidebar {
-  width: 80px;
-  height: 100vh;
-  background-color: var(--canvas);
-  border-left: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--space-md) 0;
-  flex-shrink: 0;
-}
-
-.sidebarLogoContainer {
-  width: 46px;
-  height: 46px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  margin-bottom: var(--space-xl);
-  transition: background-color var(--transition-fast);
-  text-decoration: none;
-}
-
-.sidebarLogoBox {
-  width: 46px;
-  height: 46px;
-  border-radius: var(--radius-md);
-  background-color: var(--accent);
-  color: var(--accent-ink);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color var(--transition-normal);
-}
-
-.sidebarNav {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  align-items: center;
-  flex-grow: 1;
-  width: 100%;
-}
-
-.sidebarNavItem {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  position: relative;
-  overflow: visible;
-  transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.25s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  text-decoration: none;
-}
-
-.sidebarNavItem:hover {
-  background-color: var(--accent-soft);
-  color: var(--text-strong);
-  border-color: var(--border-subtle);
-}
-
-.sidebarNavItemActive {
-  background-color: var(--accent-soft-strong) !important;
-  color: var(--accent) !important;
-  border-color: var(--border-glow-active) !important;
-  box-shadow: 0 0 12px var(--border-glow);
-}
 
 /* Sliding hover label styling */
-.sidebarNavLabel {
-  position: absolute;
-  right: calc(100% + 12px);
-  top: 50%;
-  transform: translateY(-50%) translateX(10px);
-  opacity: 0;
-  pointer-events: none;
-  background-color: var(--surface);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-strong);
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-  font-weight: 600;
-  white-space: nowrap;
-  box-shadow: var(--shadow-soft);
-  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-  z-index: 100;
-}
 
-.sidebarNavItem:hover .sidebarNavLabel,
-.sidebarNavItem:focus-visible .sidebarNavLabel {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-}
-
-.sidebarLogoContainer:focus-visible,
-.sidebarNavItem:focus-visible,
-.newChatBtn:focus-visible,
-.tabFilterBtn:focus-visible,
+.conversationStatusFilter select:focus-visible,
+.responsiveDetailsTrigger:focus-visible,
+.conversationActions summary:focus-visible,
+.aiBlockToggle:focus-visible,
 .composerSendBtn:focus-visible,
 .reactionBtn:focus-visible,
 .tabNavButton:focus-visible,
@@ -142,34 +33,20 @@
   outline-offset: 2px;
 }
 
-.sidebarFooter {
-  margin-top: auto;
-}
-
-.sidebarAvatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background-color: var(--surface);
-  border: 1px solid var(--border-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-soft);
-}
-
 /* ==========================================
    2. Conversation List Panel (350px)
    ========================================== */
 .conversationPanel {
-  width: 350px;
-  height: 100vh;
   background-color: var(--canvas-soft);
   border-left: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   box-sizing: border-box;
+  width: 320px;
+  height: 100%;
+  background: var(--surface);
+  min-height: 0;
 }
 
 /* KPI cards 2x2 grid */
@@ -544,12 +421,14 @@
    ========================================== */
 .chatPanel {
   flex-grow: 1;
-  height: 100vh;
   background-color: var(--canvas-soft);
   color: var(--text-strong);
   display: flex;
   flex-direction: column;
   min-width: 0;
+  height: 100%;
+  min-height: 0;
+  background: var(--canvas);
 }
 
 /* Keep a rendering glitch from creating a second side-by-side workspace. */
@@ -610,56 +489,70 @@
 .workspaceHeader {
   background-color: var(--canvas-soft);
   border-bottom: 1px solid var(--border-subtle);
-  padding: var(--space-lg) var(--space-lg) 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
-  animation: slideInUpHeader 0.3s ease-out forwards;
+  padding: 12px 20px 0;
+  gap: 6px;
+  background: var(--surface);
+  animation: none;
+  flex-shrink: 0;
 }
 
 .headerTopRow {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
+  gap: 12px;
 }
 
 .headerProfile {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  min-width: 0;
+  gap: 10px;
+  flex: 1;
 }
 
 .headerAvatar {
-  width: 52px;
-  height: 52px;
   border-radius: 50%;
   background-color: var(--surface-raised);
   border: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-soft);
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 1.125rem;
+  font-weight: 600;
 }
 
 .customerInfoBlock {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .workspaceCustomerName {
-  font-size: 1.45rem;
-  font-weight: 800;
   color: var(--text-strong);
   margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .customerSubDetails {
-  font-size: 0.8rem;
   color: var(--text-soft);
   margin: 3px 0 0;
   display: flex;
   align-items: center;
   gap: 6px;
+  font-size: .75rem;
+  flex-wrap: wrap;
 }
 
 .dividerDot {
@@ -669,67 +562,102 @@
 .headerManagerAssignee {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
-.managerProfile {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  background-color: var(--surface);
-  border: 1px solid var(--border-subtle);
-  padding: 6px 12px;
-  border-radius: 16px;
-}
-
-.managerAvatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background-color: var(--surface-raised);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.conversationAssignee {
+  font-size: .75rem;
   color: var(--text-soft);
+  overflow-wrap: anywhere;
 }
 
-.managerNameBlock {
-  display: flex;
-  flex-direction: column;
-}
-
-.managerLabel {
-  font-size: 0.6rem;
-  color: var(--text-soft);
-}
-
-.managerName {
-  font-size: 0.76rem;
-  font-weight: 800;
+.conversationAssignee strong {
+  font-weight: 500;
   color: var(--text-strong);
 }
 
-.stagePillsRow {
+.conversationContextRow {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.conversationActions {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.conversationActions summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
   gap: 6px;
+  color: var(--text-soft);
+  font-size: .75rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.conversationActions summary::-webkit-details-marker { display: none; }
+.conversationActions summary::after { content: '+'; font-size: 1rem; }
+.conversationActions[open] summary::after { content: '−'; }
+
+.conversationActionsPanel {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 100%;
+  z-index: 5;
+  min-width: 200px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.conversationActionsPanel .aiBlockToggle {
+  width: 100%;
+  min-height: 44px;
+  justify-content: flex-start;
+}
+
+.automationBlockedState {
+  color: var(--danger);
+  font-size: .75rem;
 }
 
 .statusPill {
-  font-size: 0.72rem;
-  font-weight: 800;
-  padding: 4px 12px;
-  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .75rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 7px;
+  white-space: nowrap;
 }
 
-.statusPillHigh {
-  background-color: rgba(243, 92, 110, 0.12);
-  color: #f35c6e;
+.statusPill[data-status='Open'] {
+  background: var(--info-soft);
+  color: var(--info);
 }
 
-.statusPillWarm {
-  background-color: var(--accent-soft-strong);
-  color: var(--accent);
-  border: 1px solid var(--border-glow-active);
+.statusPill[data-status='Pending'] {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.statusPill[data-status='Resolved'] {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.statusPill[data-status='Closed'] {
+  background: var(--surface-muted);
+  color: var(--text-soft);
 }
 
 /* Action button row + Tabs */
@@ -811,11 +739,15 @@
 
 .workspaceTabs {
   display: flex;
-  margin-right: auto; /* Push to the left (LTR equivalent) */
+  margin: 0;
   gap: 6px;
 }
 
 .tabBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   background: transparent;
   border: none;
   color: var(--text-soft);
@@ -824,6 +756,7 @@
   padding: 8px 14px;
   cursor: pointer;
   border-bottom: 2px solid transparent;
+  min-height: 44px;
   transition: color 0.2s ease, border-color 0.2s ease;
 }
 
@@ -832,9 +765,9 @@
 }
 
 .tabBtnActive {
-  color: var(--text-strong) !important;
-  border-bottom-color: var(--text-strong) !important;
-  font-weight: 800 !important;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 700;
 }
 
 /* Workspace Display Area */
@@ -844,6 +777,8 @@
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
+  min-height: 0;
+  flex: 1;
 }
 
 @keyframes fadeInMessages {
@@ -857,13 +792,17 @@
 
 .messagesContainer {
   flex-grow: 1;
-  overflow-y: auto;
-  padding: var(--space-lg);
   display: flex;
   flex-direction: column;
   gap: 16px;
   background-color: var(--canvas-soft);
-  animation: fadeInMessages 0.35s ease-out forwards;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--canvas);
+  animation: none;
+  overscroll-behavior: contain;
 }
 
 .emptyMessages {
@@ -889,9 +828,9 @@
 }
 
 .msgBubble {
-  max-width: 65%;
+  max-width: min(76%, 65ch);
   padding: 14px 18px;
-  border-radius: 20px;
+  border-radius: 14px;
   line-height: 1.6;
   font-size: 0.9rem;
   display: flex;
@@ -900,33 +839,42 @@
 }
 
 .msgBubbleIncoming {
-  background-color: var(--surface-raised);
   color: var(--text-strong);
-  border: 1px solid var(--border-subtle);
-  border-bottom-right-radius: 4px; /* Distinct bubble style */
+  border-bottom-right-radius: 4px; /* Distinct bubble style */ background-color: var(--surface); border: 1px solid var(--border-subtle);
 }
 
 .msgBubbleOutgoing {
-  background-color: var(--accent);
   color: var(--accent-ink);
   border-bottom-left-radius: 4px;
+  background-color: var(--accent);
+  border: 1px solid var(--accent);
 }
 
 .msgBubbleAI {
-  background-color: var(--surface);
   color: var(--text-strong);
-  border: 1px solid var(--border-strong);
   border-bottom-left-radius: 4px;
+  background-color: var(--intelligence-soft);
+  border: 1px solid color-mix(in oklch, var(--intelligence) 22%, var(--intelligence-soft));
 }
 
-.aiBadgeRow {
+.aiBadgeRow, .agentBadgeRow {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.68rem;
-  font-weight: 800;
+  font-size: .75rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.aiBadgeRow { color: var(--intelligence); }
+.agentBadgeRow { color: inherit; }
+
+.msgRow[data-sender='System'] { justify-content: center; }
+.msgRow[data-sender='System'] .msgBubble,
+.msgRow[data-sender='Unknown'] .msgBubble {
+  background: var(--surface-muted);
   color: var(--text-base);
-  margin-bottom: 2px;
+  border-color: var(--border-subtle);
 }
 
 .messageTextContent {
@@ -935,13 +883,13 @@
 }
 
 .messageTime {
-  font-size: 0.64rem;
-  opacity: 0.5;
+  font-size: .6875rem;
+  opacity: .78;
   align-self: flex-end;
 }
 
 .typingSparkle {
-  color: var(--accent);
+  color: var(--intelligence);
   animation: typing-pulse 1.2s infinite ease-in-out;
 }
 
@@ -963,12 +911,13 @@
 
 /* Composer Area */
 .messageComposer {
-  padding: var(--space-md) var(--space-lg);
   background-color: var(--surface);
   border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  flex-shrink: 0;
+  padding: 12px 20px max(12px, env(safe-area-inset-bottom));
+  gap: 10px;
 }
 
 .composerToolBtn {
@@ -989,17 +938,20 @@
 .messageInput {
   flex-grow: 1;
   background-color: var(--canvas-soft);
-  border: 1px solid var(--border-subtle);
-  border-radius: 20px;
-  padding: 10px 16px;
-  font-size: 0.9rem;
+  border: 1px solid var(--border-strong);
   color: var(--text-strong);
   resize: none;
-  height: 40px;
   line-height: 20px;
   outline: 2px solid transparent;
   font-family: inherit;
   box-sizing: border-box;
+  border-radius: var(--radius-md);
+  min-height: 46px;
+  max-height: 140px;
+  height: 46px;
+  padding: 10px 14px;
+  background: var(--surface);
+  font-size: 1rem;
 }
 
 .messageInput:focus {
@@ -1008,9 +960,6 @@
 }
 
 .composerSendBtn {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
   background-color: var(--accent);
   border: none;
   color: var(--accent-ink);
@@ -1019,6 +968,16 @@
   justify-content: center;
   cursor: pointer;
   transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  min-width: 92px;
+  padding: 10px 14px;
+  height: 48px;
+  gap: 8px;
+  font: inherit;
+  font-size: .875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
 }
 
 .composerSendBtn:hover:not(:disabled) {
@@ -1026,10 +985,10 @@
 }
 
 .composerSendBtn:disabled {
-  opacity: 0.5;
+  opacity: .65;
   cursor: not-allowed;
-  background-color: var(--surface-muted);
-  color: var(--text-soft);
+  background-color: var(--accent-soft-strong);
+  color: var(--accent);
 }
 
 /* Comments Composite Composer */
@@ -1040,11 +999,14 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow: auto;
 }
 
 .commentsInputsRow {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-md);
 }
 
@@ -1052,6 +1014,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .commentLabel {
@@ -1073,6 +1036,8 @@
   outline: 2px solid transparent;
   font-family: inherit;
   box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
 }
 
 .commentTextarea:focus {
@@ -1084,11 +1049,14 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .reactionSelector {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
 }
 
@@ -1311,28 +1279,35 @@
 /* ==========================================
    4. Right Context Panel (320px)
    ========================================== */
-.contextPane,
-.contextPaneSurface {
-  display: contents;
-}
-
-.contextPaneHeader,
 .responsiveDetailsTrigger {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-base);
+  font: inherit;
+  font-size: .75rem;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .detailsPanel {
-  width: 320px;
-  height: 100vh;
   background-color: var(--canvas);
   border-right: 1px solid var(--border-subtle);
-  padding: var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
   overflow-y: auto;
   flex-shrink: 0;
   box-sizing: border-box;
+  height: 100%;
+  width: 280px;
+  background: var(--surface-muted);
+  padding: 14px;
 }
 
 .detailsPanelEmpty {
@@ -1345,32 +1320,73 @@
   color: var(--text-soft);
 }
 
-/* Cards inside Details panel */
-.crmIntelligenceCard,
-.tasksCard,
-.aiInsightsCard,
-.automationsCard {
-  background-color: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 24px;
-  padding: var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
+.customerSummary h3 {
+  margin: 0;
+  font-size: 1.125rem;
 }
 
-.crmCardTitleRow {
+.customerSummary p {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  margin: 8px 0 0;
+  color: var(--text-soft);
+  font-size: .875rem;
+}
+
+.customerSummary .customerSummaryNotes {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
   color: var(--text-base);
 }
 
-.crmCardTitleRow h4 {
-  font-size: 0.82rem;
-  font-weight: 800;
+.customerSummaryTags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.customerSummaryTags .tagPill {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: .75rem;
+}
+
+.customerScore {
+  color: var(--text-soft);
+  font-size: .75rem;
+}
+
+.detailsSection {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.detailsSection > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
   color: var(--text-strong);
-  margin: 0;
+  font-size: .875rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.detailsSection > summary::-webkit-details-marker { display: none; }
+.detailsSection > summary::after { content: '+'; margin-inline-start: auto; }
+.detailsSection[open] > summary::after { content: '−'; }
+.detailsSection > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.detailsSectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 16px;
 }
 
 /* Deal info profit details */
@@ -1592,10 +1608,6 @@
 
 
 /* AI Insights list */
-.aiSparkleIcon {
-  color: var(--accent);
-}
-
 .aiInsightList {
   display: flex;
   flex-direction: column;
@@ -2024,281 +2036,7 @@
   color: var(--accent);
 }
 
-@media (max-width: 768px) {
-  .inboxMobileToolbar {
-    width: 100%;
-    min-height: 58px;
-    padding: max(8px, env(safe-area-inset-top)) 14px 8px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: var(--canvas);
-    border-bottom: 1px solid var(--border-subtle);
-    flex-shrink: 0;
-    z-index: 40;
-  }
-
-  .inboxMobileMenuButton {
-    width: 40px;
-    height: 40px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    background: var(--surface-raised);
-    color: var(--text-strong);
-    cursor: pointer;
-  }
-
-  .inboxMobileMenuButton:focus-visible {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent-soft-strong);
-    outline-offset: 2px;
-  }
-
-  .inboxMobileProjectContext {
-    min-width: 0;
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--text-soft);
-    font-size: 0.72rem;
-    font-weight: 700;
-  }
-
-  .inboxMobileProjectName {
-    min-width: 0;
-    flex: 1;
-    min-height: 40px;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    background: var(--surface-raised);
-    color: var(--text-strong);
-    font-size: 0.82rem;
-    font-weight: 700;
-    direction: rtl;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .inboxMobileMenuOverlay {
-    position: fixed;
-    inset: 0;
-    display: block;
-    background: var(--overlay);
-    z-index: 200;
-  }
-
-  .inboxMobileDrawer {
-    width: min(82vw, 310px);
-    height: 100dvh;
-    padding: max(16px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border-left: 1px solid var(--border-subtle);
-    box-shadow: var(--shadow-soft);
-    overflow-y: auto;
-  }
-
-  .inboxMobileDrawerHeader,
-  .inboxMobileDrawerBrand,
-  .inboxMobileDrawerItem,
-  .inboxMobileLogout {
-    display: flex;
-    align-items: center;
-  }
-
-  .inboxMobileDrawerHeader {
-    min-height: 46px;
-    justify-content: space-between;
-    margin-bottom: 14px;
-  }
-
-  .inboxMobileDrawerBrand {
-    gap: 9px;
-    color: var(--text-strong);
-    font-size: 0.95rem;
-    font-weight: 800;
-  }
-
-  .inboxMobileDrawerLogo {
-    width: 34px;
-    height: 34px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 9px;
-    background: var(--accent);
-    color: var(--accent-ink);
-  }
-
-  .inboxMobileDrawerClose {
-    width: 38px;
-    height: 38px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border-subtle);
-    border-radius: 9px;
-    background: var(--surface-raised);
-    color: var(--text-strong);
-    cursor: pointer;
-  }
-
-  .inboxMobileDrawerNav {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .inboxMobileDrawerItem,
-  .inboxMobileLogout {
-    width: 100%;
-    min-height: 44px;
-    gap: 11px;
-    padding: 0 12px;
-    border: 1px solid transparent;
-    border-radius: 9px;
-    background: transparent;
-    color: var(--text-soft);
-    font: inherit;
-    font-size: 0.84rem;
-    font-weight: 700;
-    text-align: right;
-    cursor: pointer;
-  }
-
-  .inboxMobileDrawerItem:hover,
-  .inboxMobileDrawerItem:focus-visible {
-    background: var(--surface-raised);
-    color: var(--text-strong);
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .inboxMobileDrawerItemActive {
-    border-color: var(--border-glow-active);
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
-
-  .inboxMobileLogout {
-    margin-top: auto;
-    border-color: var(--border-subtle);
-    color: hsl(var(--accent-danger));
-  }
-
-  .mobileBackBtn {
-    display: flex;
-  }
-  
-  .thinSidebar {
-    display: none !important;
-  }
-  
-  .detailsPanel,
-  .detailsPanelEmpty {
-    display: none !important;
-  }
-  
-  .inboxContainer {
-    flex-direction: column;
-    width: 100vw !important;
-    height: 100dvh !important;
-  }
-  
-  .conversationPanel {
-    width: 100vw !important;
-    height: calc(100dvh - 58px) !important;
-    display: flex !important;
-  }
-  
-  .chatPanel,
-  .noActiveChat {
-    width: 100vw !important;
-    height: calc(100dvh - 58px) !important;
-    display: none !important;
-  }
-  
-  /* Toggle visibility based on active conversation class */
-  .hasActiveConv .conversationPanel {
-    display: none !important;
-  }
-  
-  .hasActiveConv .chatPanel {
-    display: flex !important;
-  }
-  
-  /* Make message bubbles and containers fit mobile screen width */
-  .messagesContainer {
-    padding: var(--space-sm) !important;
-  }
-
-  .workspaceHeader {
-    padding: var(--space-sm) !important;
-  }
-
-  .headerProfile {
-    max-width: 65%;
-  }
-
-  .customerSubDetails {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-  }
-
-  .dividerDot {
-    display: none;
-  }
-
-  .headerManagerAssignee {
-    display: none !important; /* Hide assignee block on small screens */
-  }
-
-  .headerActionsRow {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-    padding: var(--space-xs) var(--space-sm) !important;
-  }
-
-  .aiBlockToggle {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .workspaceTabs {
-    width: 100%;
-    overflow-x: auto;
-    padding-bottom: 4px;
-  }
-  
-  .tabBtn {
-    padding: 6px 12px !important;
-    font-size: 0.75rem !important;
-  }
-}
-
 /* CRM Customer Profile edit inputs */
-.profileCard {
-  background-color: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 24px;
-  padding: var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
 .profileInputGroup {
   display: flex;
   flex-direction: column;
@@ -2328,6 +2066,16 @@
   border-color: var(--border-glow-active) !important;
   box-shadow: var(--focus-ring) !important;
 }
+
+.profileCityField { position: relative; }
+.profileCityField > svg {
+  position: absolute;
+  inset-inline-start: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-soft);
+}
+.profileCityField > input { padding-inline-start: 30px !important; }
 
 .profileTextarea {
   width: 100%;
@@ -2449,12 +2197,13 @@
 
 /* Chat List Header & Containers */
 .chatListHeader {
-  padding: 20px;
   background-color: var(--canvas);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  padding: 16px;
+  gap: 12px;
+  background: var(--surface);
 }
 
 .chatListTitleRow {
@@ -2464,29 +2213,10 @@
 }
 
 .chatListTitle {
-  font-size: 1.25rem;
-  font-weight: 700;
   color: var(--text-strong);
   margin: 0;
-}
-
-.newChatBtn {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-strong);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-.newChatBtn:hover {
-  background-color: var(--accent-soft);
-  color: var(--accent);
+  font-size: 1.25rem;
+  font-weight: 700;
 }
 
 .searchContainer {
@@ -2521,44 +2251,35 @@
   background-color: var(--surface) !important;
 }
 
-.tabsFilterScroll {
+.conversationStatusFilter {
   display: flex;
+  align-items: center;
   gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.tabFilterBtn {
-  background: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
   color: var(--text-soft);
-  font-size: 0.72rem;
-  font-weight: 700;
-  padding: 6px 12px;
-  border-radius: 18px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  font-size: .8125rem;
 }
 
-.tabFilterBtn:hover {
+.conversationStatusFilter select {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
   color: var(--text-strong);
-  background-color: var(--accent-soft);
-}
-
-.tabFilterBtnActive {
-  background-color: var(--accent) !important;
-  border-color: var(--accent) !important;
-  color: var(--accent-ink) !important;
+  font: inherit;
+  cursor: pointer;
 }
 
 .conversationListScroll {
   flex-grow: 1;
   overflow-y: auto;
-  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  padding: 4px 0;
+  gap: 0;
+  min-height: 0;
 }
 
 .conversationErrorState {
@@ -2609,26 +2330,41 @@
 /* Chat List Item Card */
 .chatListItem {
   background-color: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 16px;
-  padding: 16px;
   display: flex;
-  gap: 12px;
   cursor: pointer;
   text-align: right;
   transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   width: 100%;
   align-items: flex-start;
+  border-radius: 0;
+  padding: 14px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  gap: 10px;
 }
 
 .chatListItem:hover {
   border-color: var(--border-strong);
+  background: var(--surface-muted);
 }
 
 .chatListItemActive {
-  background-color: var(--surface-raised) !important;
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 10px var(--border-glow);
+  background-color: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.chatListItemActive:hover { background: var(--accent-soft-strong); }
+.chatListItem:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+
+.chatListItem[data-unread='true'] .chatPartnerName {
+  color: var(--info);
+  font-weight: 700;
+}
+
+.chatListItem[data-unread='true'] .avatarCircle {
+  background: var(--info-soft);
+  color: var(--info);
 }
 
 .avatarContainer {
@@ -2640,8 +2376,8 @@
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background-color: var(--accent-soft);
-  color: var(--accent);
+  background-color: var(--surface-muted);
+  color: var(--text-base);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2672,20 +2408,22 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
 }
 
 .chatPartnerName {
-  font-weight: 700;
-  font-size: 0.88rem;
   color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 500;
+  font-size: .9375rem;
 }
 
 .chatTime {
   font-size: 0.7rem;
   color: var(--text-soft);
+  flex-shrink: 0;
 }
 
 .itemSnippetRow {
@@ -2696,7 +2434,6 @@
 }
 
 .chatSnippet {
-  font-size: 0.78rem;
   color: var(--text-soft);
   margin: 0;
   white-space: nowrap;
@@ -2704,16 +2441,18 @@
   text-overflow: ellipsis;
   flex-grow: 1;
   text-align: right;
+  font-size: .8125rem;
 }
 
 .unreadBadge {
-  min-width: 18px;
-  height: 18px;
-  background-color: var(--accent);
+  min-height: 24px;
+  padding: 3px 7px;
+  background-color: var(--info);
   color: var(--accent-ink);
-  border-radius: 50%;
-  font-size: 0.65rem;
-  font-weight: 700;
+  border-radius: 6px;
+  font-size: .6875rem;
+  font-weight: 600;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2725,6 +2464,7 @@
   align-items: center;
   justify-content: space-between;
   margin-top: 4px;
+  gap: 8px;
 }
 
 .tagPill {
@@ -2747,15 +2487,14 @@
   border-color: rgba(16, 185, 129, 0.2);
 }
 
-.tagCommunicated {
-  background-color: var(--surface-raised);
-  color: var(--text-soft);
-  border-color: var(--border-subtle);
-}
-
 .chatChannelIcon {
-  font-size: 0.68rem;
+  font-size: .75rem;
   color: var(--text-soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Chat Header Redesign */
@@ -3016,7 +2755,6 @@
 }
 
 /* Reachable controls and resilient workspace widths. */
-.newChatBtn,
 .composerToolBtn,
 .composerSendBtn,
 .commentSendBtn,
@@ -3028,7 +2766,6 @@
 .addTaskBtn,
 .deleteTaskBtn,
 .headerActionButton,
-.tabFilterBtn,
 .toggleSwitch {
   min-width: 44px;
   min-height: 44px;
@@ -3041,111 +2778,6 @@
 .profitInput,
 .stageSelectorBtn {
   min-height: 44px;
-}
-
-@media (min-width: 769px) and (max-width: 1150px) {
-  .thinSidebar {
-    width: 64px;
-  }
-
-  .conversationPanel {
-    width: 300px;
-  }
-
-  .detailsPanel,
-  .detailsPanelEmpty {
-    width: 260px;
-  }
-}
-
-@media (min-width: 769px) and (max-width: 1024px) {
-  .detailsPanel,
-  .detailsPanelEmpty {
-    display: none;
-  }
-}
-
-@media (max-width: 1024px) {
-  .responsiveDetailsTrigger {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    padding: 8px 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    background: var(--surface-raised);
-    color: var(--text-strong);
-    font: inherit;
-    font-size: 0.78rem;
-    font-weight: 700;
-    cursor: pointer;
-  }
-
-  .responsiveDetailsTrigger:focus-visible,
-  .contextPaneHeader button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .contextPane {
-    display: none;
-  }
-
-  .contextPaneOpen {
-    position: fixed;
-    inset: 0;
-    z-index: 160;
-    display: flex;
-    justify-content: flex-start;
-    background: var(--overlay);
-  }
-
-  .contextPaneSurface {
-    width: min(360px, calc(100vw - 32px));
-    height: 100dvh;
-    display: flex;
-    flex-direction: column;
-    background: var(--canvas);
-    border-left: 1px solid var(--border-subtle);
-    box-shadow: var(--shadow-soft);
-  }
-
-  .contextPaneHeader {
-    min-height: 64px;
-    padding: 10px 14px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .contextPaneHeader h2 {
-    margin: 0;
-    font-size: 1rem;
-  }
-
-  .contextPaneHeader button {
-    width: 44px;
-    height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border-subtle);
-    border-radius: 9px;
-    background: var(--surface-raised);
-    color: var(--text-strong);
-    cursor: pointer;
-  }
-
-  .contextPaneOpen .detailsPanel,
-  .contextPaneOpen .detailsPanelEmpty {
-    width: 100%;
-    height: calc(100dvh - 64px);
-    display: flex !important;
-    border: 0;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3172,3 +2804,81 @@
   outline: 2px solid currentColor;
   outline-offset: 3px;
 }
+
+.workspaceBody > section[role="tabpanel"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.channelTabs { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-muted); }
+
+.channelTabs a { display: flex; align-items: center; justify-content: center; gap: 5px; flex: 1; min-height: 44px; padding: 6px 4px; color: var(--text-soft); font-size: .75rem; text-decoration: none; border-radius: var(--radius-sm); white-space: nowrap; }
+
+.channelTabs a[aria-current='page'] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+@media (min-width: 1280px) {
+  .workspaceHeader { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+  .headerTopRow { grid-column: 1 / -1; }
+  .headerActionsRow { grid-column: 1; grid-row: 2; }
+  .conversationContextRow { grid-column: 2; grid-row: 2; justify-content: flex-end; }
+}
+
+@media (max-width: 767px) {
+  .inboxContainer { flex-direction: column; }
+  .conversationPanel { width: 100%; height: 100%; }
+  .chatPanel, .noActiveChat { display: none; }
+  .hasActiveConv .conversationPanel { display: none; }
+  .hasActiveConv .chatPanel { display: flex; width: 100%; height: 100%; }
+  .workspaceHeader { padding: 10px 12px 0; gap: 6px; }
+  .headerProfile { flex: 1; gap: 8px; }
+  .headerAvatar { display: none; }
+  .workspaceCustomerName { font-size: 1.0625rem; }
+  .customerSubDetails { font-size: .6875rem; margin-top: 1px; white-space: nowrap; overflow: hidden; max-width: calc(100vw - 82px); }
+  .headerManagerAssignee { gap: 4px 8px; }
+  .mobileBackBtn { display: flex; min-width: 44px; padding: 0; }
+  .headerActionsRow { flex-direction: row; flex-wrap: wrap; gap: 4px 8px; padding: 0; }
+  .workspaceTabs { width: 100%; margin: 0; justify-content: space-between; gap: 0; }
+  .tabBtn { flex: 1; padding: 6px 8px; font-size: .8125rem; }
+  .responsiveDetailsTrigger { padding: 6px 8px; font-size: .75rem; }
+  .responsiveDetailsTrigger svg { display: none; }
+  .conversationStatusFilter select { font-size: 1rem; }
+  .messagesContainer { padding: 14px 12px; gap: 12px; }
+  .msgBubble { max-width: 90%; padding: 10px 12px; font-size: .9375rem; }
+  .messageTextContent { font-size: .9375rem; line-height: 1.8; }
+  .messageComposer { padding: 10px 12px max(10px, env(safe-area-inset-bottom)); gap: 8px; }
+  .commentsInputsRow { grid-template-columns: minmax(0, 1fr); }
+  .commentSendBtn { width: 100%; }
+  .commentsComposer { padding: 12px; }
+  .chatListHeader { padding: 14px 16px 10px; gap: 10px; }
+  .searchBarInput { font-size: 16px !important; }
+  .chatListItem { padding: 14px 16px; }
+  .headerTopRow { min-height: 44px; }
+ }
+
+.customerDetailsHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.customerDetailsHeading h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.customerDetailsHeading ~ .detailsPanel, .customerDetailsHeading ~ .detailsPanelEmpty {
+  display: flex !important;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) { .conversationPanel { width: 260px; } }

@@ -32,7 +32,9 @@ namespace Modules.Projects.Domain
         public string? SystemPrompt { get; set; }
         public string? AiBehaviorSettingsJson { get; set; }
         public bool IsWhatsAppGroupAutomationEnabled { get; set; } = false;
+        public string GroupAutomationAdminPhones { get; set; } = string.Empty;
         public string GroupAutomationManagerPhone { get; set; } = string.Empty;
+        public string GroupStaffDirectoryJson { get; set; } = "{}";
         public string ActiveInstructors { get; set; } = string.Empty;
         public bool HumanTransferEnabled { get; set; } = false;
         public string? HumanTransferPhone { get; set; }

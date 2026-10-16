@@ -11,38 +11,42 @@ namespace Shared.Security
     public class JwtService : IJwtService
     {
         private readonly string _secret;
-        private readonly int _expiryMinutes;
 
         public JwtService(IConfiguration configuration)
         {
-            _secret = configuration["JWT:Secret"] ?? "a_very_long_and_secure_secret_key_that_is_at_least_32_characters_long";
-            _expiryMinutes = int.TryParse(configuration["JWT:ExpiryMinutes"], out var val) ? val : 15;
+            _secret = JwtSettings.SigningSecret(configuration);
         }
 
         private static readonly Dictionary<string, string[]> RolePermissions = new Dictionary<string, string[]>
         {
-            { "Owner", new[] { "read", "write", "delete", "invite", "manage_roles" } },
-            { "Admin", new[] { "read", "write", "delete", "invite", "manage_roles" } },
-            { "Supervisor", new[] { "read", "write", "invite" } },
+            { "Owner", new[] { "read", "write", "delete", "invite", "manage_roles", "approve_actions" } },
+            { "Admin", new[] { "read", "write", "delete", "invite", "manage_roles", "approve_actions" } },
+            { "Supervisor", new[] { "read", "write", "invite", "approve_actions" } },
             { "Agent", new[] { "read", "write" } },
             { "AI Reviewer", new[] { "read", "review" } },
             { "Analyst", new[] { "read", "analyze" } }
         };
 
-        public string GenerateToken(Guid userId, string email, string role, Guid projectId)
+        public static bool HasPermission(ClaimsPrincipal user, string permission) =>
+            user.Identity?.IsAuthenticated == true
+            && RolePermissions.TryGetValue(user.FindFirstValue(ClaimTypes.Role) ?? "", out var permissions)
+            && permissions.Contains(permission);
+
+        public string GenerateToken(AccessTokenIdentity identity)
         {
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.UTF8.GetBytes(_secret);
 
             var claims = new List<Claim>
             {
-                new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
-                new Claim(JwtRegisteredClaimNames.Email, email),
-                new Claim(ClaimTypes.Role, role),
-                new Claim("ProjectId", projectId.ToString())
+                new Claim(JwtRegisteredClaimNames.Sub, identity.UserId.ToString()),
+                new Claim(JwtRegisteredClaimNames.Email, identity.Email),
+                new Claim(ClaimTypes.Role, identity.Role),
+                new Claim("ProjectId", identity.ProjectId.ToString()),
+                new Claim("sid", identity.SessionId.ToString())
             };
 
-            if (role != null && RolePermissions.TryGetValue(role, out var permissions))
+            if (identity.Role != null && RolePermissions.TryGetValue(identity.Role, out var permissions))
             {
                 foreach (var perm in permissions)
                 {
@@ -53,7 +57,7 @@ namespace Shared.Security
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.UtcNow.AddMinutes(_expiryMinutes),
+                Expires = DateTime.UtcNow.AddMinutes(JwtSettings.LifetimeMinutes),
                 SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
             };
 

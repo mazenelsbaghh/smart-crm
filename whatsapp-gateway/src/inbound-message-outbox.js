@@ -3,6 +3,7 @@ import { readFile, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { createJsonAtomic, writeJsonAtomic } from './durable-json.js';
 import { resolveSessionIdentity } from './session-identity.js';
+import { isNonCustomerChat } from './inbound-source.js';
 
 const RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 60_000, 300_000];
 const OUTBOX_DIRECTORY = '.gateway-state-v1/inbound-outbox';
@@ -117,6 +118,11 @@ class InboundMessageOutbox {
 
     async #dispatchFile(filePath) {
         const envelope = JSON.parse(await readFile(filePath, 'utf8'));
+        if (isNonCustomerChat(envelope.message.senderJid || envelope.message.sender || '')) {
+            this.#cancelRetry(filePath);
+            await rm(filePath, { force: true });
+            return;
+        }
         const waitMs = envelope.nextAttemptAt === null
             ? 0
             : envelope.nextAttemptAt - this.#now();
@@ -188,6 +194,7 @@ class InboundMessageOutbox {
     }
 
     captureAndForward(message, enrichMessage) {
+        if (isNonCustomerChat(message.senderJid || message.sender || '')) return Promise.resolve();
         const { filePath } = this.#messageLocation(message);
         const activeCapture = this.#captures.get(filePath);
         if (activeCapture) return activeCapture;

@@ -8,11 +8,15 @@ namespace Modules.GroupAppointments.Domain
     {
         public Guid ProjectId { get; set; }
         public string Name { get; set; } = string.Empty;
+        public string CourseType { get; set; } = CourseTypes.Regular;
         public DateTime DateTime { get; set; }
         public int Capacity { get; set; }
         public bool IsActive { get; set; } = true;
         public string Days { get; set; } = string.Empty;
         public string Mode { get; set; } = "offline"; // "online" or "offline" // Comma-separated day indices: 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
+        public string SupervisorPhone { get; set; } = string.Empty;
+        public string? StaffSyncError { get; set; }
+        public DateTime? StaffSyncedAtUtc { get; set; }
         public string InstructorName { get; set; } = string.Empty;
         public DateTime? FreeSessionDateTime { get; set; }
         public DateTime? CourseSecondDateTime { get; set; }

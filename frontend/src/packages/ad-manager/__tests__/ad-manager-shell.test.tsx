@@ -4,14 +4,31 @@ import { describe, expect, it, vi } from 'vitest';
 import { AdManagerShell } from '../components/AdManagerShell';
 import { OverviewView } from '../components/OverviewView';
 import { WhatsAppOutcomesView } from '../components/WhatsAppOutcomesView';
+import { ReadinessPanel } from '../components/ReadinessPanel';
 import type { AdvertisingOverview } from '../types';
 
 const tabs = [{ key: 'overview', label: 'نظرة عامة' }, { key: 'settings', label: 'الإعدادات' }];
 
 describe('AdManagerShell accessibility', () => {
-  it('does not present a new Gateway conversation as a qualified lead', () => {
+  it('keeps blocking requirements visible while completed checks can be expanded', async () => {
+    const configure = vi.fn();
+    render(<ReadinessPanel onConfigure={configure} readiness={{ ready: false, items: [
+      { key: 'budget', label: 'سقف الصرف', ready: true },
+      { key: 'tracking', label: 'جودة التتبع', ready: false, reason: 'ADS_TRACKING_STALE' },
+    ] }} />);
+
+    expect(screen.getByText('آخر قياس قديم ويحتاج تحديثًا')).toBeVisible();
+    expect(screen.getByText('سقف الصرف')).not.toBeVisible();
+    await userEvent.click(screen.getByText('١ عناصر مكتملة'));
+    expect(screen.getByText('سقف الصرف')).toBeVisible();
+    expect(screen.getByText('آخر قياس قديم ويحتاج تحديثًا')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'إكمال الإعداد' }));
+    expect(configure).toHaveBeenCalledOnce();
+  });
+
+  it('keeps missing spend unknown and does not present a Lead as a qualified lead', () => {
     const overview: AdvertisingOverview = {
-      asOfUtc: '2026-08-19T05:31:03Z', windowStartUtc: '2026-08-18T21:00:00Z', windowEndUtc: '2026-08-19T05:31:03Z', spend: 0, revenue: 0, roas: 0, leads: 1, qualifiedLeads: 0,
+      asOfUtc: '2026-08-19T05:31:03Z', windowStartUtc: '2026-08-18T21:00:00Z', windowEndUtc: '2026-08-19T05:31:03Z', spend: 0, spendAvailable: false, revenue: 0, roas: null, leads: 1, qualifiedLeads: 0,
       bookings: 0, purchases: 0, activeAds: 0, totalAds: 0, autopilot: true, emergencyStop: false,
       continuingSpend: false, dailyCap: 2000, usableCap: 1700, aiModel: 'gemini', usesProjectApiKey: true,
       reportingTimezone: 'Africa/Cairo', currency: 'EGP', attributionWindow: '7d click', truthSource: 'Gateway',
@@ -20,8 +37,11 @@ describe('AdManagerShell accessibility', () => {
 
     render(<OverviewView overview={overview} onConfigure={vi.fn()} />);
 
-    expect(screen.getByText(/1 محادثة جديدة، 0 مؤهل/)).toBeVisible();
+    expect(screen.getByText(/1 عميل محتمل، 0 مؤهل/)).toBeVisible();
     expect(screen.queryByText(/1 عميل مؤهل/)).not.toBeInTheDocument();
+    expect(screen.getByText('الصرف').parentElement).toHaveTextContent('غير متاح');
+    expect(screen.getByText(/ROAS المنسوب للإعلانات غير متاح/)).toBeVisible();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 
   it('does not count attribution from another outcome as attributed Gateway lead', () => {
@@ -31,6 +51,15 @@ describe('AdManagerShell accessibility', () => {
 
     expect(screen.getByText('منسوب لإعلان بدقة').parentElement).toHaveTextContent('٠');
     expect(screen.getByText('غير منسوب — لم نخمن')).toBeVisible();
+  });
+
+  it('counts one attributed lead once when multiple click touches reference it', () => {
+    render(<WhatsAppOutcomesView rows={[{ id: 'lead-1', eventType: 'Lead', occurredAtUtc: '2026-10-16T10:00:00Z',
+      state: 'Verified', truthState: 'Verified', attributionState: 'Attributed', attributionMethod: 'CtwaClid' }]}
+      touches={['touch-1', 'touch-2'].map(id => ({ id, conversionId: 'lead-1', method: 'CtwaClid', hasClickIdentifier: true, touchedAtUtc: '2026-10-16T09:00:00Z' }))}
+      deliveries={[]} tracking={[]} />);
+    expect(screen.getByText('منسوب لإعلان بدقة').parentElement).toHaveTextContent('١');
+    expect(screen.getByText('حالة الاستقبال').parentElement).toHaveTextContent('غير متاحة');
   });
 
   it('keeps continuing spend and Emergency Stop visible in every view', async () => {

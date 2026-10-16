@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { Clock3, Link2, RefreshCw, Send } from 'lucide-react';
+import { Save, Clock3, Link2, RefreshCw, Send } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
@@ -83,18 +83,29 @@ export function FacebookAutomationPanel({ selection, timezone }: { selection: Ve
     return () => window.removeEventListener('message', receiveOAuth);
   }, [activeProject]);
 
-  const connect = () => {
+  const connect = async () => {
     if (!activeProject || busy || publishing) return;
     if (oauthPopupRef.current && !oauthPopupRef.current.closed) {
       oauthPopupRef.current.focus();
       return;
     }
     resetFeedback(setError, setMessage);
-    const baseUrl = api.defaults.baseURL?.startsWith('http') ? api.defaults.baseURL : `${window.location.origin}${api.defaults.baseURL || ''}`;
-    const oauthUrl = `${baseUrl.replace(/\/$/, '')}/api/facebook/oauth/login?projectId=${activeProject.id}`;
-    const popup = window.open(oauthUrl, 'facebook-oauth-login', popupFeatures());
-    if (!popup) setError('اسمح بالنوافذ المنبثقة ثم حاول الربط مرة أخرى.');
-    else oauthPopupRef.current = popup;
+    const popup = window.open('about:blank', 'facebook-oauth-login', popupFeatures());
+    if (!popup) {
+      setError('اسمح بالنوافذ المنبثقة ثم حاول الربط مرة أخرى.');
+      return;
+    }
+    oauthPopupRef.current = popup;
+    try {
+      const response = await api.get<{ authorizationUrl: string }>('/api/facebook/oauth/login', {
+        params: { projectId: activeProject.id },
+      });
+      if (!popup.closed) popup.location.replace(response.data.authorizationUrl);
+    } catch (requestError) {
+      popup.close();
+      oauthPopupRef.current = null;
+      setError(apiErrorMessage(requestError));
+    }
   };
 
   const confirmPage = async (page: OAuthPage) => {
@@ -182,7 +193,7 @@ export function FacebookAutomationPanel({ selection, timezone }: { selection: Ve
             <div className={styles.scheduleGrid}><label><span><Clock3 size={15} /> ينشر كل</span><div className={styles.intervalInput}><input type="number" min="1" max="168" value={settings.intervalHours} onChange={(event) => setSettings({ ...settings, intervalHours: Number(event.target.value) })} /><b>ساعة</b></div></label></div>
             <label className={styles.captionTemplate}><span>الوصف التلقائي</span><textarea rows={6} maxLength={5000} value={settings.captionTemplate} onChange={(event) => setSettings({ ...settings, captionTemplate: event.target.value })} /><small>المتغيرات: {'{surah}'}، {'{ayah}'}، {'{word}'}</small></label>
             <label className={styles.automationSwitch}><input type="checkbox" checked={settings.isEnabled} disabled={!settings.facebookPageId} onChange={(event) => setSettings({ ...settings, isEnabled: event.target.checked })} /><span /><div><strong>تشغيل النشر التلقائي على Facebook</strong><small>{settings.nextPublishAtUtc ? `الموعد القادم: ${automationDateTime(settings.nextPublishAtUtc, timezone)}` : 'لن يبدأ قبل اختيار الصفحة وحفظ الجدولة'}</small></div></label>
-            <div className={styles.youtubeActions}><button type="button" className={styles.saveSchedule} onClick={save} disabled={busy || publishing}>{busy ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button><button type="button" className={styles.publishNow} onClick={() => setConfirmPublish(true)} disabled={!settings.facebookPageId || busy || publishing}><Send size={17} />{publishing ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button></div>
+            <div className={styles.youtubeActions}><button type="button" className={styles.saveSchedule} onClick={save} disabled={busy || publishing}><Save size={17} aria-hidden="true" />{busy ? 'جارٍ الحفظ…' : 'حفظ الجدولة'}</button><button type="button" className={styles.publishNow} onClick={() => setConfirmPublish(true)} disabled={!settings.facebookPageId || busy || publishing}><Send size={17} />{publishing ? 'جارٍ الإضافة…' : 'انشر الآية الحالية الآن'}</button></div>
             {settings.lastPublishedAtUtc && <p className={styles.lastPublish}>آخر نشر: {automationDateTime(settings.lastPublishedAtUtc, timezone)}</p>}
             {(error || settings.lastError) && <p className={styles.youtubeError} role="alert">{error || settings.lastError}</p>}
             {message && <p className={styles.youtubeSuccess} role="status">{message}</p>}

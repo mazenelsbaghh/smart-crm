@@ -91,7 +91,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div className={styles.toastContainer} aria-label="التنبيهات">
+      <section className={styles.toastContainer} aria-label="التنبيهات">
         {toasts.map((toast) => (
           <div
             key={toast.id}
@@ -114,7 +114,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
             </button>
           </div>
         ))}
-      </div>
+      </section>
     </ToastContext.Provider>
   );
 }

@@ -22,7 +22,11 @@ export interface AdvertisingOverview {
   windowEndUtc: string;
   spend: number;
   revenue: number;
-  roas: number;
+  roas: number | null;
+  spendAvailable?: boolean;
+  attributedRevenue?: number;
+  excludedRevenueCurrencies?: number;
+  excludedSpendCurrencies?: number;
   leads: number;
   qualifiedLeads: number;
   bookings: number;
@@ -73,4 +77,4 @@ export interface AdvertisingStrategy {
 }
 export interface AudienceStrategy { id: string; offerId: string; version: number; includedGeoJson: string; excludedGeoJson: string; minimumAge: number; maximumAgeSuggestion?: number; requiredLanguagesJson: string; customAudienceExclusionsJson: string; audienceSuggestionsJson: string; specialCategoryConstraintsJson: string; estimatedReachJson: string; evidenceJson: string; state: string }
 export interface AdvertisingExperiment { id: string; name: string; hypothesis: string; primaryVariable: string; businessOutcome: string; attributionWindowDays: number; minimumElapsedHours: number; minimumSpend: number; minimumAttributedOutcomes: number; minimumAttributionCoverage: number; correctionLagHours: number; confidencePolicyJson: string; budgetCap: number; stopRuleJson: string; state: string; startedAtUtc?: string; maturedAtUtc?: string; stoppedAtUtc?: string; conclusionJson: string; arms: { id: string; name: string; isControl: boolean; changedValueJson: string; allocatedBudget: number; state: string; evidenceJson: string }[] }
-export interface DailyAdvertisingReport { date: string; timezone: string; currency: string; startUtc: string; endUtc: string; totals: { entrants: number; qualified: number; bookings: number; spend: number }; rows: { id: string; name: string; adExternalId?: string; source?: { sourceType: string; sourceExternalId?: string; mediaType: string }; entrants: number; qualified: number; bookings: number; spend: number; costPerEntrant?: number; costPerQualified?: number; qualificationRate?: number; bookingRate?: number }[]; unattributed: { entrants: number; qualified: number; bookings: number } }
+export interface DailyAdvertisingReport { spendAvailable?: boolean; excludedSpendCurrencies?: number; unlinkedOutcomes?: { qualified: number; bookings: number }; date: string; timezone: string; currency: string; startUtc: string; endUtc: string; totals: { entrants: number; qualified: number; bookings: number; spend: number }; rows: { id: string; name: string; spendAvailable?: boolean; adExternalId?: string; source?: { sourceType: string; sourceExternalId?: string; mediaType: string }; entrants: number; qualified: number; bookings: number; spend: number; costPerEntrant?: number; costPerQualified?: number; qualificationRate?: number; bookingRate?: number }[]; unattributed: { entrants: number; qualified: number; bookings: number } }

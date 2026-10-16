@@ -46,6 +46,17 @@ namespace Modules.AI.Workers
             public string? ProviderMessageId { get; set; }
         }
 
+        internal sealed record WhatsAppTransitionSendAttempt(
+            Guid? WhatsAppAccountId,
+            WhatsAppTransitionMessage? Transition,
+            WhatsAppTransitionDeliveryOutcome Outcome);
+
+        internal sealed record WhatsAppTransitionRequest(
+            Guid ProjectId,
+            string ToPhone,
+            string Message,
+            string IdempotencyKey);
+
         internal sealed record WhatsAppReactionPersistence(
             Conversation Conversation,
             Guid WhatsAppAccountId,
@@ -60,7 +71,10 @@ namespace Modules.AI.Workers
             string SenderPsid,
             string DeliveryIdempotencyKey);
 
-        private sealed record CachedReplyAnalysis(MarketingAnalysisResult Analysis, bool IsFallbackResponse);
+        private sealed record CachedReplyAnalysis(
+            MarketingAnalysisResult Analysis,
+            bool IsFallbackResponse,
+            bool ShouldDeferReply);
 
         private readonly IServiceProvider _serviceProvider;
         private readonly IAIMarketingBrain _aiMarketingBrain;
@@ -115,6 +129,20 @@ namespace Modules.AI.Workers
         }
 
         public async Task HandleAsync(MessageAggregatedEvent @event)
+        {
+            try { await GenerateAndDeliverAsync(@event); }
+            catch (DeferredAiReplyException)
+            {
+                var jobs = _serviceProvider.GetRequiredService<Hangfire.IBackgroundJobClient>();
+                Hangfire.BackgroundJobClientExtensions.Schedule<AIReplyWorker>(jobs,
+                    worker => worker.RetryDeferredReplyAsync(@event), TimeSpan.FromMinutes(1));
+            }
+        }
+
+        [Hangfire.AutomaticRetry(Attempts = 6, DelaysInSeconds = new[] { 60, 120, 300, 600, 1800, 3600 })]
+        public Task RetryDeferredReplyAsync(MessageAggregatedEvent @event) => GenerateAndDeliverAsync(@event);
+
+        private async Task GenerateAndDeliverAsync(MessageAggregatedEvent @event)
         {
             Console.WriteLine($"[AIReplyWorker] Received aggregated message for Project: {@event.ProjectId}, Sender: {@event.Sender}");
 
@@ -230,6 +258,8 @@ namespace Modules.AI.Workers
             }
 
             var aiBehaviorSettings = aiBehaviorSettingsService.Resolve(settings, channel);
+            if (aiBehaviorSettings.SubscribersOnlyAutoStop && CustomerOptOutService.IsOptOutRequest(@event.Content))
+                return;
 
             // Check per-channel AI auto-reply toggle
             bool isAiEnabled;
@@ -282,6 +312,8 @@ namespace Modules.AI.Workers
             }
 
             var shouldOfferTrialAfterBooking = false;
+            var shouldPrepareBeforeSession = settings.IsWhatsAppGroupAutomationEnabled
+                && !string.IsNullOrWhiteSpace(aiBehaviorSettings.Fallbacks.GroupPreparationSite);
             if (channel == "WhatsApp" && settings.IsTalkTipsTrialGateEnabled && customer != null)
             {
                 var trialStatusClient = scope.ServiceProvider.GetRequiredService<Modules.TalkTips.Services.TalkTipsTrialStatusClient>();
@@ -299,10 +331,20 @@ namespace Modules.AI.Workers
                 }
             }
 
-            // Intercept Messenger message for phone number transition
+            var sourceTimestamp = @event.SourceMessageTimestampUtc ?? @event.OccurredOn;
+            var precedingReply = await dbContext.Messages
+                .Where(message => message.ConversationId == conversation.Id
+                    && message.Direction == "Outgoing" && message.MessageType != "Reaction"
+                    && message.Timestamp <= sourceTimestamp)
+                .OrderByDescending(message => message.Timestamp).ThenByDescending(message => message.Id)
+                .Select(message => new { message.Content, message.Timestamp })
+                .FirstOrDefaultAsync();
+            var lastReplyTimestamp = precedingReply?.Timestamp;
+
+            // Intercept Messenger message only when the requester identifies the number as their own.
             if (channel == "Messenger" && aiBehaviorSettings.MessengerWhatsAppTransitionEnabled && customer != null)
             {
-                var extractedPhone = EgyptianPhoneNumber.Extract(@event.Content);
+                var extractedPhone = AiRequesterBookingPhone.ForIdentityTransition(@event.Content, precedingReply?.Content);
                 if (!string.IsNullOrEmpty(extractedPhone))
                 {
                     string pageId = null;
@@ -361,6 +403,7 @@ namespace Modules.AI.Workers
 
             string brainContext = null;
             string cachedContentId = null;
+            string knowledgeFingerprint = string.Empty;
             string tonePref = !string.IsNullOrEmpty(aiBehaviorSettings.Tone.CustomTone)
                 ? aiBehaviorSettings.Tone.CustomTone
                 : (!string.IsNullOrEmpty(settings.AiTonePreference) ? settings.AiTonePreference : "العامية المصرية المهذبة والمحترمة");
@@ -370,16 +413,17 @@ namespace Modules.AI.Workers
 
             try
             {
-                // Fetch all approved knowledge base chunks
+                var approvedDocumentIds = Modules.Brain.Services.AICompanyBrain
+                    .ApprovedDocuments(dbContext, @event.ProjectId).Select(document => document.Id);
                 var approvedChunksList = await dbContext.KnowledgeChunks
-                    .Include(c => c.KnowledgeDocument)
-                    .Where(c => c.KnowledgeDocument!.ProjectId == @event.ProjectId &&
-                                (c.KnowledgeDocument.Status == "Published" || c.KnowledgeDocument.Status == "Approved"))
+                    .Where(chunk => approvedDocumentIds.Contains(chunk.KnowledgeDocumentId))
                     .OrderBy(c => c.Id)
                     .Select(c => c.ChunkText)
                     .ToListAsync();
 
                 var approvedChunksText = string.Join("\n\n", approvedChunksList.Distinct(StringComparer.Ordinal).Select(text => $"- {text}"));
+                knowledgeFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    Encoding.UTF8.GetBytes(approvedChunksText)));
                 var agentName = aiBehaviorSettingsService.GetAgentName(aiBehaviorSettings);
                 var staticPrompt = _aiMarketingBrain.BuildStaticPrompt(agentName, tonePref, targetAud, approvedChunksText, systemPromptForReply, aiBehaviorSettings, channel);
 
@@ -433,7 +477,7 @@ namespace Modules.AI.Workers
                             .Include(c => c.KnowledgeDocument)
                             .Where(c => c.KnowledgeDocument!.ProjectId == @event.ProjectId &&
                                         (c.KnowledgeDocument.Status == "Published" || c.KnowledgeDocument.Status == "Approved") &&
-                                        (c.ChunkText.Contains("الاشتراك الشهري") || c.ChunkText.Contains("عرض الكاش") || c.ChunkText.Contains("رابط اللوكيشن")))
+                                        (c.ChunkText.Contains("الاشتراك الشهري") || c.ChunkText.Contains("عرض الكاش") || c.ChunkText.Contains("رابط اللوكيشن") || c.ChunkText.Contains("المكثف") || c.ChunkText.Contains("الكورس العادي")))
                             .ToListAsync();
 
                         foreach (var pChunk in pricingAndLocationChunks)
@@ -468,6 +512,9 @@ namespace Modules.AI.Workers
             }
 
             string bookedGroupInfo = null;
+            Guid? currentBookedGroupId = null;
+            var recentBookingRequests = new List<string>();
+            var requesterAllowsTransfer = false;
 
             // Inject Group Appointments context if enabled
             if (settings.IsGroupAppointmentsEnabled)
@@ -476,8 +523,9 @@ namespace Modules.AI.Workers
                 {
                     var activeGroups = await dbContext.GroupAppointments
                         .Include(g => g.Bookings)
-                        .Where(g => g.ProjectId == @event.ProjectId && g.IsActive)
-                        .OrderBy(g => g.DateTime)
+                        .Where(g => g.ProjectId == @event.ProjectId && g.IsActive
+                            && (g.FreeSessionDateTime ?? g.DateTime) > DateTime.UtcNow)
+                        .OrderBy(g => g.FreeSessionDateTime ?? g.DateTime)
                         .ToListAsync();
 
                     var groupsContextList = new System.Collections.Generic.List<string>();
@@ -489,136 +537,38 @@ namespace Modules.AI.Workers
 
                     // Determine customer's city status and filter/adjust instructions accordingly
                     var customerCity = customer?.City?.Trim();
-                    bool isCityKnown = !string.IsNullOrEmpty(customerCity) && !customerCity.Equals("Missing", StringComparison.OrdinalIgnoreCase);
-                    bool isFromAlexandria = false;
-                    if (isCityKnown)
-                    {
-                        var lowerCity = customerCity.ToLowerInvariant();
-                        if (lowerCity.Contains("اسكندرية") || lowerCity.Contains("إسكندرية") || lowerCity.Contains("alexandria"))
-                        {
-                            isFromAlexandria = true;
-                        }
-                    }
+                    bool isCityKnown = GroupBookingAttendancePolicy.HasKnownCity(customerCity);
+                    bool isFromAlexandria = GroupBookingAttendancePolicy.IsAlexandria(customerCity);
 
                     // If customer is known and NOT from Alexandria, filter out offline (in center) groups completely
                     if (isCityKnown && !isFromAlexandria)
                     {
-                        availableGroups = availableGroups.Where(g => g.Mode == "online").ToList();
-                        fullGroups = fullGroups.Where(g => g.Mode == "online").ToList();
+                        availableGroups = availableGroups.Where(g => Shared.Domain.AttendanceModes.Normalize(g.Mode) == Shared.Domain.AttendanceModes.Online).ToList();
+                        fullGroups = fullGroups.Where(g => Shared.Domain.AttendanceModes.Normalize(g.Mode) == Shared.Domain.AttendanceModes.Online).ToList();
                     }
 
                     Console.WriteLine($"[AIReplyWorker] Active groups: {activeGroups.Count}, Available: {availableGroups.Count}, Full: {fullGroups.Count}, CityKnown: {isCityKnown}, FromAlexandria: {isFromAlexandria}");
 
-                    string GetArabicDayName(DayOfWeek day)
-                    {
-                        switch (day)
-                        {
-                            case DayOfWeek.Sunday: return "الأحد";
-                            case DayOfWeek.Monday: return "الاثنين";
-                            case DayOfWeek.Tuesday: return "الثلاثاء";
-                            case DayOfWeek.Wednesday: return "الأربعاء";
-                            case DayOfWeek.Thursday: return "الخميس";
-                            case DayOfWeek.Friday: return "الجمعة";
-                            case DayOfWeek.Saturday: return "السبت";
-                            default: return string.Empty;
-                        }
-                    }
-
-                    string GetArabicDaysText(string daysCsv)
-                    {
-                        if (string.IsNullOrWhiteSpace(daysCsv))
-                            return string.Empty;
-
-                        var daysParts = daysCsv.Split(',', StringSplitOptions.RemoveEmptyEntries);
-                        var dayNames = new System.Collections.Generic.List<string>();
-                        foreach (var part in daysParts)
-                        {
-                            if (int.TryParse(part.Trim(), out int dayIdx))
-                            {
-                                switch (dayIdx)
-                                {
-                                    case 0: dayNames.Add("الأحد"); break;
-                                    case 1: dayNames.Add("الاثنين"); break;
-                                    case 2: dayNames.Add("الثلاثاء"); break;
-                                    case 3: dayNames.Add("الأربعاء"); break;
-                                    case 4: dayNames.Add("الخميس"); break;
-                                    case 5: dayNames.Add("الجمعة"); break;
-                                    case 6: dayNames.Add("السبت"); break;
-                                }
-                            }
-                        }
-                        if (dayNames.Count == 0)
-                            return string.Empty;
-                        if (dayNames.Count == 1)
-                            return "يوم " + dayNames[0];
-                        if (dayNames.Count == 2)
-                            return "يومي " + dayNames[0] + " و " + dayNames[1];
-                        return "أيام " + string.Join(" و ", dayNames);
-                    }
-
-                    string GetArabicDateTimeText(DateTime? utcDateTime)
-                    {
-                        if (!utcDateTime.HasValue)
-                            return string.Empty;
-
-                        var utcTimeValue = DateTime.SpecifyKind(utcDateTime.Value, DateTimeKind.Utc);
-                        var localTimeValue = TimeZoneInfo.ConvertTimeFromUtc(utcTimeValue, projectZone);
-                        var dateTextValue = $"{GetArabicDayName(localTimeValue.DayOfWeek)} {localTimeValue:d/M}";
-                        return $"{dateTextValue} الساعة {localTimeValue:h:mm} {(localTimeValue.Hour >= 12 ? "مساءً" : "صباحاً")}";
-                    }
-
-                    string BuildGroupScheduleDetails(GroupAppointment group)
-                    {
-                        var details = new System.Collections.Generic.List<string>();
-                        var instructorName = string.IsNullOrWhiteSpace(group.InstructorName) ? "الإنستراكتور المسؤول عن المجموعة" : group.InstructorName.Trim();
-                        var firstCourseSession = GetArabicDateTimeText(group.DateTime);
-                        var secondCourseSession = GetArabicDateTimeText(group.CourseSecondDateTime);
-                        var freeSession = GetArabicDateTimeText(group.FreeSessionDateTime);
-
-                        if (!string.IsNullOrEmpty(group.InstructorName))
-                        {
-                            details.Add($"إنستراكتور الكورس: {instructorName}");
-                        }
-                        if (!string.IsNullOrEmpty(freeSession))
-                        {
-                            details.Add($"ميعاد السيشن المجانية: {freeSession} مع دكتور مصطفى");
-                        }
-                        if (!string.IsNullOrEmpty(firstCourseSession))
-                        {
-                            details.Add($"ميعاد السيشن الأولى للكورس: {firstCourseSession} مع {instructorName}");
-                        }
-                        if (!string.IsNullOrEmpty(secondCourseSession))
-                        {
-                            details.Add($"ميعاد السيشن الثانية للكورس: {secondCourseSession} مع {instructorName}");
-                        }
-
-                        return details.Count == 0 ? string.Empty : "\n  " + string.Join("\n  ", details);
-                    }
-
                     foreach (var g in availableGroups)
                     {
                         // Convert the database UTC datetime back to the project's local timezone
-                        var utcTime = DateTime.SpecifyKind(g.DateTime, DateTimeKind.Utc);
+                        var utcTime = DateTime.SpecifyKind(g.FreeSessionDateTime ?? g.DateTime, DateTimeKind.Utc);
                         var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
-                        var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
-                        var daysText = GetArabicDaysText(g.Days);
-                        var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
-                        var dateText = $"{GetArabicDayName(localTime.DayOfWeek)} {localTime:d/M}";
-                        var scheduleDetails = BuildGroupScheduleDetails(g);
-                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  تاريخ المجموعة الأساسي: {dateText}\n  الموعد الأساسي: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}{scheduleDetails}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
+                        var modeText = Shared.Domain.AttendanceModes.Normalize(g.Mode) == Shared.Domain.AttendanceModes.Online ? "أونلاين (Online)" : "في السنتر (Offline)";
+                        var dateText = FreeSessionBookingPolicy.FormatDate(localTime);
+                        var scheduleDetails = FreeSessionBookingPolicy.ScheduleDetails(g, projectZone);
+                        groupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}\n  تاريخ الحصة المجانية: {dateText}\n  موعد الحصة المجانية: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}{scheduleDetails}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
                     }
 
                     var fullGroupsContextList = new System.Collections.Generic.List<string>();
                     foreach (var g in fullGroups)
                     {
-                        var utcTime = DateTime.SpecifyKind(g.DateTime, DateTimeKind.Utc);
+                        var utcTime = DateTime.SpecifyKind(g.FreeSessionDateTime ?? g.DateTime, DateTimeKind.Utc);
                         var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
-                        var modeText = g.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
-                        var daysText = GetArabicDaysText(g.Days);
-                        var daysLine = string.IsNullOrEmpty(daysText) ? "" : $"\n  أيام الموعد: {daysText}";
-                        var dateText = $"{GetArabicDayName(localTime.DayOfWeek)} {localTime:d/M}";
-                        var scheduleDetails = BuildGroupScheduleDetails(g);
-                        fullGroupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}{daysLine}\n  تاريخ المجموعة الأساسي: {dateText}\n  الموعد الأساسي: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")} (مكتملة العدد تماماً - ممتلئة){scheduleDetails}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
+                        var modeText = Shared.Domain.AttendanceModes.Normalize(g.Mode) == Shared.Domain.AttendanceModes.Online ? "أونلاين (Online)" : "في السنتر (Offline)";
+                        var dateText = FreeSessionBookingPolicy.FormatDate(localTime);
+                        var scheduleDetails = FreeSessionBookingPolicy.ScheduleDetails(g, projectZone);
+                        fullGroupsContextList.Add($"- معرف المجموعة (ID): {g.Id}\n  نوع المجموعة: {modeText}\n  تاريخ الحصة المجانية: {dateText}\n  موعد الحصة المجانية: الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")} (مكتملة العدد تماماً - ممتلئة){scheduleDetails}\n  عدد المشتركين المسجلين حالياً: {g.Bookings.Count} من أصل {g.Capacity}");
                     }
 
                     // Check if this customer is already booked in any group
@@ -631,26 +581,40 @@ namespace Modules.AI.Workers
                         if (booking != null)
                         {
                             bookedGroup = booking.GroupAppointment;
+                            currentBookedGroupId = bookedGroup.Id;
+                            recentBookingRequests = await (from message in dbContext.Messages
+                                join customerConversation in dbContext.Conversations on message.ConversationId equals customerConversation.Id
+                                where customerConversation.ProjectId == @event.ProjectId
+                                    && customerConversation.CustomerId == customer.Id && message.Direction == "Incoming"
+                                    && message.Timestamp >= booking.UpdatedAt
+                                orderby message.Timestamp descending
+                                select message.Transcription ?? message.Content).Take(5).ToListAsync();
+                            recentBookingRequests.Reverse();
+                            requesterAllowsTransfer = BookedAppointmentReplyPolicy.AllowsOtherTimes(@event.Content, recentBookingRequests);
+                            if (!requesterAllowsTransfer)
+                            {
+                                groupsContextList.Clear();
+                                fullGroupsContextList.Clear();
+                            }
                         }
                     }
 
                     string alreadyBookedNote = "";
                     if (bookedGroup != null)
                     {
-                        var utcTime = DateTime.SpecifyKind(bookedGroup.DateTime, DateTimeKind.Utc);
+                        var utcTime = DateTime.SpecifyKind(bookedGroup.FreeSessionDateTime ?? bookedGroup.DateTime, DateTimeKind.Utc);
                         var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, projectZone);
-                        var modeText = bookedGroup.Mode == "online" ? "أونلاين (Online)" : "في السنتر (Offline)";
-                        var bookedArabicDay = GetArabicDayName(localTime.DayOfWeek);
-                        var bookedDateText = $"{bookedArabicDay} {localTime:d/M}";
+                        var modeText = Shared.Domain.AttendanceModes.Normalize(bookedGroup.Mode) == Shared.Domain.AttendanceModes.Online ? "أونلاين (Online)" : "في السنتر (Offline)";
+                        var bookedDateText = FreeSessionBookingPolicy.FormatDate(localTime);
                         var timeText = $"الساعة {localTime:h:mm} {(localTime.Hour >= 12 ? "مساءً" : "صباحاً")}";
                         var scheduleInfo = $"مجموعة {modeText} ({bookedDateText} {timeText})";
-                        var bookedScheduleDetails = BuildGroupScheduleDetails(bookedGroup);
+                        var bookedScheduleDetails = FreeSessionBookingPolicy.ScheduleDetails(bookedGroup, projectZone);
 
                         bookedGroupInfo = $"Group Name: {bookedGroup.Name}\nGroup ID: {bookedGroup.Id}\nSchedule: {modeText} ({bookedDateText} at {timeText}){bookedScheduleDetails}";
 
                         alreadyBookedNote = $"\nملاحظة هامة جداً وصارمة: العميل مسجل حالياً ومحجوز في الموعد التالي: {scheduleInfo} (اسم المجموعة: {bookedGroup.Name}، معرف المجموعة ID: {bookedGroup.Id})." +
                                             $"\nتفاصيل مواعيده الحالية عند السؤال عنها أو عند تأكيد الحجز:{bookedScheduleDetails}" +
-                                            $"\n- إذا سأل العميل عن موعده أو مجموعته أو متى تم حجزه، أخبره بدقة وصراحة تامة بالموعد الحالي المحجوز فيه وتفاصيل السيشن المجانية وسيشني الكورس إذا كانت موجودة (ولا تخمن أو تخترع أي موعد آخر من المجموعات المتاحة!)." +
+                                            $"\n- إذا سأل العميل عن موعده أو مجموعته أو متى تم حجزه، أخبره بدقة وصراحة تامة بالموعد الحالي المحجوز فيه وموعد الحصة المجانية ودكتور مجموعته (ولا تخمن أو تخترع أي موعد آخر من المجموعات المتاحة!)." +
                                             $"\n- إذا طلب تغيير موعد المجموعة أو حجز مجموعة أخرى مختلفة، فقم بتسجيله في المجموعة الجديدة بوضع suggestedGroupBookingId = معرف المجموعة الجديد (ID). وسيقوم النظام بنقله تلقائياً." +
                                             $"\n- أما إذا سأل أو طلب الحجز في نفس مجموعته الحالية، أخبره بلطف أنه مسجل ومحجوز بالفعل في هذا الموعد ولا تسجله مرة أخرى (اترك suggestedGroupBookingId = null).";
                     }
@@ -671,6 +635,8 @@ namespace Modules.AI.Workers
                                           "بما أن العميل يعيش في الإسكندرية، يمكنك عرض المجموعات المتاحة 'أونلاين (Online)' و'في السنتر (Offline)' معاً وخيره بينهما.\n";
                     }
 
+                    cityInstruction += "كل مجموعة موضح لها نوع الكورس (عادي أو مكثف). اعرض واحجز فقط النوع الذي اختاره العميل؛ لو النوع غير واضح اسأله قبل الحجز. لا تستخدم مواعيد أو أسعار نوع للكورس الآخر، ولا تنقل حجزه بين النوعين بدون طلبه الصريح. لو لا توجد مواعيد للنوع المطلوب وضح أنها لم تُحدد بعد ولا تخترع موعداً.\n";
+
                     var bookingPhoneInstruction =
                         NormalizeBookingPhone(knownBookingPhone) == null
                             ? "قانون إلزامي لرقم صاحب الحجز:\n" +
@@ -678,7 +644,7 @@ namespace Modules.AI.Workers
                             : string.Empty;
 
                     var groupsContextText = "معلومات مواعيد المجموعات المتاحة للحجز (Group Appointments):\n" +
-                                            "إذا سأل العميل عن المجموعات أو المواعيد المتاحة أو يرغب في الحجز، اعرض عليه المجموعات المتاحة المناسبة له مع توضيح نوع كل مجموعة (سواء كانت أونلاين أو في السنتر)، وأيام الكورس، وميعاد السيشن المجانية، وميعادي سيشني الكورس الأسبوعيين، واسم الإنستراكتور المسؤول. السيشن المجانية سيشن واحدة مع دكتور مصطفى، والكورس عبارة عن سيشنين في الأسبوع مع إنستراكتور المجموعة. لا تذكر تفاصيل السيشن المجانية وسيشني الكورس في كل رد عادي؛ اذكرها فقط عند الحديث عن المواعيد أو الحجز أو قبل تأكيد الحجز أو إذا سأل العميل عنها. قبل تأكيد الحجز ذكّر العميل يتأكد أن ميعاد السيشن المجانية مناسب له وأن ميعادي الكورس الأسبوعيين مناسبين له. لا تذكر عدد الأماكن المتبقية قبل إتمام الحجز. إذا أراد الحجز في مجموعة محددة، ضع suggestedGroupBookingId = معرف المجموعة (ID) وأكد له الحجز في ردك. النظام سيسجله تلقائياً، وبعد نجاح التسجيل سيضيف النظام عدد الأماكن المحدود ودعوة حجز صديق أو قريب ورابط تجربة الموقع إلى الرد. لا تكتب أنت أي رابط تجربة أو عدد أماكن أو دعوة مرافق من عندك. إذا لم تكن هناك مجموعات متاحة، أخبره أن المجموعات مكتملة حالياً.\n" +
+                                            FreeSessionBookingPolicy.Instructions + "\n" +
                                             "تنبيه هام جداً وصارم بشأن توافر المجموعات وسعتها: إذا كانت المجموعة مدرجة في 'قائمة المجموعات المتاحة حالياً' بالأسفل، فهذا يعني بشكل قاطع وبقوة النظام أنها متاحة وبها أماكن شاغرة ومفتوحة للحجز الفعلي والمباشر. تجاهل تماماً أي معلومات قديمة أو متعارضة في القاعدة المعرفية أو الملفات المرفقة (مثل التي تدعي أن مجموعات السنتر/سيدي جابر مكتملة تماماً، أو تدعي أن المجموعات الأونلاين مكتملة، أو تطلب تسجيل العملاء في 'قائمة الانتظار'، أو تحدد سعة معينة للمجموعات الأونلاين أو الأوفلاين مثل 12 إلى 20 أو 21). اعتمد فقط وحصرياً على أرقام المشتركين والسعة الموضحة في القائمة بالأسفل لتحديد إمكانية الحجز. يُمنع منعاً باتاً ذكر 'قائمة الانتظار' للعميل أو الادعاء بأن المجموعات مكتملة طالما أن المجموعة تظهر في القائمة بالأسفل؛ بل احجز للعميل فيها مباشرة وبشكل طبيعي إذا رغب في ذلك. النظام وحده يضيف رسالة الأماكن المحدودة بعد نجاح الحجز.\n" +
                                             bookingPhoneInstruction +
                                             cityInstruction + "\n" +
@@ -799,37 +765,14 @@ namespace Modules.AI.Workers
                         .FirstOrDefaultAsync(m => m.CustomerId == customerId);
                     if (memory != null)
                     {
-                        var summaryText = memory.LongTermSummary;
-                        var factsText = string.IsNullOrEmpty(memory.FactsJson) || memory.FactsJson == "[]"
-                            ? ""
-                            : "\nFacts: " + string.Join(", ", System.Text.Json.JsonSerializer.Deserialize<string[]>(memory.FactsJson));
-                        var objectionsText = string.IsNullOrEmpty(memory.ObjectionsJson) || memory.ObjectionsJson == "[]"
-                            ? ""
-                            : "\nObjections: " + string.Join(", ", System.Text.Json.JsonSerializer.Deserialize<string[]>(memory.ObjectionsJson));
-
-                        customerMemory = $"Summary: {summaryText}{factsText}{objectionsText}";
-                        Console.WriteLine($"[AIReplyWorker] Injected Customer Memory: {customerMemory}");
+                        customerMemory = Modules.Customers.Services.CustomerMemoryService.BuildPromptContext(memory);
+                        _logger.LogInformation("Customer memory context contains {CharacterCount} characters.", customerMemory.Length);
                     }
                 }
                 catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
                 {
                     _logger.LogWarning(ex, "Failed to query customer memory");
                 }
-            }
-
-            // Fetch existing customer labels to restrict options
-            string[] existingLabels = Array.Empty<string>();
-            try
-            {
-                existingLabels = await dbContext.Customers
-                    .Where(c => c.ProjectId == @event.ProjectId && c.Label != null && c.Label != "")
-                    .Select(c => c.Label)
-                    .Distinct()
-                    .ToArrayAsync();
-            }
-            catch (Exception ex) when (ex is not System.Data.Common.DbException && !ex.ToString().Contains("EntityFrameworkCore"))
-            {
-                _logger.LogWarning(ex, "Failed to query existing labels");
             }
 
             // Construct customer profile description to probe for missing data
@@ -843,7 +786,7 @@ namespace Modules.AI.Workers
                 customerProfile += $"\nCurrent Booking:\n{bookedGroupInfo}";
             }
 
-            // Check for media attachments in the active conversation
+            // Use the same source-turn boundary as aggregation so delayed retries retain their attachment.
             byte[] fileBytes = null;
             string mimeType = null;
             Message latestMediaMsg = null;
@@ -851,39 +794,50 @@ namespace Modules.AI.Workers
             if (conversation != null)
             {
                 latestMediaMsg = await dbContext.Messages
-                    .Where(m => m.ConversationId == conversation.Id && m.Direction == "Incoming" && m.AssetId != null)
+                    .Where(m => m.ConversationId == conversation.Id && m.Direction == "Incoming" && m.AssetId != null
+                        && m.MessageType != "Reaction" && m.Timestamp <= sourceTimestamp
+                        && (!lastReplyTimestamp.HasValue || m.Timestamp > lastReplyTimestamp.Value))
                     .OrderByDescending(m => m.Timestamp)
+                    .ThenByDescending(m => m.Id)
                     .FirstOrDefaultAsync();
 
                 if (latestMediaMsg != null)
                 {
-                    var timeDiff = DateTime.UtcNow - latestMediaMsg.Timestamp;
-                    if (timeDiff.TotalMinutes <= 2.0)
-                    {
-                        var asset = await dbContext.Assets
-                            .IgnoreQueryFilters()
-                            .FirstOrDefaultAsync(a => a.Id == latestMediaMsg.AssetId);
+                    var asset = await dbContext.Assets
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(a => a.Id == latestMediaMsg.AssetId && a.ProjectId == @event.ProjectId);
 
-                        if (asset != null)
+                    if (asset != null)
+                    {
+                        try
                         {
-                            try
-                            {
-                                var storageService = scope.ServiceProvider.GetRequiredService<Modules.Media.Services.IMinIoStorageService>();
-                                using var stream = await storageService.DownloadFileAsync(asset.StoragePath);
-                                using var ms = new System.IO.MemoryStream();
-                                await stream.CopyToAsync(ms);
-                                fileBytes = ms.ToArray();
-                                mimeType = asset.ContentType;
-                                Console.WriteLine($"[AIReplyWorker] Downloaded multimodal media: {asset.FileName} ({fileBytes.Length} bytes) of type {mimeType}");
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"[AIReplyWorker] Failed to download media asset from MinIO: {ex.Message}");
-                            }
+                            var storageService = scope.ServiceProvider.GetRequiredService<Modules.Media.Services.IMinIoStorageService>();
+                            using var stream = await storageService.DownloadFileAsync(asset.StoragePath);
+                            using var ms = new System.IO.MemoryStream();
+                            await stream.CopyToAsync(ms);
+                            fileBytes = ms.ToArray();
+                            mimeType = asset.ContentType;
+                            Console.WriteLine($"[AIReplyWorker] Downloaded multimodal media: {asset.FileName} ({fileBytes.Length} bytes) of type {mimeType}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[AIReplyWorker] Failed to download media asset from MinIO: {ex.Message}");
                         }
                     }
                 }
             }
+
+            var isCourseConversation = CourseDiscoveryPricingPolicy.IsCourseContext(brainContext);
+            if (currentBookedGroupId.HasValue)
+                brainContext += "\n\n" + BookedAppointmentReplyPolicy.ContextMarker;
+            if (shouldPrepareBeforeSession)
+                brainContext += "\n\n" + GroupSessionPreparationScheduler.ContextMarker;
+            var deliveredCourseMessages = isCourseConversation
+                ? await CourseDiscoveryPricingPolicy.DeliveredMessageCountAsync(
+                    dbContext, @event.ProjectId, customerId, @event.SourceMessageTimestampUtc)
+                : 5;
+            if (isCourseConversation)
+                brainContext += $"\n\nCourse discovery: {deliveredCourseMessages} automated messages have already been delivered to this customer across Messenger and WhatsApp. The next answer is still within the first five messages when this count is less than 5.";
 
             Console.WriteLine(
                 $"[AIReplyWorker] Generating customer reply with {customerReplyProvider}/{customerReplyModel}...");
@@ -896,7 +850,7 @@ namespace Modules.AI.Workers
                 brainContext, 
                 chatHistory, 
                 customerMemory,
-                existingLabels,
+                Array.Empty<string>(),
                 customerProfile,
                 fileBytes,
                 mimeType,
@@ -906,26 +860,57 @@ namespace Modules.AI.Workers
                 systemPromptForReply,
                 aiBehaviorSettings,
                 channel);
-                return JsonSerializer.Serialize(new CachedReplyAnalysis(generated, generated.IsFallbackResponse));
+                if (generated.ShouldDeferReply) throw new DeferredAiReplyException();
+                return JsonSerializer.Serialize(new CachedReplyAnalysis(
+                    generated,
+                    generated.IsFallbackResponse,
+                    generated.ShouldDeferReply));
             }
             // The event identifies one aggregated customer turn, including queue redelivery.
             var replyCache = scope.ServiceProvider.GetRequiredService<AiGenerationCache>();
             var replyConfigHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { customerReplyProvider, customerReplyModel,
-                    apiKeyOverride, systemPromptForReply, aiBehaviorSettings, learnedInstructions }))));
-            var cachedAnalysis = customerReplyProvider == CustomerReplyProviders.Gemini
-                ? await replyCache.GetOrGenerateReplyAsync(
-                    $"ai:reply:v1:{@event.ProjectId}:{conversation.Id}:{@event.Id}:{replyConfigHash}",
-                    GenerateAnalysisAsync, TimeSpan.FromMinutes(10))
-                : await GenerateAnalysisAsync();
+                    apiKeyOverride, systemPromptForReply, aiBehaviorSettings, learnedInstructions, knowledgeFingerprint,
+                    outputPolicyVersion = CustomerReplyInstructionPolicy.Version, cacheContractVersion = 3 }))));
+            var cachedAnalysis = await replyCache.GetOrGenerateReplyAsync(
+                $"ai:reply:v2:{@event.ProjectId}:{conversation.Id}:{@event.Id}:{replyConfigHash}",
+                GenerateAnalysisAsync, TimeSpan.FromMinutes(10));
             var cachedReply = JsonSerializer.Deserialize<CachedReplyAnalysis>(cachedAnalysis)!;
             var analysisResult = cachedReply.Analysis;
             analysisResult.IsFallbackResponse = cachedReply.IsFallbackResponse;
+            analysisResult.ShouldDeferReply = cachedReply.ShouldDeferReply;
+            CustomerReplyInstructionPolicy.Apply(analysisResult, aiBehaviorSettings.Tone.BusinessInstructions);
             MessengerBookingPolicy.Apply(aiBehaviorSettings, channel, analysisResult);
 
             await dbContext.Entry(conversation).ReloadAsync();
             if (conversation.HumanHandoffReplyId.HasValue ||
                 await HasNewerConversationTurnAsync(dbContext, conversation.Id, @event.SourceMessageTimestampUtc)) return;
+
+            if (analysisResult.ShouldDeferReply)
+            {
+                _logger.LogWarning(
+                    "AI reply deferred for project {ProjectId}, conversation {ConversationId} after a provider or output failure.",
+                    @event.ProjectId,
+                    conversation.Id);
+                try
+                {
+                    var redis = scope.ServiceProvider
+                        .GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>()
+                        .GetDatabase();
+                    await redis.KeyDeleteAsync($"ai_typing:{conversation.Id}");
+                    var hub = scope.ServiceProvider.GetRequiredService<IHubContext<Modules.Conversations.Hubs.NotificationHub>>();
+                    await hub.Clients.Group($"project_{@event.ProjectId}").SendAsync("AITyping", new
+                    {
+                        conversationId = conversation.Id,
+                        isTyping = false
+                    });
+                }
+                catch (Exception cleanupError)
+                {
+                    _logger.LogWarning(cleanupError, "Could not clear typing state for deferred AI reply.");
+                }
+                throw new DeferredAiReplyException();
+            }
 
             if (!string.IsNullOrWhiteSpace(analysisResult.Transcription))
                 customerMessages.Add(analysisResult.Transcription);
@@ -933,6 +918,10 @@ namespace Modules.AI.Workers
             EnforceDistinctBookingPhones(customer, analysisResult);
             ApplyFollowUpPolicy(aiBehaviorSettings, analysisResult);
             await ApplyKnowledgePricingGuardAsync(dbContext, @event.ProjectId, @event.Content, analysisResult);
+            var bookingCity = GroupBookingAttendancePolicy.EffectiveCity(analysisResult.Entities?.City, customer?.City);
+            if (analysisResult.SuggestedGroupBookingPeople.All(person => person.IsRequester)
+                && GroupBookingAttendancePolicy.HasKnownCity(bookingCity) && !GroupBookingAttendancePolicy.IsAlexandria(bookingCity))
+                analysisResult.AttendanceMode = Shared.Domain.AttendanceModes.Online;
             SchedulePreferenceReplyPolicy.Apply(
                 @event.Content,
                 analysisResult,
@@ -951,6 +940,20 @@ namespace Modules.AI.Workers
                 Console.WriteLine($"[AIReplyWorker] Saved voice note transcription: {latestMediaMsg.Transcription}");
             }
 
+            if (CustomerOptOutService.IsOptOutRequest(analysisResult.Transcription))
+            {
+                await scope.ServiceProvider.GetRequiredService<CustomerOptOutService>()
+                    .ApplyIfRequestedAsync(customer, analysisResult.Transcription);
+                await dbContext.SaveChangesAsync();
+                return;
+            }
+            if (currentBookedGroupId.HasValue && analysisResult.CancelGroupBooking
+                && !BookedAppointmentReplyPolicy.RequestsCancellation(@event.Content + "\n" + analysisResult.Transcription))
+            {
+                analysisResult.CancelGroupBooking = false;
+                analysisResult.SuggestedGroupBookingId = null;
+                analysisResult.ReplyContent = "حجز حضرتك الحالي ثابت زي ما هو.";
+            }
             // 2.6. Process AI Auto-Cancellation if CancelGroupBooking is set to true
             if (analysisResult.CancelGroupBooking)
             {
@@ -1007,10 +1010,18 @@ namespace Modules.AI.Workers
                 }
                 catch (Exception cancelEx)
                 {
-                    Console.WriteLine($"[AIReplyWorker] Auto-cancellation failed: {cancelEx.Message}");
+                    _logger.LogError(cancelEx, "Auto-cancellation did not commit; withholding the AI confirmation.");
+                    throw;
                 }
             }
 
+            if (analysisResult.RequestHuman && aiBehaviorSettings.SubscribersOnlyAutoStop)
+            {
+                analysisResult.RequestHuman = false;
+                analysisResult.ReplyContent = settings.HumanTransferEnabled && !string.IsNullOrWhiteSpace(settings.HumanTransferPhone)
+                    ? $"تقدر تتواصل مع المسؤول مباشرة على {settings.HumanTransferPhone.Trim()}. وأنا متاح هنا لاستفساراتك."
+                    : "أنا متاح مع حضرتك هنا. قولّي الاستفسار اللي محتاج أوضحه ليك.";
+            }
             if (analysisResult.RequestHuman)
             {
                 var contact = settings.HumanTransferEnabled && !string.IsNullOrWhiteSpace(settings.HumanTransferPhone)
@@ -1053,7 +1064,12 @@ namespace Modules.AI.Workers
                             GroupId = groupId,
                             RequesterCustomerId = customer?.Id,
                             SuggestedPeople = analysisResult.SuggestedGroupBookingPeople,
-                            Timezone = settings?.Timezone
+                            RequesterCity = analysisResult.Entities?.City,
+                            AttendanceMode = analysisResult.AttendanceMode,
+                            Timezone = settings?.Timezone,
+                            RequesterAllowsTransfer = currentBookedGroupId.HasValue
+                                && BookedAppointmentReplyPolicy.AllowsTransfer(
+                                    @event.Content + "\n" + analysisResult.Transcription, recentBookingRequests)
                         });
                         if (autoBookingResult.Succeeded && customer != null)
                         {
@@ -1079,10 +1095,24 @@ namespace Modules.AI.Workers
                 }
             }
 
+            if (autoBookingResult is { Succeeded: false }
+                && analysisResult.SuggestedFollowUp is { } bookingFollowUp
+                && string.Equals(bookingFollowUp.Type, "AppointmentReminder", StringComparison.OrdinalIgnoreCase))
+                bookingFollowUp.Needed = false;
+
             analysisResult.ReplyContent = AiGroupBookingReplyPolicy.Apply(
                 analysisResult.ReplyContent,
                 shouldOfferTrialAfterBooking,
-                autoBookingResult);
+                autoBookingResult,
+                shouldPrepareBeforeSession);
+            if (currentBookedGroupId.HasValue && !BookedAppointmentReplyPolicy.AllowsOtherTimes(
+                    @event.Content + "\n" + analysisResult.Transcription, recentBookingRequests))
+                analysisResult.ReplyContent = BookedAppointmentReplyPolicy.PreserveBooking(analysisResult.ReplyContent);
+            if (isCourseConversation)
+                analysisResult.ReplyContent = CourseDiscoveryPricingPolicy.Apply(
+                    analysisResult.ReplyContent,
+                    @event.Content + "\n" + analysisResult.Transcription,
+                    deliveredCourseMessages);
 
             Console.WriteLine($"[AIReplyWorker] AI Response: {analysisResult.ReplyContent}");
 
@@ -1367,9 +1397,9 @@ namespace Modules.AI.Workers
         {
             try
             {
-                var pending = await dbContext.FollowUps
+                var pending = await GroupSessionPreparationScheduler.ExcludePreparation(dbContext.FollowUps
                     .IgnoreQueryFilters()
-                    .Where(f => f.CustomerId == customerId && f.Status == "Pending")
+                    .Where(f => f.CustomerId == customerId && f.Status == "Pending"))
                     .ToListAsync();
 
                 foreach (var fu in pending)
@@ -1392,7 +1422,7 @@ namespace Modules.AI.Workers
         {
             try
             {
-                var pending = await dbContext.FollowUps
+                var pending = await GroupSessionPreparationScheduler.ExcludePreparation(dbContext.FollowUps
                     .IgnoreQueryFilters()
                     .Where(followUp => followUp.ProjectId == source.ProjectId
                         && followUp.CustomerId == customerId
@@ -1403,7 +1433,7 @@ namespace Modules.AI.Workers
                                 && followUp.Channel == source.Channel
                                 && (source.Channel != "WhatsApp"
                                     || (followUp.WhatsAppAccountId ?? followUp.ProjectId)
-                                        == (source.WhatsAppAccountId ?? source.ProjectId))))
+                                        == (source.WhatsAppAccountId ?? source.ProjectId)))))
                     .ToListAsync();
 
                 dbContext.FollowUps.RemoveRange(pending);
@@ -1611,6 +1641,52 @@ namespace Modules.AI.Workers
             }
         }
 
+        internal static async Task<WhatsAppTransitionSendAttempt> SendWhatsAppTransitionMessageThroughConnectedAccountAsync(
+            IServiceProvider serviceProvider,
+            WhatsAppTransitionRequest request)
+        {
+            var accounts = await serviceProvider
+                .GetRequiredService<WhatsAppAccountService>()
+                .ListAsync(request.ProjectId);
+            WhatsAppTransitionSendAttempt? lastDefinitelyUnsentAttempt = null;
+
+            foreach (var account in accounts)
+            {
+                var attempt = await TrySendWhatsAppTransitionThroughAccountAsync(
+                    serviceProvider,
+                    account.Id,
+                    request);
+                if (attempt is null) continue;
+                if (attempt.Outcome != WhatsAppTransitionDeliveryOutcome.DefinitelyNotSent) return attempt;
+                lastDefinitelyUnsentAttempt = attempt;
+            }
+
+            return lastDefinitelyUnsentAttempt ?? new WhatsAppTransitionSendAttempt(
+                null,
+                null,
+                WhatsAppTransitionDeliveryOutcome.DefinitelyNotSent);
+        }
+
+        private static async Task<WhatsAppTransitionSendAttempt?> TrySendWhatsAppTransitionThroughAccountAsync(
+            IServiceProvider serviceProvider,
+            Guid accountId,
+            WhatsAppTransitionRequest request)
+        {
+            var session = await serviceProvider
+                .GetRequiredService<WhatsAppGatewaySessionClient>()
+                .GetAsync(request.ProjectId, accountId);
+            if (!session.Connected || !session.ConnectedAt.HasValue) return null;
+
+            var transition = new WhatsAppTransitionMessage(
+                request.ProjectId,
+                accountId,
+                request.ToPhone,
+                request.Message,
+                request.IdempotencyKey);
+            var outcome = await SendWhatsAppTransitionMessageAsync(serviceProvider, transition);
+            return new WhatsAppTransitionSendAttempt(accountId, transition, outcome);
+        }
+
         private static string? TryGetProviderMessageId(string responseBody)
         {
             try
@@ -1658,9 +1734,7 @@ namespace Modules.AI.Workers
             }
 
             var deliveryOutcome = WhatsAppTransitionDeliveryOutcome.DefinitelyNotSent;
-            var whatsAppAccountId = (await serviceProvider
-                .GetRequiredService<WhatsAppAccountService>()
-                .GetDefaultAsync(settings.ProjectId)).Id;
+            Guid? whatsAppAccountId = null;
             WhatsAppTransitionMessage? whatsAppTransition = null;
             try
             {
@@ -1673,15 +1747,16 @@ namespace Modules.AI.Workers
                     PhoneNumber = extractedPhone,
                     Channel = "WhatsApp"
                 });
-                whatsAppTransition = new WhatsAppTransitionMessage(
-                    settings.ProjectId,
-                    whatsAppAccountId,
-                    extractedPhone,
-                    transitionMessage,
-                    transition.DeliveryIdempotencyKey);
-                deliveryOutcome = await SendWhatsAppTransitionMessageAsync(
+                var sendAttempt = await SendWhatsAppTransitionMessageThroughConnectedAccountAsync(
                     serviceProvider,
-                    whatsAppTransition);
+                    new WhatsAppTransitionRequest(
+                        settings.ProjectId,
+                        extractedPhone,
+                        transitionMessage,
+                        transition.DeliveryIdempotencyKey));
+                whatsAppAccountId = sendAttempt.WhatsAppAccountId;
+                whatsAppTransition = sendAttempt.Transition;
+                deliveryOutcome = sendAttempt.Outcome;
             }
             catch (Exception ex)
             {
@@ -1690,6 +1765,8 @@ namespace Modules.AI.Workers
 
             if (deliveryOutcome == WhatsAppTransitionDeliveryOutcome.Sent)
             {
+                var connectedWhatsAppAccountId = whatsAppAccountId
+                    ?? throw new InvalidOperationException("A confirmed WhatsApp transition must include its account id.");
                 Console.WriteLine($"[AIReplyWorker] WhatsApp message successfully sent to {extractedPhone}. Proceeding with transition.");
 
                 customer = await serviceProvider
@@ -1705,13 +1782,13 @@ namespace Modules.AI.Workers
                     .ResolveOrCreateAsync(
                         settings.ProjectId,
                         customer.Id,
-                        whatsAppAccountId,
+                        connectedWhatsAppAccountId,
                         sentAt);
                 var providerMessageId = whatsAppTransition?.ProviderMessageId
                     ?? throw new InvalidOperationException("A confirmed WhatsApp transition must include its provider message id.");
                 var outgoingMessageId = DeterministicWhatsAppOutgoingMessageId(
                     settings.ProjectId,
-                    whatsAppAccountId,
+                    connectedWhatsAppAccountId,
                     providerMessageId);
                 if (!await dbContext.Messages.IgnoreQueryFilters()
                     .AnyAsync(message => message.Id == outgoingMessageId))
@@ -1802,7 +1879,7 @@ namespace Modules.AI.Workers
                         new PendingAutomationFollowUpRequest(
                             settings.ProjectId,
                             customer.Id,
-                            $"whatsapp-ai-nurture:{whatsAppAccountId:N}:{whatsAppConversation.Id:N}",
+                            $"whatsapp-ai-nurture:{connectedWhatsAppAccountId:N}:{whatsAppConversation.Id:N}",
                             DateTime.UtcNow.AddHours(24),
                             behaviorService.RenderTemplate(
                                 whatsAppBehavior.Fallbacks.FollowUpDefault,
@@ -1815,7 +1892,7 @@ namespace Modules.AI.Workers
                                     Channel = "WhatsApp"
                                 }),
                             ConversationId: whatsAppConversation.Id,
-                            WhatsAppAccountId: whatsAppAccountId,
+                            WhatsAppAccountId: connectedWhatsAppAccountId,
                             Channel: "WhatsApp"));
                 Console.WriteLine($"[AIReplyWorker] Scheduled new WhatsApp follow-up {newFollowUp.Id} for transitioned customer {customer.Id}.");
             }

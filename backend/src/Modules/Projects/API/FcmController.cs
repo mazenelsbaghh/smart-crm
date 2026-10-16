@@ -1,90 +1,52 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using StackExchange.Redis;
-using System;
-using System.Linq;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using FirebaseAdmin.Messaging;
+using Modules.Projects.Services;
+using Shared.Security;
 
-namespace Modules.Projects.API
+namespace Modules.Projects.API;
+
+[ApiController]
+[Authorize]
+[ProjectPermission("read")]
+[Route("api/projects/{projectId}/fcm-tokens")]
+public sealed class FcmController(ProjectPushSubscriptions subscriptions) : ControllerBase
 {
-    [ApiController]
-    [Route("api/projects/{projectId}/fcm-tokens")]
-    public class FcmController : ControllerBase
+    [HttpPost]
+    public async Task<IActionResult> RegisterToken(Guid projectId, FcmTokenRequest request)
     {
-        private readonly IDatabase _redis;
-
-        public FcmController(IConnectionMultiplexer redis)
-        {
-            _redis = redis.GetDatabase();
-        }
-
-        [HttpPost]
-        public async Task<IActionResult> RegisterToken(Guid projectId, [FromBody] FcmTokenRequest request)
-        {
-            if (request == null || string.IsNullOrWhiteSpace(request.Token))
-            {
-                return BadRequest(new { error = "Token is required." });
-            }
-
-            var redisKey = $"fcm_tokens:{projectId}";
-            
-            // Add token to the project's Redis Set
-            await _redis.SetAddAsync(redisKey, request.Token);
-            
-            // Set token expiration of 30 days (so stale/inactive tokens eventually expire)
-            await _redis.KeyExpireAsync(redisKey, TimeSpan.FromDays(30));
-
-            Console.WriteLine($"[FcmController] Registered FCM token for project: {projectId}");
-
-            return Ok(new { message = "FCM token registered successfully." });
-        }
-
-        [HttpPost("test")]
-        public async Task<IActionResult> SendTestNotification(Guid projectId)
-        {
-            var redisKey = $"fcm_tokens:{projectId}";
-            var tokens = await _redis.SetMembersAsync(redisKey);
-            if (tokens.Length == 0)
-            {
-                return BadRequest(new { error = "No registered devices found for this project. Please open the app first to register your device." });
-            }
-
-            var tokenList = tokens.Select(t => t.ToString()).ToList();
-            var fcmMessage = new MulticastMessage
-            {
-                Tokens = tokenList,
-                Notification = new Notification
-                {
-                    Title = "تنبيه تجريبي 🧪",
-                    Body = "هذا إشعار تجريبي من نظام الإشعارات للتأكد من عمل الميزة بنجاح!"
-                },
-                Data = new Dictionary<string, string>
-                {
-                    { "type", "Test" },
-                    { "projectId", projectId.ToString() }
-                }
-            };
-
-            try
-            {
-                var response = await FirebaseMessaging.DefaultInstance.SendMulticastAsync(fcmMessage);
-                return Ok(new
-                {
-                    message = $"Sent test notification to {tokenList.Count} devices.",
-                    successCount = response.SuccessCount,
-                    failureCount = response.FailureCount
-                });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = $"FCM Send failed: {ex.Message}" });
-            }
-        }
+        if (!new ProjectAuthorizationService().CanRead(User, projectId)) return Forbid();
+        if (string.IsNullOrWhiteSpace(request.Token) || request.Token.Length > 4096) return BadRequest("Invalid device token.");
+        await subscriptions.RegisterAsync(User, request.Token);
+        return Ok(new { message = "FCM token registered successfully." });
     }
 
-    public class FcmTokenRequest
+    [HttpDelete]
+    public async Task<IActionResult> RemoveToken(Guid projectId, FcmTokenRequest request)
     {
-        public string Token { get; set; } = string.Empty;
+        if (!new ProjectAuthorizationService().CanRead(User, projectId)) return Forbid();
+        if (string.IsNullOrWhiteSpace(request.Token)) return BadRequest("Device token is required.");
+        return await subscriptions.RemoveAsync(User, request.Token) ? NoContent() : Forbid();
     }
+
+    [HttpPost("test")]
+    [Authorize(Roles = "Owner,Admin")]
+    public async Task<IActionResult> SendTestNotification(Guid projectId)
+    {
+        if (!new ProjectAuthorizationService().CanManageProject(User, projectId)) return Forbid();
+        var tokens = await subscriptions.ActiveTokensAsync(projectId);
+        if (tokens.Count == 0) return BadRequest(new { error = "No registered devices found for this project." });
+        var response = await FirebaseMessaging.DefaultInstance.SendEachForMulticastAsync(new MulticastMessage
+        {
+            Tokens = tokens,
+            Notification = new Notification { Title = "تنبيه تجريبي", Body = "تم تفعيل الإشعارات." },
+            Data = new Dictionary<string, string> { ["type"] = "Test", ["projectId"] = projectId.ToString() }
+        });
+        return Ok(new { successCount = response.SuccessCount, failureCount = response.FailureCount });
+    }
+}
+
+public sealed class FcmTokenRequest
+{
+    public string Token { get; set; } = string.Empty;
 }

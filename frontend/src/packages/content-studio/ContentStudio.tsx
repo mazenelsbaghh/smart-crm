@@ -1,14 +1,20 @@
 'use client';
 
+import PageHeader from '../../components/ui/PageHeader';
+import Tabs from '../../components/ui/Tabs';
 import Image from 'next/image';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertTriangle,
+  BookOpen,
+  FileText,
   CalendarClock,
   Check,
   CheckCircle2,
   Clock3,
+  ChevronLeft,
+  ChevronRight,
   Film,
   Gamepad2,
   ImagePlus,
@@ -19,16 +25,22 @@ import {
   Share2,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
+  X,
+  ZoomIn,
 } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import Dialog from '../../components/shared/Dialog';
 import { useUnsavedNavigationGuard } from '../../hooks/use-unsaved-navigation-guard';
 import { contentApi } from './content-api';
 import ContentVideos from './ContentVideos';
 import ContentDocuments from './ContentDocuments';
+import ImageModelSelect from './ImageModelSelect';
+import SingleImageTrial from './SingleImageTrial';
 import ContentCardGames from './ContentCardGames';
-import type { ContentPost, ContentPostStatus, ContentStudioData, ContentWeekPlan, UpdateContentSettings } from './types';
+import type { ContentPost, ContentPostStatus, ContentStudioData, ContentWeekPlan, ContentWeekPlanItem, UpdateContentSettings } from './types';
 import styles from './ContentStudio.module.css';
 
 const statusLabels: Record<ContentPostStatus, string> = {
@@ -45,12 +57,20 @@ const statusLabels: Record<ContentPostStatus, string> = {
 
 const activeStatuses: ContentPostStatus[] = ['Generating', 'Publishing'];
 const contentTabs = [
-  { key: 'posts', label: 'الصور والمنشورات' },
-  { key: 'videos', label: 'الفيديوهات' },
-  { key: 'documents', label: 'العروض والمستندات' },
-  { key: 'games', label: 'الألعاب والكروت' },
+  { key: 'posts', label: 'الصور والمنشورات', icon: <ImagePlus size={17} aria-hidden="true" /> },
+  { key: 'videos', label: 'الفيديوهات', icon: <Film size={17} aria-hidden="true" /> },
+  { key: 'paper', label: 'ورق', icon: <FileText size={17} aria-hidden="true" /> },
+  { key: 'documents', label: 'العروض والمستندات', icon: <BookOpen size={17} aria-hidden="true" /> },
+  { key: 'games', label: 'الألعاب والكروت', icon: <Gamepad2 size={17} aria-hidden="true" /> },
 ] as const;
 type ContentView = (typeof contentTabs)[number]['key'];
+const postTasks = [
+  { key: 'review', label: 'المراجعة والمكتبة', icon: <CheckCircle2 size={17} aria-hidden="true" /> },
+  { key: 'create', label: 'إنشاء محتوى', icon: <Sparkles size={17} aria-hidden="true" /> },
+  { key: 'schedule', label: 'جدول النشر', icon: <CalendarClock size={17} aria-hidden="true" /> },
+  { key: 'brand', label: 'هوية المحتوى', icon: <Palette size={17} aria-hidden="true" /> },
+] as const;
+type PostTask = (typeof postTasks)[number]['key'];
 
 interface ConfirmationState {
   title: string;
@@ -70,7 +90,10 @@ function ContentStudioProjectView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedView = searchParams.get('view');
-  const activeView: ContentView = requestedView === 'videos' || requestedView === 'documents' || requestedView === 'games' ? requestedView : 'posts';
+  const activeView: ContentView = requestedView === 'paper' || requestedView === 'videos' || requestedView === 'documents' || requestedView === 'games' ? requestedView : 'posts';
+  const requestedTask = searchParams.get('task');
+  const activeTask: PostTask = requestedTask === 'create' || requestedTask === 'schedule' || requestedTask === 'brand' ? requestedTask : 'review';
+  const [trialDirty, setTrialDirty] = useState(false);
   const [studioData, setStudioData] = useState<ContentStudioData | null>(null);
   const [form, setForm] = useState<UpdateContentSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,21 +108,30 @@ function ContentStudioProjectView() {
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
   const formDirtyRef = useRef(false);
   const logoInput = useRef<HTMLInputElement>(null);
+  const paletteReferenceInput = useRef<HTMLInputElement>(null);
+  const postReferenceInput = useRef<HTMLInputElement>(null);
   const hasActivePost = Boolean(studioData?.posts.some((post) => activeStatuses.includes(post.status)));
   const polledWeeklyPlans = studioData?.weeklyPlans?.length
     ? studioData.weeklyPlans
     : studioData?.weeklyPlan ? [studioData.weeklyPlan] : [];
+  const hasPublishingPlan = polledWeeklyPlans.some((plan) => plan.items.some((item) => item.postStatus === 'Publishing'));
   const hasGeneratingPlan = polledWeeklyPlans.some((plan) => plan.status === 'Generating'
     || plan.items.some((item) => !item.contentPostId || item.postStatus === 'Generating'));
-  const navigationGuard = useUnsavedNavigationGuard(formDirty || videoDraftDirty || documentDraftDirty || gameDraftDirty);
+  const navigationGuard = useUnsavedNavigationGuard(formDirty || videoDraftDirty || documentDraftDirty || gameDraftDirty || trialDirty);
   const canManage = user?.role === 'Owner' || user?.role === 'Admin';
 
   const hydrateForm = useCallback((response: ContentStudioData) => {
     setForm({
       facebookPageId: response.settings.facebookPageId,
       dailyPublishTimeLocal: response.settings.dailyPublishTimeLocal,
+      postsPerDay: response.settings.postsPerDay ?? 1,
       stylePrompt: response.settings.stylePrompt,
       isEnabled: response.settings.isEnabled,
+      designSource: response.settings.designSource,
+      matchReferenceTone: response.settings.matchReferenceTone,
+      referenceColors: response.settings.referenceColors,
+      imageProvider: response.settings.imageProvider ?? 'Gemini',
+      openAiImageModel: response.settings.openAiImageModel ?? 'gpt-image-2.5-sunburst',
     });
     formDirtyRef.current = false;
     setFormDirty(false);
@@ -143,11 +175,11 @@ function ContentStudioProjectView() {
   }, [activeProject?.id, refresh]);
 
   useEffect(() => {
-    if (!polling && !hasActivePost && !hasGeneratingPlan) return;
+    if (!polling && !hasActivePost && !hasPublishingPlan && !hasGeneratingPlan) return;
     const interval = window.setInterval(() => void refresh('background'), 4_000);
     const timeout = window.setTimeout(() => setPolling(false), 60_000);
     return () => { window.clearInterval(interval); window.clearTimeout(timeout); };
-  }, [hasActivePost, hasGeneratingPlan, polling, refresh]);
+  }, [hasActivePost, hasPublishingPlan, hasGeneratingPlan, polling, refresh]);
 
   const run = async (key: string, action: () => Promise<{ message?: string } | ContentStudioData>) => {
     setBusy(key);
@@ -176,14 +208,42 @@ function ContentStudioProjectView() {
     if (logoInput.current) logoInput.current.value = '';
   };
 
+  const uploadReference = async (file: File | undefined, kind: 'palette' | 'post') => {
+    if (!file) return;
+    await run(`reference-${kind}`, async () => {
+      const response = await contentApi.uploadBrandReference(file, kind);
+      if (kind === 'palette') {
+        setForm((current) => current ? { ...current, referenceColors: response.settings.referenceColors } : current);
+      }
+      return response;
+    });
+    const input = kind === 'palette' ? paletteReferenceInput.current : postReferenceInput.current;
+    if (input) input.value = '';
+  };
+
   const commitContentView = (nextView: ContentView) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('view', nextView);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
+  const selectPostTask = (nextTask: PostTask) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('task', nextTask);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
   const selectContentView = (nextView: ContentView) => {
     if (nextView === activeView) return true;
+    if (activeView === 'posts' && trialDirty) {
+      setConfirmation({
+        title: 'مغادرة تجربة الصورة؟',
+        message: 'وصف الصورة والمعاينة الحالية لم يتم حفظهما. هل تريد المغادرة؟',
+        confirmLabel: 'مغادرة دون حفظ',
+        onConfirm: () => { setTrialDirty(false); commitContentView(nextView); },
+      });
+      return false;
+    }
     if (activeView === 'videos' && videoDraftDirty) {
       setConfirmation({
         title: 'مغادرة فكرة الفيديو؟',
@@ -193,7 +253,7 @@ function ContentStudioProjectView() {
       });
       return false;
     }
-    if (activeView === 'documents' && documentDraftDirty) {
+    if ((activeView === 'documents' || activeView === 'paper') && documentDraftDirty) {
       setConfirmation({
         title: 'مغادرة الملف قبل الحفظ؟',
         message: 'ستفقد النص الجديد أو تعديلات الصفحات غير المحفوظة. الملفات المحفوظة لن تتأثر.',
@@ -228,17 +288,10 @@ function ContentStudioProjectView() {
   if (activeView === 'videos') {
     return (
       <div className={styles.studio} dir="rtl">
-        <header className={styles.pageHeader}>
-          <div>
-            <p className={styles.eyebrow}>VIDEO STORYBOARD</p>
-            <h1>فيديو يبدأ من معرفة مشروعك</h1>
-            <p>يقترح الفكرة والافتتاحية، يقسمها لمشاهد تراجعها، ثم يولّد كل مشهد ويحفظ المكتمل حتى لو احتاج غيره إعادة.</p>
-          </div>
-          <div className={styles.modelStamp} aria-label="توليد الفيديو يحتاج مفتاح Agent Platform مستقل لكل مشروع">
-            <Film size={18} />
-            <span><strong>Gemini Video</strong>مفتاح مستقل لكل مشروع</span>
-          </div>
-        </header>
+        <div className={styles.pageHeader}>
+          <PageHeader icon={<Film size={22} aria-hidden="true" />} title="استوديو المحتوى" description="إعداد مشاهد الفيديو ومراجعتها وتوليدها" />
+
+        </div>
         <ContentTabs activeView={activeView} onChange={selectContentView} />
         <div id="content-panel-videos" role="tabpanel" aria-labelledby="content-tab-videos">
           <ContentVideos key={activeProject.id} projectId={activeProject.id} canManage={canManage} onDraftDirtyChange={setVideoDraftDirty} />
@@ -247,23 +300,16 @@ function ContentStudioProjectView() {
       </div>
     );
   }
-  if (activeView === 'documents') {
+  if (activeView === 'documents' || activeView === 'paper') {
     if (loading || !studioData) return <ContentSkeleton />;
     return (
       <div className={styles.studio} dir="rtl">
-        <header className={styles.pageHeader}>
-          <div>
-            <p className={styles.eyebrow}>AI DOCUMENT STUDIO</p>
-            <h1>نص واحد، ملف كامل بهويتك</h1>
-            <p>Gemini يقسم المحتوى لسلايدز أو صفحات A4، يولّد صورة لكل صفحة، ويترك لك النص والترتيب قبل التنزيل.</p>
-          </div>
-          <div className={styles.modelStamp} aria-label="التصميم يستخدم هوية المحتوى الحالية">
-            <Sparkles size={18} />
-            <span><strong>Brand linked</strong>اللوجو والألوان الحالية</span>
-          </div>
-        </header>
+        <div className={styles.pageHeader}>
+          <PageHeader icon={<BookOpen size={22} aria-hidden="true" />} title="استوديو المحتوى" description={activeView === 'paper' ? 'تصميم أوراق الشرح بفريم وهوية موحّدة' : 'إنشاء المستندات والعروض ومراجعتها وتصديرها'} />
+
+        </div>
         <ContentTabs activeView={activeView} onChange={selectContentView} />
-        <ContentDocuments canManage={canManage} aiReady={studioData.aiConfigured} brandReady={Boolean(studioData.settings.logoUrl)} onDraftDirtyChange={setDocumentDraftDirty} />
+        <ContentDocuments key={activeView} paperMode={activeView === 'paper'} canManage={canManage} aiReady={studioData.aiConfigured} brandReady={Boolean(studioData.settings.logoUrl)} onDraftDirtyChange={setDocumentDraftDirty} />
         <StudioDialogs confirmation={confirmation} onCloseConfirmation={() => setConfirmation(null)} navigationGuard={navigationGuard} />
       </div>
     );
@@ -272,17 +318,10 @@ function ContentStudioProjectView() {
     if (loading || !studioData) return <ContentSkeleton />;
     return (
       <div className={styles.studio} dir="rtl">
-        <header className={styles.pageHeader}>
-          <div>
-            <p className={styles.eyebrow}>WORKSHOP GAME STUDIO</p>
-            <h1>حوّل فكرة الورشة إلى لعبة كروت كاملة</h1>
-            <p>اقترح أكثر من لعبة، نفّذ عدد الكروت الذي تختاره، وطبّق لوجو وألوان وهوية المشروع تلقائيًا.</p>
-          </div>
-          <div className={styles.modelStamp} aria-label="الألعاب تستخدم Gemini وهوية المشروع الحالية">
-            <Gamepad2 size={18} />
-            <span><strong>Brand linked</strong>نفس مفتاح Gemini والإعدادات</span>
-          </div>
-        </header>
+        <div className={styles.pageHeader}>
+          <PageHeader icon={<Gamepad2 size={22} aria-hidden="true" />} title="استوديو المحتوى" description="تصميم الألعاب والكروت بهوية مشروعك" />
+
+        </div>
         <ContentTabs activeView={activeView} onChange={selectContentView} />
         <ContentCardGames canManage={canManage} aiReady={studioData.aiConfigured} brandReady={Boolean(studioData.settings.logoUrl)} onDraftDirtyChange={setGameDraftDirty} />
         <StudioDialogs confirmation={confirmation} onCloseConfirmation={() => setConfirmation(null)} navigationGuard={navigationGuard} />
@@ -297,10 +336,22 @@ function ContentStudioProjectView() {
     ? studioData.posts.find((post) => post.id === studioData.settings.approvedSamplePostId)
     : studioData.posts.find((post) => post.isStyleSample
       && ['Generating', 'AwaitingApproval', 'GenerationFailed'].includes(post.status));
-  const canGenerate = Boolean(studioData.settings.logoUrl && studioData.aiConfigured && studioData.knowledgeDocumentCount > 0);
+  const missingGenerationRequirements = [
+    !studioData.aiConfigured && 'مفتاح Gemini من إعدادات المشروع',
+    studioData.settings.imageProvider === 'OpenAI' && !studioData.settings.openAiImageApiKeyConfigured && 'مفتاح OpenAI للصور',
+    !studioData.settings.logoUrl && 'اللوجو',
+    studioData.knowledgeDocumentCount === 0 && 'مستند معتمد في قاعدة المعرفة',
+    studioData.settings.designSource === 'references' && studioData.settings.referenceImages.every((image) => image.kind !== 'post') && 'ريفرنس بوست واحد على الأقل',
+    formDirty && 'حفظ تعديلات الهوية',
+  ].filter(Boolean);
+  const canGenerate = missingGenerationRequirements.length === 0;
   const weeklyPlans = studioData.weeklyPlans?.length
     ? studioData.weeklyPlans
     : studioData.weeklyPlan ? [studioData.weeklyPlan] : [];
+  const requiredDailySlots = Math.max(form.postsPerDay, ...weeklyPlans
+    .filter((plan) => plan.status === 'Approved' || plan.status === 'AwaitingApproval')
+    .map((plan) => plan.items.length / 7));
+  const latestFirstPostTime = requiredDailySlots >= 3 ? '15:59' : requiredDailySlots >= 2 ? '19:59' : '23:59';
   const pageSaved = !formDirty && form.facebookPageId === studioData.settings.facebookPageId && Boolean(studioData.settings.facebookPageId);
   const isConfigured = Boolean(studioData.settings.logoUrl && studioData.settings.facebookPageId);
   const canControlSchedule = form.isEnabled || weeklyPlans.some((plan) => plan.status === 'Approved');
@@ -310,131 +361,8 @@ function ContentStudioProjectView() {
     && ((post.isStyleSample && post.status === 'Published')
       || (!post.isStyleSample && (post.status === 'Published' || !plannedPostIds.has(post.id)))));
 
-  return (
-    <div className={styles.studio} dir="rtl">
-      <header className={styles.pageHeader}>
-        <div>
-          <p className={styles.eyebrow}>CONTENT AUTOPILOT</p>
-          <h1>محتوى يطلع شبه براندك</h1>
-          <p>من قاعدة معرفة المشروع، بهوية ولوجو واضح من غير خلفية، وبعد موافقتك على خطة الأسبوع ينزل كل بوست في يومه.</p>
-        </div>
-        <div className={styles.modelStamp} aria-label="موديل ودقة توليد الصور">
-          <Sparkles size={18} />
-          <span><strong>{studioData.imageModel}</strong>{studioData.imageSize} · {studioData.aspectRatio}</span>
-        </div>
-      </header>
-
-      <ContentTabs activeView={activeView} onChange={selectContentView} />
-
-      <div id="content-panel-posts" role="tabpanel" aria-labelledby="content-tab-posts">
-
-      {(notice || error || studioData.settings.lastError) && (
-        <div className={error || studioData.settings.lastError ? styles.alertError : styles.alertSuccess} role={error || studioData.settings.lastError ? 'alert' : 'status'} aria-live={error || studioData.settings.lastError ? 'assertive' : 'polite'}>
-          {error || studioData.settings.lastError ? <AlertTriangle size={18} aria-hidden="true" /> : <CheckCircle2 size={18} aria-hidden="true" />}
-          <span>{error ?? notice ?? studioData.settings.lastError}</span>
-        </div>
-      )}
-
-      <section className={styles.readinessRail} aria-label="جاهزية التوليد والنشر">
-        <Readiness icon={<Sparkles size={17} />} label="Gemini API" ready={studioData.aiConfigured} detail={studioData.aiConfigured ? 'مفتاح المشروع جاهز' : 'أضف المفتاح من الإعدادات'} />
-        <Readiness icon={<ShieldCheck size={17} />} label="قاعدة المعرفة" ready={studioData.knowledgeDocumentCount > 0} detail={`${studioData.knowledgeDocumentCount} مستند معتمد`} />
-        <Readiness icon={<Palette size={17} />} label="هوية البراند" ready={Boolean(studioData.settings.logoUrl)} detail={studioData.settings.logoFileName ?? 'ارفع اللوجو الأصلي'} />
-        <Readiness icon={<Share2 size={17} />} label="صفحة Facebook" ready={Boolean(studioData.settings.facebookPageId)} detail={studioData.settings.facebookPageName ?? 'اختار الصفحة المتصلة'} />
-      </section>
-
-      <div className={styles.workspace}>
-        <aside className={styles.settingsPanel} aria-label="إعدادات هوية وجدول المحتوى">
-          <div className={styles.panelHeading}>
-            <div><span>01</span><h2>الهوية والجدول</h2></div>
-            {studioData.settings.hasApprovedStyle && <span className={styles.approvedMark}><Check size={14} /> معتمد</span>}
-          </div>
-
-          <div className={styles.logoSection}>
-            <div className={styles.logoPreview}>
-              {studioData.settings.logoUrl ? (
-                <AuthenticatedImage assetUrl={studioData.settings.logoUrl} alt="اللوجو الأصلي للمشروع" sizes="180px" />
-              ) : <ImagePlus size={30} />}
-            </div>
-            <div>
-              <strong>{studioData.settings.logoFileName ?? 'ارفع اللوجو'}</strong>
-              <p>هنبعت الملف الأصلي مع كل تصميم، نعزل خلفيته، ونظبط لون أجزائه الفاتحة أو الغامقة للوضوح من غير تغيير شكله.</p>
-              <input ref={logoInput} className={styles.hiddenInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="اختيار ملف شعار المشروع" onChange={(event) => void uploadLogo(event.target.files?.[0])} />
-              <button type="button" className={styles.textButton} disabled={Boolean(busy)} onClick={() => logoInput.current?.click()}>
-                {busy === 'logo' ? <LoaderCircle className={styles.spin} size={16} /> : <Upload size={16} />}
-                {studioData.settings.logoUrl ? 'غيّر اللوجو' : 'اختار ملف اللوجو'}
-              </button>
-            </div>
-          </div>
-
-          {studioData.settings.brandColors.length > 0 && (
-            <div className={styles.paletteRow} aria-label="ألوان مستخرجة من اللوجو">
-              <span>ألوانك</span>
-              <div>{studioData.settings.brandColors.map((color) => <i key={color} style={{ backgroundColor: color }} title={color} />)}</div>
-            </div>
-          )}
-
-          <label className={styles.field}>
-            <span>صفحة النشر</span>
-            <select value={form.facebookPageId ?? ''} onChange={(event) => updateForm({ ...form, facebookPageId: event.target.value || undefined })}>
-              <option value="">اختار صفحة Facebook</option>
-              {studioData.connectedPages.map((page) => <option value={page.pageId} key={page.pageId}>{page.pageName}</option>)}
-            </select>
-          </label>
-
-          <label className={styles.field}>
-            <span>ميعاد البوست اليومي</span>
-            <div className={styles.timeField}><Clock3 size={17} aria-hidden="true" /><input type="time" value={form.dailyPublishTimeLocal} onChange={(event) => updateForm({ ...form, dailyPublishTimeLocal: event.target.value, isEnabled: false })} /></div>
-            <small>حسب توقيت {studioData.settings.timezone}</small>
-          </label>
-
-          <label className={styles.field}>
-            <span>شكل التصميم</span>
-            <textarea rows={5} maxLength={1500} value={form.stylePrompt} onChange={(event) => updateForm({ ...form, stylePrompt: event.target.value, isEnabled: false })} />
-            {studioData.settings.hasApprovedStyle && <small>تغيير الشكل يوقف الجدول لحد ما تعتمد معاينة جديدة.</small>}
-            <small>{form.stylePrompt.length} من 1500 حرف</small>
-          </label>
-
-          {formDirty && <p className={styles.unsavedNotice} role="status">لديك تعديلات غير محفوظة. التحديث التلقائي لن يمسحها.</p>}
-
-          <div className={styles.settingsActions}>
-            <button type="button" className={styles.btnSecondary} disabled={Boolean(busy) || !formDirty} onClick={() => void run('save', () => contentApi.updateSettings(form))}>
-              {busy === 'save' ? <LoaderCircle className={styles.spin} size={17} /> : <Check size={17} />} حفظ الإعدادات
-            </button>
-            {studioData.settings.hasApprovedStyle && canControlSchedule && (
-              <button type="button" className={form.isEnabled ? styles.btnPause : styles.btnPrimary} disabled={Boolean(busy) || !isConfigured || formDirty} onClick={() => setConfirmation({
-                title: form.isEnabled ? 'إيقاف النشر اليومي؟' : 'تشغيل النشر اليومي؟',
-                message: form.isEnabled ? 'سيتوقف إنشاء ونشر البوستات اليومية الجديدة حتى تعيد تشغيل الجدول.' : `سيُنشر محتوى يومي على الصفحة المحفوظة في تمام ${form.dailyPublishTimeLocal} حسب توقيت ${studioData.settings.timezone}.`,
-                confirmLabel: form.isEnabled ? 'إيقاف الجدول' : 'تشغيل الجدول',
-                onConfirm: () => void run('toggle', () => contentApi.updateSettings({ ...form, isEnabled: !form.isEnabled })),
-              })}>
-                {form.isEnabled ? 'وقّف النشر اليومي' : 'شغّل النشر اليومي'}
-              </button>
-            )}
-          </div>
-        </aside>
-
-        <section className={styles.previewStage} aria-labelledby="content-production-heading">
-          <div className={styles.stageHeading}>
-            <div><span>02</span><div><h2 id="content-production-heading">{studioData.settings.hasApprovedStyle ? 'خط الإنتاج شغّال' : 'اعتماد أول تصميم'}</h2><p>{studioData.settings.hasApprovedStyle ? 'كل بوست جديد يستخدم نفس الهوية واللوجو.' : 'أول صورة مش هتنزل غير لما تقول تمام.'}</p></div></div>
-            {studioData.settings.isEnabled && <span className={styles.liveBadge}><i /> نشر يومي</span>}
-          </div>
-          <NextPublishStatus
-            settings={studioData.settings}
-            weeklyPlan={weeklyPlans.find((plan) => plan.status === 'Approved') ?? studioData.weeklyPlan}
-          />
-
-          {!sample && !studioData.settings.hasApprovedStyle && (
-            <div className={styles.emptyPreview}>
-              <div className={styles.posterGhost}><span>1:1</span><Sparkles size={42} /></div>
-              <h3>جاهز نطلع أول شكل؟</h3>
-              <p>هنقرأ قاعدة المعرفة كلها، نختار فكرة حقيقية، ونبني الصورة بألوان اللوجو.</p>
-              <button type="button" className={styles.btnPrimary} disabled={!canGenerate || Boolean(busy)} onClick={() => void run('sample', contentApi.generateSample)}>
-                {busy === 'sample' ? <LoaderCircle className={styles.spin} size={18} /> : <Sparkles size={18} />} ولّد أول تصميم
-              </button>
-              {!canGenerate && <small>كمّل مفتاح Gemini، قاعدة المعرفة، واللوجو الأول.</small>}
-            </div>
-          )}
-
+  const sampleReview = sample && <details className={styles.sampleReviewSection} open={!studioData.settings.hasApprovedStyle || sample.status === 'PublishFailed' || sample.status === 'PublishUnknown'}>
+            <summary>{studioData.settings.hasApprovedStyle ? 'التصميم المعتمد' : 'مراجعة أول تصميم'}<span>{statusLabels[sample.status]}</span></summary>
           {sample?.status === 'Generating' && <GeneratingPreview />}
 
           {sample && sample.status !== 'Generating' && sample.status !== 'GenerationFailed' && (
@@ -443,6 +371,7 @@ function ContentStudioProjectView() {
               pageSaved={pageSaved}
               busy={busy}
               approved={studioData.settings.hasApprovedStyle}
+              canManage={canManage}
               onApprove={() => setConfirmation({
                 title: 'اعتماد التصميم وتجهيز خطة الأسبوع؟',
                 message: 'سيُنشر أول بوست على صفحة Facebook، ثم يجهّز النظام 7 أفكار وكابشنات من قاعدة المعرفة لتراجعها قبل تشغيل النشر اليومي.',
@@ -460,21 +389,276 @@ function ContentStudioProjectView() {
           )}
 
           {sample?.status === 'GenerationFailed' && (
-            <div className={styles.failedPreview}><AlertTriangle size={28} aria-hidden="true" /><h3>التصميم ماكملش</h3><p>{sample.error}</p><button type="button" className={styles.btnSecondary} onClick={() => void run('regenerate', () => contentApi.regenerate(sample.id))}><RefreshCw size={17} aria-hidden="true" /> جرّب تصميم جديد</button></div>
+            <div className={styles.failedPreview}><AlertTriangle size={28} aria-hidden="true" /><h3>التصميم ماكملش</h3><p>{sample.error}</p><button type="button" className={styles.btnSecondary} disabled={Boolean(busy) || !canManage} onClick={() => void run('regenerate', () => contentApi.regenerate(sample.id))}><RefreshCw size={17} aria-hidden="true" /> جرّب تصميم جديد</button></div>
           )}
 
-          {studioData.settings.hasApprovedStyle && !sample && <AutomationSummary studioData={studioData} />}
-        </section>
+            {!pageSaved && <button type="button" className={styles.textButton} onClick={() => selectPostTask('schedule')}>اختيار صفحة النشر وحفظها</button>}
+          </details>;
+
+  return (
+    <div className={styles.studio} dir="rtl">
+      <div className={styles.pageHeader}>
+        <PageHeader icon={<ImagePlus size={22} aria-hidden="true" />} title="استوديو المحتوى" actions={<button type="button" className={styles.btnPrimary} onClick={() => selectPostTask('create')}><Sparkles size={17} /> إنشاء محتوى</button>} />
       </div>
 
-      <WeeklyPlan
+      <ContentTabs activeView={activeView} onChange={selectContentView} />
+
+      <div id="content-panel-posts" role="tabpanel" aria-labelledby="content-tab-posts">
+
+      {(notice || error || studioData.settings.lastError) && (
+        <div className={error || studioData.settings.lastError ? styles.alertError : styles.alertSuccess} role={error || studioData.settings.lastError ? 'alert' : 'status'} aria-live={error || studioData.settings.lastError ? 'assertive' : 'polite'}>
+          {error || studioData.settings.lastError ? <AlertTriangle size={18} aria-hidden="true" /> : <CheckCircle2 size={18} aria-hidden="true" />}
+          <span>{error ?? notice ?? studioData.settings.lastError}</span>
+        </div>
+      )}
+
+      <div className={styles.taskNavigation}>
+        <Tabs idPrefix="content-task" label="مهام الصور والمنشورات" tabs={postTasks} selected={activeTask} onChange={selectPostTask} />
+      </div>
+
+      {formDirty && <div className={styles.draftBar} role="status">
+        <span>تعديلات الهوية أو النشر لم تُحفظ بعد.</span>
+        <button type="button" className={styles.btnPrimary} disabled={Boolean(busy) || !canManage} onClick={() => void run('save', () => contentApi.updateSettings(form))}>
+          {busy === 'save' ? <LoaderCircle className={styles.spin} size={17} /> : <Check size={17} />} حفظ الإعدادات
+        </button>
+      </div>}
+
+      <section className={styles.taskPanel} id="content-task-panel-create" role="tabpanel" aria-labelledby="content-task-tab-create" hidden={activeTask !== 'create'}>
+        <h2 className={styles.srOnly}>إنشاء محتوى جديد</h2>
+        <div className={styles.createLayout}>
+          <div className={styles.creationEditor}>
+          <SingleImageTrial title="جرب صورة واحدة" promptLabel="وصف الصورة التجريبية" disabled={!canManage || Boolean(busy)}
+            ready={form.imageProvider === 'OpenAI' ? Boolean(form.openAiImageApiKey?.trim() || studioData.settings.openAiImageApiKeyConfigured) : studioData.aiConfigured}
+            onDirtyChange={setTrialDirty} onBusyChange={running => setBusy(running ? 'single-trial' : null)}
+            generate={(prompt, signal) => contentApi.generateSingleImage({ prompt, imageProvider: form.imageProvider ?? 'Gemini',
+              openAiImageModel: form.openAiImageModel ?? 'gpt-image-2.5-sunburst', openAiImageApiKey: form.openAiImageApiKey }, signal)} />
+
+            {activeTask === 'create' && <details className={styles.configurationSection}>
+              <summary><Sparkles size={17} aria-hidden="true" /> إعدادات توليد الصورة</summary>
+              <fieldset className={styles.editableFields} disabled={!canManage || Boolean(busy)}>
+              <ImageGenerationSettings form={form} settings={studioData.settings} onChange={updateForm}
+                disabled={Boolean(busy) || !canManage || hasActivePost || hasGeneratingPlan} />
+
+              </fieldset>
+            </details>}
+          </div>
+          <aside className={styles.productionStart} aria-labelledby="content-first-design-heading">
+            <h3 id="content-first-design-heading"><Send size={18} aria-hidden="true" /> من الصورة إلى النشر</h3>
+          {!sample && !studioData.settings.hasApprovedStyle && (
+            <div className={styles.emptyPreview}>
+              <div className={styles.posterGhost}><span>1:1</span><Sparkles size={42} /></div>
+              <h3>جاهز نطلع أول شكل؟</h3>
+              <p>{studioData.settings.designSource === 'references' ? 'هنقرأ قاعدة المعرفة، ونبني التصميم بألوانك وريفرنسات البوستات.' : 'هنقرأ قاعدة المعرفة كلها، نختار فكرة حقيقية، ونبني الصورة بألوان اللوجو.'}</p>
+              <button type="button" className={styles.btnPrimary} disabled={!canGenerate || Boolean(busy) || !canManage} onClick={() => void run('sample', contentApi.generateSample)}>
+                {busy === 'sample' ? <LoaderCircle className={styles.spin} size={18} /> : <Sparkles size={18} />} ولّد أول تصميم
+              </button>
+              <small>معاينة فقط، لن يُنشر التصميم تلقائيًا ولا تحتاج صفحة Facebook.</small>
+              {!canGenerate && <small>المتبقي للتوليد: {missingGenerationRequirements.join('، ')}.</small>}
+            </div>
+          )}
+
+            {(sample || studioData.settings.hasApprovedStyle) && <div className={styles.productionStatus}>
+              <CheckCircle2 size={24} aria-hidden="true" />
+              <strong>{studioData.settings.hasApprovedStyle ? 'هوية المنشورات معتمدة' : 'أول تصميم جاهز للمراجعة أو قيد التجهيز'}</strong>
+              <p>راجع التصميم وخطط الأسابيع قبل اعتماد النشر.</p>
+              <button type="button" className={styles.btnSecondary} onClick={() => selectPostTask('review')}>فتح المراجعة</button>
+            </div>}
+            {!canGenerate && <button type="button" className={styles.textButton} onClick={() => selectPostTask('brand')}>استكمال هوية المحتوى</button>}
+          </aside>
+        </div>
+      </section>
+
+      {activeTask === 'brand' && <section className={styles.taskPanel} id="content-task-panel-brand" role="tabpanel" aria-labelledby="content-task-tab-brand">
+        <div className={styles.taskHeading}><div><h2><Palette size={20} aria-hidden="true" /> هوية المحتوى</h2></div>{studioData.settings.hasApprovedStyle && <span className={styles.approvedMark}><Check size={14} /> معتمدة</span>}</div>
+      <details className={styles.readinessDisclosure}><summary><ShieldCheck size={17} aria-hidden="true" /> جاهزية التوليد والنشر</summary>
+      <section className={styles.readinessRail} aria-label="جاهزية التوليد والنشر">
+        <Readiness icon={<Sparkles size={17} />} label="Gemini API" ready={studioData.aiConfigured} detail={studioData.aiConfigured ? 'مفتاح المشروع جاهز' : 'أضف المفتاح من الإعدادات'} />
+        <Readiness icon={<ShieldCheck size={17} />} label="قاعدة المعرفة" ready={studioData.knowledgeDocumentCount > 0} detail={`${studioData.knowledgeDocumentCount} مستند معتمد`} />
+        <Readiness icon={<Palette size={17} />} label="هوية البراند" ready={Boolean(studioData.settings.logoUrl)} detail={studioData.settings.logoFileName ?? 'ارفع اللوجو الأصلي'} />
+        <div className={styles.readinessItem}><span><Share2 size={17} aria-hidden="true" /></span><div><strong>Facebook للنشر فقط</strong><small>{studioData.settings.facebookPageName ?? 'اختياري لتجربة التوليد'}</small></div></div>
+      </section>
+      </details>
+
+        <fieldset className={styles.editableFields} disabled={!canManage || Boolean(busy)}>
+          <div className={styles.brandLayout}>
+            <div className={styles.brandIdentity}>
+          <div className={styles.logoSection}>
+            <button type="button" className={styles.logoPreview} aria-label="رفع لوجو المشروع من جهازك" disabled={Boolean(busy)} onClick={() => logoInput.current?.click()}>
+              {studioData.settings.logoUrl ? (
+                <AuthenticatedImage assetUrl={studioData.settings.logoUrl} alt="اللوجو الأصلي للمشروع" sizes="180px" />
+              ) : <ImagePlus size={30} aria-hidden="true" />}
+            </button>
+            <div>
+              <strong>{studioData.settings.logoFileName ?? 'ارفع اللوجو'}</strong>
+              <p>هنبعت الملف الأصلي مع كل تصميم، نعزل خلفيته، ونظبط لون أجزائه الفاتحة أو الغامقة للوضوح من غير تغيير شكله.</p>
+              <input ref={logoInput} className={styles.hiddenInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="اختيار ملف شعار المشروع" onChange={(event) => void uploadLogo(event.target.files?.[0])} />
+              <button type="button" className={styles.btnPrimary} disabled={Boolean(busy)} onClick={() => logoInput.current?.click()}>
+                {busy === 'logo' ? <LoaderCircle className={styles.spin} size={16} /> : <Upload size={16} />}
+                {studioData.settings.logoUrl ? 'تغيير اللوجو' : 'رفع اللوجو من جهازك'}
+              </button>
+              <p>PNG أو JPG أو WebP، حتى 10 ميجابايت.</p>
+            </div>
+          </div>
+
+          <fieldset className={styles.designSource}>
+            <legend>مصدر شكل البوستات</legend>
+            <label className={form.designSource === 'logo' ? styles.sourceSelected : styles.sourceOption}>
+              <input type="radio" name="design-source" checked={form.designSource === 'logo'} onChange={() => updateForm({ ...form, designSource: 'logo', isEnabled: false })} />
+              <span><strong>من اللوجو تلقائيًا</strong><small>الألوان المستخرجة والشكل الحالي.</small></span>
+            </label>
+            <label className={form.designSource === 'references' ? styles.sourceSelected : styles.sourceOption}>
+              <input type="radio" name="design-source" checked={form.designSource === 'references'} onChange={() => updateForm({
+                ...form,
+                designSource: 'references',
+                referenceColors: form.referenceColors.length ? form.referenceColors : (studioData.settings.brandColors.length ? studioData.settings.brandColors.slice(0, 6) : ['#0B0B0B']),
+                isEnabled: false,
+              })} />
+              <span><strong>من البرزنتيشن وريفرنسات البوستات</strong><small>ألوان تحددها أنت وصور يستلهم منها التصميم.</small></span>
+            </label>
+          </fieldset>
+
+          {form.designSource === 'logo' && studioData.settings.brandColors.length > 0 && (
+            <div className={styles.paletteRow} aria-label="ألوان مستخرجة من اللوجو">
+              <span>ألوان اللوجو</span>
+              <div>{studioData.settings.brandColors.map((color) => <i key={color} style={{ backgroundColor: color }} title={color} />)}</div>
+            </div>
+          )}
+
+          {form.designSource === 'references' && <div className={styles.referenceSetup}>
+            <fieldset className={styles.designSource}>
+              <legend>درجة الالتزام بالريفرنس</legend>
+              <label className={!form.matchReferenceTone ? styles.sourceSelected : styles.sourceOption}>
+                <input type="radio" name="reference-tone" checked={!form.matchReferenceTone} onChange={() => updateForm({ ...form, matchReferenceTone: false, isEnabled: false })} />
+                <span><strong>استلهام حر</strong><small>يستخدم ألوان وريفرنسات البراند مع مساحة لفكرة بصرية جديدة.</small></span>
+              </label>
+              <label className={form.matchReferenceTone ? styles.sourceSelected : styles.sourceOption}>
+                <input type="radio" name="reference-tone" checked={form.matchReferenceTone} onChange={() => updateForm({ ...form, matchReferenceTone: true, isEnabled: false })} />
+                <span><strong>مطابقة تون الريفرنس</strong><small>يتبع نوع الصور والخلفيات والتباين وتوزيع الألوان والتايبوجرافي عن قرب.</small></span>
+              </label>
+            </fieldset>
+            <div className={styles.referenceHeading}><strong>لوحة ألوان البراند</strong><small>ارفع صورة اللوحة لاستخراج الألوان تلقائيًا، أو اكتب أكواد HEX وعدّلها بنفسك.</small></div>
+            <div className={styles.referenceColors}>
+              {form.referenceColors.map((color, index) => <div className={styles.referenceColor} key={index}>
+                <input type="color" aria-label={`اختيار اللون ${index + 1}`} value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : '#000000'} onChange={(event) => updateForm({ ...form, referenceColors: form.referenceColors.map((item, itemIndex) => itemIndex === index ? event.target.value.toUpperCase() : item), isEnabled: false })} />
+                <input type="text" dir="ltr" aria-label={`كود اللون ${index + 1}`} maxLength={7} value={color} onChange={(event) => updateForm({ ...form, referenceColors: form.referenceColors.map((item, itemIndex) => itemIndex === index ? event.target.value : item), isEnabled: false })} />
+                <button type="button" aria-label={`حذف اللون ${index + 1}`} onClick={() => updateForm({ ...form, referenceColors: form.referenceColors.filter((_, itemIndex) => itemIndex !== index), isEnabled: false })}><Trash2 size={15} /></button>
+              </div>)}
+            </div>
+            {form.referenceColors.length < 8 && <button type="button" className={styles.textButton} onClick={() => updateForm({ ...form, referenceColors: [...form.referenceColors, '#FFFFFF'], isEnabled: false })}>+ أضف لونًا</button>}
+
+            <div className={styles.referenceHeading}><strong>صورة لوحة الألوان</strong><small>هنقرأ أكواد الألوان الظاهرة في الصورة ونملأ الخانات فوق.</small></div>
+            <input ref={paletteReferenceInput} className={styles.hiddenInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="اختيار صورة لوحة الألوان" onChange={(event) => void uploadReference(event.target.files?.[0], 'palette')} />
+            <button type="button" className={styles.btnSecondary} disabled={Boolean(busy)} onClick={() => paletteReferenceInput.current?.click()}><Upload size={15} /> {busy === 'reference-palette' ? 'جارٍ الرفع...' : 'ارفع صورة الألوان'}</button>
+
+            <div className={styles.referenceHeading}><strong>ريفرنسات البوستات</strong><small>ارفع من 1 إلى 4 صور. سنأخذ منها أسلوب التكوين والخطوط، بدون نسخ كلامها.</small></div>
+            <input ref={postReferenceInput} className={styles.hiddenInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="اختيار صورة بوست مرجعي" onChange={(event) => void uploadReference(event.target.files?.[0], 'post')} />
+            <button type="button" className={styles.btnSecondary} disabled={Boolean(busy) || studioData.settings.referenceImages.filter((image) => image.kind === 'post').length >= 4} onClick={() => postReferenceInput.current?.click()}><ImagePlus size={15} /> {busy === 'reference-post' ? 'جارٍ الرفع...' : 'أضف ريفرنس بوست'}</button>
+            <div className={styles.referenceGrid}>
+              {studioData.settings.referenceImages.map((reference) => <div className={styles.referenceCard} key={reference.id}>
+                <div className={styles.referenceThumb}><AuthenticatedImage assetUrl={reference.url} alt={reference.kind === 'palette' ? 'لوحة الألوان المرجعية' : 'بوست مرجعي'} sizes="96px" /></div>
+                <span title={reference.fileName}>{reference.kind === 'palette' ? 'لوحة الألوان' : reference.fileName}</span>
+                <button type="button" aria-label={`حذف ${reference.fileName}`} disabled={Boolean(busy)} onClick={() => void run(`delete-reference-${reference.id}`, () => contentApi.deleteBrandReference(reference.id))}><Trash2 size={15} /></button>
+              </div>)}
+            </div>
+            <small>PNG أو JPG أو WebP، حتى 5 ميجابايت للصورة. تغيير الريفرنسات بعد الاعتماد يحتاج معاينة جديدة.</small>
+          </div>}
+
+            </div>
+            <div className={styles.brandDirection}>
+          <label className={styles.field}>
+            <span>شكل التصميم</span>
+            <textarea rows={5} maxLength={1500} value={form.stylePrompt} onChange={(event) => updateForm({ ...form, stylePrompt: event.target.value, isEnabled: false })} />
+            {form.designSource === 'references' && form.matchReferenceTone && <small>في وضع مطابقة التون، صور البوستات المرجعية هي اللي بتحدد شكل التصميم حتى لو الوصف المكتوب مختلف.</small>}
+            {studioData.settings.hasApprovedStyle && <small>تغيير الشكل يوقف الجدول لحد ما تعتمد معاينة جديدة.</small>}
+            <small>{form.stylePrompt.length} من 1500 حرف</small>
+          </label>
+
+              <details className={styles.configurationSection}>
+                <summary><Sparkles size={17} aria-hidden="true" /> مزود الصور ومفتاح التوليد</summary>
+              <ImageGenerationSettings form={form} settings={studioData.settings} onChange={updateForm}
+                disabled={Boolean(busy) || !canManage || hasActivePost || hasGeneratingPlan} />
+
+                <div className={styles.modelDetails}>{studioData.imageModel} · {studioData.imageSize} · {studioData.aspectRatio}</div>
+              </details>
+            </div>
+          </div>
+        </fieldset>
+        {!canManage && <p className={styles.contextNote}>تعديل الهوية متاح لمالك المشروع والمدير.</p>}
+      </section>}
+
+      {(activeTask === 'review' || activeTask === 'schedule') && <section className={styles.taskPanel} id={`content-task-panel-${activeTask}`} role="tabpanel" aria-labelledby={`content-task-tab-${activeTask}`}>
+        <h2 className={styles.srOnly}>{activeTask === 'review' ? 'المحتوى المطلوب مراجعته' : 'جدول النشر'}</h2>
+
+        {activeTask === 'schedule' && <>
+          <NextPublishStatus settings={studioData.settings} weeklyPlan={weeklyPlans.find((plan) => plan.status === 'Approved') ?? studioData.weeklyPlan} />
+          <div className={styles.scheduleSummary}>
+            <span>{studioData.settings.facebookPageName ?? 'لم تُحدد صفحة النشر'} · {studioData.settings.isEnabled ? 'النشر اليومي مفعّل' : 'النشر اليومي متوقف'}</span>
+            {studioData.settings.hasApprovedStyle && canControlSchedule && (
+              <button type="button" className={form.isEnabled ? styles.btnPause : styles.btnPrimary} disabled={Boolean(busy) || !canManage || !isConfigured || formDirty} onClick={() => setConfirmation({
+                title: form.isEnabled ? 'إيقاف النشر اليومي؟' : 'تشغيل النشر اليومي؟',
+                message: form.isEnabled ? 'سيتوقف نشر البوستات المجدولة حتى تعيد تشغيل الجدول.' : `سيعود نشر الخطط المعتمدة في مواعيدها الظاهرة. الخطط الجديدة ستكون ${form.postsPerDay} بوست في اليوم، بدءًا من ${form.dailyPublishTimeLocal} حسب توقيت ${studioData.settings.timezone}.`,
+                confirmLabel: form.isEnabled ? 'إيقاف الجدول' : 'تشغيل الجدول',
+                onConfirm: () => void run('toggle', () => contentApi.updateSettings({ ...form, isEnabled: !form.isEnabled })),
+              })}>
+                {form.isEnabled ? 'وقّف النشر اليومي' : 'شغّل النشر اليومي'}
+              </button>
+            )}
+
+          </div>
+          <details className={styles.configurationSection} open={!studioData.settings.facebookPageId}>
+            <summary><CalendarClock size={17} aria-hidden="true" /> إعدادات صفحة النشر والمواعيد</summary>
+            <fieldset className={`${styles.editableFields} ${styles.scheduleFields}`} disabled={!canManage || Boolean(busy)}>
+          <label className={styles.field}>
+            <span>صفحة النشر (اختيارية للتوليد)</span>
+            <select value={form.facebookPageId ?? ''} onChange={(event) => updateForm({ ...form, facebookPageId: event.target.value || undefined })}>
+              <option value="">بدون صفحة، توليد وتجربة فقط</option>
+              {studioData.connectedPages.map((page) => <option value={page.pageId} key={page.pageId}>{page.pageName}</option>)}
+            </select>
+            <small>تقدر تولّد وتراجع التصميم بدون صفحة. اختار صفحة لاحقًا عند النشر أو الجدولة.</small>
+          </label>
+
+          <label className={styles.field}>
+            <span>ميعاد أول بوست في اليوم</span>
+            <div className={styles.timeField}><Clock3 size={17} aria-hidden="true" /><input type="time" value={form.dailyPublishTimeLocal} onChange={(event) => updateForm({ ...form, dailyPublishTimeLocal: event.target.value, isEnabled: false })} /></div>
+            <small>حسب توقيت {studioData.settings.timezone}</small>
+          </label>
+
+          <label className={styles.field}>
+            <span>عدد البوستات في اليوم</span>
+            <select value={form.postsPerDay} onChange={(event) => updateForm({ ...form, postsPerDay: Number(event.target.value) })}>
+              <option value={1}>بوست واحد</option>
+              <option value={2}>بوستين</option>
+              <option value={3}>3 بوستات</option>
+            </select>
+            <small>لو أكتر من بوست، بينهم 4 ساعات. آخر موعد لأول بوست: {latestFirstPostTime}. العدد الجديد يطبق على الخطط اللي تجهزها بعد الحفظ.</small>
+          </label>
+
+            </fieldset>
+          </details>
+        </>}
+
+        {activeTask === 'review' && <>
+          {!sample && !studioData.settings.hasApprovedStyle && <div className={styles.emptyPlan}>
+            <ImagePlus size={28} aria-hidden="true" /><div><h3>ابدأ بأول تصميم</h3><p>جهّز الهوية وأنشئ أول صورة لتراجعها هنا قبل النشر.</p></div>
+            <button type="button" className={styles.btnSecondary} onClick={() => selectPostTask('create')}>إنشاء أول تصميم</button>
+          </div>}
+          {!studioData.settings.hasApprovedStyle && sampleReview}
+
+        </>}
+      {(activeTask === 'schedule' || studioData.settings.lastPublishedAtUtc || weeklyPlans.length > 0) && <WeeklyPlan
+        key={activeTask}
+        view={activeTask === 'schedule' ? 'schedule' : 'review'}
+        canManage={canManage}
         plans={weeklyPlans}
+        canPublish={canManage && pageSaved}
+        onPublish={(id) => void run(`publish-${id}`, () => contentApi.publish(id))}
+        postsPerDay={studioData.settings.postsPerDay}
         firstPostPublished={Boolean(studioData.settings.lastPublishedAtUtc)}
         busy={busy}
         onGenerate={() => void run('weekly-plan', contentApi.generateWeeklyPlan)}
         onApprove={(planId) => setConfirmation({
           title: 'اعتماد خطة الأسبوع؟',
-          message: 'سيبدأ النشر التلقائي للصور والأفكار التي وافقت عليها، بوست واحد كل يوم في الموعد الظاهر أمامك.',
+          message: 'سيبدأ النشر التلقائي للصور والأفكار التي وافقت عليها في المواعيد الظاهرة أمامك.',
           confirmLabel: 'اعتمد وابدأ النشر',
           onConfirm: () => void run('approve-weekly-plan', () => contentApi.approveWeeklyPlan(planId)),
         })}
@@ -482,50 +666,62 @@ function ContentStudioProjectView() {
         onRegenerateItem={(planId, itemId) => void run(`regenerate-weekly-item-${itemId}`, () => contentApi.regenerateWeeklyPlanItem(planId, itemId))}
         onRegenerate={(planId) => setConfirmation({
           title: 'تجهيز خطة أسبوع بديلة؟',
-          message: 'سيتم رفض الخطة الحالية وإنشاء 7 أفكار وكابشنات جديدة من قاعدة المعرفة.',
+          message: `سيتم رفض الخطة الحالية وإنشاء ${7 * studioData.settings.postsPerDay} أفكار وكابشنات جديدة من قاعدة المعرفة.`,
           confirmLabel: 'جهّز خطة بديلة',
           onConfirm: () => void run('regenerate-weekly-plan', () => contentApi.regenerateWeeklyPlan(planId)),
         })}
-      />
+      />}
 
-      <ContentHistory key={activeProject.id} posts={historyPosts} busy={busy} onPublish={(id) => setConfirmation({
+        {activeTask === 'review' && <>
+          {studioData.settings.hasApprovedStyle && sampleReview}
+      <ContentHistory key={activeProject.id} posts={historyPosts} busy={busy} canPublish={canManage && pageSaved} onPublish={(id) => setConfirmation({
         title: 'نشر هذا البوست الآن؟',
         message: 'سيُرسل التصميم والكابشن إلى صفحة Facebook المحفوظة. راجع المحتوى قبل المتابعة.',
         confirmLabel: 'نشر الآن',
         onConfirm: () => void run(`publish-${id}`, () => contentApi.publish(id)),
       })} />
+
+        </>}
+      </section>}
       </div>
       <StudioDialogs confirmation={confirmation} onCloseConfirmation={() => setConfirmation(null)} navigationGuard={navigationGuard} />
     </div>
   );
 }
 
-function ContentTabs({ activeView, onChange }: { activeView: ContentView; onChange: (view: ContentView) => boolean }) {
-  const tabRefs = useRef<Record<ContentView, HTMLButtonElement | null>>({ posts: null, videos: null, documents: null, games: null });
-  const selectFromKeyboard = (event: React.KeyboardEvent, index: number) => {
-    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? contentTabs.length - 1
-      : (index + (event.key === 'ArrowRight' ? -1 : 1) + contentTabs.length) % contentTabs.length;
-    const nextView = contentTabs[nextIndex].key;
-    if (onChange(nextView)) window.requestAnimationFrame(() => tabRefs.current[nextView]?.focus());
-  };
+function ImageGenerationSettings({ form, settings, disabled, onChange }: {
+  form: UpdateContentSettings;
+  settings: ContentStudioData['settings'];
+  disabled: boolean;
+  onChange: (next: UpdateContentSettings) => void;
+}) {
+  return <>
+          <ImageModelSelect label="موديل صور البوستات" provider={form.imageProvider ?? 'Gemini'} model={form.openAiImageModel}
+            disabled={disabled} className={styles.field}
+            onChange={selection => onChange({ ...form, ...selection })} />
+          <small>التجربة تستخدم الاختيار الحالي فورًا. احفظ الإعدادات لتطبيقه على البوستات الجديدة.</small>
+          {form.imageProvider === 'OpenAI' && <>
+            <label className={styles.field}>
+              <span>مفتاح OpenAI للصور</span>
+              <input type="password" autoComplete="new-password" dir="ltr" value={form.openAiImageApiKey ?? ''}
+                disabled={disabled}
+                placeholder={settings.openAiImageApiKeyConfigured ? 'المفتاح محفوظ. اكتب مفتاحًا جديدًا لاستبداله' : 'أدخل مفتاح OpenAI API'}
+                onChange={(event) => onChange({ ...form, openAiImageApiKey: event.target.value, clearOpenAiImageApiKey: false })} />
+              <small>{form.clearOpenAiImageApiKey ? 'سيتم مسح المفتاح عند الحفظ. اختر Gemini لاستكمال الحفظ.'
+                : settings.openAiImageApiKeyConfigured ? 'المفتاح محفوظ ومشفّر.' : 'يحتاج مفتاح API برصيد وصلاحية لموديل الصور. Gemini يجهّز الأفكار والكابشنات.'}</small>
+            </label>
+            {settings.openAiImageApiKeyConfigured && <button type="button" className={styles.textButton}
+              disabled={disabled || Boolean(form.openAiImageApiKey)}
+              onClick={() => onChange({ ...form, clearOpenAiImageApiKey: !form.clearOpenAiImageApiKey })}>
+              {form.clearOpenAiImageApiKey ? 'إلغاء مسح المفتاح' : 'مسح مفتاح OpenAI عند الحفظ'}
+            </button>}
+          </>}
 
-  return <nav className={styles.contentTabs} role="tablist" aria-label="أنواع المحتوى">
-    {contentTabs.map((tab, index) => <button
-      type="button"
-      role="tab"
-      id={`content-tab-${tab.key}`}
-      aria-selected={activeView === tab.key}
-      aria-controls={`content-panel-${tab.key}`}
-      tabIndex={activeView === tab.key ? 0 : -1}
-      className={activeView === tab.key ? styles.contentTabActive : styles.contentTab}
-      key={tab.key}
-      ref={(node) => { tabRefs.current[tab.key] = node; }}
-      onClick={() => onChange(tab.key)}
-      onKeyDown={(event) => selectFromKeyboard(event, index)}
-    >{tab.label}</button>)}
-  </nav>;
+  </>;
+}
+
+function ContentTabs({ activeView, onChange }: { activeView: ContentView; onChange: (view: ContentView) => boolean }) {
+  return <div className={styles.mediaNavigation}><Tabs idPrefix="content" label="أنواع المحتوى" compactOnMobile tabs={contentTabs} selected={activeView} onChange={onChange} /></div>;
 }
 
 function StudioDialogs({ confirmation, onCloseConfirmation, navigationGuard }: {
@@ -599,7 +795,7 @@ function AuthenticatedImage({ assetUrl, alt, sizes, priority = false }: { assetU
   return <Image src={loadedAsset.imageSource} alt={alt} fill sizes={sizes} unoptimized priority={priority} />;
 }
 
-function SampleReview({ sample, pageSaved, busy, approved, onApprove, onRegenerate, onPublish }: { sample: ContentPost; pageSaved: boolean; busy: string | null; approved: boolean; onApprove: () => void; onRegenerate: () => void; onPublish: () => void }) {
+function SampleReview({ sample, pageSaved, busy, approved, canManage, onApprove, onRegenerate, onPublish }: { sample: ContentPost; pageSaved: boolean; busy: string | null; approved: boolean; canManage: boolean; onApprove: () => void; onRegenerate: () => void; onPublish: () => void }) {
   return <div className={styles.reviewLayout}>
     <div className={styles.posterFrame}>
       {sample.imageUrl && <AuthenticatedImage assetUrl={sample.imageUrl} alt={`تصميم ${sample.visualHeadline}`} sizes="(max-width: 900px) 90vw, 430px" priority />}
@@ -612,20 +808,16 @@ function SampleReview({ sample, pageSaved, busy, approved, onApprove, onRegenera
       <p className={styles.caption}>{sample.caption}</p>
       <div className={styles.sourceNote}><ShieldCheck size={17} /><span>اتعمل من {sample.knowledgeDocumentCount} مستند معتمد، واللوجو مأخوذ من الملف الأصلي من غير خلفية وبلون واضح على التصميم.</span></div>
       {!approved && <div className={styles.reviewActions}>
-        <button type="button" className={styles.btnPrimary} disabled={Boolean(busy) || !pageSaved} onClick={onApprove}>{busy === 'approve' ? <LoaderCircle className={styles.spin} size={18} /> : <Send size={18} />} اعتمد وانشر وجهّز الخطة</button>
-        <button type="button" className={styles.btnSecondary} disabled={Boolean(busy)} onClick={onRegenerate}>{busy === 'regenerate' ? <LoaderCircle className={styles.spin} size={17} /> : <RefreshCw size={17} />} جرّب شكل تاني</button>
+        <button type="button" className={styles.btnPrimary} disabled={Boolean(busy) || !canManage || !pageSaved} onClick={onApprove}>{busy === 'approve' ? <LoaderCircle className={styles.spin} size={18} /> : <Send size={18} />} اعتمد وانشر وجهّز الخطة</button>
+        <button type="button" className={styles.btnSecondary} disabled={Boolean(busy) || !canManage} onClick={onRegenerate}>{busy === 'regenerate' ? <LoaderCircle className={styles.spin} size={17} /> : <RefreshCw size={17} />} جرّب شكل تاني</button>
         {!pageSaved && <small>اختار صفحة Facebook واضغط حفظ الإعدادات قبل الاعتماد.</small>}
       </div>}
       {approved && sample.status === 'PublishFailed' && <div className={styles.reviewActions}>
-        <button type="button" className={styles.btnPrimary} disabled={Boolean(busy)} onClick={onPublish}>{busy === 'publish-sample' ? <LoaderCircle className={styles.spin} size={18} /> : <Send size={18} />} حاول تنشر أول بوست تاني</button>
+        <button type="button" className={styles.btnPrimary} disabled={Boolean(busy) || !canManage} onClick={onPublish}>{busy === 'publish-sample' ? <LoaderCircle className={styles.spin} size={18} /> : <Send size={18} />} حاول تنشر أول بوست تاني</button>
       </div>}
       {approved && sample.status === 'PublishUnknown' && <div className={styles.sourceNote}><AlertTriangle size={17} /><span>وقفنا الجدول لأن Facebook ما أكدش نتيجة النشر. راجع الصفحة قبل أي محاولة جديدة.</span></div>}
     </div>
   </div>;
-}
-
-function AutomationSummary({ studioData }: { studioData: ContentStudioData }) {
-  return <div className={styles.automationSummary}><div className={styles.orbit}><CalendarClock size={40} /></div><h3>{studioData.settings.isEnabled ? 'المحتوى بيتجهّز تلقائيًا' : 'الهوية معتمدة والجدول متوقف'}</h3><p>{studioData.settings.isEnabled ? `البوست الجاي ${formatDate(studioData.settings.nextPublishAtUtc, studioData.settings.timezone)}` : 'تقدر تشغّل النشر اليومي من الإعدادات.'}</p></div>;
 }
 
 function NextPublishStatus({ settings, weeklyPlan }: { settings: ContentStudioData['settings']; weeklyPlan?: ContentWeekPlan }) {
@@ -642,21 +834,29 @@ function NextPublishStatus({ settings, weeklyPlan }: { settings: ContentStudioDa
 }
 
 function nextPublishSchedule(settings: ContentStudioData['settings'], weeklyPlan?: ContentWeekPlan) {
-  const dailyTime = `يوميًا الساعة ${settings.dailyPublishTimeLocal}`;
+  const scheduledCount = weeklyPlan?.items.length && (weeklyPlan.status === 'Approved' || weeklyPlan.status === 'AwaitingApproval')
+    ? weeklyPlan.items.length / 7
+    : settings.postsPerDay;
+  const dailyTime = `${scheduledCount} بوست يوميًا، بداية من ${settings.dailyPublishTimeLocal}`;
   const timezone = settings.timezone === 'Africa/Cairo' ? 'القاهرة' : settings.timezone;
   if (settings.isEnabled && settings.nextPublishAtUtc) {
     return { title: formatNextPublishDate(settings.nextPublishAtUtc, settings.timezone), detail: `حسب توقيت ${timezone}` };
   }
   if (!settings.hasApprovedStyle) return { title: 'لسه ما اتحددش', detail: `اعتمد أول تصميم، وبعدها ${dailyTime}` };
   if (!settings.lastPublishedAtUtc) return { title: 'بعد نشر أول بوست', detail: `وبعدها ${dailyTime}` };
-  if (weeklyPlan?.status === 'Generating') return { title: 'بنجهّز خطة الأسبوع', detail: '7 أفكار وكابشنات من قاعدة المعرفة' };
-  if (weeklyPlan?.status === 'AwaitingApproval') return { title: 'مستني اعتماد الخطة', detail: 'راجع الأيام الموجودة تحت قبل بدء النشر' };
-  if (weeklyPlan?.status === 'GenerationFailed') return { title: 'الخطة محتاجة إعادة', detail: 'جرّب تجهيز خطة بديلة من القسم الموجود تحت' };
+  if (weeklyPlan?.status === 'Generating') return { title: 'بنجهّز خطة الأسبوع', detail: `${7 * settings.postsPerDay} أفكار وكابشنات من قاعدة المعرفة` };
+  if (weeklyPlan?.status === 'AwaitingApproval') return { title: 'مستني اعتماد الخطة', detail: 'اعتمد الصور من المراجعة قبل بدء النشر' };
+  if (weeklyPlan?.status === 'GenerationFailed') return { title: 'الخطة محتاجة إعادة', detail: 'جرّب تجهيز خطة بديلة من المراجعة' };
   return { title: 'مستني خطة معتمدة', detail: `${dailyTime} بعد اعتماد الأيام السبعة` };
 }
 
-function WeeklyPlan({ plans, firstPostPublished, busy, onGenerate, onApprove, onRegenerate, onApproveItem, onRegenerateItem }: {
+function WeeklyPlan({ plans, view, canManage, postsPerDay, firstPostPublished, busy, canPublish, onPublish, onGenerate, onApprove, onRegenerate, onApproveItem, onRegenerateItem }: {
   plans: ContentWeekPlan[];
+  view: 'review' | 'schedule';
+  canManage: boolean;
+  canPublish: boolean;
+  onPublish: (postId: string) => void;
+  postsPerDay: number;
   firstPostPublished: boolean;
   busy: string | null;
   onGenerate: () => void;
@@ -676,101 +876,185 @@ function WeeklyPlan({ plans, firstPostPublished, busy, onGenerate, onApprove, on
     knownPlanIds.current = new Set(plans.map((candidate) => candidate.id));
   }, [plans, selectedPlanId]);
 
-  const plan = plans.find((candidate) => candidate.id === selectedPlanId) ?? plans[0];
+  const visiblePlans = plans.filter((candidate) => view === 'schedule'
+    ? candidate.status === 'Approved' || candidate.status === 'Completed' || candidate.status === 'Rejected'
+    : candidate.status !== 'Approved' && candidate.status !== 'Completed' && candidate.status !== 'Rejected');
+  const plan = visiblePlans.find((candidate) => candidate.id === selectedPlanId) ?? visiblePlans[0];
   const unresolvedPlan = plans.find((candidate) => ['Generating', 'AwaitingApproval', 'GenerationFailed'].includes(candidate.status));
   const canAddWeek = firstPostPublished && !unresolvedPlan;
   const isGenerating = plan?.status === 'Generating';
   const awaitingApproval = plan?.status === 'AwaitingApproval';
   const approved = plan?.status === 'Approved';
   const reviewedCount = plan?.items.filter((item) => item.postStatus === 'Approved' || item.postStatus === 'Published').length ?? 0;
-  const allReviewed = Boolean(plan?.items.length === 7 && reviewedCount === 7);
+  const allReviewed = Boolean(plan?.items.length && plan.items.length % 7 === 0 && reviewedCount === plan.items.length);
+  const plannedCount = plan?.items.length || 7 * postsPerDay;
 
   return <section className={styles.weeklyPlan} aria-labelledby="weekly-plan-heading">
     <div className={styles.weeklyPlanHeading}>
-      <div><span>03</span><div><h2 id="weekly-plan-heading">خطط الأسابيع</h2><p>جهّز أسبوعًا أو أكثر؛ كل أسبوع يبدأ بعد اللي قبله ومن غير تكرار القديم.</p></div></div>
+      <div className={styles.weekTitle}>
+        <h2 id="weekly-plan-heading">{view === 'schedule' ? <CalendarClock size={19} aria-hidden="true" /> : <CheckCircle2 size={19} aria-hidden="true" />}{view === 'schedule' ? 'خطط النشر' : 'خطط للمراجعة'}</h2>
+        {plan && <span className={`${styles.planStatus} ${approved ? styles.planApproved : plan.status === 'GenerationFailed' ? styles.itemFailed : ''}`}>{awaitingApproval && <Clock3 size={12} aria-hidden="true" />}{weekPlanStatusLabel(plan.status)}</span>}
+        {awaitingApproval && <span className={styles.reviewCount}>{reviewedCount} / {plan.items.length} تمت مراجعتها</span>}
+        {visiblePlans.length === 1 && <span className={styles.weekPeriod}>{formatWeekRange(plan)}</span>}
+      </div>
       <div className={styles.weekPlanHeadingActions}>
-        {plan && <strong className={`${styles.planStatus} ${approved ? styles.planApproved : ''}`}>{weekPlanStatusLabel(plan.status)}</strong>}
-        {firstPostPublished && <button type="button" className={styles.weekPlanAdd} disabled={Boolean(busy) || !canAddWeek} onClick={onGenerate} title={unresolvedPlan ? 'راجع الأسبوع الجاري أو اعتمده قبل إضافة أسبوع جديد' : undefined}>
+        {view === 'review' && firstPostPublished && canAddWeek && <button type="button" className={styles.weekPlanAdd} disabled={!canManage || Boolean(busy)} onClick={onGenerate}>
           {busy === 'weekly-plan' ? <LoaderCircle className={styles.spin} size={16} /> : <Sparkles size={16} />}
           {plans.length > 0 ? 'ضيف أسبوع جديد' : 'جهّز أول أسبوع'}
         </button>}
       </div>
     </div>
 
-    {plans.length > 0 && <div className={styles.weekTabs} role="tablist" aria-label="الأسابيع المجهزة">
-      {plans.map((candidate, index) => <button
+    {visiblePlans.length > 1 && <div className={styles.weekTabs} role="group" aria-label="الأسابيع المجهزة">
+      {visiblePlans.map((candidate) => <button
         type="button"
-        role="tab"
-        aria-selected={candidate.id === plan?.id}
+        aria-pressed={candidate.id === plan?.id}
         className={candidate.id === plan?.id ? styles.weekTabActive : styles.weekTab}
         key={candidate.id}
         onClick={() => setSelectedPlanId(candidate.id)}
       >
-        <span>الأسبوع {index + 1}</span>
+        <span>الأسبوع {plans.indexOf(candidate) + 1}</span>
         <small>{formatWeekRange(candidate)}</small>
       </button>)}
     </div>}
 
     {!plan && <div className={styles.emptyPlan}>
       <CalendarClock size={30} aria-hidden="true" />
-      <div><h3>{firstPostPublished ? 'جاهز نرتب الأسبوع الجاي' : 'الخطة بعد اعتماد أول تصميم'}</h3><p>{firstPostPublished ? 'هنبني 7 أفكار مختلفة من قاعدة المعرفة، واحدة لكل يوم.' : 'أول بوست يتنشر بعد موافقتك، وبعدها هتظهر هنا الخطة كاملة.'}</p></div>
+      <div><h3>{view === 'schedule' ? 'لا توجد خطط معتمدة بعد' : firstPostPublished ? 'لا توجد خطط تنتظر المراجعة' : 'الخطة بعد اعتماد أول تصميم'}</h3><p>{view === 'schedule' ? 'اعتمد الصور وخطة الأسبوع من المراجعة لتظهر مواعيدها هنا.' : firstPostPublished ? `يمكنك تجهيز ${plannedCount} أفكار مختلفة من قاعدة المعرفة، ${postsPerDay} في اليوم.` : 'أول بوست يتنشر بعد موافقتك، وبعدها هتظهر هنا الخطة كاملة.'}</p></div>
     </div>}
 
     {isGenerating && <div className={styles.planGenerating} aria-busy="true">
-      <div><LoaderCircle className={styles.spin} size={22} /><strong>{plan.items.length > 0 ? 'بنجهّز صور الأيام السبعة للمراجعة' : 'بنقرأ قاعدة المعرفة ونرتب 7 أيام مختلفة'}</strong></div>
+      <div><LoaderCircle className={styles.spin} size={22} /><strong>{plan.items.length > 0 ? `بنجهّز ${plannedCount} صورة للمراجعة` : `بنقرأ قاعدة المعرفة ونرتب ${plannedCount} بوست على 7 أيام`}</strong></div>
       {plan.items.length === 0 && Array.from({ length: 7 }, (_, index) => <span key={index} />)}
     </div>}
 
     {plan?.status === 'GenerationFailed' && <div className={styles.planFailed} role="alert">
       <AlertTriangle size={24} /><div><h3>الخطة ماكملتش</h3><p>{plan.error ?? 'تعذر تجهيز خطة الأسبوع.'}</p></div>
-      <button type="button" className={styles.btnSecondary} disabled={Boolean(busy)} onClick={() => onRegenerate(plan.id)}>{busy === 'regenerate-weekly-plan' ? <LoaderCircle className={styles.spin} size={17} /> : <RefreshCw size={17} />} جرّب خطة جديدة</button>
+      <button type="button" className={styles.btnSecondary} disabled={!canManage || Boolean(busy)} onClick={() => onRegenerate(plan.id)}>{busy === 'regenerate-weekly-plan' ? <LoaderCircle className={styles.spin} size={17} /> : <RefreshCw size={17} />} جرّب خطة جديدة</button>
     </div>}
 
     {plan?.status === 'Completed' && <div className={styles.emptyPlan}>
       <CheckCircle2 size={28} aria-hidden="true" />
-      <div><h3>الأيام السبعة اتنشرت</h3><p>تقدر تضيف أسبوعًا جديدًا من الزر الموجود فوق.</p></div>
+      <div><h3>بوستات الأسبوع اتنشرت</h3><p>تقدر تجهّز أسبوعًا جديدًا من المراجعة والمكتبة.</p></div>
     </div>}
 
     {plan?.status === 'Rejected' && <div className={styles.emptyPlan}>
       <AlertTriangle size={28} aria-hidden="true" />
-      <div><h3>الأسبوع ده اتبدّل</h3><p>ضيف أسبوعًا جديدًا، والنظام هيبعد عن كل الأفكار والعناوين السابقة.</p></div>
+      <div><h3>الأسبوع ده اتبدّل</h3><p>جهّز أسبوعًا جديدًا من المراجعة والمكتبة. النظام هيبعد عن الأفكار والعناوين السابقة.</p></div>
     </div>}
 
-    {plan && plan.items.length > 0 && <div className={styles.weekList}>
-      {plan.items.map((item) => {
-        const imageReady = item.postStatus === 'AwaitingApproval';
-        const imageApproved = item.postStatus === 'Approved' || item.postStatus === 'Published';
-        const imageFailed = item.postStatus === 'GenerationFailed';
-        const canRegenerate = awaitingApproval && (imageReady || imageApproved || imageFailed);
-        return <article className={styles.weekItem} key={item.id}>
-          <div className={styles.weekImage}>
-            {item.imageUrl
-              ? <AuthenticatedImage assetUrl={item.imageUrl} alt={`تصميم يوم ${formatWeekday(item.scheduledForUtc, plan.timezone)}: ${item.visualHeadline}`} sizes="(max-width: 560px) 92vw, 220px" />
-              : <span className={styles.weekImageState}>{imageFailed ? <AlertTriangle size={26} /> : <LoaderCircle className={styles.spin} size={24} />}</span>}
-            {item.imageSize && <span className={styles.weekResolution}>{item.imageSize}</span>}
-          </div>
-          <div className={styles.weekCopy}>
-            <div className={styles.weekMeta}>
-              <time dateTime={item.scheduledForUtc}><strong>{formatWeekday(item.scheduledForUtc, plan.timezone)}</strong><span>{formatDayAndTime(item.scheduledForUtc, plan.timezone)}</span></time>
-              <span className={`${styles.itemState} ${imageApproved || item.postStatus === 'Published' ? styles.itemPublished : ''}`}>{weekItemStatus(item.postStatus, approved)}</span>
-            </div>
-            <span>الفكرة الكريتيف: {item.topic}</span><h3>{item.visualHeadline}</h3><p>{item.caption}</p>
-            {imageFailed && <small className={styles.weekImageError}>{item.postError ?? 'الصورة ماكملتش. جرّب توليدها مرة ثانية.'}</small>}
-            {awaitingApproval && <div className={styles.itemReviewActions}>
-              {imageReady && <button type="button" className={styles.btnPrimary} disabled={Boolean(busy)} onClick={() => onApproveItem(plan.id, item.id)}>{busy === `approve-weekly-item-${item.id}` ? <LoaderCircle className={styles.spin} size={17} /> : <CheckCircle2 size={17} />} موافق</button>}
-              {canRegenerate && <button type="button" className={styles.btnSecondary} disabled={Boolean(busy)} onClick={() => onRegenerateItem(plan.id, item.id)}>{busy === `regenerate-weekly-item-${item.id}` ? <LoaderCircle className={styles.spin} size={17} /> : <RefreshCw size={17} />} إعادة الصورة</button>}
-            </div>}
-          </div>
-        </article>;
-      })}
-    </div>}
+    {plan && plan.items.length > 0 && (view === 'review'
+      ? <WeeklyPlanReview key={plan.id} plan={plan} busy={busy} canManage={canManage} canPublish={canPublish}
+          onPublish={onPublish} onApproveItem={onApproveItem} onRegenerateItem={onRegenerateItem} />
+      : <div className={styles.weekList}>{plan.items.map(item => <WeeklyPost key={item.id} item={item} plan={plan} presentation="row"
+          busy={busy} canManage={canManage} canPublish={canPublish} onPublish={onPublish}
+          onApproveItem={onApproveItem} onRegenerateItem={onRegenerateItem} />)}</div>)}
 
     {awaitingApproval && <div className={styles.planActions}>
-      <div><ShieldCheck size={18} /><span>تمت مراجعة {reviewedCount} من 7. لن يبدأ النشر قبل موافقتك على كل الصور.</span></div>
-      <button type="button" className={styles.btnPrimary} disabled={Boolean(busy) || !allReviewed} onClick={() => onApprove(plan.id)}>{busy === 'approve-weekly-plan' ? <LoaderCircle className={styles.spin} size={18} /> : <CheckCircle2 size={18} />} {allReviewed ? 'اعتمد الأيام السبعة' : 'وافق على الصور الأول'}</button>
-      <button type="button" className={styles.btnSecondary} disabled={Boolean(busy)} onClick={() => onRegenerate(plan.id)}>{busy === 'regenerate-weekly-plan' ? <LoaderCircle className={styles.spin} size={17} /> : <RefreshCw size={17} />} اعمل خطة غيرها</button>
+      <div><ShieldCheck size={18} /><span>تمت مراجعة {reviewedCount} من {plan.items.length}. لن يبدأ النشر قبل موافقتك على كل الصور.</span></div>
+      <button type="button" className={styles.btnPrimary} disabled={!canManage || Boolean(busy) || !allReviewed} onClick={() => onApprove(plan.id)}>{busy === 'approve-weekly-plan' ? <LoaderCircle className={styles.spin} size={18} /> : <CheckCircle2 size={18} />} {allReviewed ? 'اعتمد بوستات الأسبوع' : 'وافق على الصور الأول'}</button>
+      <button type="button" className={styles.btnSecondary} disabled={!canManage || Boolean(busy)} onClick={() => onRegenerate(plan.id)}>{busy === 'regenerate-weekly-plan' ? <LoaderCircle className={styles.spin} size={17} /> : <RefreshCw size={17} />} اعمل خطة غيرها</button>
     </div>}
   </section>;
+}
+
+interface WeeklyPostActions {
+  plan: ContentWeekPlan;
+  busy: string | null;
+  canManage: boolean;
+  canPublish: boolean;
+  onPublish: (postId: string) => void;
+  onApproveItem: (planId: string, itemId: string) => void;
+  onRegenerateItem: (planId: string, itemId: string) => void;
+}
+
+function WeeklyPlanReview(props: WeeklyPostActions) {
+  const { plan } = props;
+  const [selectedId, setSelectedId] = useState(() => plan.items.find(item => item.postStatus === 'AwaitingApproval')?.id ?? plan.items[0].id);
+  const selected = plan.items.find(item => item.id === selectedId)
+    ?? plan.items.find(item => item.postStatus === 'AwaitingApproval') ?? plan.items[0];
+  const selectedIndex = plan.items.indexOf(selected);
+  const selectPost = (id: string) => setSelectedId(id);
+  return <div className={styles.postReviewWorkspace}>
+    <nav className={styles.postReviewList} aria-label="منشورات الخطة">
+      {plan.items.map((item, index) => <button type="button" key={item.id} aria-pressed={selected.id === item.id}
+        aria-label={`مراجعة المنشور ${index + 1}: ${item.visualHeadline}`} onClick={() => selectPost(item.id)}>
+        <span className={styles.postListThumb}>{item.imageUrl ? <AuthenticatedImage assetUrl={item.imageUrl} alt="" sizes="48px" /> : <ImagePlus size={20} aria-hidden="true" />}</span>
+        <span className={styles.postListCopy}><strong>{item.visualHeadline}</strong><small>{formatWeekday(item.scheduledForUtc, plan.timezone)} · {weekItemStatus(item.postStatus, false)}</small></span>
+        {item.postStatus === 'Approved' || item.postStatus === 'Published' ? <CheckCircle2 size={16} aria-label="تمت الموافقة" /> : <span className={styles.postListNumber}>{index + 1}</span>}
+      </button>)}
+    </nav>
+    <div className={styles.postReviewDetail}>
+      <div className={styles.postReviewControls}>
+        <label className={styles.mobilePostSelect}>المنشور<select aria-label="اختيار منشور للمراجعة" value={selected.id} onChange={event => selectPost(event.target.value)}>
+          {plan.items.map((item, index) => <option key={item.id} value={item.id}>{index + 1}. {item.visualHeadline}</option>)}
+        </select></label>
+        <span className={styles.postPosition}>منشور {selectedIndex + 1} من {plan.items.length}</span>
+        <div><button type="button" className={styles.iconButton} aria-label="المنشور السابق" disabled={selectedIndex === 0} onClick={() => selectPost(plan.items[selectedIndex - 1].id)}><ChevronRight size={18} aria-hidden="true" /></button>
+          <button type="button" className={styles.iconButton} aria-label="المنشور التالي" disabled={selectedIndex === plan.items.length - 1} onClick={() => selectPost(plan.items[selectedIndex + 1].id)}><ChevronLeft size={18} aria-hidden="true" /></button></div>
+      </div>
+      <section aria-label="معاينة المنشور المختار"><WeeklyPost {...props} item={selected} presentation="detail" /></section>
+    </div>
+  </div>;
+}
+
+function WeeklyPost({ item, plan, presentation, busy, canManage, canPublish, onPublish, onApproveItem, onRegenerateItem }: WeeklyPostActions & { item: ContentWeekPlanItem; presentation: 'detail' | 'row' }) {
+  const imageReady = item.postStatus === 'AwaitingApproval';
+  const imageApproved = item.postStatus === 'Approved' || item.postStatus === 'Published';
+  const imageFailed = item.postStatus === 'GenerationFailed';
+  const publishable = plan.status === 'Approved' && Boolean(item.contentPostId)
+    && (item.postStatus === 'Approved' || item.postStatus === 'PublishFailed');
+  const publishing = busy === `publish-${item.contentPostId}` || item.postStatus === 'Publishing';
+  const canRegenerate = plan.status === 'AwaitingApproval' && (imageReady || imageApproved || imageFailed);
+  return <article className={presentation === 'detail' ? styles.selectedPost : styles.weekItem} key={item.id}>
+    {presentation === 'detail' && item.imageUrl ? <ExpandablePostImage assetUrl={item.imageUrl} title={item.visualHeadline} imageSize={item.imageSize} /> : <div className={styles.weekImage}>
+      {item.imageUrl
+        ? <AuthenticatedImage assetUrl={item.imageUrl} alt={`تصميم يوم ${formatWeekday(item.scheduledForUtc, plan.timezone)}: ${item.visualHeadline}`} sizes="(max-width: 560px) 96px, 128px" />
+        : <span className={styles.weekImageState}>{imageFailed ? <AlertTriangle size={26} /> : <LoaderCircle className={styles.spin} size={24} />}</span>}
+      {item.imageSize && <span className={styles.weekResolution}>{item.imageSize}</span>}
+    </div>}
+    <div className={styles.weekCopy}>
+      <div className={styles.weekMeta}>
+        <time dateTime={item.scheduledForUtc}><strong>{formatWeekday(item.scheduledForUtc, plan.timezone)}</strong><span>{formatDayAndTime(item.scheduledForUtc, plan.timezone)}</span></time>
+        <span className={`${styles.itemState} ${imageApproved ? styles.itemPublished : imageFailed || item.postStatus === 'PublishFailed' || item.postStatus === 'PublishUnknown' ? styles.itemFailed : ''}`}>{imageReady && <Clock3 size={12} aria-hidden="true" />}{publishing ? statusLabels.Publishing : weekItemStatus(item.postStatus, plan.status === 'Approved')}</span>
+      </div>
+      <span className={styles.postTopic}>{item.topic}</span><h3>{item.visualHeadline}</h3><p>{item.caption}</p>
+      {(item.postStatus === 'PublishFailed' || item.postStatus === 'PublishUnknown') && <small className={styles.weekImageError}>{item.postError ?? statusLabels[item.postStatus]}</small>}
+      {imageFailed && <small className={styles.weekImageError}>{item.postError ?? 'الصورة ماكملتش. جرّب توليدها مرة ثانية.'}</small>}
+      <div className={styles.weekActions}>
+      {(publishable || item.postStatus === 'Publishing') && <div className={styles.itemReviewActions}>
+        <button type="button" className={styles.btnSecondary} disabled={!canPublish || Boolean(busy) || publishing} onClick={() => onPublish(item.contentPostId!)} aria-label={`نزّل دلوقتي: ${item.visualHeadline}`} title={!canPublish ? 'اختار صفحة Facebook واحفظ الإعدادات بحساب مدير قبل النشر' : undefined}>
+          {publishing ? <LoaderCircle className={styles.spin} size={17} /> : <Send size={17} />} {publishing ? 'بيتنشر دلوقتي…' : 'نزّل دلوقتي'}
+        </button>
+      </div>}
+      {plan.status === 'AwaitingApproval' && <div className={styles.itemReviewActions}>
+        {imageReady && <button type="button" className={styles.btnPrimary} disabled={!canManage || Boolean(busy)} onClick={() => onApproveItem(plan.id, item.id)}>{busy === `approve-weekly-item-${item.id}` ? <LoaderCircle className={styles.spin} size={17} /> : <CheckCircle2 size={17} />} موافق</button>}
+        {canRegenerate && <button type="button" className={styles.btnSecondary} disabled={!canManage || Boolean(busy)} onClick={() => onRegenerateItem(plan.id, item.id)}>{busy === `regenerate-weekly-item-${item.id}` ? <LoaderCircle className={styles.spin} size={17} /> : <RefreshCw size={17} />} إعادة الصورة</button>}
+      </div>}
+      </div>
+    </div>
+  </article>;
+}
+
+function ExpandablePostImage({ assetUrl, title, imageSize }: { assetUrl: string; title: string; imageSize: string | undefined }) {
+  const [expanded, setExpanded] = useState(false);
+  const [zoomed, setZoomed] = useState(false);
+  return <>
+    <button type="button" className={styles.selectedPostImage} aria-label={`تكبير التصميم: ${title}`} onClick={() => { setZoomed(false); setExpanded(true); }}>
+      <AuthenticatedImage assetUrl={assetUrl} alt={`تصميم ${title}`} sizes="(max-width: 820px) 90vw, 480px" />
+      {imageSize && <small className={styles.weekResolution}>{imageSize}</small>}
+      <span><ZoomIn size={16} aria-hidden="true" /> تكبير التصميم</span>
+    </button>
+    {expanded && <Dialog label={`معاينة التصميم: ${title}`} onClose={() => setExpanded(false)}>
+      <div className={styles.imageZoomViewer}>
+        <div className={styles.imageZoomHeader}><h2>{title}</h2><button type="button" className={styles.iconButton} aria-label="إغلاق معاينة التصميم" onClick={() => setExpanded(false)}><X size={20} aria-hidden="true" /></button></div>
+        <button type="button" className={styles.btnSecondary} aria-pressed={zoomed} onClick={() => setZoomed(!zoomed)}><ZoomIn size={16} aria-hidden="true" />{zoomed ? 'عرض الصورة كاملة' : 'تكبير 200٪'}</button>
+        <div className={styles.imageZoomViewport} tabIndex={0} role="region" aria-label="منطقة الصورة المكبرة"><div className={`${styles.imageZoomCanvas} ${zoomed ? styles.imageZoomed : ''}`}>
+          <AuthenticatedImage assetUrl={assetUrl} alt={`التصميم مكبر: ${title}`} sizes="90vw" />
+        </div></div>
+      </div>
+    </Dialog>}
+  </>;
 }
 
 function weekItemStatus(status: ContentPostStatus | undefined, planApproved: boolean) {
@@ -779,7 +1063,7 @@ function weekItemStatus(status: ContentPostStatus | undefined, planApproved: boo
   if (status === 'Approved') return 'تمت الموافقة';
   if (status === 'AwaitingApproval') return 'مستنية رأيك';
   if (status === 'GenerationFailed') return 'محتاجة إعادة';
-  return 'بتتجهّز';
+  return status ? statusLabels[status] : 'بتتجهّز';
 }
 
 function weekPlanStatusLabel(status: ContentWeekPlan['status']) {
@@ -808,19 +1092,19 @@ function formatPlanDate(value: string) {
     .format(new Date(`${value}T12:00:00`));
 }
 
-function ContentHistory({ posts, busy, onPublish }: { posts: ContentPost[]; busy: string | null; onPublish: (id: string) => void }) {
+function ContentHistory({ posts, busy, canPublish, onPublish }: { posts: ContentPost[]; busy: string | null; canPublish: boolean; onPublish: (id: string) => void }) {
   const [visibleCount, setVisibleCount] = useState(12);
   const visiblePosts = posts.slice(0, visibleCount);
 
   return <section className={styles.history}>
-    <div className={styles.historyHeading}><div><span>04</span><div><h2>سجل المحتوى</h2><p>كل صورة وكابشن وحالة النشر في مكان واحد.</p></div></div><strong>{posts.length} بوست</strong></div>
+    <div className={styles.historyHeading}><div><div><h2><BookOpen size={19} aria-hidden="true" /> سجل المحتوى</h2><p>أحدث 40 بوستًا بصورها والكابشن وحالة النشر.</p></div></div><strong>{posts.length} بوست في القائمة</strong></div>
     {posts.length === 0 ? <div className={styles.emptyHistory}>أول بوست معتمد هيظهر هنا.</div> : (
       <div className={styles.historyList}>
         {visiblePosts.map((post) => <article className={styles.historyRow} key={post.id}>
           <div className={styles.historyThumb}>{post.imageUrl ? <AuthenticatedImage assetUrl={post.imageUrl} alt="" sizes="84px" /> : <Sparkles size={22} />}</div>
           <div className={styles.historyCopy}><span>{post.topic || 'محتوى جديد'}</span><strong>{post.visualHeadline || 'جاري تجهيز النص'}</strong><small>{post.publishedAtUtc ? `اتنشر ${formatDate(post.publishedAtUtc)}` : post.generatedAtUtc ? `اتولد ${formatDate(post.generatedAtUtc)}` : 'قيد التنفيذ'}</small></div>
           <span className={`${styles.rowStatus} ${statusClass(post.status)}`}>{statusLabels[post.status]}</span>
-          {(post.status === 'Approved' || post.status === 'PublishFailed') && <button type="button" className={styles.iconButton} disabled={Boolean(busy)} onClick={() => onPublish(post.id)} aria-label={`نشر البوست الآن: ${post.visualHeadline || post.topic}`}>{busy === `publish-${post.id}` ? <LoaderCircle className={styles.spin} size={18} /> : <Send size={18} />}</button>}
+          {(post.status === 'Approved' || post.status === 'PublishFailed') && <button type="button" className={styles.iconButton} disabled={Boolean(busy) || !canPublish} onClick={() => onPublish(post.id)} aria-label={`نشر البوست الآن: ${post.visualHeadline || post.topic}`}>{busy === `publish-${post.id}` ? <LoaderCircle className={styles.spin} size={18} /> : <Send size={18} />}</button>}
         </article>)}
         {visibleCount < posts.length && <button type="button" className={styles.loadMoreButton} onClick={() => setVisibleCount((count) => count + 12)}>عرض 12 بوستًا إضافيًا</button>}
       </div>

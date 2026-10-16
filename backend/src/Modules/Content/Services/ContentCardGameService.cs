@@ -55,7 +55,7 @@ public sealed class ContentCardGameService(
             Title = Limit(deck.Title, 200),
             Brief = input.Brief.Trim(),
             Mechanic = Limit(deck.Mechanic, 600),
-            Instructions = Limit(deck.Instructions, 3_000),
+            Instructions = deck.Instructions.Trim(),
             CardCount = input.CardCount,
             BrandLogoObjectKey = context.Brand.LogoObjectKey,
             BrandColorsJson = context.Brand.BrandColorsJson,
@@ -182,6 +182,7 @@ public sealed class ContentCardGameService(
         Use original rules and an original name. Do not copy a commercial game, its name, card wording, or distinctive rules. You may evoke the social strategy feeling of hidden information, swapping, drawing, peeking, bluffing, collecting, or tactical choices, but create a new game system for this project.
         Use 3 to 6 distinct English card categories across the deck. Include action cards that make players draw, swap, peek, reveal, block, trade, protect, steal, score, or make a tactical choice. Do not make every card an objection, question, or prompt.
         Write title in English. Write mechanic and instructions in simple Egyptian Arabic for the workshop organizer. In instructions use these Arabic section headings EXACTLY: "عدد اللاعبين"، "التجهيز"، "توزيع الكروت"، "الدور"، "تأثير الكروت"، "نهاية اللعبة"، "الفوز". Write EVERY card category, title, prompt, and instruction in clear natural English for players. Make each card distinct: prompt must state a playable action, event, choice, mission, or scoring effect — not merely ask a question.
+        Keep the complete instructions within 3000 characters, including all seven required sections. Shorten the wording, never omit the end condition or winning rules.
         Return exactly {{input.CardCount}} cards. Do not add visual instructions, colors, markdown, or any prose outside the JSON.
         Return JSON only in this exact shape:
         {"title":"English game name","mechanic":"ملخص عربي لطريقة اللعب","instructions":"شرح عربي كامل: عدد اللاعبين، التجهيز، توزيع الكروت، تسلسل الدور أو الجولة، تأثير كل نوع كارت، النهاية وطريقة الفوز","cards":[{"category":"English card type","title":"English short title","prompt":"English playable card effect","instruction":"English one-line player instruction"}]}
@@ -286,6 +287,7 @@ public sealed class ContentCardGameService(
         !string.IsNullOrWhiteSpace(deck.Title)
         && HasArabic(deck.Mechanic)
         && HasRequiredArabicRules(deck.Instructions)
+        && deck.Instructions.Trim().Length <= 3_000
         && deck.Cards?.Count == cardCount
         && deck.Cards.All(ValidCard)
         && HasPlayableCardMix(deck.Cards);

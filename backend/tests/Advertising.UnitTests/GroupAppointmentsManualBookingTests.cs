@@ -26,6 +26,166 @@ namespace Advertising.UnitTests;
 public sealed class GroupAppointmentsManualBookingTests
 {
     [Fact]
+    public async Task Staff_directory_preserves_legacy_names_and_updates_assigned_groups_only_in_current_project()
+    {
+        var projectId = Guid.NewGuid();
+        var (controller, db) = CreateController(projectId, "Owner", projectId);
+        await using var ownedDb = db;
+        var settings = new ProjectSettings { ProjectId = projectId, ActiveInstructors = "أحمد",
+            GroupAutomationAdminPhones = "201515089806,201279333079" };
+        var group = ActiveGroup(projectId, 5); group.InstructorName = "أحمد";
+        var other = ActiveGroup(Guid.NewGuid(), 5); other.InstructorName = "أحمد";
+        db.AddRange(settings, group, other); await db.SaveChangesAsync();
+        var legacy = Assert.Single(GroupStaffDirectory.FromSettings(settings).InstructorContacts);
+        var supervisor = new GroupStaffContact("supervisor", "سارة", "01012345678");
+        Assert.IsType<OkObjectResult>(await controller.UpdateInstructors(new UpdateInstructorsRequest {
+            InstructorContacts = [legacy with { Name = "أحمد علي", Phone = "01112345678" }], Supervisors = [supervisor] }));
+        Assert.Equal("أحمد علي", group.InstructorName);
+        Assert.Equal("أحمد", other.InstructorName);
+        Assert.Contains("201112345678", GroupStaffNotifications.MemberPhones(settings, group));
+        Assert.DoesNotContain("201112345678", GroupStaffNotifications.AdminPhones(settings));
+        group.SupervisorPhone = "201012345678";
+        var saved = GroupStaffDirectory.FromSettings(settings);
+        Assert.IsType<OkObjectResult>(await controller.UpdateInstructors(new UpdateInstructorsRequest {
+            InstructorContacts = saved.InstructorContacts, Supervisors = [supervisor with { Phone = "01212345678" }] }));
+        Assert.Equal("201212345678", group.SupervisorPhone);
+        Assert.Equal(4, GroupStaffNotifications.ParticipantPhones(settings, group).Length);
+        Assert.Equal(new[] { "201515089806", "201279333079" }, GroupStaffNotifications.AdminPhones(settings));
+        Assert.Contains("201212345678", GroupStaffNotifications.MemberPhones(settings, group));
+        var booking = new GroupAppointmentBooking { ProjectId = projectId, CustomerName = "طالب", CustomerPhone = "201000000001" };
+        GroupStaffNotifications.Enqueue(db, group, booking);
+        await db.SaveChangesAsync();
+        Assert.Equal("201212345678", (await db.GroupStaffNotifications.SingleAsync()).RecipientPhone);
+    }
+
+    [Theory]
+    [InlineData("Agent", "01012345678", false)]
+    [InlineData("Owner", "invalid", true)]
+    public async Task Staff_directory_rejects_unauthorized_or_invalid_phone_without_saving(string role, string phone, bool validationFailure)
+    {
+        var projectId = Guid.NewGuid();
+        var (controller, db) = CreateController(projectId, role, projectId);
+        await using var ownedDb = db;
+        var settings = new ProjectSettings { ProjectId = projectId };
+        db.Add(settings); await db.SaveChangesAsync();
+        var response = await controller.UpdateInstructors(new UpdateInstructorsRequest {
+            Supervisors = [new GroupStaffContact("staff", "سارة", phone)] });
+        if (validationFailure) Assert.IsType<BadRequestObjectResult>(response);
+        else Assert.IsType<ForbidResult>(response);
+        Assert.Empty(GroupStaffDirectory.FromSettings(settings).Supervisors);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Ai_cannot_transfer_an_existing_booking_without_requester_authorization(bool authorized)
+    {
+        var projectId = Guid.NewGuid();
+        var (_, db) = CreateController(projectId, "Owner", projectId);
+        await using var ownedDb = db;
+        var original = ActiveGroup(projectId, 3);
+        var alternative = ActiveGroup(projectId, 3);
+        original.Mode = "online";
+        alternative.Mode = "online";
+        var requester = Customer(projectId, "201011112222", "صاحب الحجز");
+        var booking = new GroupAppointmentBooking { ProjectId = projectId, GroupAppointmentId = original.Id,
+            CustomerId = requester.Id, CustomerName = requester.Name, CustomerPhone = requester.PhoneNumber };
+        db.AddRange(original, alternative, requester, booking);
+        await db.SaveChangesAsync();
+        var orchestrator = new AiGroupBookingOrchestrator(db, new GroupBookingCoordinator(db),
+            NoOpHubContext(), NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedWhatsAppNumber());
+        var response = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest {
+            ProjectId = projectId, GroupId = alternative.Id, RequesterCustomerId = requester.Id,
+            RequesterAllowsTransfer = authorized });
+        Assert.Equal(authorized, response.Succeeded);
+        Assert.Equal(authorized ? alternative.Id : original.Id, (await db.GroupAppointmentBookings.SingleAsync()).GroupAppointmentId);
+    }
+
+    [Theory]
+    [InlineData(-48, false)]
+    [InlineData(48, true)]
+    public async Task Public_availability_uses_free_session_instead_of_later_legacy_course_date(int freeSessionOffsetHours, bool available)
+    {
+        var projectId = Guid.NewGuid();
+        var (controller, db) = CreateController(projectId, "Owner", projectId);
+        await using var ownedDb = db;
+        var group = ActiveGroup(projectId, 3);
+        group.DateTime = DateTime.UtcNow.AddDays(14);
+        group.FreeSessionDateTime = DateTime.UtcNow.AddHours(freeSessionOffsetHours);
+        db.AddRange(group, new ProjectSettings { ProjectId = projectId, IsGroupAppointmentsEnabled = true });
+        await db.SaveChangesAsync();
+        var response = Assert.IsType<OkObjectResult>(await controller.GetActiveGroupsForPublic(projectId));
+        var groups = JsonSerializer.SerializeToElement(response.Value);
+        Assert.Equal(available ? 1 : 0, groups.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Creating_group_requires_no_course_sessions_and_preserves_selected_instructor()
+    {
+        var projectId = Guid.NewGuid();
+        var (controller, db) = CreateController(projectId, "Owner", projectId);
+        await using var ownedDb = db;
+        var freeSession = DateTime.UtcNow.AddDays(3);
+        Assert.IsType<OkObjectResult>(await controller.CreateGroup(new CreateGroupRequest
+        {
+            FreeSessionDateTime = freeSession, InstructorName = "سارة", Capacity = 5,
+            CourseType = CourseTypes.Regular
+        }));
+        var group = await db.GroupAppointments.SingleAsync();
+        Assert.Equal(freeSession, group.FreeSessionDateTime);
+        Assert.Equal(freeSession, group.DateTime);
+        Assert.Equal("سارة", group.InstructorName);
+        Assert.Null(group.CourseSecondDateTime);
+        Assert.Empty(group.Days);
+    }
+
+    private sealed class VerifiedWhatsAppNumber(WhatsAppNumberVerification verification = WhatsAppNumberVerification.Registered) : IWhatsAppBookingNumberVerifier
+    {
+        public List<string> Numbers { get; } = [];
+        public Task<WhatsAppNumberVerification> VerifyAsync(Guid projectId, string phone, CancellationToken cancellationToken = default)
+        {
+            Numbers.Add(phone);
+            return Task.FromResult(verification);
+        }
+    }
+
+    [Theory]
+    [InlineData(WhatsAppNumberVerification.Registered, 2, AiGroupBookingFailure.None)]
+    [InlineData(WhatsAppNumberVerification.NotRegistered, 1, AiGroupBookingFailure.FriendNotOnWhatsApp)]
+    [InlineData(WhatsAppNumberVerification.Unavailable, 1, AiGroupBookingFailure.WhatsAppVerificationUnavailable)]
+    public async Task Friends_are_booked_only_after_WhatsApp_verification_and_the_requester_is_preserved(
+        WhatsAppNumberVerification verification, int expectedBookings, AiGroupBookingFailure expectedFailure)
+    {
+        var projectId = Guid.NewGuid();
+        var (_, db) = CreateController(projectId, "Owner", projectId);
+        await using var ownedDb = db;
+        var group = ActiveGroup(projectId, capacity: 3);
+        group.Mode = "online";
+        var requester = Customer(projectId, "201011112222", "صاحب الشات");
+        db.AddRange(group, requester);
+        await db.SaveChangesAsync();
+        var verifier = new VerifiedWhatsAppNumber(verification);
+        var orchestrator = new AiGroupBookingOrchestrator(db, new GroupBookingCoordinator(db),
+            NoOpHubContext(), NullLogger<AiGroupBookingOrchestrator>.Instance, verifier);
+
+        var result = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
+        {
+            ProjectId = projectId, GroupId = group.Id, RequesterCustomerId = requester.Id,
+            SuggestedPeople = [new() { IsRequester = true }, new() { Name = "الصديق", PhoneNumber = "01033334444", IsRequester = false }]
+        });
+
+        Assert.Equal(expectedFailure, result.Failure);
+        Assert.True(result.Succeeded);
+        Assert.Equal(expectedBookings, await db.GroupAppointmentBookings.CountAsync());
+        Assert.Equal(["201033334444"], verifier.Numbers);
+        if (verification == WhatsAppNumberVerification.Unavailable)
+        {
+            Assert.Contains("مش قادر أتحقق", result.CustomerReplyOverride);
+            Assert.DoesNotContain("مش مسجل", result.CustomerReplyOverride);
+        }
+    }
+
+    [Fact]
     public async Task Arabic_digits_are_canonicalized_and_a_new_manual_booking_is_persisted()
     {
         var projectId = Guid.NewGuid();
@@ -320,6 +480,7 @@ public sealed class GroupAppointmentsManualBookingTests
         var (_, db) = CreateController(projectId, "Owner", projectId);
         await using var ownedDb = db;
         var group = ActiveGroup(projectId, capacity: 1);
+        group.Mode = "online";
         var occupant = Customer(projectId, "201011112222", "مشترك موجود");
         db.AddRange(group, occupant, Booking(projectId, group.Id, occupant, occupant.PhoneNumber));
         await db.SaveChangesAsync();
@@ -327,7 +488,7 @@ public sealed class GroupAppointmentsManualBookingTests
             db,
             new GroupBookingCoordinator(db),
             NoOpHubContext(),
-            NullLogger<AiGroupBookingOrchestrator>.Instance);
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedWhatsAppNumber());
 
         var result = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
         {
@@ -358,6 +519,7 @@ public sealed class GroupAppointmentsManualBookingTests
         var (_, db) = CreateController(projectId, "Owner", projectId);
         await using var ownedDb = db;
         var group = ActiveGroup(projectId, capacity: 3);
+        group.Mode = "online";
         var requester = Customer(projectId, "201011112222", "صاحب الشات");
         db.AddRange(group, requester);
         await db.SaveChangesAsync();
@@ -365,7 +527,7 @@ public sealed class GroupAppointmentsManualBookingTests
             db,
             new GroupBookingCoordinator(db),
             NoOpHubContext(),
-            NullLogger<AiGroupBookingOrchestrator>.Instance);
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedWhatsAppNumber());
 
         var bookingResult = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
         {
@@ -403,13 +565,14 @@ public sealed class GroupAppointmentsManualBookingTests
         var (_, db) = CreateController(projectId, "Owner", projectId);
         await using var ownedDb = db;
         var group = ActiveGroup(projectId, capacity: 20);
+        group.Mode = "online";
         db.GroupAppointments.Add(group);
         await db.SaveChangesAsync();
         var orchestrator = new AiGroupBookingOrchestrator(
             db,
             new GroupBookingCoordinator(db),
             NoOpHubContext(),
-            NullLogger<AiGroupBookingOrchestrator>.Instance);
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedWhatsAppNumber());
 
         var result = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
         {
@@ -480,6 +643,7 @@ public sealed class GroupAppointmentsManualBookingTests
         var (_, db) = CreateController(projectId, "Owner", projectId);
         await using var ownedDb = db;
         var group = ActiveGroup(projectId, 3);
+        group.Mode = "online";
         var requester = Customer(projectId, "123456789@lid", "صاحب الشات");
         db.AddRange(group, requester);
         if (alreadyBookedByAnotherCustomer)

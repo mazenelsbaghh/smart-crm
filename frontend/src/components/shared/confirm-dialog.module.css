@@ -70,6 +70,7 @@
 }
 
 .confirmBtn {
+  composes: button from '../ui/ui.module.css';
   background-color: var(--accent);
   color: var(--accent-ink);
 }
@@ -83,6 +84,7 @@
 }
 
 .cancelBtn {
+  composes: button from '../ui/ui.module.css';
   background-color: var(--surface-muted);
   border-color: var(--border-subtle);
   color: var(--text-base);

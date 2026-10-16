@@ -99,6 +99,7 @@ public sealed class WhatsAppGatewayAuthenticationPipelineTests
                 new Dictionary<string, string?>
                 {
                     ["Advertising:Enabled"] = "false",
+                    ["JWT:Secret"] = "gateway-pipeline-tests-independent-signing-secret-1234567890",
                     ["Advertising:Meta:UseMock"] = "false",
                     ["ConnectionStrings:DefaultConnection"] =
                         "Host=127.0.0.1;Port=1;Database=gateway_auth_test;Username=test;Password=test;Timeout=1",

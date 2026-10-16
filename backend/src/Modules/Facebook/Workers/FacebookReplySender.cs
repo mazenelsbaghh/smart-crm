@@ -97,6 +97,7 @@ namespace Modules.Facebook.Workers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[FacebookReplySender] Error handling reply for channel {Channel}", channel);
+                throw;
             }
         }
 
@@ -160,41 +161,39 @@ namespace Modules.Facebook.Workers
             // Simulate typing delay (4 seconds)
             await Task.Delay(4000);
 
-            // Split the reply content into multiple messages by double newlines to send as separate messages
-            var rawParts = @event.Content.Split(new[] { "\r\n\r\n", "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
-            var parts = new System.Collections.Generic.List<string>();
-            foreach (var p in rawParts)
-            {
-                var trimmed = p.Trim();
-                if (!string.IsNullOrEmpty(trimmed))
-                {
-                    parts.Add(trimmed);
-                }
-            }
-
-            if (parts.Count == 0 && !string.IsNullOrEmpty(@event.Content))
-            {
-                parts.Add(@event.Content.Trim());
-            }
+            var parts = ReplyMessageParts.SplitParagraphs(@event.Content);
 
             for (int i = 0; i < parts.Count; i++)
             {
                 if (await new ConversationHumanHandoff(_context).BlocksReplyAsync(@event)) return;
+                if (await HasNewerCustomerMessageAsync(@event, conversationId))
+                {
+                    _logger.LogInformation(
+                        "[FacebookReplySender] Stopping stale reply {ReplyId}; a newer customer message arrived in conversation {ConversationId}",
+                        @event.Id, conversationId);
+                    return;
+                }
                 var part = parts[i];
+                var partKey = $"ai_fb_{@event.Id:N}_{i}";
+                if (conversationId.HasValue && await _context.Messages.IgnoreQueryFilters().AnyAsync(message =>
+                    message.ConversationId == conversationId.Value && message.ExternalMessageId == partKey)) continue;
 
-                // Send via Graph API
-                await _graphService.SendMessageAsync(
+                var deliveries = new MessengerDeliveryReceipt(_context);
+                var receipt = await deliveries.ClaimAsync(@event, i, conversationId);
+                if (receipt is null) continue;
+                if (receipt.State == "Unknown") return;
+                if (!await deliveries.SendAsync(receipt, () => _graphService.SendMessageAsync(
                     connectedPage.FacebookPageId,
                     connectedPage.PageAccessToken,
                     @event.Sender,
-                    part);
+                    part))) return;
 
                 if (customer != null && conversationId.HasValue)
                 {
                     var msg = new Modules.Conversations.Domain.Message
                     {
                         ConversationId = conversationId.Value,
-                        ExternalMessageId = $"msg_ai_{Guid.NewGuid():N}",
+                        ExternalMessageId = partKey,
                         Direction = "Outgoing",
                         SenderType = "AI",
                         Content = part,
@@ -216,6 +215,7 @@ namespace Modules.Facebook.Workers
                         channel = "Messenger"
                     });
                 }
+                else await _context.SaveChangesAsync();
 
                 if (i < parts.Count - 1)
                 {
@@ -244,6 +244,15 @@ namespace Modules.Facebook.Workers
             }
 
             _logger.LogInformation("[FacebookReplySender] Messenger reply sent to {Sender} in {Count} messages", @event.Sender, parts.Count);
+        }
+
+        private Task<bool> HasNewerCustomerMessageAsync(AIReplyGeneratedEvent reply, Guid? conversationId)
+        {
+            var sourceTimestamp = reply.SourceMessageTimestampUtc ?? reply.OccurredOn;
+            return _context.Messages.IgnoreQueryFilters().AnyAsync(message =>
+                message.ConversationId == conversationId
+                && message.Direction == "Incoming" && message.MessageType != "Reaction"
+                && message.Timestamp > sourceTimestamp);
         }
 
         private async Task HandleCommentReply(Modules.Facebook.Domain.ConnectedPage connectedPage, AIReplyGeneratedEvent @event)

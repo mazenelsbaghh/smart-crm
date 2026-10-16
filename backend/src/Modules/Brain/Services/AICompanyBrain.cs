@@ -5,9 +5,8 @@ using Modules.Brain.Domain;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading.Tasks;
-using Pgvector;
-using Pgvector.EntityFrameworkCore;
 
 namespace Modules.Brain.Services
 {
@@ -27,6 +26,19 @@ namespace Modules.Brain.Services
 
     public class AICompanyBrain : IAICompanyBrain
     {
+        // Match the complete, untouched factory payload; similarly named or edited documents belong to the user.
+        private static readonly Expression<Func<KnowledgeDocument, bool>> LegacyFactoryDocument = document =>
+            document.Status == "Published" && document.Version == 1 &&
+            (document.Title == "Pricing Policy 2026"
+                && document.Content == "Our default subscription is $49/month with a 10% discount for annual payments."
+                && document.SourceUrl == "https://example.com/pricing"
+            || document.Title == "Shipping Policy"
+                && document.Content == "We offer free shipping on all orders over $50. Standard shipping takes 3-5 business days."
+                && document.SourceUrl == "https://example.com/shipping"
+            || document.Title == "Refund Policy"
+                && document.Content == "Refunds are processed within 5-7 business days of request. Items must be returned in original condition."
+                && document.SourceUrl == "https://example.com/refunds");
+
         private readonly AppDbContext _dbContext;
         private readonly IGeminiClient _geminiClient;
 
@@ -36,13 +48,12 @@ namespace Modules.Brain.Services
             _geminiClient = geminiClient;
         }
 
-        private async Task GenerateChunksAndEmbeddingsAsync(KnowledgeDocument doc)
+        private async Task GenerateChunksAsync(KnowledgeDocument doc)
         {
             var oldChunks = await _dbContext.KnowledgeChunks
                 .Where(c => c.KnowledgeDocumentId == doc.Id)
                 .ToListAsync();
             _dbContext.KnowledgeChunks.RemoveRange(oldChunks);
-            await _dbContext.SaveChangesAsync();
 
             var paragraphs = doc.Content.Split(new[] { "\r\n\r\n", "\n\n", "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
             var currentChunk = new System.Text.StringBuilder();
@@ -67,14 +78,10 @@ namespace Modules.Brain.Services
 
             foreach (var chunkText in chunks)
             {
-                var embeddingFloats = await _geminiClient.GenerateEmbeddingAsync(chunkText);
-                var embeddingVector = new Vector(embeddingFloats);
-
                 var chunk = new KnowledgeChunk
                 {
                     KnowledgeDocumentId = doc.Id,
-                    ChunkText = chunkText,
-                    Embedding = embeddingVector
+                    ChunkText = chunkText
                 };
 
                 _dbContext.KnowledgeChunks.Add(chunk);
@@ -83,68 +90,44 @@ namespace Modules.Brain.Services
 
         public async Task SyncBrainAsync(Guid projectId)
         {
-            // Check if there are already any documents for this project
-            var hasDocs = await _dbContext.KnowledgeDocuments
-                .AnyAsync(d => d.ProjectId == projectId);
-
-            if (!hasDocs)
+            await QuarantineFactoryDocumentsAsync(projectId);
+            var documents = await _dbContext.KnowledgeDocuments
+                .Where(d => d.ProjectId == projectId)
+                .ToListAsync();
+            foreach (var document in documents)
             {
-                // Only seed default templates if the project has no documents
-                var syncPayloads = new[]
-                {
-                    new { Title = "Pricing Policy 2026", Content = "Our default subscription is $49/month with a 10% discount for annual payments.", Source = "https://example.com/pricing" },
-                    new { Title = "Shipping Policy", Content = "We offer free shipping on all orders over $50. Standard shipping takes 3-5 business days.", Source = "https://example.com/shipping" },
-                    new { Title = "Refund Policy", Content = "Refunds are processed within 5-7 business days of request. Items must be returned in original condition.", Source = "https://example.com/refunds" }
-                };
-
-                foreach (var payload in syncPayloads)
-                {
-                    var doc = new KnowledgeDocument
-                    {
-                        ProjectId = projectId,
-                        Title = payload.Title,
-                        Content = payload.Content,
-                        SourceUrl = payload.Source,
-                        Status = "Published", // Auto-publish synced records
-                        Version = 1
-                    };
-
-                    _dbContext.KnowledgeDocuments.Add(doc);
-                    await _dbContext.SaveChangesAsync(); // Generates doc.Id
-
-                    // Split content into chunks
-                    await GenerateChunksAndEmbeddingsAsync(doc);
-                }
-                await _dbContext.SaveChangesAsync();
+                var hasChunks = await _dbContext.KnowledgeChunks
+                    .AnyAsync(chunk => chunk.KnowledgeDocumentId == document.Id);
+                if (!hasChunks) await GenerateChunksAsync(document);
             }
-            else
-            {
-                // If there are existing documents, make sure their chunks and embeddings are up-to-date
-                var documents = await _dbContext.KnowledgeDocuments
-                    .Where(d => d.ProjectId == projectId)
-                    .ToListAsync();
+            await _dbContext.SaveChangesAsync();
+        }
 
-                foreach (var doc in documents)
-                {
-                    // Check if this document already has chunks. If not, generate them.
-                    var hasChunks = await _dbContext.KnowledgeChunks
-                        .AnyAsync(c => c.KnowledgeDocumentId == doc.Id);
+        private async Task QuarantineFactoryDocumentsAsync(Guid projectId)
+        {
+            var factoryDocuments = await _dbContext.KnowledgeDocuments
+                .Where(document => document.ProjectId == projectId)
+                .Where(LegacyFactoryDocument).ToListAsync();
+            var knowledge = new KnowledgeBaseService(_dbContext, _geminiClient);
+            foreach (var document in factoryDocuments)
+                await knowledge.RejectDocumentAsync(document.Id);
+        }
 
-                    if (!hasChunks)
-                    {
-                        await GenerateChunksAndEmbeddingsAsync(doc);
-                    }
-                }
-                await _dbContext.SaveChangesAsync();
-            }
+        internal static IQueryable<KnowledgeDocument> ApprovedDocuments(AppDbContext dbContext, Guid projectId)
+        {
+            var factoryDocumentIds = dbContext.KnowledgeDocuments
+                .Where(document => document.ProjectId == projectId)
+                .Where(LegacyFactoryDocument).Select(document => document.Id);
+            return dbContext.KnowledgeDocuments.Where(document => document.ProjectId == projectId
+                && (document.Status == "Published" || document.Status == "Approved")
+                && !factoryDocumentIds.Contains(document.Id));
         }
 
         public async Task<List<KnowledgeChunkSearchDto>> SearchBrainAsync(Guid projectId, string query, int limit = 3)
         {
+            var approvedDocumentIds = ApprovedDocuments(_dbContext, projectId).Select(document => document.Id);
             var chunks = await _dbContext.KnowledgeChunks
-                .Include(c => c.KnowledgeDocument)
-                .Where(c => c.KnowledgeDocument!.ProjectId == projectId && 
-                        (c.KnowledgeDocument.Status == "Published" || c.KnowledgeDocument.Status == "Approved"))
+                .Where(chunk => approvedDocumentIds.Contains(chunk.KnowledgeDocumentId))
                 .Select(c => new KnowledgeChunkSearchDto
                 {
                     ChunkId = c.Id,
