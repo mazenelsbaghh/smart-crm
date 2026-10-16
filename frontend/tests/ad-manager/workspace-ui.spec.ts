@@ -58,13 +58,15 @@ test(`conversation retains message and task drafts when details close at ${width
   expect(composerBounds!.y).toBeGreaterThan(650);
   expect(messagesBounds!.y).toBeLessThan(220);
   await composer.fill('سأراجع المواعيد المتاحة');
-  await page.getByRole('button', { name: 'بيانات العميل', exact: true }).click();
+  const detailsTrigger = page.getByRole('button', { name: 'بيانات العميل', exact: true });
+  await detailsTrigger.focus();
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'بيانات العميل', exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: 'مهمة جديدة', exact: true }).fill('اتصال بعد العمل');
   await page.keyboard.press('Escape');
   await expect(composer).toHaveValue('سأراجع المواعيد المتاحة');
-  await expect(page.getByRole('button', { name: 'بيانات العميل', exact: true })).toBeFocused();
-  await page.getByRole('button', { name: 'بيانات العميل', exact: true }).click();
+  await expect(detailsTrigger).toBeFocused();
+  await detailsTrigger.click();
   await expect(page.getByRole('textbox', { name: 'مهمة جديدة', exact: true })).toHaveValue('اتصال بعد العمل');
 });
 }
