@@ -53,6 +53,7 @@ public sealed class GroupBookingCommand
     public required string CustomerName { get; init; }
     public required string CustomerPhone { get; init; }
     public Guid? KnownCustomerId { get; init; }
+    public Guid? SourceConversationId { get; init; }
     public string? CustomerCity { get; init; }
     public string? AttendanceMode { get; init; }
     public ExistingGroupBookingPolicy ExistingBookingPolicy { get; init; }
@@ -326,6 +327,7 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
         }
 
         GroupStaffNotifications.Enqueue(_context, group, booking);
+        await BookingMessageReadRequests.EnqueueAsync(_context, booking, command, cancellationToken);
 
         var alert = command.Origin == GroupBookingOrigin.Public
             ? CreatePublicBookingAlert(command.ProjectId, group.Name, booking, bookingStatus)

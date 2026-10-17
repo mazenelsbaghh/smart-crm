@@ -69,6 +69,10 @@ else
 builder.Services.AddProjectSecurity(builder.Configuration);
 builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient(nameof(Modules.WhatsApp.Workers.BookingLastMessageReadJob),
+    client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddScoped<Modules.WhatsApp.Workers.BookingLastMessageReadConsumer>();
+builder.Services.AddScoped<Modules.WhatsApp.Workers.BookingLastMessageReadJob>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<Modules.TalkTips.Services.TalkTipsTrialStatusClient>(client =>
 {
@@ -554,6 +558,7 @@ using (var scope = app.Services.CreateScope())
     eventBus.Subscribe<Shared.Events.AIReplyGeneratedEvent, Modules.WhatsApp.Workers.ReplySender>(consumerCount: 4);
     eventBus.Subscribe<Shared.Events.CRMUpdateSuggestedEvent, Modules.CRM.Workers.CRMWorker>();
     eventBus.Subscribe<Shared.Events.CustomerTagAddedEvent, Modules.Workflows.Workers.WorkflowWorker>();
+    eventBus.Subscribe<Shared.Events.BookingLastMessageReadRequested, Modules.WhatsApp.Workers.BookingLastMessageReadConsumer>();
     eventBus.Subscribe<Shared.Events.ConversationClosedEvent, Modules.Customers.Workers.CustomerMemoryWorker>();
     eventBus.Subscribe<Shared.Events.EntityIndexedEvent, Modules.Search.Workers.ElasticsearchIndexerWorker>();
     eventBus.Subscribe<Shared.Events.AIReplyGeneratedEvent, Modules.Facebook.Workers.FacebookReplySender>();

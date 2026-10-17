@@ -7,6 +7,8 @@ namespace Modules.Conversations.Domain
     {
         public Guid ConversationId { get; set; }
         public string ExternalMessageId { get; set; }
+        public string? WhatsAppRemoteJid { get; set; }
+        public DateTime? ReceivedAtUtc { get; set; } = DateTime.UtcNow;
         public string SenderType { get; set; } = "Unknown";
         public string Direction { get; set; } // Incoming, Outgoing
         public string Content { get; set; }

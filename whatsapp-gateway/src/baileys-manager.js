@@ -15,6 +15,7 @@ import {
     inboundOutboxDirectory
 } from './inbound-message-outbox.js';
 import { shouldCaptureInboundUpsert } from './inbound-upsert-policy.js';
+import { sendCustomerReadReceipt } from './message-read-receipt.js';
 import { isNonCustomerChat } from './inbound-source.js';
 import { recentOutboundMessages } from './recent-outbound-messages.js';
 import {
@@ -394,16 +395,6 @@ async function initializeSession(identity, key) {
                     console.log(`[baileys-manager] full msg keys: ${Object.keys(msg).join(', ')}`);
                     if (msg.key.participant) console.log(`[baileys-manager] msg.key.participant: ${msg.key.participant}`);
                     
-                    // Mark message as read/seen immediately (DISABLED: "نشيل السين" as requested by user)
-                    /*
-                    try {
-                        await sock.readMessages([msg.key]);
-                        console.log(`[baileys-manager] Marked message ${msg.key.id} from ${msg.key.remoteJid} as read/seen.`);
-                    } catch (readErr) {
-                        console.error(`[baileys-manager] Failed to mark message ${msg.key.id} as read: ${readErr.message}`);
-                    }
-                    */
-
                     let mInfo = msg.message;
                     // Unwrap ephemeral or view once wrapper types
                     if (mInfo.ephemeralMessage) mInfo = mInfo.ephemeralMessage.message;
@@ -462,6 +453,7 @@ async function initializeSession(identity, key) {
                         projectId: identity.projectId,
                         whatsappAccountId: identity.whatsappAccountId,
                         messageId: msg.key.id,
+                        messageRemoteJid: remoteJid,
                         sender,
                         senderJid,
                         senderLid,
@@ -498,6 +490,14 @@ async function initializeSession(identity, key) {
 
 export async function restorePendingInboundMessages() {
     return inboundMessageOutbox.restore();
+}
+
+export async function markCustomerMessageRead(identity, message) {
+    const key = sessionMapKey(identity);
+    const socket = sessions.get(key);
+    if (!socket || statuses.get(key) !== 'Connected')
+        throw new WhatsAppSessionUnavailableError('WhatsApp session is not connected.');
+    await sendCustomerReadReceipt(socket, message);
 }
 
 export async function getJournaledGroupResult(projectId, whatsappAccountId, idempotencyKey) {

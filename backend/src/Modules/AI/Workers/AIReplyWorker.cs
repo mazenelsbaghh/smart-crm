@@ -1065,6 +1065,7 @@ namespace Modules.AI.Workers
                             ProjectId = @event.ProjectId,
                             GroupId = groupId,
                             RequesterCustomerId = customer?.Id,
+                            SourceConversationId = @event.ConversationId,
                             SuggestedPeople = analysisResult.SuggestedGroupBookingPeople,
                             RequesterCity = analysisResult.Entities?.City,
                             AttendanceMode = analysisResult.AttendanceMode,
