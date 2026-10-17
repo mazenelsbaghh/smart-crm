@@ -19,6 +19,7 @@ public sealed class AiGroupBookingRequest
     public bool RequesterAllowsTransfer { get; init; }
     public string? RequesterCity { get; init; }
     public string? AttendanceMode { get; init; }
+    public IReadOnlyList<string> CustomerMessages { get; init; } = [];
 }
 
 public enum AiGroupBookingFailure
@@ -34,7 +35,8 @@ public enum AiGroupBookingFailure
     WhatsAppVerificationUnavailable,
     OnlineRequired,
     CityRequired,
-    AttendanceModeMismatch
+    AttendanceModeMismatch,
+    TimeChoiceMismatch
 }
 
 public sealed record AiGroupBookingResult(
@@ -44,6 +46,7 @@ public sealed record AiGroupBookingResult(
 {
     public string[] BookedPeople { get; init; } = [];
     public string[] UnbookedPeople { get; init; } = [];
+    public string? ConfirmedAppointmentDetails { get; init; }
 
     public string? CustomerReplyOverride
     {
@@ -59,6 +62,7 @@ public sealed record AiGroupBookingResult(
                 AiGroupBookingFailure.OnlineRequired => "الحجز ده لازم يكون أونلاين. المجموعة دي في السنتر ومش متاحة للحضور أونلاين؛ اختار معاد من مجموعات الأونلاين علشان نأكد الحجز.",
                 AiGroupBookingFailure.CityRequired => "السنتر في الإسكندرية. قبل تأكيد الحجز، هل الشخص المطلوب حجزه مقيم في الإسكندرية ويقدر يحضر السنتر هناك؟ خارج الإسكندرية الحضور أونلاين فقط.",
                 AiGroupBookingFailure.AttendanceModeMismatch => "المجموعة دي أونلاين ومش مطابقة لاختيار الحضور في السنتر. اختار مجموعة بنفس طريقة الحضور المطلوبة علشان نأكد الحجز.",
+                AiGroupBookingFailure.TimeChoiceMismatch => "المعاد المقترح مش مطابق للساعة اللي حضرتك اخترتها، فمأكدتش حجز جديد ولا غيرت حجزك. محتاجين نحدد موعد متاح يطابق اختيار حضرتك؛ تحب نراجع المواعيد المناسبة؟",
                 _ => null
             };
             if (attendanceGuidance is not null)
@@ -148,6 +152,7 @@ public sealed class AiGroupBookingOrchestrator(
         var requester = await FindRequesterAsync(request, cancellationToken);
         var selection = GetBookingCandidates(request, requester);
         var bookedPeople = new List<string>();
+        GroupAppointment? confirmedGroup = null;
         var unbookedPeople = selection.InvalidPeople.ToList();
         var failure = unbookedPeople.Count > 0
             ? AiGroupBookingFailure.InvalidSuggestion
@@ -172,6 +177,7 @@ public sealed class AiGroupBookingOrchestrator(
             if (result.Succeeded)
             {
                 bookedPeople.Add(candidate.Name);
+                confirmedGroup = result.Group;
             }
             else
             {
@@ -206,7 +212,10 @@ public sealed class AiGroupBookingOrchestrator(
             failure)
         {
             BookedPeople = bookedPeople.ToArray(),
-            UnbookedPeople = unbookedPeople.ToArray()
+            UnbookedPeople = unbookedPeople.ToArray(),
+            ConfirmedAppointmentDetails = confirmedGroup is null ? null
+                : $"الحضور: {(Shared.Domain.AttendanceModes.Normalize(confirmedGroup.Mode) == Shared.Domain.AttendanceModes.Online ? "أونلاين" : "في السنتر في الإسكندرية")}" +
+                    FreeSessionBookingPolicy.ScheduleDetails(confirmedGroup, TimezoneHelper.GetTimeZone(request.Timezone))
         };
     }
 
@@ -285,6 +294,7 @@ public sealed class AiGroupBookingOrchestrator(
             SourceConversationId = candidate.CustomerId == request.RequesterCustomerId ? request.SourceConversationId : null,
             CustomerCity = candidate.City,
             AttendanceMode = request.AttendanceMode,
+            CustomerMessages = request.CustomerMessages,
             ExistingBookingPolicy = candidate.CustomerId.HasValue && request.RequesterAllowsTransfer
                 ? ExistingGroupBookingPolicy.Transfer
                 : ExistingGroupBookingPolicy.UpdateSameGroup,
@@ -367,6 +377,7 @@ public sealed class AiGroupBookingOrchestrator(
         GroupBookingStatus.OnlineRequired => AiGroupBookingFailure.OnlineRequired,
         GroupBookingStatus.CityRequired => AiGroupBookingFailure.CityRequired,
         GroupBookingStatus.AttendanceModeMismatch => AiGroupBookingFailure.AttendanceModeMismatch,
+        GroupBookingStatus.TimeChoiceMismatch => AiGroupBookingFailure.TimeChoiceMismatch,
         GroupBookingStatus.BookingAlreadyExists => AiGroupBookingFailure.BookingAlreadyExists,
         GroupBookingStatus.GroupFull => AiGroupBookingFailure.GroupFull,
         GroupBookingStatus.GroupExpired => AiGroupBookingFailure.GroupExpired,
