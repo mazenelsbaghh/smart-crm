@@ -70,6 +70,31 @@ test('keeps two account sessions and mock traffic isolated through the HTTP cont
         `${baseUrl}/api/whatsapp/mock/sent?projectId=project-a&whatsappAccountId=account-b`)).length, 1);
 });
 
+test('booking read receipts stay in their account and stale sessions cannot read another message', async context => {
+    const baseUrl = await startGateway(context);
+    for (const account of ['account-a', 'account-b']) {
+        await postJson(`${baseUrl}/api/whatsapp/session/mock`, {
+            projectId: 'project-a', whatsappAccountId: account, status: 'Connected', phoneNumber: '201111111111',
+        });
+    }
+    const status = await getJson(`${baseUrl}/api/whatsapp/session/status?projectId=project-a&whatsappAccountId=account-a`);
+    const receipt = { projectId: 'project-a', whatsappAccountId: 'account-a',
+        remoteJid: '123456789012345@lid', messageId: 'last-before-booking', expectedConnectedAt: status.connectedAt };
+    await postJson(`${baseUrl}/api/whatsapp/read`, receipt);
+    const recorded = await getJson(`${baseUrl}/api/whatsapp/mock/read-receipts?projectId=project-a&whatsappAccountId=account-a`);
+    assert.deepEqual(recorded, [{ projectId: 'project-a', whatsappAccountId: 'account-a',
+        remoteJid: receipt.remoteJid, messageIds: ['last-before-booking'], type: 'read' }]);
+    assert.deepEqual(await getJson(`${baseUrl}/api/whatsapp/mock/read-receipts?projectId=project-a&whatsappAccountId=account-b`), []);
+    await postJson(`${baseUrl}/api/whatsapp/session/mock`, {
+        projectId: 'project-a', whatsappAccountId: 'account-a', status: 'Connected', phoneNumber: '201111111111',
+    });
+    const stale = await fetch(`${baseUrl}/api/whatsapp/read`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...receipt, messageId: 'new-message' }),
+    });
+    assert.equal(stale.status, 412);
+    assert.deepEqual(await getJson(`${baseUrl}/api/whatsapp/mock/read-receipts?projectId=project-a&whatsappAccountId=account-a`), recorded);
+});
+
 test('durable group result replays before session and Redis checks', async context => {
     const groupResult = {
         jid: 'provider-group-replay@g.us',

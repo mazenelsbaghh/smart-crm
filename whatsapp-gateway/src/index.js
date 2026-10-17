@@ -6,7 +6,7 @@ import {
     startSession, restoreSession, getQR, getStatus, sendMessage, sendReaction, disconnectSession,
     statuses, sessions, sessionErrors, connectionOpenedAt, hasCredentials, createGroup,
     WhatsAppSessionUnavailableError, getGroupInviteLink, restorePendingInboundMessages,
-    getJournaledGroupResult
+    getJournaledGroupResult, markCustomerMessageRead
 } from './baileys-manager.js';
 import { validateExpectedConnectionEpoch } from './connection-epoch.js';
 import { createSendIdempotency } from './send-idempotency.js';
@@ -20,6 +20,7 @@ import { replaceWithMockSession } from './mock-session.js';
 import { verifyWhatsAppNumber } from './number-verification.js';
 import { readGroupMembership } from './group-membership.js';
 import { ensureGroupMembers } from './group-admins.js';
+import { isCustomerMessageKey } from './message-read-receipt.js';
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -149,6 +150,21 @@ app.post('/api/whatsapp/number/check', async (req, res) => {
         return res.json({ exists });
     } catch {
         return res.status(503).json({ error: 'Unable to verify WhatsApp registration right now' });
+    }
+});
+
+app.post('/api/whatsapp/read', async (req, res) => {
+    const { projectId, whatsappAccountId, remoteJid, messageId, expectedConnectedAt } = req.body;
+    const parsed = parseSessionIdentity(projectId, whatsappAccountId);
+    if (parsed.error || !isCustomerMessageKey({ remoteJid, messageId }))
+        return res.status(400).json({ error: 'A valid account and direct customer message key are required' });
+    if (validateSessionConnection(parsed.identity, expectedConnectedAt) !== 'current')
+        return res.status(412).json({ error: 'WhatsApp connection is unavailable or changed' });
+    try {
+        await markCustomerMessageRead(parsed.identity, { remoteJid, messageId });
+        return res.json({ messageId, read: true });
+    } catch {
+        return res.status(503).json({ error: 'Unable to send the read receipt; retry is safe' });
     }
 });
 
@@ -485,6 +501,7 @@ app.post('/api/whatsapp/group/invite', async (req, res) => {
 });
 
 const mockSentMessages = [];
+const mockReadReceipts = [];
 
 // Mock connection endpoint for integration testing
 app.post('/api/whatsapp/session/mock', async (req, res) => {
@@ -502,6 +519,10 @@ app.post('/api/whatsapp/session/mock', async (req, res) => {
         ? {
             isMock: true,
             user: { id: phoneNumber ? `${phoneNumber}:1` : '1234567890:1' },
+            sendReceipt: async (remoteJid, participant, messageIds, type) => {
+                mockReadReceipts.push({ projectId: identity.projectId, whatsappAccountId: identity.whatsappAccountId,
+                    remoteJid, messageIds, type });
+            },
             sendMessage: async (jid, content) => {
                 if (content.react) {
                     console.log(`[MOCK REACT] Reacting with ${content.react.text} to message ${content.react.key.id}`);
@@ -555,6 +576,13 @@ app.post('/api/whatsapp/session/mock', async (req, res) => {
         status,
         message: `Mocked session status of ${identity.projectId}/${identity.whatsappAccountId} to ${status}`
     });
+});
+
+app.get('/api/whatsapp/mock/read-receipts', (req, res) => {
+    const parsed = parseSessionIdentity(req.query.projectId, req.query.whatsappAccountId);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    res.json(mockReadReceipts.filter(receipt => receipt.projectId === parsed.identity.projectId
+        && receipt.whatsappAccountId === parsed.identity.whatsappAccountId));
 });
 
 app.get('/api/whatsapp/mock/sent', (req, res) => {

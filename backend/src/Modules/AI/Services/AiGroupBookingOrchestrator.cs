@@ -13,6 +13,7 @@ public sealed class AiGroupBookingRequest
     public Guid ProjectId { get; init; }
     public Guid GroupId { get; init; }
     public Guid? RequesterCustomerId { get; init; }
+    public Guid? SourceConversationId { get; init; }
     public SuggestedGroupBookingPerson[]? SuggestedPeople { get; init; } = [];
     public string? Timezone { get; init; }
     public bool RequesterAllowsTransfer { get; init; }
@@ -281,6 +282,7 @@ public sealed class AiGroupBookingOrchestrator(
             CustomerName = candidate.Name,
             CustomerPhone = candidate.Phone,
             KnownCustomerId = candidate.CustomerId,
+            SourceConversationId = candidate.CustomerId == request.RequesterCustomerId ? request.SourceConversationId : null,
             CustomerCity = candidate.City,
             AttendanceMode = request.AttendanceMode,
             ExistingBookingPolicy = candidate.CustomerId.HasValue && request.RequesterAllowsTransfer

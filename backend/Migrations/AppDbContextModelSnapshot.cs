@@ -6488,6 +6488,9 @@ namespace backend.Migrations
                     b.Property<string>("ParentCommentId")
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("ReceivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("SenderType")
                         .IsRequired()
                         .HasColumnType("text");
@@ -6496,6 +6499,9 @@ namespace backend.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Transcription")
+                        .HasColumnType("text");
+
+                    b.Property<string>("WhatsAppRemoteJid")
                         .HasColumnType("text");
 
                     b.HasKey("Id");

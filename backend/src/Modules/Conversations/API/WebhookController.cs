@@ -488,6 +488,7 @@ namespace Modules.Conversations.API
                     $"whatsapp-message:{payload.ProjectId:N}:{whatsAppAccountId:N}:{payload.MessageId}"),
                 ConversationId = conversation.Id,
                 ExternalMessageId = payload.MessageId,
+                WhatsAppRemoteJid = payload.MessageRemoteJid,
                 Direction = "Incoming",
                 Content = payload.Content,
                 MessageType = payload.MessageType ?? "Text",
@@ -749,6 +750,7 @@ namespace Modules.Conversations.API
         public string MessageId { get; set; } = default!;
         public string Sender { get; set; } = default!;
         public string? SenderJid { get; set; }
+        public string? MessageRemoteJid { get; set; }
         public string? SenderLid { get; set; }
         public string? Name { get; set; }
         public string Content { get; set; } = default!;
