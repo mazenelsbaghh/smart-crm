@@ -598,7 +598,7 @@ public sealed class GroupAppointmentsManualBookingTests
         Assert.Equal(20, (await db.GroupAppointments.AsNoTracking().SingleAsync()).Capacity);
         Assert.Single(await db.GroupAppointmentBookings.AsNoTracking().ToListAsync());
         Assert.Contains("فاضل ٧ أماكن", reply, StringComparison.Ordinal);
-        Assert.DoesNotContain("١٩", reply, StringComparison.Ordinal);
+        Assert.DoesNotContain("١٩ أماكن", reply, StringComparison.Ordinal);
     }
 
     [Theory]

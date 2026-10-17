@@ -43,7 +43,8 @@ public enum GroupBookingStatus
     BookingAlreadyExists,
     OnlineRequired,
     CityRequired,
-    AttendanceModeMismatch
+    AttendanceModeMismatch,
+    TimeChoiceMismatch
 }
 
 public sealed class GroupBookingCommand
@@ -56,6 +57,7 @@ public sealed class GroupBookingCommand
     public Guid? SourceConversationId { get; init; }
     public string? CustomerCity { get; init; }
     public string? AttendanceMode { get; init; }
+    public IReadOnlyList<string> CustomerMessages { get; init; } = [];
     public ExistingGroupBookingPolicy ExistingBookingPolicy { get; init; }
     public GroupBookingOrigin Origin { get; init; }
     public GroupBookingExpirationPolicy ExpirationPolicy { get; init; }
@@ -211,6 +213,11 @@ public sealed class GroupBookingCoordinator(AppDbContext context, IEventBus? eve
         var customer = await FindCustomerAsync(command, canonicalPhone, cancellationToken);
         if (command.Origin == GroupBookingOrigin.Ai)
         {
+            if (GroupBookingTimeChoicePolicy.Conflicts(group, command.Timezone, command.CustomerMessages))
+            {
+                await RollbackAsync(transaction, cancellationToken);
+                return new(GroupBookingStatus.TimeChoiceMismatch, canonicalPhone, group);
+            }
             var city = GroupBookingAttendancePolicy.EffectiveCity(command.CustomerCity, customer?.City);
             var attendanceFailure = GroupBookingAttendancePolicy.Rejection(group.Mode, city, command.AttendanceMode);
             if (attendanceFailure is { } rejectedStatus)

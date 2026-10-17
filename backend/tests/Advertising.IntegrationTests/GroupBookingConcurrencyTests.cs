@@ -81,6 +81,44 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
             JsonSerializer.Deserialize<AdvertisingBookingOutcomeChanged>(message.PayloadJson)!.BookingId == bookingId);
     }
 
+    [Theory]
+    [InlineData(11, false)]
+    [InlineData(17, true)]
+    public async Task Production_Oct17_eight_pm_choice_only_commits_matching_group(int utcHour, bool expectedSuccess)
+    {
+        var projectId = Guid.NewGuid();
+        var group = await SeedAvailableGroupAsync(projectId, 4);
+        await using var db = postgres.CreateContext(Tenant(projectId));
+        var tracked = await db.GroupAppointments.SingleAsync();
+        tracked.FreeSessionDateTime = DateTime.UtcNow.Date.AddDays(2).AddHours(utcHour);
+        tracked.InstructorName = "دكتور الاختبار";
+        await db.SaveChangesAsync();
+        var (hub, _) = CommitObservingHub(projectId);
+        var orchestrator = new AiGroupBookingOrchestrator(db, new GroupBookingCoordinator(db), hub,
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedBookingNumber());
+        var response = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
+        {
+            ProjectId = projectId, GroupId = group.Id, Timezone = "Africa/Cairo",
+            CustomerMessages = ["الساعه ٨", "المكان فين"],
+            SuggestedPeople = [new() { Name = "إسراء", PhoneNumber = "01012345678" }]
+        });
+        Assert.Equal(expectedSuccess, response.Succeeded);
+        await using var verification = postgres.CreateContext(Tenant(projectId));
+        var bookings = await verification.GroupAppointmentBookings.AsNoTracking().ToListAsync();
+        if (expectedSuccess)
+        {
+            Assert.Equal(group.Id, Assert.Single(bookings).GroupAppointmentId);
+            Assert.Contains("8:00", response.ConfirmedAppointmentDetails!);
+            Assert.Contains("دكتور الاختبار", response.ConfirmedAppointmentDetails!);
+        }
+        else
+        {
+            Assert.Equal(AiGroupBookingFailure.TimeChoiceMismatch, response.Failure);
+            Assert.Empty(bookings);
+            Assert.Empty(await verification.IntegrationOutboxMessages.Where(message => message.EventType == "BookingLastMessageReadRequested.v1" && message.PayloadJson.Contains(projectId.ToString())).ToListAsync());
+        }
+    }
+
     private sealed class VerifiedBookingNumber : IWhatsAppBookingNumberVerifier
     {
         public Task<WhatsAppNumberVerification> VerifyAsync(Guid projectId, string phone, CancellationToken cancellationToken = default)

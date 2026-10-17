@@ -10,8 +10,12 @@ internal static class AiGroupBookingReplyPolicy
         AiGroupBookingResult? bookingResult,
         bool shouldPrepareBeforeSession = false)
     {
+        if (bookingResult is { Succeeded: true, ConfirmedAppointmentDetails: { } details })
+            generatedReply = $"تم تسجيل {string.Join("، ", bookingResult.BookedPeople)} في الحصة المجانية بنجاح.\n{details}";
         if (bookingResult?.CustomerReplyOverride is { } bookingReplyOverride)
         {
+            if (bookingResult.Succeeded && bookingResult.ConfirmedAppointmentDetails is { } partialDetails)
+                bookingReplyOverride += "\n" + partialDetails;
             if (shouldPrepareBeforeSession && bookingResult.Succeeded)
                 return TalkTipsTrialCtaInstructions.BookingTrialLast(
                     $"{bookingReplyOverride}\n\n{Modules.CRM.Services.GroupSessionPreparationScheduler.Confirmation}");

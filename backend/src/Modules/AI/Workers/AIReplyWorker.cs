@@ -24,6 +24,7 @@ using Modules.CRM.Services;
 using Modules.Projects.Domain;
 using Modules.Advertising.Services;
 using Modules.WhatsApp.Services;
+using Modules.TalkTips.Services;
 
 namespace Modules.AI.Workers
 {
@@ -726,6 +727,7 @@ namespace Modules.AI.Workers
 
             // Fetch chat history for context
             string chatHistory = null;
+            var replyHistory = new List<Message>();
             var customerMessages = new List<string> { @event.Content };
             if (customerId != Guid.Empty)
             {
@@ -742,6 +744,7 @@ namespace Modules.AI.Workers
                             .ToListAsync();
 
                         historyMessages.Reverse(); // Chronological order
+                        replyHistory = historyMessages;
 
                         knownBookingPhone ??= AiRequesterBookingPhone.FromConversation(historyMessages, @event.Content);
 
@@ -832,6 +835,11 @@ namespace Modules.AI.Workers
             }
 
             var isCourseConversation = CourseDiscoveryPricingPolicy.IsCourseContext(brainContext);
+            var acceptsCourseInvitation = settings.IsTalkTipsTrialGateEnabled && !currentBookedGroupId.HasValue
+                && TalkTipsFollowUpAcceptancePolicy.AcceptsCourseInvitation(@event.Content, replyHistory);
+            brainContext += "\n\n" + TalkTipsFollowUpAcceptancePolicy.Instructions;
+            if (settings.IsTalkTipsTrialGateEnabled)
+                brainContext += "\n\n" + Modules.TalkTips.Services.TalkTipsCourseGroupSizePolicy.Instructions;
             if (currentBookedGroupId.HasValue)
                 brainContext += "\n\n" + BookedAppointmentReplyPolicy.ContextMarker;
             if (shouldPrepareBeforeSession)
@@ -875,7 +883,7 @@ namespace Modules.AI.Workers
             var replyConfigHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { customerReplyProvider, customerReplyModel,
                     apiKeyOverride, systemPromptForReply, aiBehaviorSettings, learnedInstructions, knowledgeFingerprint,
-                    outputPolicyVersion = CustomerReplyInstructionPolicy.Version, cacheContractVersion = 4 }))));
+                    outputPolicyVersion = CustomerReplyInstructionPolicy.Version, cacheContractVersion = 5 }))));
             var cachedAnalysis = await replyCache.GetOrGenerateReplyAsync(
                 $"ai:reply:v2:{@event.ProjectId}:{conversation.Id}:{@event.Id}:{replyConfigHash}",
                 GenerateAnalysisAsync, TimeSpan.FromMinutes(10));
@@ -922,6 +930,11 @@ namespace Modules.AI.Workers
             EnforceDistinctBookingPhones(customer, analysisResult);
             ApplyFollowUpPolicy(aiBehaviorSettings, analysisResult);
             await ApplyKnowledgePricingGuardAsync(dbContext, @event.ProjectId, @event.Content, analysisResult);
+            if (acceptsCourseInvitation)
+                TalkTipsFollowUpAcceptancePolicy.ContinueWithDetails(analysisResult,
+                    string.Join("\n", replyHistory.Where(message => message.Direction == "Outgoing").TakeLast(3).Select(message => message.Content)));
+            if (settings.IsTalkTipsTrialGateEnabled)
+                Modules.TalkTips.Services.TalkTipsCourseGroupSizePolicy.Apply(@event.Content + "\n" + analysisResult.Transcription, analysisResult);
             var bookingCity = GroupBookingAttendancePolicy.EffectiveCity(analysisResult.Entities?.City, customer?.City);
             if (analysisResult.SuggestedGroupBookingPeople.All(person => person.IsRequester)
                 && GroupBookingAttendancePolicy.HasKnownCity(bookingCity) && !GroupBookingAttendancePolicy.IsAlexandria(bookingCity))
@@ -1071,6 +1084,9 @@ namespace Modules.AI.Workers
                             SuggestedPeople = analysisResult.SuggestedGroupBookingPeople,
                             RequesterCity = analysisResult.Entities?.City,
                             AttendanceMode = analysisResult.AttendanceMode,
+                            CustomerMessages = replyHistory.Where(message => message.Direction == "Incoming")
+                                .Select(message => message.Transcription ?? message.Content)
+                                .Append(@event.Content + "\n" + analysisResult.Transcription).ToArray(),
                             Timezone = settings?.Timezone,
                             RequesterAllowsTransfer = currentBookedGroupId.HasValue
                                 && BookedAppointmentReplyPolicy.AllowsTransfer(
@@ -1100,6 +1116,8 @@ namespace Modules.AI.Workers
                 }
             }
 
+            if (autoBookingResult is not null)
+                analysisResult.SuggestedButtons = [];
             if (autoBookingResult is { Succeeded: false }
                 && analysisResult.SuggestedFollowUp is { } bookingFollowUp
                 && string.Equals(bookingFollowUp.Type, "AppointmentReminder", StringComparison.OrdinalIgnoreCase))
@@ -1124,6 +1142,7 @@ namespace Modules.AI.Workers
                     TimezoneHelper.GetTimeZone(settings.Timezone),
                     bookingCity));
             Modules.TalkTips.Services.TalkTipsLocationReplyPolicy.Apply(settings, analysisResult);
+            CustomerReplyInstructionPolicy.RemoveGroupIdentifiers(analysisResult);
 
             Console.WriteLine($"[AIReplyWorker] AI Response: {analysisResult.ReplyContent}");
 
