@@ -40,6 +40,7 @@ public static partial class SchedulePreferenceReplyPolicy
         analysis.ReplyContent =
             $"أكيد يا فندم، اختار الفترة الأنسب لحضرتك:\nمن ١٢ ظهرًا لـ٤ عصرًا\nمن ٤ عصرًا لـ٨ مساءً\nمن ٨ مساءً لـ١٢ منتصف الليل\n\nوكمان تحب الموعد يكون الأسبوع الجاي، الشهر الجاي، خلال ٣ شهور، ولا أي وقت؟\n{AttendancePreferenceText(analysis.AttendanceMode)}\nهنبلغك أول ما يتوفر موعد مناسب.\n\n- {agentName} ✨";
         analysis.SuggestedGroupBookingId = null;
+        analysis.SuggestedGroupOfferIds = [];
         analysis.SuggestedGroupBookingPeople = [];
         if (analysis.SuggestedFollowUp is not null) analysis.SuggestedFollowUp.Needed = false;
     }

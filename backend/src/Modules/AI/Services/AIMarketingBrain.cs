@@ -30,6 +30,7 @@ namespace Modules.AI.Services
         public string[] SuggestedButtons { get; set; } = Array.Empty<string>();
         public string? SuggestedReaction { get; set; }
         public string? SuggestedGroupBookingId { get; set; }
+        public string[] SuggestedGroupOfferIds { get; set; } = Array.Empty<string>();
         public SuggestedGroupBookingPerson[] SuggestedGroupBookingPeople { get; set; } = Array.Empty<SuggestedGroupBookingPerson>();
         public bool CancelGroupBooking { get; set; } = false;
         public bool RequestHuman { get; set; } = false;
@@ -174,6 +175,7 @@ You MUST respond strictly in the following JSON format, and nothing else (no mar
   },
   ""suggestedReaction"": ""👍 | ❤️ | 💖 | 😢 | 😂 | 😮 | null"",
   ""suggestedGroupBookingId"": ""GUID_OF_GROUP | null"",
+  ""suggestedGroupOfferIds"": [""GUID_OF_GROUP_OFFERED_WITHOUT_BOOKING""],
   ""suggestedGroupBookingPeople"": [],
   ""cancelGroupBooking"": true | false,
   ""requestHuman"": true | false,
@@ -210,6 +212,11 @@ Guidelines for publicCommentReply:
 
 Guidelines for suggestedReaction:
 - suggestedReaction: Set to a single emoji (👍, ❤️, 💖, 😢, 😂, 😮) or null. Suggest an emoji reaction to the customer's message only if it adds a warm, human-like touch (e.g. ❤️/💖 for gratitude, joy, or positive feedback; 😢 for sadness or complaints; 😂 for jokes; 👍 for agreement or simple acknowledgment). Otherwise, return null.
+
+Guidelines for suggestedGroupOfferIds (showing appointments without booking):
+- When offering or listing a specific free-session appointment, return its exact group GUID in suggestedGroupOfferIds (maximum three). These are offers only, never booking consent.
+- Choose groups matching the customer's chosen attendance mode and course type. Each group's mode, date, time and instructor are one indivisible record: never combine the time of an offline group with the online label of another group, even when the instructor is the same.
+- The system renders the appointment details from those records. Keep replyContent free of appointment dates, times and instructor names when offering groups. Return [] when no specific appointment is being offered.
 
 Guidelines for suggestedGroupBookingId (Auto-Booking):
 - IMPORTANT: When the customer explicitly expresses intent to book or register in a group appointment (e.g. ""عايز أحجز"", ""سجلني"", ""أنا جاهز"", ""أيوه عايز"", ""احجزلي"", ""ينفع اشترك""), set suggestedGroupBookingId to the GUID of the appropriate group.
@@ -609,6 +616,7 @@ Be concise, natural, and friendly. Do not repeat greetings or duplicate question
                     result.Entities.Interests ??= Array.Empty<string>();
                     result.SuggestedButtons ??= Array.Empty<string>();
                     result.SuggestedGroupBookingPeople ??= Array.Empty<SuggestedGroupBookingPerson>();
+                    result.SuggestedGroupOfferIds ??= Array.Empty<string>();
                     result.AIInsights ??= Array.Empty<string>();
                     if (string.IsNullOrEmpty(result.Label))
                     {

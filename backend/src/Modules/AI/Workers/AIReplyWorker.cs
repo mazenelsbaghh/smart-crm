@@ -515,6 +515,7 @@ namespace Modules.AI.Workers
 
             string bookedGroupInfo = null;
             Guid? currentBookedGroupId = null;
+            var appointmentOfferGroups = new List<GroupAppointment>();
             var recentBookingRequests = new List<string>();
             var requesterAllowsTransfer = false;
 
@@ -530,6 +531,7 @@ namespace Modules.AI.Workers
                         .OrderBy(g => g.FreeSessionDateTime ?? g.DateTime)
                         .ToListAsync();
 
+                    appointmentOfferGroups = activeGroups;
                     var groupsContextList = new System.Collections.Generic.List<string>();
                     TimeZoneInfo projectZone = TimezoneHelper.GetTimeZone(settings.Timezone);
 
@@ -873,7 +875,7 @@ namespace Modules.AI.Workers
             var replyConfigHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { customerReplyProvider, customerReplyModel,
                     apiKeyOverride, systemPromptForReply, aiBehaviorSettings, learnedInstructions, knowledgeFingerprint,
-                    outputPolicyVersion = CustomerReplyInstructionPolicy.Version, cacheContractVersion = 3 }))));
+                    outputPolicyVersion = CustomerReplyInstructionPolicy.Version, cacheContractVersion = 4 }))));
             var cachedAnalysis = await replyCache.GetOrGenerateReplyAsync(
                 $"ai:reply:v2:{@event.ProjectId}:{conversation.Id}:{@event.Id}:{replyConfigHash}",
                 GenerateAnalysisAsync, TimeSpan.FromMinutes(10));
@@ -1116,6 +1118,11 @@ namespace Modules.AI.Workers
                     analysisResult.ReplyContent,
                     @event.Content + "\n" + analysisResult.Transcription,
                     deliveredCourseMessages);
+            if (settings.IsGroupAppointmentsEnabled && (!currentBookedGroupId.HasValue || requesterAllowsTransfer) && autoBookingResult is null)
+                GroupAppointmentOfferReplyPolicy.Apply(analysisResult, new(
+                    appointmentOfferGroups,
+                    TimezoneHelper.GetTimeZone(settings.Timezone),
+                    bookingCity));
             Modules.TalkTips.Services.TalkTipsLocationReplyPolicy.Apply(settings, analysisResult);
 
             Console.WriteLine($"[AIReplyWorker] AI Response: {analysisResult.ReplyContent}");

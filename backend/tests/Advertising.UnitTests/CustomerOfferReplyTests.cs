@@ -10,6 +10,41 @@ namespace Advertising.UnitTests;
 public sealed class CustomerOfferReplyTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Ai_offer_selection_is_rendered_from_the_real_group_even_when_offer_ids_are_null(bool missingIds)
+    {
+        var center = new Modules.GroupAppointments.Domain.GroupAppointment
+        {
+            Id = Guid.NewGuid(), Mode = "offline", Capacity = 5, InstructorName = "أحمد قاسم",
+            FreeSessionDateTime = DateTime.UtcNow.Date.AddDays(7).AddHours(11)
+        };
+        var online = new Modules.GroupAppointments.Domain.GroupAppointment
+        {
+            Id = Guid.NewGuid(), Mode = "online", Capacity = 5, InstructorName = "يوسف سعد",
+            FreeSessionDateTime = DateTime.UtcNow.Date.AddDays(7).AddHours(13)
+        };
+        var payload = JsonSerializer.Serialize(new
+        {
+            replyContent = "الحصة المجانية الساعة ٢:٠٠ مساءً أونلاين مع أحمد قاسم",
+            attendanceMode = "Online",
+            suggestedGroupOfferIds = missingIds ? null : new[] { center.Id.ToString() }
+        });
+        var brain = new AIMarketingBrain(new OfferReplyGemini(payload), null!, null!, new AIBehaviorSettingsService());
+
+        var analysis = await brain.AnalyzeAndGenerateReplyAsync("اسكندرية", "test-key");
+        GroupAppointmentOfferReplyPolicy.Apply(analysis, new([center, online],
+            TimeZoneInfo.CreateCustomTimeZone("Cairo test", TimeSpan.FromHours(3), "Cairo", "Cairo"), "اسكندرية"));
+
+        Assert.False(analysis.IsFallbackResponse);
+        Assert.Contains("4:00", analysis.ReplyContent);
+        Assert.Contains("يوسف سعد", analysis.ReplyContent);
+        Assert.DoesNotContain("٢:٠٠", analysis.ReplyContent);
+        Assert.DoesNotContain("أحمد قاسم", analysis.ReplyContent);
+        Assert.Null(analysis.SuggestedGroupBookingId);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("current-static-instructions-cache")]
     public async Task Current_business_and_cta_facts_are_supplied_once_with_or_without_context_cache(string? cacheId)

@@ -12,6 +12,7 @@ public sealed class SchedulePreferenceReplyPolicyTests
         {
             ReplyContent = "دي المواعيد المتاحة.",
             SuggestedGroupBookingId = Guid.NewGuid().ToString(),
+            SuggestedGroupOfferIds = [Guid.NewGuid().ToString()],
             SuggestedGroupBookingPeople = [new() { IsRequester = true }],
             SuggestedFollowUp = new() { Needed = true }
         };
@@ -31,6 +32,7 @@ public sealed class SchedulePreferenceReplyPolicyTests
         Assert.DoesNotContain("الأيام", analysis.ReplyContent);
         Assert.Null(analysis.SuggestedGroupBookingId);
         Assert.Empty(analysis.SuggestedGroupBookingPeople);
+        Assert.Empty(analysis.SuggestedGroupOfferIds);
         Assert.False(analysis.SuggestedFollowUp.Needed);
     }
 
