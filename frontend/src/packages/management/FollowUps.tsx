@@ -5,6 +5,7 @@ import { useAuth } from '../../context/auth-context';
 import { api } from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import Dialog from '../../components/shared/Dialog';
+import FollowUpRecoveryDialog from './FollowUpRecoveryDialog';
 import { 
   Calendar, 
   AlertCircle, 
@@ -18,7 +19,8 @@ import {
   X,
   Sparkles,
   CheckCircle2,
-  ListChecks
+  ListChecks,
+  RotateCcw
 } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader';
 import StatusMessage from '../../components/ui/StatusMessage';
@@ -98,6 +100,7 @@ function FollowUpsList() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reEvaluating, setReEvaluating] = useState(false);
+  const [recoveryProjectId, setRecoveryProjectId] = useState<string | null>(null);
 
   // Confirmation States
   const [confirmReEvaluateOpen, setConfirmReEvaluateOpen] = useState(false);
@@ -305,6 +308,11 @@ function FollowUpsList() {
     <div className={styles.container}>
       <div className={styles.header}>
         <PageHeader icon={<Calendar size={22} aria-hidden="true" />} title="المتابعات" description="المواعيد والرسائل التي تحتاج متابعة فريقك." />
+        <div className={dialogStyles.wizardToolbar}>
+        <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} disabled={!activeProject}
+          onClick={() => { setMessage(null); setRecoveryProjectId(activeProject!.id); }}>
+          <RotateCcw size={17} aria-hidden="true" />إرجاع للمتابعة
+        </button>
         <button
           type="button"
           onClick={triggerReEvaluateAll}
@@ -315,6 +323,7 @@ function FollowUpsList() {
           <Sparkles size={16} aria-hidden="true" />
           {reEvaluating ? 'جاري إعادة الضبط بالـ AI...' : 'ضبط المتابعات تلقائياً بالـ AI'}
         </button>
+        </div>
       </div>
 
       <FilterTabs compactOnMobile label="تصفية المتابعات حسب الحالة" selected={filter} onChange={setFilter} options={[
@@ -549,6 +558,20 @@ function FollowUpsList() {
           </div>
         )}
       </div>
+
+      {recoveryProjectId && recoveryProjectId === activeProject?.id && (
+        <FollowUpRecoveryDialog key={recoveryProjectId} projectId={recoveryProjectId}
+          onClose={() => setRecoveryProjectId(null)}
+          onRecovered={(recovery, phone) => {
+            setRecoveryProjectId(null);
+            setMessage({ type: 'success', text: recovery.code === 'CREATED'
+              ? `تم إرجاع ${recovery.customerName || phone} للمتابعة. الموعد: ${formatCairoDate(recovery.dueDate)}.`
+              : `العميل ${recovery.customerName || phone} لديه متابعة ${statusMapAr[recovery.status] || recovery.status} بالفعل، لم نضف متابعة أخرى. الموعد: ${formatCairoDate(recovery.dueDate)}.` });
+            setFilter(recovery.status === 'Processing' ? 'Processing' : 'Pending');
+            setSearchQuery(phone);
+            void fetchData();
+          }} />
+      )}
 
       {editingFollowUp && (
         <Dialog
