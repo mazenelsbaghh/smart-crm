@@ -52,7 +52,7 @@ public sealed class BookingChoiceAndContinuationTests
     public void Production_Oct17_customer_never_receives_internal_group_ids_in_any_customer_field()
     {
         const string id = "0bd7f9fd-dce9-4aff-a2da-5dc56adf23c7";
-        var analysis = new MarketingAnalysisResult { ReplyContent = $"أونلاين الساعة ٤ مع يوسف سعد (معرف المجموعة: {id}).",
+        var analysis = new MarketingAnalysisResult { ReplyContent = $"أونلاين الساعة ٤ مع يوسف سعد (معرف المجموعة: {id}). المجموعة-{id}",
             PublicCommentReply = $"مجموعة {id}", SuggestedButtons = [$"احجز {id}"], SuggestedGroupBookingId = id };
         CustomerReplyInstructionPolicy.RemoveGroupIdentifiers(analysis);
         Assert.DoesNotContain(id, analysis.ReplyContent);
@@ -61,6 +61,19 @@ public sealed class BookingChoiceAndContinuationTests
         Assert.DoesNotContain(id, analysis.PublicCommentReply!);
         Assert.All(analysis.SuggestedButtons, button => Assert.DoesNotContain(id, button));
         Assert.Equal(id, analysis.SuggestedGroupBookingId);
+    }
+
+    [Theory]
+    [InlineData("https://academy.example/enroll/0bd7f9fd-dce9-4aff-a2da-5dc56adf23c7")]
+    [InlineData("https://academy.example/enroll?token=0bd7f9fd-dce9-4aff-a2da-5dc56adf23c7")]
+    public void Hiding_group_identifiers_preserves_customer_business_links(string link)
+    {
+        var analysis = new MarketingAnalysisResult { ReplyContent = "رابط التقديم: " + link,
+            PublicCommentReply = link, SuggestedButtons = [link] };
+        CustomerReplyInstructionPolicy.RemoveGroupIdentifiers(analysis);
+        Assert.Contains(link, analysis.ReplyContent);
+        Assert.Equal(link, analysis.PublicCommentReply);
+        Assert.Equal(link, Assert.Single(analysis.SuggestedButtons));
     }
 
     [Theory]
