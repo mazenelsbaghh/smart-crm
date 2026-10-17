@@ -11,13 +11,14 @@ internal static partial class GroupBookingTimeChoicePolicy
         var session = TimeZoneInfo.ConvertTimeFromUtc(
             DateTime.SpecifyKind(group.FreeSessionDateTime ?? group.DateTime, DateTimeKind.Utc),
             Shared.Infrastructure.TimezoneHelper.GetTimeZone(timezone));
-        foreach (var message in customerMessages.TakeLast(5).Reverse())
+        foreach (var message in customerMessages.Reverse())
         {
             var normalized = Normalize(message);
             var matches = SelectedTime().Matches(normalized);
             if (matches.Count == 0) continue;
             // Several times or a declined time need clarification, never a guessed booking.
-            if (matches.Count != 1 || Regex.IsMatch(normalized, @"مش|مينفعش|لا يناسب|بدل|من\s+\d+.*(?:ل|الى)")) return true;
+            if (matches.Count != 1 || Regex.IsMatch(normalized,
+                @"(?<!\p{L})(?:[وف]?مش|مينفعش|لا يناسب|مشغوله?)(?!\p{L})|من\s+\d{1,2}(?:[:：]\d{1,2})?\s*(?:ل|الى|الي)\s*\d{1,2}")) return true;
             return !MatchesSession(matches[0], session);
         }
         return false;

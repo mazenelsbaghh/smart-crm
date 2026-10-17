@@ -20,5 +20,6 @@ internal static class TalkTipsCourseGroupSizePolicy
         analysis.SuggestedGroupBookingPeople = [];
         analysis.SuggestedGroupOfferIds = [];
         analysis.SuggestedButtons = [];
+        UnconfirmedBookingFollowUpPolicy.Apply(analysis.SuggestedFollowUp);
     }
 }

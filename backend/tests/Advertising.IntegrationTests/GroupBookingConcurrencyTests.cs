@@ -119,6 +119,41 @@ public sealed class GroupBookingConcurrencyTests(PostgresFixture postgres)
         }
     }
 
+    [Fact]
+    public async Task Explicit_eight_instead_of_two_request_transfers_the_existing_booking_to_eight()
+    {
+        var projectId = Guid.NewGuid();
+        var chosenGroup = await SeedAvailableGroupAsync(projectId, 4);
+        await using var db = postgres.CreateContext(Tenant(projectId));
+        var chosen = await db.GroupAppointments.SingleAsync();
+        chosen.FreeSessionDateTime = DateTime.UtcNow.Date.AddDays(2).AddHours(17);
+        var originalGroup = new GroupAppointment { ProjectId = projectId, Mode = "online", IsActive = true,
+            Capacity = 4, DateTime = DateTime.UtcNow.Date.AddDays(2).AddHours(11) };
+        var customer = Customer(projectId, "01012345678");
+        var existing = Booking(projectId, originalGroup.Id, customer, customer.PhoneNumber);
+        db.AddRange(originalGroup, customer, existing);
+        await db.SaveChangesAsync();
+        const string request = "عايزه المعاد ٨ بدلا من ٢، من فضلك";
+        var (hub, _) = CommitObservingHub(projectId);
+        var orchestrator = new AiGroupBookingOrchestrator(db, new GroupBookingCoordinator(db), hub,
+            NullLogger<AiGroupBookingOrchestrator>.Instance, new VerifiedBookingNumber());
+
+        var response = await orchestrator.BookSuggestedPeopleAsync(new AiGroupBookingRequest
+        {
+            ProjectId = projectId, GroupId = chosenGroup.Id, RequesterCustomerId = customer.Id,
+            Timezone = "Africa/Cairo", CustomerMessages = [request],
+            RequesterAllowsTransfer = BookedAppointmentReplyPolicy.AllowsTransfer(request, [])
+        });
+
+        Assert.True(response.Succeeded);
+        await using var verification = postgres.CreateContext(Tenant(projectId));
+        var booking = Assert.Single(await verification.GroupAppointmentBookings.AsNoTracking().ToListAsync());
+        Assert.Equal(existing.Id, booking.Id);
+        Assert.Equal(chosenGroup.Id, booking.GroupAppointmentId);
+        Assert.Equal(customer.Id, booking.CustomerId);
+        Assert.Contains("8:00", response.ConfirmedAppointmentDetails!);
+    }
+
     private sealed class VerifiedBookingNumber : IWhatsAppBookingNumberVerifier
     {
         public Task<WhatsAppNumberVerification> VerifyAsync(Guid projectId, string phone, CancellationToken cancellationToken = default)

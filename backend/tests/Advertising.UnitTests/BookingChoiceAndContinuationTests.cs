@@ -14,6 +14,9 @@ public sealed class BookingChoiceAndContinuationTests
     [InlineData("٨", 11, true)]
     [InlineData("فهكون موجودة ٨ إن شاء الله", 11, true)]
     [InlineData("الساعة 8", 17, false)]
+    [InlineData("عايزه المعاد ٨ بدلا من ٢، من فضلك", 17, false)]
+    [InlineData("مشيرة أحمد، اسكندرية، الساعة ٨", 17, false)]
+    [InlineData("مشغول الساعة ٨", 17, true)]
     [InlineData("الساعه ٨:٣٠", 17, true)]
     [InlineData("الساعة 20:00", 17, false)]
     [InlineData("الساعة ٨ صباحا", 17, true)]
@@ -33,6 +36,14 @@ public sealed class BookingChoiceAndContinuationTests
     {
         var group = new GroupAppointment { FreeSessionDateTime = new DateTime(2026, 10, 19, 17, 0, 0, DateTimeKind.Utc) };
         Assert.False(GroupBookingTimeChoicePolicy.Conflicts(group, "Africa/Cairo", ["الساعة ٢", "الساعة ٨", "فين المكان"]));
+    }
+
+    [Fact]
+    public void Collecting_booking_details_does_not_erase_the_students_eight_pm_choice()
+    {
+        var group = new GroupAppointment { FreeSessionDateTime = new DateTime(2026, 10, 19, 11, 0, 0, DateTimeKind.Utc) };
+        string[] messages = ["الساعة ٨", "إسراء", "الإسكندرية", "01012345678", "في السنتر", "فين المكان", "تمام"];
+        Assert.True(GroupBookingTimeChoicePolicy.Conflicts(group, "Africa/Cairo", messages));
     }
 
     [Fact]
@@ -63,6 +74,20 @@ public sealed class BookingChoiceAndContinuationTests
         Assert.Equal(id, analysis.SuggestedGroupBookingId);
     }
 
+    [Fact]
+    public void Group_redaction_preserves_unrelated_order_references()
+    {
+        var groupId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var analysis = new MarketingAnalysisResult { ReplyContent = $"المجموعة: {groupId}، رقم الطلب: {orderId}",
+            PublicCommentReply = orderId.ToString(), SuggestedButtons = [orderId.ToString()] };
+        CustomerReplyInstructionPolicy.RemoveGroupIdentifiers(analysis, [groupId]);
+        Assert.DoesNotContain(groupId.ToString(), analysis.ReplyContent);
+        Assert.Contains(orderId.ToString(), analysis.ReplyContent);
+        Assert.Equal(orderId.ToString(), analysis.PublicCommentReply);
+        Assert.Equal(orderId.ToString(), Assert.Single(analysis.SuggestedButtons));
+    }
+
     [Theory]
     [InlineData("https://academy.example/enroll/0bd7f9fd-dce9-4aff-a2da-5dc56adf23c7")]
     [InlineData("https://academy.example/enroll?token=0bd7f9fd-dce9-4aff-a2da-5dc56adf23c7")]
@@ -89,13 +114,16 @@ public sealed class BookingChoiceAndContinuationTests
             new() { Direction = "Incoming", MessageType = "Text", Content = customerMessage }];
         Assert.Equal(accepted, TalkTipsFollowUpAcceptancePolicy.AcceptsCourseInvitation(customerMessage, history));
         if (!accepted) return;
-        var analysis = new MarketingAnalysisResult { ReplyContent = "تحت أمرك هل فيه استفسار تاني؟", SuggestedGroupBookingId = Guid.NewGuid().ToString() };
+        var analysis = new MarketingAnalysisResult { ReplyContent = "تحت أمرك هل فيه استفسار تاني؟", SuggestedGroupBookingId = Guid.NewGuid().ToString(),
+            SuggestedFollowUp = new() { Needed = true, Type = "Nurturing", AppointmentTime = "2026-10-17T11:00:00Z", Notes = "تأكيد الحجز الساعة ٢" } };
         TalkTipsFollowUpAcceptancePolicy.ContinueWithDetails(analysis, history[0].Content);
         Assert.Contains("٤ شهور", analysis.ReplyContent);
         Assert.Contains("١٨", analysis.ReplyContent);
         Assert.Contains("تجربة مجانية", analysis.ReplyContent);
         Assert.DoesNotContain("استفسار تاني", analysis.ReplyContent);
         Assert.Null(analysis.SuggestedGroupBookingId);
+        Assert.Null(analysis.SuggestedFollowUp!.AppointmentTime);
+        Assert.DoesNotContain("٢", analysis.SuggestedFollowUp.Notes!);
     }
 
     [Fact]
@@ -105,6 +133,21 @@ public sealed class BookingChoiceAndContinuationTests
             new() { Direction = "Incoming", Content = "احجز الساعة ٨" },
             new() { Direction = "Outgoing", Content = "تم تسجيل الحجز بنجاح الساعة ٨" }];
         Assert.False(TalkTipsFollowUpAcceptancePolicy.AcceptsCourseInvitation("تمام", history));
+    }
+
+    [Theory]
+    [InlineData("AppointmentReminder")]
+    [InlineData("appointmentreminder")]
+    public void Acceptance_of_course_details_never_schedules_an_unconfirmed_appointment(string followUpType)
+    {
+        var analysis = new MarketingAnalysisResult { SuggestedGroupBookingId = Guid.NewGuid().ToString(),
+            SuggestedFollowUp = new() { Needed = true, Type = followUpType,
+                AppointmentTime = "2026-10-17T11:00:00Z", Notes = "تأكيد الساعة ٢" } };
+        TalkTipsFollowUpAcceptancePolicy.ContinueWithDetails(analysis, "تحب تعرف تفاصيل الكورس؟");
+        Assert.Null(analysis.SuggestedGroupBookingId);
+        Assert.False(analysis.SuggestedFollowUp.Needed);
+        Assert.Null(analysis.SuggestedFollowUp.AppointmentTime);
+        Assert.DoesNotContain("الساعة ٢", analysis.ReplyContent);
     }
 
     [Fact]
