@@ -1118,10 +1118,8 @@ namespace Modules.AI.Workers
 
             if (autoBookingResult is not null)
                 analysisResult.SuggestedButtons = [];
-            if (autoBookingResult is { Succeeded: false }
-                && analysisResult.SuggestedFollowUp is { } bookingFollowUp
-                && string.Equals(bookingFollowUp.Type, "AppointmentReminder", StringComparison.OrdinalIgnoreCase))
-                bookingFollowUp.Needed = false;
+            if (autoBookingResult is { Succeeded: false })
+                UnconfirmedBookingFollowUpPolicy.Apply(analysisResult.SuggestedFollowUp);
 
             analysisResult.ReplyContent = AiGroupBookingReplyPolicy.Apply(
                 analysisResult.ReplyContent,
@@ -1142,7 +1140,9 @@ namespace Modules.AI.Workers
                     TimezoneHelper.GetTimeZone(settings.Timezone),
                     bookingCity));
             Modules.TalkTips.Services.TalkTipsLocationReplyPolicy.Apply(settings, analysisResult);
-            CustomerReplyInstructionPolicy.RemoveGroupIdentifiers(analysisResult);
+            CustomerReplyInstructionPolicy.RemoveGroupIdentifiers(analysisResult,
+                appointmentOfferGroups.Select(group => group.Id).Concat(currentBookedGroupId.HasValue
+                    ? new[] { currentBookedGroupId.Value } : Array.Empty<Guid>()));
 
             Console.WriteLine($"[AIReplyWorker] AI Response: {analysisResult.ReplyContent}");
 

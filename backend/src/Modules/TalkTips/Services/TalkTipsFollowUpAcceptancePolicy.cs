@@ -38,7 +38,7 @@ internal static class TalkTipsFollowUpAcceptancePolicy
         analysis.SuggestedGroupOfferIds = [];
         analysis.SuggestedButtons = [];
         analysis.CancelGroupBooking = false;
-        if (analysis.SuggestedFollowUp is { Type: "AppointmentReminder" } followUp) followUp.Needed = false;
+        UnconfirmedBookingFollowUpPolicy.Apply(analysis.SuggestedFollowUp);
     }
 
     private static string Normalize(string text) => Regex.Replace(text.ToLowerInvariant()
